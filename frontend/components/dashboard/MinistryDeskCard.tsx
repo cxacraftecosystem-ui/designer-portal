@@ -266,10 +266,8 @@ export function MinistryDeskCard() {
         >
           Open the walkthrough
         </Link>{" "}
-        — it carries a deck for the ministry posts that says, screen by screen, which post each one is
-        for, and for the three posts it is the deck that opens. The three do not have the same powers:
-        two of these screens refuse a Regional Director even though they outrank an Assistant
-        Director.
+        — its ministry deck says, screen by screen, which post each one is for. The three ministry
+        posts do not all see the same screens.
       </p>
     </section>
   );

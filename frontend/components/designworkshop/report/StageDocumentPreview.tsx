@@ -399,17 +399,13 @@ export function StageDocumentPreview({
           */}
           {localOnly === null ? (
             <p className="text-sm leading-6 text-ink-700">
-              What there is to draw is not settled yet: the preview is built by the repository from the
-              record it holds, and this page has not established whether the repository holds this
-              workshop at all. This panel will not claim either way — it draws the document, or says
-              the workshop is still only on this device, as soon as that is known. If something stopped
-              this page reading the workshop, the banners above say so.
+              Checking whether this workshop has been uploaded. The preview appears here once that is
+              known. If something stopped this page loading the workshop, the messages above say so.
             </p>
           ) : localOnly ? (
             <p className="text-sm leading-6 text-ink-700">
-              This workshop is still only on this device. The preview, the .docx and the .pdf are all
-              built by the repository from the record it holds, so there is nothing to draw until this
-              workshop has synced. Everything captured so far is safe in this browser.
+              This workshop is still only on this device. The preview appears once it has uploaded.
+              Everything captured so far is safe on this device.
             </p>
           ) : (
             <>
@@ -418,9 +414,9 @@ export function StageDocumentPreview({
                   would take a missing last sentence for a report that had dropped it. */}
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface-50 px-3 py-2">
                 <p className="min-w-0 text-xs leading-5 text-ink-500">
-                  Built by the repository from what has been <strong className="font-medium text-ink-700">saved</strong>
+                  Built from what has been <strong className="font-medium text-ink-700">saved</strong>
                   {" "}— the same document the .docx and .pdf are written from. It refreshes when the stage
-                  saves, so anything still being typed is not in it yet.
+                  saves, so anything still being typed isn&rsquo;t in it yet.
                 </p>
                 <button
                   type="button"
@@ -486,8 +482,7 @@ export function StageDocumentPreview({
                 {state.kind === "loading" ? (
                   <>
                     <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                    Building the document from what has been saved. The repository loads every stage,
-                    resolves the media and draws the figures, so this takes a few seconds — longer on a
+                    Building the document from what has been saved. This takes a few seconds — longer on a
                     weak connection. Nothing captured is at risk while it runs.
                   </>
                 ) : state.kind === "ready" ? (
@@ -500,7 +495,7 @@ export function StageDocumentPreview({
               {state.kind === "failed" ? (
                 <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {state.offline
-                    ? "There is no connection, so the repository could not build the document. Everything captured is safe; try again when you have signal."
+                    ? "Connect to the internet to build the document. Everything captured is safe."
                     : state.message}
                 </p>
               ) : null}
@@ -535,7 +530,7 @@ export function StageDocumentPreview({
                   {state.warnings.length ? (
                     <section className="mb-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
                       <p className="font-semibold">
-                        {state.warnings.length} thing{state.warnings.length === 1 ? "" : "s"} the report cannot
+                        {state.warnings.length} thing{state.warnings.length === 1 ? "" : "s"} the report can&rsquo;t
                         print as it stands — across the whole document, not only this stage
                       </p>
                       <ul className="mt-1 ml-5 list-disc space-y-0.5">
@@ -559,12 +554,9 @@ export function StageDocumentPreview({
                         the panel cannot keep the moment somebody tries a different template next door.
                       */}
                       <p className="mt-2 text-xs leading-5">
-                        Each one is a sentence the repository wrote, and most of them name the stage they came
-                        from; nothing in the payload says which stage a warning belongs to, so all of them are
-                        listed here rather than a subset chosen by guesswork. This is the workshop’s saved
-                        template, so the report page shows this same list unless you try a different template
-                        there. None of it is carried inside the .docx or the .pdf — this screen and that one
-                        are the only places it can be read.
+                        Most of them name the stage they came from. They are for the workshop’s saved
+                        template, so the report page shows the same list unless you try a different template
+                        there. They are not printed in the .docx or the .pdf.
                       </p>
                     </section>
                   ) : null}

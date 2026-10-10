@@ -295,8 +295,7 @@ export class Tracer {
         // never finishes rather than as a failure.
         reject(
           new Error(
-            "That image could not be handed to the tracing engine. It may already have been used " +
-              "for a trace — pass a fresh copy of the pixels."
+            "That image couldn't be traced. Choose the photograph again, then try again."
           )
         );
       }
@@ -342,8 +341,8 @@ export class Tracer {
       // screenshot. `new Worker` throws a SecurityError for a blocked or missing script as readily as
       // it does for a browser without module workers, and those two want opposite answers.
       throw new TraceUnavailableError(
-        "This browser would not start a background worker, and tracing is never run on the page " +
-          "thread. Try a current version of Chrome, Edge, Firefox or Safari.",
+        "This browser can't run the tracing tool. Try a current version of Chrome, Edge, Firefox or " +
+          "Safari.",
         { cause: err }
       );
     }
@@ -368,7 +367,7 @@ export class Tracer {
     });
     onceOnly(worker, "onmessageerror", (event) => {
       console.error("[trace] the worker sent a message this page could not deserialize", event);
-      this.failAll("The tracing engine sent something unreadable.");
+      this.failAll("Something went wrong while tracing. Please try again.");
     });
 
     this.worker = worker;

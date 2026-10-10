@@ -406,9 +406,9 @@ export function UploadTabPanel({
         <div className="panel p-4">
           <h3 className="font-display text-base font-semibold text-ink-900">Prototypes</h3>
           <p className="mt-1 max-w-prose text-sm leading-6 text-ink-500">
-            A prototype reaches a reviewer two ways, and they are not equal. Photographs of it turning are
-            placed in the ministry document as pictures; a 3D model file is listed there only as a count. Both
-            are worth attaching — the panel below says which does what.
+            A prototype reaches a reviewer two ways. Photographs of it turning appear in the report as
+            pictures; a 3D model file is listed there as an attached file. Both are worth attaching — the panel
+            below says which does what.
           </p>
           {/*
             ── WHAT THIS HALF TAKES THAT THE OTHER ONE DOES NOT, SAID AT THE TOP ──────────────────

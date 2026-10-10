@@ -651,7 +651,7 @@ function openDb(): Promise<IDBDatabase> {
         }
       };
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error("Cannot open the offline outbox"));
+      request.onerror = () => reject(request.error ?? new Error("Couldn't open the work saved on this device."));
     });
     // A failed open must not be cached forever — a private-mode tab that later allows storage
     // should get a working outbox rather than the first rejection for the rest of the session.
@@ -670,7 +670,7 @@ function tx<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequ
           const transaction = db.transaction(STORE, mode);
           const request = run(transaction.objectStore(STORE));
           request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error ?? new Error("Offline outbox write failed"));
+          request.onerror = () => reject(request.error ?? new Error("Couldn't save to this device."));
         })
     )
     .catch((error: unknown) => {
@@ -723,8 +723,8 @@ function updateEntry(id: number, apply: (row: OutboxEntry) => OutboxEntry | null
             };
           };
           transaction.oncomplete = () => resolve(wrote);
-          transaction.onerror = () => reject(transaction.error ?? new Error("Offline outbox write failed"));
-          transaction.onabort = () => reject(transaction.error ?? new Error("Offline outbox write aborted"));
+          transaction.onerror = () => reject(transaction.error ?? new Error("Couldn't save to this device."));
+          transaction.onabort = () => reject(transaction.error ?? new Error("Saving to this device was interrupted."));
         })
     )
     .catch((error: unknown) => {
@@ -1273,21 +1273,21 @@ export function outboxDanglingSentence(said: string, nouns: readonly string[], f
   const subject = isCorrection ? "This correction" : "This record";
   const head =
     nouns.length === 1
-      ? `${subject} points at ${anyOneOf(nouns)} that is not on the server.`
+      ? `${subject} points at ${anyOneOf(nouns)} that no longer exists.`
       : // NOT A GUESS DRESSED AS A FACT. The 404 names no field and the body carries several ids, so
         // the sentence carries several.
-        `${subject} points at something that is not on the server. It is ${anyOneOf(nouns)} — the server's answer does not say which.`;
+        `${subject} points at something that no longer exists: ${anyOneOf(nouns)}.`;
   const carrying = files > 0 ? ` and the ${files} file(s) saved with it` : "";
   const isAre = files > 0 ? "are" : "is";
   const trimmed = said.trim();
-  const server = trimmed ? ` The server said: ${/[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`}` : "";
+  const server = trimmed ? ` Reason: ${/[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`}` : "";
   // The nothing-is-lost clause is kept WHOLE because it is already the terse recipe — state, act,
   // reassure, in one line. Word for word Android's `outboxDanglingSentence`, save for "in this
   // browser": one queue, one story, and the two clients differ only where the device does.
   return (
-    `${head} Nothing is lost — open it, choose one that is, and it will send.${server} ` +
+    `${head} Nothing is lost — open it, choose another, and it will send.${server} ` +
     `This entry${carrying} ${isAre} still in this browser; nothing was deleted. ` +
-    "Retrying unchanged gets the same answer."
+    "Trying again without a change won't help."
   );
 }
 
@@ -1313,7 +1313,7 @@ export function repickEmptyLine(noun: string, listed: boolean): string {
   // researcher looking at a dead end has to be told.
   return listed
     ? `No ${noun} is open to this account. An administrator can give you access to one; until then the record stays here, and nothing is deleted.`
-    : `The ${noun} list could not be read just now, so this is not showing what exists. Nothing has been lost — the record and anything saved with it stay in this browser.`;
+    : `The ${noun} list couldn't be loaded just now. Nothing has been lost — the record and anything saved with it stay in this browser.`;
 }
 
 /**
@@ -2060,7 +2060,7 @@ async function runSync(): Promise<SyncResult> {
               // Tersened with the rest of the family on 2026-09-03: "so it cannot be confirmed or
               // its files attached" is the consequence of the first clause and is argued in the
               // comment above, not on a row read standing up beside a Discard button.
-              "The server accepted this but did not say what it saved. This entry" +
+              "This may have been saved, but it couldn't be confirmed. This entry" +
                 `${files ? ` and its ${files} file(s)` : ""} are still in this browser. If you were on a wi-fi ` +
                 "network that asks you to sign in, connect properly and check whether the record arrived before " +
                 "discarding this."
@@ -2084,7 +2084,7 @@ async function runSync(): Promise<SyncResult> {
               // Android's `outboxConflictSentence`, in this client's words and tersened with it on
               // 2026-09-03: "Nothing has been sent" is what the row already means, so "nothing was
               // deleted" is the half that has to be said beside a Discard button.
-              `Not saved — the register already holds a clashing record. ${error.message} Nothing was deleted: ` +
+              `Not saved — it clashes with a record that already exists. ${error.message} Nothing was deleted: ` +
                 `this entry${files ? ` and its ${files} file(s)` : ""} are still in this browser. Open the clashing ` +
                 "record, copy anything missing, then discard this entry."
             );
@@ -2257,7 +2257,7 @@ async function runSync(): Promise<SyncResult> {
           progress,
           `Saved, but ${mediaFailed.length} file(s) did not upload: ${mediaFailed.map((f) => f.name).join(", ")}. ` +
             "Nothing has been thrown away — they are still on this device, and Try again re-sends only those. If " +
-            "they keep being refused, re-attach them on the record."
+            "they keep failing, attach them again on the record."
         );
         failed += 1;
         await refreshOutbox();
@@ -2323,10 +2323,9 @@ async function runSync(): Promise<SyncResult> {
         const files = pendingFileCount(progress);
         await markFailure(
           progress,
-          `This copy of the app and the repository are out of step, so the repository could not read what was sent: ` +
-            `${answered.message} Nothing you entered is wrong and nothing has been thrown away — this entry` +
-            `${files ? ` and its ${files} file(s)` : ""} stays on this device and will be sent by itself once one of ` +
-            "the two has been updated. You do not have to do anything.",
+          `This entry couldn't be sent: ${answered.message} Nothing you entered is wrong and nothing has been ` +
+            `thrown away — this entry${files ? ` and its ${files} file(s)` : ""} stays on this device. Reload the ` +
+            "page to update the app, and it will send by itself.",
           APP_RUN_ID
         );
         failed += 1;
@@ -2363,7 +2362,7 @@ async function runSync(): Promise<SyncResult> {
         failed += 1;
         continue;
       }
-      await markFailure(progress, error instanceof Error ? error.message : "The server rejected this entry.");
+      await markFailure(progress, error instanceof Error ? error.message : "This entry couldn't be saved.");
       failed += 1;
     }
   }

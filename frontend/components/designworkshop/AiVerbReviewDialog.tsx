@@ -63,7 +63,6 @@ import {
 } from "@/lib/aiLayers";
 import {
   AI_VERB_COUNTDOWN_FROM,
-  SUBTITLES_DEPLOYMENT_KEY_NOTE,
   SUBTITLE_FORMAT_LABELS,
   downloadDesignWorkshopSubtitles,
   subtitleCueSummary,
@@ -289,9 +288,8 @@ export function AiVerbReviewDialog({
           // correctness. It travels so a designer deciding whether to accept can see it, and it
           // travels labelled so nobody builds a gate on it.
           <p className="text-xs leading-5 text-ink-500">
-            The model reported {confidence} as its own confidence in this description. That is the model&apos;s own
-            estimate, which nothing has checked against anything — it is not a measurement of whether the sentence is
-            right. The photograph is.
+            The model rated its own confidence in this description at {confidence}. That is only its own estimate, not a
+            check of whether the sentence is right — compare it with the photograph.
           </p>
         ) : null}
 
@@ -354,10 +352,8 @@ export function AiVerbReviewDialog({
                 />
                 <span>
                   Put the speaker label in front of each line. <strong className="font-semibold">The labels are the
-                  engine&apos;s own guess</strong> — nobody told it how many people were in the room or who they were,
-                  and it can merge two quiet voices or split one person who moved away from the microphone. The .vtt
-                  carries that caution inside the file; SubRip has no comment syntax and cannot, so a .srt carries the
-                  labels alone.
+                  engine&apos;s own guess</strong> — it can merge two quiet voices or split one person who moved away
+                  from the microphone. A .vtt file includes this caution; a .srt file carries the labels alone.
                 </span>
               </label>
             ) : null}
@@ -397,11 +393,6 @@ export function AiVerbReviewDialog({
             Provider: {provenance.provider} · Model: {provenance.model} · Language: {provenance.language}
             {languages ? ` · From ${languages.from} into ${languages.into}` : ""}
           </p>
-          {kind === "SUBTITLES" ? (
-            // THE ONE VERB THAT NEVER RUNS ON THE DESIGNER'S OWN KEY, said beside the provenance line
-            // that would otherwise imply it might have. See `SUBTITLES_DEPLOYMENT_KEY_NOTE`.
-            <p className="text-xs leading-5 text-ink-500">{SUBTITLES_DEPLOYMENT_KEY_NOTE}</p>
-          ) : null}
           <p className="text-xs leading-5 text-ink-500">
             Accepting records your name and the moment against this {layerKindNoun(kind)}. Until somebody does, it is
             listed on the AI layers screen and no report will print it.

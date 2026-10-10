@@ -2285,7 +2285,7 @@ export function RichTextEditor({
       commit(result, "paste");
       setNotice(
         hadMarkup
-          ? "Pasted as text. The source's own bold, colours and fonts are not part of this document's vocabulary, so only the words and the list structure came across — re-apply any formatting with the toolbar."
+          ? "Pasted as text. Only the words and the list structure are kept — re-apply any formatting with the toolbar."
           : null
       );
     }
@@ -3091,9 +3091,7 @@ export function RichTextEditor({
               still belongs in the stage&apos;s own image fields, which the report lays out as a gallery.
             </li>
             <li>
-              <span className="font-medium">Not offered at all:</span> links, text colour and font choices. This document format
-              has no way to carry them, so a button for them here would look as though it worked and leave nothing in the
-              report.
+              <span className="font-medium">Not kept:</span> links, text colour and font choices.
             </li>
             <li>
               Pasted text arrives as words and list structure only — the source&apos;s own formatting is not carried across.

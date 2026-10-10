@@ -83,14 +83,14 @@ import {
 
 function describeFailure(error: unknown, user: User | null | undefined): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so this workshop could not be read. Nothing was loaded at all.";
+    return "Couldn't connect, so this workshop couldn't be loaded. Check your connection and try again.";
   }
   if (oversightRefusalMeansNoPosts(error, user)) {
     // An admin the server will not yet show this surface to holds no post anywhere — so none here.
-    return "This workshop is not one you supervise: you do not hold any Assistant Director or Regional Director posts. A Ministry Admin, an admin or the master admin names them one workshop at a time, on Workshop oversight.";
+    return "You haven't been named Assistant Director or Regional Director on any workshop, so this one isn't open to you. A Ministry Admin, an Admin or the Master Admin names them on Workshop oversight.";
   }
   if (error.status === 404) {
-    return "This workshop is not one you have been named on as Assistant Director or Regional Director, or it no longer exists. A Ministry Admin, an admin or the master admin names them one workshop at a time, on Workshop oversight.";
+    return "This workshop isn't open to you. You may not have been named its Assistant Director or Regional Director, or it may have been deleted. A Ministry Admin, an Admin or the Master Admin names them on Workshop oversight.";
   }
   return error.message;
 }
@@ -117,8 +117,7 @@ function ReadField({
       <span className="field-label">{field.label}</span>
       {reading.kind === "media" ? (
         <span className="text-sm text-ink-500">
-          {reading.count} file{reading.count === 1 ? "" : "s"} recorded here. An oversight read does
-          not carry photographs, recordings or attachments.
+          {reading.count} file{reading.count === 1 ? "" : "s"} recorded here.
         </span>
       ) : (
         <span className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{reading.text}</span>
@@ -238,9 +237,7 @@ function ReadStage({
       {nothingRecorded ? (
         <p className="pt-3 text-sm text-ink-500">
           Nothing has been recorded on this stage.
-          {stage.optionalStage
-            ? " The source document marks it as one a workshop may legitimately skip."
-            : ""}
+          {stage.optionalStage ? " This stage is optional." : ""}
         </p>
       ) : (
         <div className="grid gap-4 pt-3">
@@ -264,7 +261,7 @@ function ReadStage({
             return (
               <div key={entity.key}>
                 <h3 className="mb-1 text-sm font-medium text-ink-700">
-                  {entity.title} · {rows.length} {rows.length === 1 ? "row" : "rows"}
+                  {entity.title} · {rows.length} {rows.length === 1 ? "entry" : "entries"}
                 </h3>
                 <div className="grid gap-3">
                   {rows.map((row, index) => (
@@ -299,11 +296,8 @@ function ReadStage({
 
           {customAnswers > 0 ? (
             <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-              {customAnswers} answer{customAnswers === 1 ? "" : "s"} to question
-              {customAnswers === 1 ? "" : "s"} this workshop&apos;s designer added to this stage{" "}
-              {customAnswers === 1 ? "is" : "are"} recorded. The questions themselves are read
-              through a route an oversight read does not reach, so the answers are not shown without
-              them.
+              {customAnswers} answer{customAnswers === 1 ? "" : "s"} recorded to question
+              {customAnswers === 1 ? "" : "s"} this workshop&apos;s designer added to this stage.
             </p>
           ) : null}
         </div>
@@ -357,9 +351,7 @@ export default function WorkshopUnderOversightPage({
         // A SEPARATE FAILURE FROM THE WORKSHOP READ, because it means something different: the
         // answers are in hand and the field list that names them is not. Folding it into the error
         // above would say the workshop could not be read when it was.
-        setRegistryError(
-          "The field list could not be loaded, so the stages below cannot be named or labelled. The workshop itself was read; try again."
-        );
+        setRegistryError("The form couldn't be loaded. Check your connection and try again.");
       });
     return () => {
       cancelled = true;
@@ -393,9 +385,9 @@ export default function WorkshopUnderOversightPage({
             Officer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            A monitored workshop is read by whoever was named on it as Assistant Director or Regional
-            Director — an officer of that tier, a Ministry Admin, an admin or the master admin.
-            Designers read design &amp; prototype workshops on Design workshops instead.
+            Only someone named on a workshop as its Assistant Director or Regional Director can open
+            it here: an Assistant Director, a Regional Director, a Ministry Admin, an Admin or the
+            Master Admin. Designers open their design &amp; prototype workshops from Design workshops.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as{" "}
@@ -458,9 +450,8 @@ export default function WorkshopUnderOversightPage({
       {detail && readOnly ? (
         <p className="mb-4 rounded-md border border-ministry-300 bg-ministry-50 px-3 py-2 text-xs leading-5 text-ink-700 dark:border-ministry-900 dark:bg-ministry-950/40">
           <span className="font-semibold text-ministry-700 dark:text-ministry-300">Read-only.</span>{" "}
-          Every stage below is shown as the designers recorded it, with who wrote each field, and
-          nothing here can be edited, submitted or deleted. Photographs, recordings and attachments
-          are not carried on an oversight read.
+          Every stage below is shown as the designers recorded it, with who wrote each field.
+          Nothing here can be edited, submitted or deleted.
         </p>
       ) : null}
 
@@ -512,15 +503,14 @@ export default function WorkshopUnderOversightPage({
               // oversight row naming you exists; an empty list here would be the server contradicting
               // itself, and saying so is more useful than drawing an empty box.
               <p className="mt-2 text-sm text-ink-700">
-                No oversight is recorded on this workshop. If you can read this page, that is a
-                disagreement worth reporting rather than an empty list.
+                No Assistant Director or Regional Director is recorded on this workshop.
               </p>
             )}
           </section>
 
           {registry === null ? (
             registryError ? null : (
-              <section className="panel p-4 text-sm text-ink-700">Loading the field list…</section>
+              <section className="panel p-4 text-sm text-ink-700">Loading the form…</section>
             )
           ) : (
             <div className="grid gap-4">

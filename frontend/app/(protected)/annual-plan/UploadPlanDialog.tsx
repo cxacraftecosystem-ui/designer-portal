@@ -246,8 +246,8 @@ export function UploadPlanDialog({
       {withdrawAbsent ? (
         <p className="mt-2 flex items-start gap-2 text-sm leading-6 text-amber-800">
           <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
-          Every planned row this sheet does not mention will be marked withdrawn. Nothing is deleted
-          — a withdrawn row comes back the moment it appears in a later sheet.
+          Every planned entry this sheet does not mention will be marked withdrawn. Nothing is
+          deleted — a withdrawn entry comes back the moment it appears in a later sheet.
         </p>
       ) : null}
     </FieldDialog>

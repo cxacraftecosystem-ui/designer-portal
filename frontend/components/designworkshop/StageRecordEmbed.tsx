@@ -889,8 +889,8 @@ export function StageRecordEmbed({
         setNotice({
           tone: "warn",
           text: previous
-            ? "The record was saved and linked, but this list cannot describe it just now — so the boxes the previous record had filled in have been CLEARED rather than left standing under the new record's name. Fill them in by hand, or reopen the picker and search for it."
-            : "The record was saved and linked, but this list cannot describe it just now, so the boxes it would have filled in are still blank. Fill them in by hand, or reopen the picker and search for it — a required box left blank is refused when the stage is submitted."
+            ? "The record was saved and linked, but its details couldn't be loaded just now, so the boxes the previous record filled in have been cleared. Fill them in by hand, or reopen the picker and search for it."
+            : "The record was saved and linked, but its details couldn't be loaded just now, so the boxes it would have filled in are still blank. Fill them in by hand, or reopen the picker and search for it — a required box left blank will stop the stage being submitted."
         });
       } else {
         /*
@@ -903,7 +903,7 @@ export function StageRecordEmbed({
         */
         setNotice({
           tone: "done",
-          text: "Saved to the repository and linked to this row. The form below is now that record — worth checking its photographs, since anything still uploading when you pressed Save may not have landed."
+          text: "Saved to the records and linked to this row. The form below is now that record — check its photographs, since anything still uploading when you pressed Save may not have finished."
         });
       }
       /*
@@ -953,7 +953,7 @@ export function StageRecordEmbed({
       if (!after) {
         setNotice({
           tone: "warn",
-          text: "Your changes were saved to the record, but this list cannot describe it just now, so the boxes on this row still show what it said before. Re-open the picker and choose it again to refresh them."
+          text: "Your changes were saved to the record, but its details couldn't be loaded just now, so the boxes on this row still show what it said before. Re-open the picker and choose it again to refresh them."
         });
         // Still remounted: the record HAS changed, so the form's `initial` and its dirty tracking
         // are stale whether or not the list could describe it — and on `ProcessForm` a form left
@@ -1094,7 +1094,7 @@ export function StageRecordEmbed({
   const handleQueued = useCallback(() => {
     setNotice({
       tone: "warn",
-      text: `This ${noun} is saved on this device and will be sent when the connection returns. It is NOT linked to this row yet — there is no repository id until it has been sent. Come back and choose it in the picker above once it has gone.`
+      text: `This ${noun} is saved on this device and will upload when you are back online. It is not linked to this row yet — come back and choose it in the picker above once it has uploaded.`
     });
   }, [noun]);
 
@@ -1193,8 +1193,8 @@ export function StageRecordEmbed({
       <div className="rounded-md border border-line-200 bg-surface-50 p-3">
         <p className="text-xs leading-5 text-ink-muted">
           {linkedId
-            ? `This row is linked to an existing ${noun} record in the repository. The page below IS that record — what you change here changes the record itself, for every workshop that references it, and the boxes filled in from it are refreshed when you save.`
-            : `Fill the ${noun} in here and it is saved to the repository and linked to this row. It is the same page as the ${noun}'s own, so nothing has to be typed twice.`}
+            ? `This row is linked to an existing ${noun} record. The page below is that record — what you change here changes the record itself, for every workshop that references it, and the boxes filled in from it are refreshed when you save.`
+            : `Fill the ${noun} in here and it is saved to the records and linked to this row. It is the same page as the ${noun}'s own, so nothing has to be typed twice.`}
         </p>
       </div>
 

@@ -346,7 +346,7 @@ export function StageAddressField({
       />
       {options.length === 0 ? (
         <p className="text-xs text-ink-500">
-          No districts are listed for {stateName} — leave this blank and report the gap.
+          No districts are listed for {stateName} — leave this blank and let an administrator know.
         </p>
       ) : null}
     </div>

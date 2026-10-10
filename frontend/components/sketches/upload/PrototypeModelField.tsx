@@ -436,11 +436,8 @@ export function PrototypeModelField({
               edit; moving the paragraph, which is what happened, is not one.
             */}
             <p className="mt-0.5 text-xs leading-5 text-ink-500">
-              The ministry document places image fields as pictures and prints every other kind of attachment
-              as a count — a 3D model appears in it as the words “1 document attached”, and no viewer built
-              into this application can change that, because the limit is in the document generator rather
-              than in the browser. A turn of photographs is the only form of this prototype that reaches the
-              printed page.
+              The report shows image fields as pictures and lists a 3D model as an attached file. A turn of
+              photographs is how this prototype appears on the printed page.
             </p>
           </div>
         </div>
@@ -596,9 +593,9 @@ export function PrototypeModelField({
           <div className="min-w-0 flex-1">
             <h4 className="text-sm font-medium text-ink-900">“{modelLabel}”</h4>
             <p className="mt-0.5 text-xs leading-5 text-ink-500">
-              Worth attaching even though it does not print: it is the only form another designer can measure,
-              re-scale, section or send to a printer. They download it and open it in the tool they already
-              have — which is why the format matters more than any viewer would.
+              Worth attaching even though the report only lists it: it is the form another designer can measure,
+              re-scale, section or send to a printer. They download it and open it in their own software, so the
+              format matters.
             </p>
           </div>
         </div>

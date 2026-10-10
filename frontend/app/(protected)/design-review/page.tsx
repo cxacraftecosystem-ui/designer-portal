@@ -417,7 +417,7 @@ function DesignReview() {
           unreachable: offline,
           note: offline
             ? null
-            : refusalText(error, "The repository could not list the design workshops you can open.")
+            : refusalText(error, "The design workshops you can open couldn't be loaded.")
         });
       }
     })();
@@ -617,9 +617,8 @@ function DesignReview() {
           </div>
           <h1 className="font-display text-xl font-bold tracking-tight text-ink-900">Designer access required</h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Rating another workshop&apos;s finished pieces is part of the design work itself, so it belongs to
-            designers, admins and the master admin. The rounds are read through a route that refuses everybody else
-            before it looks at the workshop at all.
+            Rating another workshop&apos;s finished pieces is part of the design work, so it is open to designers,
+            Assistant Directors, Regional Directors, Ministry Admins, admins and the master admin.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>. An admin can
@@ -795,17 +794,13 @@ function DesignReview() {
             advanceOnSelect={false}
           />
           <p id="design-review-scope" className="max-w-3xl text-sm leading-6 text-ink-muted">
-            <span className="font-medium text-ink-700">This is a shortcut, not a list of what is open to the pool.</span>{" "}
-            It holds the design workshops <em>this account can already open</em> — the ones you created, the ones an
-            admin granted you, and every workshop on the platform if you are an admin. The pool round is wider than that by design: any
-            workshop can declare a piece finished and open it to designers outside it, and nothing lists those
-            workshops, so they reach you as a link or an id in the box below. A workshop missing from this list is not
-            a workshop you cannot read.
+            This list holds the design workshops <em>you can already open</em> — the ones you created, the ones an
+            admin granted you, and every workshop on the platform if you are an admin. To review another
+            workshop&apos;s finished pieces, paste the link or id its designers sent you in the box below.
           </p>
           <p className="max-w-3xl text-xs leading-5 text-ink-500">
-            And for a workshop you are a member of, the pool round holds the same pieces its own Review tab lists —
-            scored in the pool round rather than the peer round. So this shortcut saves the most work for admins, whose
-            list is the whole archive.
+            For a workshop you belong to, you see the same pieces its own Review tab lists, scored by the wider pool
+            of designers.
           </p>
           {asking ? (
             // "Still asking", in words. Never a bare spinner — that says something is happening
@@ -836,13 +831,12 @@ function DesignReview() {
             <div className="rounded-md border border-line-200 bg-field-100 px-3 py-2" aria-live="polite">
               <p className="text-xs leading-5 text-ink-700">
                 {listFailure.unreachable
-                  ? "The repository could not be reached, so this shortcut is empty — a list that could not be loaded, not a list with nothing in it. Reading a round needs the same connection, so the box below will not reach one until the signal is back."
+                  ? "Couldn't connect, so your workshops couldn't be listed. Opening a round needs a connection too. Check your connection and try again."
                   : listFailure.note}
               </p>
               {listFailure.unreachable ? null : (
                 <p className="mt-1 text-xs leading-5 text-ink-500">
-                  The box below does not go through this list — it asks the round about one workshop directly — so it
-                  still works.
+                  You can still open a round from its link or id in the box below.
                 </p>
               )}
               <button type="button" className="field-button-secondary mt-2" onClick={retry}>
@@ -863,8 +857,8 @@ function DesignReview() {
             // paragraph below needs no live region — its trigger is enabled and carries the id.
             <p id="design-review-empty" className="text-xs leading-5 text-ink-500" aria-live="polite">
               {titleQuery.trim()
-                ? `No design workshop this account can open matches “${titleQuery.trim()}”. That is this list answering about your own workshops — it says nothing about a pool round somebody sent you, which the box below opens directly.`
-                : "No design workshop is listed for this account yet — an admin creates them and grants access. That does not stop you reading a pool round: a link or an id in the box below goes straight to one."}
+                ? `None of your design workshops matches “${titleQuery.trim()}”. To open a round somebody sent you, paste its link or id in the box below.`
+                : "No design workshops are listed for your account. An admin creates them and gives you access. You can still open a round from its link or id in the box below."}
             </p>
           ) : null}
           {workshopCut ? (
@@ -888,13 +882,8 @@ function DesignReview() {
               workshop picker in the app prints; the rest is the part only this list can say.
             */
             <p id="design-review-truncation" className="text-xs leading-5 text-ink-500">
-              {workshopCut} Those {set.drawn} are the ones most recently added to the repository.
-              That is not the order the dates on the rows read, and it is not the order they are drawn in
-              either: the rows are sorted by the day each workshop ran, while the cut was made by the day it
-              was entered. So a workshop that ran two years ago and was entered last week is in this list, and
-              one that ran last month and was entered last year may not be. Type in the picker&apos;s box to
-              bring another into it — that box asks the repository, not this page — or open any of the rest
-              from its link or its id below, or from its own page under{" "}
+              {workshopCut} These are the {set.drawn} added most recently, sorted by the day each workshop
+              ran. You can also paste another workshop&apos;s link or id below, or open it from{" "}
               <Link href="/design-workshops" className="underline">
                 Design workshops
               </Link>
@@ -922,10 +911,8 @@ function DesignReview() {
             />
           </label>
           <p id="design-review-why" className="max-w-3xl text-sm leading-6 text-ink-muted">
-            The round is read one workshop at a time, because the ranking it shows is that workshop&apos;s own row order
-            and there is no such thing as a place across two workshops. What does not exist yet is a list of every
-            workshop that has opened a piece to the pool — so browsing the whole archive is still a different question
-            with no answer, and a piece made outside your own workshops reaches you as a link its designers sent you.
+            Each round belongs to one workshop and ranks that workshop&apos;s own pieces. To review a workshop you are
+            not part of, paste the link its designers sent you.
           </p>
           <div>
             <button type="submit" className="field-button" disabled={!typed.trim()}>
@@ -969,16 +956,13 @@ function DesignReview() {
               </>
             ) : ready ? (
               <>
-                Now reading the workshop <span className="font-mono text-ink-700">{workshopId}</span>. It is not in the
-                shortcut above, which tells you nothing either way — whether the round can be read is answered below.
+                Now reading the workshop <span className="font-mono text-ink-700">{workshopId}</span>. It isn&apos;t in
+                your list above; its round is shown below.
               </>
             ) : (
               <>
-                Now reading the workshop <span className="font-mono text-ink-700">{workshopId}</span>.{" "}
-                {asking
-                  ? "The shortcut above has not answered yet, so it cannot say whether this is one of yours."
-                  : "The shortcut above could not be loaded, so it cannot say whether this is one of yours."}{" "}
-                Either way it would tell you nothing about the round — that is answered below.
+                Now reading the workshop <span className="font-mono text-ink-700">{workshopId}</span>. Its round is shown
+                below.
               </>
             )}
           </p>

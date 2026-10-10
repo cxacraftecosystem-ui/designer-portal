@@ -178,8 +178,8 @@ export function ReviewCard({
     } catch (error) {
       setLedgerProblem(
         isUnreachable(error)
-          ? "The server could not be reached, so who rated this piece is not known here yet."
-          : refusalText(error, "This review history could not be read.")
+          ? "Couldn't connect, so the review history couldn't be loaded. Check your connection and try again."
+          : refusalText(error, "This review history couldn't be loaded.")
       );
     } finally {
       setLedgerLoading(false);
@@ -252,18 +252,18 @@ export function ReviewCard({
         setSaved({
           queued: true,
           text: outcome.sent
-            ? "This rating was saved on this device and has now been sent to the repository. The scores on these " +
-              "cards do not include it until this page is opened again — reload to see the round with it in."
-            : "This rating is saved on this device and has NOT reached the repository yet. This browser has already " +
-              "tried once and will keep trying — the sync banner above the page lists it until it lands, and can " +
-              "send it on demand. The scores on these cards will not move until it does."
+            ? "This rating was saved on this device and has now been uploaded. Reload the page to see it in the " +
+              "scores on these cards."
+            : "This rating is saved on this device but hasn't been uploaded yet. It will keep trying — the sync banner " +
+              "at the top of the page lists it and can send it now. The scores on these cards won't change until " +
+              "it's uploaded."
         });
       } else {
         onRated(outcome.saved.rating);
         setSaved({
           queued: false,
           text: outcome.saved.replayed
-            ? "The server already held this rating, unchanged."
+            ? "This rating was already saved, unchanged."
             : mine
               ? "Your rating has been amended."
               : "Your rating has been recorded."
@@ -284,8 +284,8 @@ export function ReviewCard({
           nothing was stored and that the text is still on screen, which is what a designer acts on.
         */
         isUnreachable(error)
-          ? "This rating has NOT been sent, and this device could not keep it either: its storage refused the write, which usually means the browser is in private mode or the disk is full. What you have written is still in the boxes."
-          : refusalText(error, "This rating was not accepted.")
+          ? "This rating wasn't sent and couldn't be saved on this device — usually because the browser is in private mode or the disk is full. What you wrote is still in the boxes."
+          : refusalText(error, "This rating couldn't be saved.")
       );
     } finally {
       savingRef.current = false;
@@ -433,10 +433,9 @@ export function ReviewCard({
           finished document looking for their own paragraph.
         */}
         <p className="text-xs leading-5 text-ink-500">
-          Scores, assessments and suggestions stay in this workshop&apos;s review ledger — they are read here and in the
-          ranking, and the printed report does not carry them. What the report takes from this tab is the ORDER the
-          pieces end up in, and a line saying who settled it. Anything that has to appear in the document belongs on the
-          piece&apos;s own stage form.
+          Scores, assessments and suggestions stay in this workshop&apos;s review history — they are shown here and used in
+          the ranking, and the printed report does not include them. The report takes the order the pieces end up in,
+          and who settled it. Anything that must appear in the report belongs on the piece&apos;s own stage form.
         </p>
 
         {problem ? (
@@ -511,8 +510,8 @@ function Ledger({ ledger }: { ledger: SubjectLedger }) {
         {ledger.summary.ratingCount === 0
           ? "Nobody has rated this piece yet."
           : ledger.canReadLedger
-            ? "No rating rows came back for this round."
-            : `${ledger.summary.ratingCount} designer(s) have rated this piece. Who they are is not yours to see — you can see the score, not the scorers.`}
+            ? "No ratings were found for this round."
+            : `${ledger.summary.ratingCount} designer(s) have rated this piece. Their names aren't shown to you.`}
       </p>
     );
   }
@@ -520,8 +519,7 @@ function Ledger({ ledger }: { ledger: SubjectLedger }) {
     <>
       {!ledger.namesShown ? (
         <p className="text-xs text-ink-muted">
-          These ratings are shown without their reviewers. That is the server&apos;s decision for this round, not
-          something withheld by this page.
+          Reviewers&apos; names aren&apos;t shown for this round.
         </p>
       ) : null}
       <ul className="grid gap-2">
@@ -537,13 +535,13 @@ function Ledger({ ledger }: { ledger: SubjectLedger }) {
                     ? "your rating"
                     : rating.reviewerId
                       ? `reviewer ${rating.reviewerId}`
-                      : "reviewer not named on this response"}
+                      : "reviewer not named"}
                 </span>
               </p>
               <p className="mt-0.5 text-xs text-ink-muted">
                 Judged {formatDate(judged ?? heard)}
                 {judged && heard && judged.slice(0, 10) !== heard.slice(0, 10)
-                  ? ` · reached the server ${formatDateTime(heard)}`
+                  ? ` · uploaded ${formatDateTime(heard)}`
                   : ""}
               </p>
               {rating.comment ? <p className="mt-1 whitespace-pre-wrap text-ink-700">{rating.comment}</p> : null}

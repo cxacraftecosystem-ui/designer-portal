@@ -147,7 +147,7 @@ import type { DwEntryData, DwValue } from "@/lib/designWorkshops";
 import type { MeasurementMarker } from "@/lib/photoMeasure";
 
 import { DropCard } from "./DropCard";
-import { DECODE_MAX_EDGE_PX, TRACEABLE_ACCEPT, TRACEABLE_IMAGE_TYPES } from "./decodeToPixels";
+import { TRACEABLE_ACCEPT, TRACEABLE_IMAGE_TYPES } from "./decodeToPixels";
 
 /**
  * The card's name, in the ONE spelling all three surfaces use.
@@ -635,9 +635,8 @@ function Body({
   if (targets.length === 0) {
     return (
       <Note>
-        The field registry this browser holds declares no dimension on a {what} that a photograph could be measured
-        into, so there is nothing here to propose a figure to. That is a difference in the schema, not a permission —
-        open a stage form, which renders whatever the registry does declare.
+        There is no dimension on a {what} that can be measured from a photograph here. Reload the page to update
+        the app, then try again.
       </Note>
     );
   }
@@ -708,10 +707,10 @@ function Body({
           <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
           <span>
             {photos.unreadable === 1
-              ? "One more file on this row could not be opened here, so it is not in the list below."
-              : `${photos.unreadable} more files on this row could not be opened here, so they are not in the list below.`}{" "}
-            That is usually a file uploaded from another device that this account cannot fetch back; it can be measured
-            on the stage form, or on the handset that took it.
+              ? "One more file on this piece couldn't be opened here, so it isn't in the list below."
+              : `${photos.unreadable} more files on this piece couldn't be opened here, so they aren't in the list below.`}{" "}
+            This is usually a file your account doesn&apos;t have access to; it can be measured on the stage form, or on
+            the phone that took it.
           </span>
         </p>
       ) : null}
@@ -997,7 +996,7 @@ function DifferentPhoto({
             label={inForce ? "A different photograph to measure" : "Photograph to measure"}
             buttonLabel={inForce ? "Choose another one" : "Choose a photograph to measure"}
             accept={TRACEABLE_ACCEPT}
-            acceptSentence={`${TRACEABLE_IMAGE_TYPES}, wherever this browser can read them. It is only displayed and measured — nothing here reads its pixels, re-encodes it or sends it anywhere, so nothing is reduced and there is no ${DECODE_MAX_EDGE_PX}px ceiling on this one.`}
+            acceptSentence={`${TRACEABLE_IMAGE_TYPES}, wherever this browser can read them. It is only shown and measured here — it isn't changed, reduced or sent anywhere.`}
             disabled={disabled}
             /*
               THE SAME REFUSALS AS THE SHARED CARD, MINUS THE ONE THAT DOES NOT APPLY. An SVG is

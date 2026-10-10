@@ -686,13 +686,13 @@ export function oversightEmptyState(
   if (searched) {
     return {
       title: "No workshop you monitor matches that search",
-      body: "This searches only the workshops you have been named on, which is the whole of what you can read here. Clear the search to see them all."
+      body: "Only the workshops you have been named on are searched. Clear the search to see them all."
     };
   }
   const posts = oversightPostsUserMayHold(user).map((post) => CAPACITY_LABELS[post]);
   return {
     title: `You do not hold any ${posts.length ? posts.join(" or ") : "Assistant Director or Regional Director"} posts`,
-    body: "A Ministry Admin, an admin or the master admin names a workshop's Assistant Director and Regional Director one workshop at a time, on Workshop oversight. Until somebody names you there is nothing here to read — this page is not hiding anything from you, and nothing failed to load."
+    body: "A Ministry Admin, an Admin or the Master Admin names each workshop's Assistant Director and Regional Director on Workshop oversight. The workshops you are named on will appear here."
   };
 }
 

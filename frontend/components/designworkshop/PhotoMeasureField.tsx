@@ -1048,8 +1048,7 @@ function MeasurementReadout({
     return (
       <p className="text-xs leading-5 text-ink-500">
         {remaining.length} of {needed.length} marks still to place ({remaining.map((id) => MARK_LABELS[id].badge).join(", ")}
-        ). Nothing is measured until every mark is where it belongs — a reading off the marks as they were laid out
-        would be a confident number about nothing.
+        ). Nothing is measured until every mark is in place.
       </p>
     );
   }

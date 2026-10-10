@@ -155,15 +155,15 @@ const READ_ONLY_COVER: { key: keyof DwSummary; label: string; why: string }[] = 
     label: "Workshop ID",
     why: "prints on the report cover and is what a scanned card resolves to"
   },
-  { key: "venue", label: "Venue", why: "stage 1 is the only thing that collects it" },
-  { key: "scheme", label: "Scheme", why: "stage 1 is the only thing that collects it" },
+  { key: "venue", label: "Venue", why: "collected in stage 1" },
+  { key: "scheme", label: "Scheme", why: "collected in stage 1" },
   {
     key: "designerName",
     label: "Designer",
-    why: "the authorship line the cover, the certification block and the .docx itself print"
+    why: "printed as the author on the report cover and certification"
   },
-  { key: "implementingAgency", label: "Implementing agency", why: "stage 1 is the only thing that collects it" },
-  { key: "sponsor", label: "Sponsor", why: "stage 1 is the only thing that collects it" }
+  { key: "implementingAgency", label: "Implementing agency", why: "collected in stage 1" },
+  { key: "sponsor", label: "Sponsor", why: "collected in stage 1" }
 ];
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -248,14 +248,13 @@ function readRefusal(err: unknown): Refusal {
 function describeSaveRefusal(err: unknown, serverSaid: string): string {
   const status = err instanceof ApiError ? err.status : 0;
   if (status === 403) {
-    return `${serverSaid || "This account may not edit this design workshop."} Nothing was sent and nothing was changed.`;
+    return `${serverSaid || "You don't have permission to edit this design workshop."} Nothing was sent and nothing was changed.`;
   }
   if (status === 404) {
     return (
-      "This workshop is no longer open to this account, so nothing was changed. Either it has been " +
-      "removed, or the access that let you open it has been withdrawn — the repository will not say " +
-      "which, on purpose. Ask an administrator, or the designer who shared it with you, to add you " +
-      "as a viewer of the workshop again."
+      "You no longer have access to this workshop, so nothing was changed. It may have been removed, " +
+      "or your access may have been withdrawn. Ask an administrator, or the designer who shared it " +
+      "with you, to add you as a viewer of the workshop again."
     );
   }
   if (status === 409) {
@@ -272,7 +271,7 @@ function describeSaveRefusal(err: unknown, serverSaid: string): string {
   }
   return serverSaid
     ? `The workshop was not changed: ${serverSaid}`
-    : "The workshop was not changed, and the repository did not say why.";
+    : "The workshop was not changed. Please try again.";
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -713,7 +712,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
     if (next.trim().length > TITLE_MAX_LENGTH) {
       setFieldProblem((current) => ({
         ...current,
-        title: `That name is ${next.trim().length} characters and the longest this field stores is ${TITLE_MAX_LENGTH}. Shorten it and try again.`
+        title: `That name is ${next.trim().length} characters and the longest allowed is ${TITLE_MAX_LENGTH}. Shorten it and try again.`
       }));
       return;
     }
@@ -971,10 +970,9 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           rules exist against.
         */
         setProblem(
-          "The repository could not be reached, so nothing was sent and the workshop is unchanged. " +
-            "This one act needs a connection: unlike your stages, a change to the workshop's details is " +
-            "not held in the offline queue. Everything you have typed is still on this form — press " +
-            "Save again when you have signal."
+          "Couldn't connect, so nothing was saved and the workshop is unchanged. Changes to the " +
+            "workshop's details need a connection. Everything you have typed is still on this form — " +
+            "press Save again when you are online."
         );
         return;
       }
@@ -1358,9 +1356,9 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
                 <p className="mt-1 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
                   Changing this link strands the records already filed under the old one. Five of the pickers inside the
                   stages — the artisan and product on an existing product, a prototype&apos;s product, and the process on a
-                  process step or a traditional process — only offer records filed against the LINKED workshop, so
+                  process step or a traditional process — only offer records filed against the linked workshop, so
                   anything created from them under the old link will not appear in those lists again. The records
-                  themselves are untouched and stay in the repository.
+                  themselves are unchanged.
                 </p>
               ) : null}
               {fieldProblem.workshopId ? (
@@ -1457,9 +1455,8 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           <div>
             <h3 className="text-sm font-medium text-ink-900">Filled in from stage 1</h3>
             <p className="mt-1 text-xs leading-5 text-ink-500">
-              These are the workshop&apos;s cover values and stage 1 is the only thing that collects them, so they are shown
-              here and changed there. The repository refuses them on this form by name rather than accepting them and
-              quietly not writing them.
+              These are the workshop&apos;s cover values. They are filled in from stage 1 and can only be changed
+              there.
             </p>
           </div>
           <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1502,8 +1499,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           <Link href="/design-workshops" className="font-medium text-purple-700 underline">
             design workshops list
           </Link>
-          , which an administrator opens with admin view on; naming a designer is a create-time act here, because it
-          decides whose profile was copied into stages 1 and 3 before those stages existed.
+          , which an administrator opens with admin view on.
         </p>
 
         {/*

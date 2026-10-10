@@ -132,10 +132,10 @@ async function loadSourceBlob(ref: string): Promise<{ blob: Blob; name: string }
   try {
     media = await apiFetch<MediaFile>(`/media/${ref}`);
   } catch {
-    return { reason: "That photograph could not be read from the server just now. It can be straightened later, or re-attach it here." };
+    return { reason: "That photograph couldn't be loaded just now. It can be straightened later, or re-attach it here." };
   }
   if (!media.url) {
-    return { reason: "That photograph's file is not available to this account, so it cannot be straightened here." };
+    return { reason: "You don't have access to that photograph's file, so it can't be straightened here." };
   }
   try {
     const response = await fetch(media.url);

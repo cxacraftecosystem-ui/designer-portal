@@ -168,7 +168,7 @@ export function PromoteDialog({
       */
       role="alertdialog"
       title="Open this workshop"
-      description="A planned row becomes a real design & prototype workshop. This can only be done once."
+      description="A planned entry becomes a real design & prototype workshop. This can only be done once."
       icon={<CalendarRange className="h-4 w-4" aria-hidden />}
       // WIDER THAN THE DEFAULT `max-w-md`, for the picker: a search box, a notice line, a
       // multi-select trigger and the lead chooser do not read at 448px. `UploadPlanDialog`, the
@@ -268,11 +268,9 @@ export function PromoteDialog({
             Everything above is copied onto the new workshop and into its stage 1.{" "}
             {named.team.length === 0 ? (
               <>
-                <strong className="text-ink-900">No designer is named</strong> — the designer block
-                of stage 1 is left empty, which is the right empty: a blank required field is visible
-                to the completeness score and to the report warnings, while somebody else&apos;s name
-                in it is visible to nobody. Designers can still be added afterwards on the
-                workshop&apos;s own screen.
+                <strong className="text-ink-900">No designer is named</strong>, so the designer
+                section of stage 1 is left empty and shows as still to be filled in. Designers can be
+                added later on the workshop&apos;s own screen.
               </>
             ) : (
               <>

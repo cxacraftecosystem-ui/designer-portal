@@ -73,16 +73,12 @@ import type { RegistrySource } from "@/lib/designWorkshopStore";
  */
 export function registryProvenanceNotice(source: RegistrySource | null): string {
   if (source === "memory") {
-    return (
-      "This form is drawn from a field list this tab loaded earlier and has not re-checked since. If the app has been " +
-      "deployed while this tab was open, a field added since will not appear here — reload the page to fetch the " +
-      "current one."
-    );
+    return "This form was loaded earlier in this tab and may be out of date. Reload the page to see any fields added since.";
   }
   if (source === "cache") {
     return (
-      "This form is drawn from the field list saved in this browser, because the server could not be reached. It is " +
-      "whatever was current the last time this laptop had a connection; a field added since will not appear until it does."
+      "Couldn't connect, so this is the copy of the form saved on this device the last time you were online. " +
+      "Fields added since then will appear once you reconnect."
     );
   }
   return "";

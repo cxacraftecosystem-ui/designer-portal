@@ -512,8 +512,8 @@ export function InlineRecordDialog({
       title={editing ? `Edit ${noun}` : `New ${noun}`}
       description={
         editing
-          ? `Changes are saved to the repository record. The stage you are filling in stays open.`
-          : `This ${noun} is saved to the repository and selected here. The stage you are filling in stays open.`
+          ? `Changes are saved to the record. The stage you are filling in stays open.`
+          : `This ${noun} is saved to the records and selected here. The stage you are filling in stays open.`
       }
       /*
         NOT dismissible on a stray backdrop click. The form inside holds real typing — an Aadhaar

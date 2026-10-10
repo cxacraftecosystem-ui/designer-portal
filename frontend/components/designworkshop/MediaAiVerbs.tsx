@@ -60,7 +60,6 @@ import { AiVerbReviewDialog } from "@/components/designworkshop/AiVerbReviewDial
 import {
   AI_VERB_COUNTDOWN_FROM,
   MEDIA_NOT_UPLOADED_YET,
-  SUBTITLES_DEPLOYMENT_KEY_NOTE,
   SUBTITLES_SECOND_UPLOAD_NOTE,
   VERBS_NEED_A_CONNECTION,
   WORKSHOP_NOT_ON_SERVER_YET,
@@ -240,7 +239,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
       </div>
 
       <p className="text-xs leading-5 text-ink-500">
-        A description or a set of subtitles is recorded as a LAYER over this file — it is read and accepted or declined
+        A description or a set of subtitles is recorded as a layer over this file — it is read and accepted or declined
         by name, and it never fills in the caption box below. Write that yourself.
       </p>
 
@@ -320,11 +319,11 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
                   <Link href={`/design-workshops/${workshopId}/ai-layers`} className="font-medium text-purple-700 underline">
                     Read them on the AI layers screen
                   </Link>{" "}
-                  — running it again would send the recording up a second time and spend another run.
+                  — running it again would upload the recording again and use another run.
                 </p>
               ) : (isAudio || isVideo) && !blocked ? (
                 <p className="text-xs leading-5 text-ink-500">
-                  {SUBTITLES_SECOND_UPLOAD_NOTE} {SUBTITLES_DEPLOYMENT_KEY_NOTE}
+                  {SUBTITLES_SECOND_UPLOAD_NOTE}
                 </p>
               ) : null}
             </li>

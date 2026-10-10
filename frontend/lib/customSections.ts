@@ -839,11 +839,8 @@ export function customSectionsProblem(error: unknown, fallback: string): string[
   }
   if (isUnreachable(error)) {
     return [
-      "These questions are held on the server, so they cannot be changed without a connection. Nothing " +
-        "has been queued for later — a definition edit decides what happens to answers already recorded, " +
-        "and applying that decision days late against answers that have moved on would attach a question " +
-        "to evidence given for a different one. Reconnect and save again; nothing you have typed here is " +
-        "lost by waiting."
+      "Custom questions can't be changed without a connection. Nothing was saved and nothing will be " +
+        "sent later. Reconnect and save again; what you have typed here is kept."
     ];
   }
   return [error instanceof Error && error.message.trim() ? error.message : fallback];
@@ -1067,12 +1064,8 @@ function fieldProblems(
 
   if (!isV1CustomType(field.type)) {
     problems.push(
-      `Field ${where} is a ${field.type}, which a custom question cannot be yet. Choose one of: ` +
-        `${V1_CUSTOM_TYPES.slice().sort().join(", ")}. Photographs, files, recordings, formatted ` +
-        "text, coordinates and references to other records are deliberately not available: a " +
-        "photograph attached to a custom question would sync as a reference that resolves to " +
-        "nothing, the save would report success, and the picture would simply be absent from the " +
-        "report."
+      `Field ${where}: a custom question can't be of type ${field.type}. Choose one of: ` +
+        `${V1_CUSTOM_TYPES.slice().sort().join(", ")}.`
     );
   }
 
@@ -1114,8 +1107,8 @@ function fieldProblems(
       if (token.length > MAX_CUSTOM_OPTION_VALUE_CHARS) {
         problems.push(
           `Field ${where}'s option value ${JSON.stringify(token)} is longer than ` +
-            `${MAX_CUSTOM_OPTION_VALUE_CHARS} characters. The option value is the token the answer is ` +
-            "STORED as and it is not what anybody reads — shorten it, and put the words after the “|” " +
+            `${MAX_CUSTOM_OPTION_VALUE_CHARS} characters. The option value is the code the answer is ` +
+            "saved as and is not shown to anyone — shorten it, and put the words after the “|”, " +
             "where they are printed."
         );
       }

@@ -234,7 +234,7 @@ export default function AnnualPlanPage() {
     <>
       <PageHeader
         title="Annual plan"
-        description="The ministry's directory of the workshops planned for the year — number, date, state, district and venue. A row here is a plan, not a workshop: it becomes one only when somebody opens it."
+        description="The ministry's directory of the workshops planned for the year — number, date, state, district and venue. An entry here is a plan, not a workshop: it becomes one only when somebody opens it."
         icon={<CalendarRange className="h-5 w-5" aria-hidden />}
         actions={
           <>
@@ -340,7 +340,7 @@ export default function AnnualPlanPage() {
               setStanding(value as PlanStandingFilter);
               setPage(1);
             }}
-            ariaLabel="Which rows to show"
+            ariaLabel="Which entries to show"
             // `advanceOnSelect={false}` on any dropdown that filters the screen it sits on — moving
             // focus to the next control after a filter change takes the reader away from the list
             // they changed it to see.
@@ -392,7 +392,7 @@ export default function AnnualPlanPage() {
 
       {currentYear ? (
         <p className="mb-4 text-sm text-ink-muted">
-          {currentYear.total} rows in the {currentYear.planYearLabel} plan · {currentYear.planned}{" "}
+          {currentYear.total} entries in the {currentYear.planYearLabel} plan · {currentYear.planned}{" "}
           still only planned · {currentYear.promoted} opened as workshops · {currentYear.withdrawn}{" "}
           withdrawn.
         </p>
@@ -467,7 +467,7 @@ export default function AnnualPlanPage() {
                     <td className="px-4 py-3">
                       <span className="font-medium text-ink-900">{entry.workshopNo}</span>
                       <span className="mt-0.5 block text-xs text-ink-muted">
-                        rev {entry.revision}
+                        revision {entry.revision}
                         {entry.sheetRow != null ? ` · sheet row ${entry.sheetRow}` : ""}
                       </span>
                     </td>

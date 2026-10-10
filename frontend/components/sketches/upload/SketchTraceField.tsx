@@ -2246,10 +2246,8 @@ export function SketchTraceField({
       `grep -rn "includeMetadata" android/app/src/main/java`.
     */}
     <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
-      The PDF and the EPS record that they were made by the Offline Tracer engine, which is the
-      tracing library this app uses on the device. That is a note about the software — not about the
-      drawing, and not about you. The SVG this page writes carries no such line, because this page
-      writes it rather than the engine.
+      The PDF and the EPS name Offline Tracer, the tracing software used on this device, as the program
+      that made them.
     </p>
     {/* Mounted whether or not anything has been saved, so the sentence is a CHANGE to a region
         already in the document — the same reason the success sentence at the bottom of this

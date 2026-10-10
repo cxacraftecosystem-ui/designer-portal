@@ -64,7 +64,7 @@ import {
  * not already know, as a repository with four workshops in it.
  */
 export const LINKED_WORKSHOP_SCOPE_SENTENCE =
-  "The Workshop row this 22-stage record belongs to. Only workshops filed as a Design & Prototype " +
+  "The workshop this 22-stage record belongs to. Only workshops filed as a Design & Prototype " +
   "Development Workshop, and only ones you have access to, are offered.";
 
 /**
@@ -119,7 +119,7 @@ export const LINKED_WORKSHOP_KIND_GAP =
  * wrong about for a second.
  */
 export const UNRESOLVED_LINK_LABEL =
-  "The workshop this record is filed under — its details are not open to this account";
+  "The workshop this record is filed under — you don't have access to its details";
 
 /** The trigger's word while the first read is outstanding. `WorkshopSelect`'s, verbatim. */
 export const LOADING_PLACEHOLDER = "Loading workshops…";

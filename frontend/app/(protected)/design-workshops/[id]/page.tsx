@@ -342,11 +342,9 @@ function submissionScope(stagesTotal: number | null): string {
       ? "Every stage stays editable afterwards"
       : `All ${stagesTotal} stages stay editable afterwards`;
   return (
-    `Marking a workshop complete or submitted does not lock it. ${stages} and saving one does not ` +
-    "undo it — the repository checks only that a workshop has not been deleted, never what its status " +
-    "says. It also produces and sends nothing: the .docx or .pdf is still made on the Report screen, " +
-    "and no file leaves this system until somebody sends one. What changes is the word on this record, " +
-    "and where the workshop appears in the status filter on the workshops list."
+    `Marking a workshop complete or submitted doesn't lock it. ${stages}, and saving one doesn't ` +
+    "undo it. Nothing is sent anywhere: the .docx or .pdf is made on the Report screen. What changes is " +
+    "the status shown on this workshop, and where it appears in the status filter on the workshops list."
   );
 }
 
@@ -431,7 +429,7 @@ const SEND_FOR_REVIEW: SubmissionAction = {
   label: "Hand in for inspection",
   icon: Send,
   meaning:
-    "The inspecting officers can read it and file correction suggestions. Requirement 12 is explicit that it may be handed in part-filled.",
+    "The inspecting officers can read it and file correction suggestions. It can be handed in before every field is filled in.",
   primary: true
 };
 
@@ -578,9 +576,8 @@ function noActionsReason(status: string): string | null {
   // empty candidate list too.
   if (candidatesFor(status).length > 0) {
     return (
-      "This version of the app knows this status but has no step it is still allowed to take from it, " +
-      "which means the repository's rules have moved on since this browser loaded. Reload the page; if " +
-      "the buttons are still missing, this browser needs a newer build than the server is running."
+      "There's no next step available from this status right now. Reload the page to update the app, " +
+      "then try again."
     );
   }
   if (status === "APPROVED") {
@@ -590,8 +587,8 @@ function noActionsReason(status: string): string | null {
     );
   }
   return (
-    "This build does not recognise this workshop's status, so it offers no next step from it. The word " +
-    "above is what the repository holds; this browser probably needs a newer build than the server is running."
+    "There's no next step available from this workshop's status. Reload the page to update the app, then " +
+    "try again."
   );
 }
 
@@ -805,12 +802,12 @@ function SubmissionCard({
     */
     const shortfall =
       outstanding === null
-        ? "How many required fields are still outstanding could not be counted on this device, so this " +
-          "dialog cannot tell you. It is being recorded either way."
+        ? "The number of required fields still outstanding couldn't be counted on this device. It will be " +
+          "recorded either way."
         : outstanding === 0
           ? "No required field is outstanding."
           : `${outstanding} required field${outstanding === 1 ? " is" : "s are"} still outstanding, and this ` +
-            "workshop will be recorded that way. That is allowed — partial submission is what this is for.";
+            "workshop will be recorded that way. That's allowed.";
 
     /*
       SUBMITTING OVER WORK THE REPOSITORY HAS NEVER SEEN IS ALLOWED AND MUST NOT BE SILENT.
@@ -831,13 +828,10 @@ function SubmissionCard({
     const unsent =
       goingBack || unsentStages === 0
         ? null
-        : `${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} saved on this device only, and this act ` +
-          `does not send ${unsentStages === 1 ? "it" : "them"}: a status goes straight to the repository, while ` +
-          "stage answers travel through the offline queue. So the count above is about answers this browser " +
-          "holds and the repository may not — this workshop will read " +
-          `${action.status.replace(/_/g, " ").toLowerCase()} to every other account while that fieldwork is still ` +
-          "on this laptop. Recording it anyway is allowed. The amber banner at the top of this page is where that " +
-          "work is listed, and where Sync now appears while it is waiting on the network.";
+        : `${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} saved on this device only, and this ` +
+          `doesn't upload ${unsentStages === 1 ? "it" : "them"}. Everyone else will see this workshop as ` +
+          `${action.status.replace(/_/g, " ").toLowerCase()} while that work is still only on this device. ` +
+          "You can go ahead anyway. The banner at the top of this page lists that work, with Sync now to upload it.";
 
     const agreed = await confirm({
       title: withdrawing
@@ -910,14 +904,14 @@ function SubmissionCard({
       const stillHere =
         unsentStages === 0
           ? ""
-          : ` ${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} still saved on this device only — the ` +
-            "status is on the repository, that fieldwork is not.";
+          : ` ${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} still saved on this device only and ` +
+            `${unsentStages === 1 ? "hasn't" : "haven't"} been uploaded.`;
       setOutcome(
         (withdrawing
-          ? "Withdrawn. The report is off the officers' list and back to In progress on the repository."
+          ? "Withdrawn. The report is off the officers' list and back to In progress."
           : goingBack
-          ? "Reopened. The workshop is back to In progress on the repository."
-          : `Recorded on the repository. This workshop now reads ${(updated.status ?? "")
+          ? "Reopened. The workshop is back to In progress."
+          : `Saved. This workshop now reads ${(updated.status ?? "")
               .replace(/_/g, " ")
               .toLowerCase()}. Every stage is still editable.`) + stillHere
       );
@@ -937,9 +931,8 @@ function SubmissionCard({
       */
       if (isUnreachable(err)) {
         setProblem(
-          "The repository could not be reached, so nothing was changed and the status is unchanged. " +
-            "This one act needs a connection: unlike your stages, a status is not held in the offline " +
-            "queue. Everything you have typed is still saved on this device — try again when you have signal."
+          "Couldn't connect, so the status hasn't changed. Changing the status needs a connection. " +
+            "Everything you've typed is still saved on this device — try again when you have signal."
         );
       } else {
         // `apiFetch` has already run FastAPI's `detail` through `describeApiDetail`, so `message` is a
@@ -948,7 +941,7 @@ function SubmissionCard({
         setProblem(
           err instanceof Error && err.message.trim()
             ? `The status was not changed: ${err.message}`
-            : "The status was not changed, and the repository did not say why."
+            : "The status wasn't changed. Please try again."
         );
       }
     } finally {
@@ -977,10 +970,8 @@ function SubmissionCard({
         // RULE 10: the count is missing, so the screen says the count is missing. Rendering nothing
         // here would read as "there is nothing outstanding", which is the one wrong answer.
         <p className="text-sm leading-6 text-amber-800">
-          What is still outstanding could not be counted — the count needs the field list and this browser&apos;s copy
-          of the workshop, and one of them could not be read. The buttons below still work; they simply cannot tell
-          you how much is blank. Reloading this page is what fixes it — Ready to submit? is built from the same two
-          things and would be just as blind, connection or no connection.
+          What&rsquo;s still outstanding couldn&rsquo;t be counted. The buttons below still work. Reload the page to see
+          the count.
         </p>
       )}
 
@@ -1021,9 +1012,8 @@ function SubmissionCard({
         // A status from a newer server. Say what is on the record, and that this build has no step to
         // offer from it — a card with no buttons and no sentence reads as broken.
         <p className="text-sm leading-6 text-amber-800">
-          This workshop&apos;s status is one this version of the app does not know, so it offers no next step from
-          it. The word above is what the repository holds. Reload the page; if it persists, this browser needs a
-          newer build than the server is running against.
+          There&rsquo;s no next step available from this workshop&apos;s status. Reload the page to update the app,
+          then try again.
         </p>
       ) : neverSent ? (
         // A workshop created offline that has never reached the repository. There is no row to PATCH,
@@ -1031,9 +1021,9 @@ function SubmissionCard({
         // control, for the reason `DictationConsentCard` gives: a greyed control refuses a press
         // without saying why, which is how somebody concludes the app is broken.
         <p className="text-sm leading-6 text-ink-700">
-          This workshop was created on this device and has not reached the repository yet, so there is nothing there
-          to mark complete or submit. Everything you have typed is saved here. Sync it from the workshops list first —
-          the status can be set the moment it lands.
+          This workshop was created on this device and hasn&rsquo;t been uploaded yet, so it can&rsquo;t be marked
+          complete or submitted. Everything you&rsquo;ve typed is saved here. Sync it from the workshops list first —
+          then you can set the status.
         </p>
       ) : readOnlyReason ? (
         // THE POST, NOT THE ROLE, AND IT GETS ITS OWN SENTENCE. The one below says "or an
@@ -1097,8 +1087,8 @@ function SubmissionCard({
         // Stated BEFORE the press rather than only in the failure, because the press costs the
         // designer a confirmation dialog they can already be told is going to fail.
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-          There was no connection when this page last read the repository. A status change is the one act on this
-          screen that is not held in the offline queue, so it will be refused until there is signal.
+          You&rsquo;re offline. Changing the status needs a connection, so it won&rsquo;t work until you&rsquo;re back
+          online.
         </p>
       ) : null}
 
@@ -1117,10 +1107,9 @@ function SubmissionCard({
         */
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
           {unsentStages} stage{unsentStages === 1 ? " is" : "s are"} saved on this device only. Marking this workshop
-          complete or submitting it records the WORKSHOP&apos;s status on the repository and sends none of that work,
-          so the workshop would read finished to everybody else while those answers are still in this browser. The act
-          is not blocked and the confirmation says this again; the amber banner at the top of this page is where that
-          work is listed and sent.
+          complete or submitting it doesn&rsquo;t upload that work, so everyone else would see the workshop as finished
+          while those answers are still only on this device. You can still go ahead; the banner at the top of this
+          page lists that work and uploads it.
         </p>
       ) : null}
 
@@ -1130,8 +1119,8 @@ function SubmissionCard({
         // background read cannot overwrite an unsent edit, which also means it does not refresh the
         // status. Silence would let the chip quietly contradict the repository.
         <p className="text-xs leading-5 text-ink-500">
-          This device is holding edits to this workshop&apos;s title or notes that the repository has not heard yet,
-          so the status above is the one this browser last knew. It is refreshed once those edits are sent.
+          This device has edits to this workshop&apos;s title or notes that haven&rsquo;t been uploaded yet, so the
+          status above may be out of date. It will refresh once those edits are uploaded.
         </p>
       ) : null}
 
@@ -1285,8 +1274,8 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         // is empty.
         setError(
           err instanceof Error
-            ? `The list of stages could not be loaded and this browser has no saved copy of it: ${err.message}`
-            : "The list of stages could not be loaded and this browser has no saved copy of it."
+            ? `The list of stages couldn't be loaded, and there's no copy saved on this device: ${err.message}`
+            : "The list of stages couldn't be loaded, and there's no copy saved on this device."
         );
         return;
       }
@@ -1358,7 +1347,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         if (isUnreachable(err)) {
           // A workshop already drawn from the local copy must not be replaced by an error box.
           setOffline(true);
-          if (!local) setError("There is no connection and this browser has no copy of this workshop.");
+          if (!local) setError("You're offline and this workshop isn't saved on this device.");
           return;
         }
         // A 404 over a draft this browser has never reconciled means the record was FABRICATED by
@@ -1486,13 +1475,12 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         />
         <section className="panel grid gap-3 p-4">
           <p className="text-sm font-medium text-ink-900">
-            There is no design workshop at this address that this account can open.
+            There is no design workshop at this address that you can open.
           </p>
           <p className="text-sm leading-6 text-ink-700">
-            Either no such workshop exists, or it belongs to another designer and has not been shared with you. Nothing
-            has been created here and nothing you type would be saved, so this page stops rather than offering you an
-            empty workshop to fill in. If a colleague sent you this link, ask them to add you as a viewer of their
-            workshop — an administrator can also do it — and then open the link again.
+            Either no such workshop exists, or it belongs to another designer and hasn&rsquo;t been shared with you. If
+            a colleague sent you this link, ask them to add you as a viewer of their workshop — an administrator can
+            also do it — and then open the link again.
           </p>
         </section>
       </>
@@ -1655,11 +1643,11 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         // whether anything here has yet to reach it.
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
           {offline
-            ? "There is no connection, so this is the copy saved in this browser. It is complete and editable — everything you change is kept here."
+            ? "You're offline, so this is the copy saved on this device. You can keep working — everything you change is kept here."
             : null}
           {offline && unsentStages ? " " : null}
           {unsentStages
-            ? `${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} saved on this device only and ${unsentStages === 1 ? "has" : "have"} not reached the repository yet.`
+            ? `${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} saved on this device only and ${unsentStages === 1 ? "has" : "have"} not been uploaded yet.`
             : null}
         </div>
       ) : null}
@@ -1718,9 +1706,9 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           </div>
           {/* The two things that go stale silently, both stated rather than assumed. */}
           <p className="text-xs leading-5 text-ink-500">
-            Progress counts Basic-tier fields only — the tier the report needs. A stage that asks for no required fields
-            reads as complete rather than as 0%. Craft, cluster, dates and the workshop code above are filled in from
-            stage 1 and stay blank until it is saved.
+            Progress counts Basic fields only — the ones the report needs. A stage with no required fields counts as
+            complete. Craft, cluster, dates and the workshop code above come from stage 1 and stay blank until it is
+            saved.
           </p>
           {/*
             ── WHERE THIS WORKSHOP CAME FROM ─────────────────────────────────────────────────────
@@ -1886,8 +1874,8 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         // designer who sees a new box appear on a stage they finished last week deserves to know
         // why rather than assuming they missed it.
         <p className="mt-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-          The field list has changed since this workshop was last saved. Stages may now ask for fields that did not exist
-          when they were filled in; re-opening and saving a stage brings it up to date.
+          The form has changed since this workshop was last saved. Stages may now ask for new fields; opening and saving
+          a stage brings it up to date.
         </p>
       ) : null}
     </>

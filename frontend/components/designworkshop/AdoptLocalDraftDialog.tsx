@@ -312,7 +312,7 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
         : partial
           ? ""
           : total !== null && shown < total
-            ? `Showing ${shown} of ${total} workshops open to you. Search above to reach the rest — it asks the repository, not this device.`
+            ? `Showing ${shown} of ${total} workshops open to you. Search above to find the rest.`
             : searchTerm && shown === 0
               ? "No workshop open to you matches that search."
               : "";
@@ -328,9 +328,8 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
         // something to paper over: the designer must not walk away believing a fortnight of work
         // has been filed when it has not.
         setError(
-          "This browser would not save the change, so the workshop has NOT been moved and nothing " +
-            "has been lost. Try again; if it keeps failing, do not clear this browser's storage — " +
-            "report it, because everything captured here is still in it."
+          "The workshop couldn't be moved, and nothing has been lost. Try again. If it keeps failing, don't " +
+            "clear this browser's data — everything you captured is still in it — and contact your administrator."
         );
         return;
       }
@@ -416,10 +415,9 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
 
         {nothingToMoveInto ? (
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-            No design workshop is open to this account yet, so there is nothing to move this into. A design workshop can
-            only be seen by the designers named on it — ask an admin to create the workshop for this cluster and name you
-            as one of its designers, then come back here. Nothing on this device expires and nothing will be lost in the
-            meantime.
+            No design workshop is open to you, so there&rsquo;s nothing to move this into. Ask an admin to create the
+            workshop for this cluster and name you as one of its designers, then come back here. Your work stays safe on
+            this device in the meantime.
           </p>
         ) : (
           <>
@@ -446,7 +444,7 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
               // `searchable={false}` does not switch the render cap off, so the panel's own notice
               // still fires; its default last clause would tell the reader to type into a filter box
               // this control deliberately does not have.
-              capHint="Use the search box above to reach the rest — it asks the repository, so it sees every workshop open to you."
+              capHint="Use the search box above to find the rest."
             />
           </>
         )}
@@ -459,15 +457,13 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
             — the reasoning lives on {@link verified}, not on screen.
           */
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-            There is no connection, so this lists only the workshops already open on this device and cannot check whether
-            you are still on them. Moving waits for signal — nothing would be sent before then anyway. Nothing on this
-            device expires in the meantime.
+            You&rsquo;re offline, so this lists only the workshops already on this device and can&rsquo;t check whether
+            you&rsquo;re still on them. You can move it once you&rsquo;re back online; your work stays safe here until then.
           </p>
         ) : null}
 
         <p className="text-xs leading-5 text-ink-500">
-          Choose carefully: this decides which workshop a fortnight of fieldwork is filed under. It can only be done once
-          per workshop — after the move, the stages belong to the workshop you pick.
+          Choose carefully. It can only be done once — after the move, the stages belong to the workshop you pick.
         </p>
         {error ? (
           <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">

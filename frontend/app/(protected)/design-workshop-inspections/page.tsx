@@ -83,12 +83,12 @@ const SEARCH_DEBOUNCE_MS = 300;
  */
 function describeFailure(error: unknown): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so this list could not be loaded. It is not empty — nothing was read at all. Check the connection and try again.";
+    return "Couldn't connect, so this list couldn't be loaded. Check your connection and try again.";
   }
   if (error.status === 403) {
-    return `${error.message} This list is not empty — it was not read at all.`;
+    return error.message;
   }
-  return `${error.message} This list could not be loaded, which is not the same as having nothing to inspect.`;
+  return `${error.message} The list couldn't be loaded. Please try again.`;
 }
 
 export default function DesignWorkshopInspectionsPage() {
@@ -171,10 +171,9 @@ export default function DesignWorkshopInspectionsPage() {
             Inspector / Reviewer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Workshops to inspect shows the design &amp; prototype workshops an account has been appointed to inspect,
-            so it opens for whoever may be appointed: the Inspector / Reviewer tier, a Ministry Admin, an admin and
-            the master admin. Designers read design &amp; prototype workshops on Design workshops instead; who
-            inspects a workshop is chosen on Workshop oversight.
+            Workshops to inspect lists the design &amp; prototype workshops you have been appointed to inspect. It
+            is open to Inspector / Reviewers, Ministry Admins, Admins and the Master Admin. Designers open their
+            workshops from Design workshops; inspectors are appointed on Workshop oversight.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.

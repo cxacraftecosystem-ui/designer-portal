@@ -138,12 +138,12 @@ const PEOPLE_ICONS = { designers: Users, officers: UserCog, inspectors: ShieldCh
  */
 function describeFailure(error: unknown): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so the register could not be read. It is not empty — nothing was read at all. Check the connection and try again.";
+    return "Couldn't connect, so the register couldn't be loaded. Check your connection and try again.";
   }
   if (error.status === 403) {
-    return `${error.message} The register is not empty — it was not read at all.`;
+    return error.message;
   }
-  return `${error.message} The register could not be read, which is not the same as there being no workshops.`;
+  return `${error.message} The register couldn't be loaded. Please try again.`;
 }
 
 export default function MinistryDashboardPage() {
@@ -317,7 +317,7 @@ export default function MinistryDashboardPage() {
         setReadAt(new Date().toISOString());
         if (manualRefresh.current) {
           manualRefresh.current = false;
-          setRefreshNote(`Register re-read. ${result.total} ${result.total === 1 ? "workshop" : "workshops"}.`);
+          setRefreshNote(`Refreshed. ${result.total} ${result.total === 1 ? "workshop" : "workshops"}.`);
         }
       })
       .catch((err) => {
@@ -332,7 +332,7 @@ export default function MinistryDashboardPage() {
           manualRefresh.current = false;
           // The FAILURE is announced too. A button that says nothing when it fails is worse than one
           // that says nothing at all, because the silence reads as success.
-          setRefreshNote("The register could not be re-read. The message above says what the server answered.");
+          setRefreshNote("The register couldn't be refreshed. See the message above.");
         }
       });
 
@@ -520,9 +520,9 @@ export default function MinistryDashboardPage() {
           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-ink-500">
             The ministry dashboard gathers every design &amp; prototype workshop and every other
             workshop on the platform, with each designer&apos;s progress, for the ministry&apos;s own
-            posts — Assistant Director, Regional Director and Ministry Administrator — and the master
-            admin. Admins read the same estate on Cross-workshop analytics in the settings hub;
-            designers read the workshops they are on through Design workshops.
+            posts — Assistant Director, Regional Director and Ministry Admin — and the Master Admin.
+            Admins see the same workshops on Cross-workshop analytics in Settings; designers open the
+            workshops they are on from Design workshops.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
@@ -737,18 +737,18 @@ export default function MinistryDashboardPage() {
           */}
           {readAt ? (
             <>
-              Read at <span className="font-medium text-ink-700">{formatDateTime(readAt)}</span>. This
-              register re-reads itself while this tab is in front{error ? ", and the last re-read failed" : ""}.
+              Updated at <span className="font-medium text-ink-700">{formatDateTime(readAt)}</span>. This
+              register refreshes itself while this tab is open{error ? ", but the last refresh failed" : ""}.
               {switching ? " The table below is still the other register — the one you asked for is loading." : ""}
             </>
           ) : (
-            "Reading the register…"
+            "Loading the register…"
           )}
           <button
             type="button"
             onClick={() => {
               manualRefresh.current = true;
-              setRefreshNote("Re-reading the register…");
+              setRefreshNote("Refreshing the register…");
               setLoadToken((token) => token + 1);
             }}
             className="ml-2 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 font-semibold text-ministry-700 underline-offset-2 hover:underline dark:text-ministry-300"
@@ -798,8 +798,8 @@ export default function MinistryDashboardPage() {
         reader has about a file they are about to send somewhere.
       */}
       <p className="mb-4 text-xs leading-5 text-ink-500">
-        “Download workshops” carries the columns on this screen — the workshop, where and when, its
-        designer, its standing and its progress — and no stage content: no answers, no photographs, no
+        “Download workshops” has what is on this screen — the workshop, where and when, its
+        designer, its status and its progress — and no stage content: no answers, no photographs, no
         recordings, no consent decisions. It takes the filters above with it and says so inside the
         file. “Download beneficiaries” is the whole artisan list, not only the artisans of the
         workshops listed here, and every identity number in it is masked to its last four characters.
@@ -830,9 +830,8 @@ export default function MinistryDashboardPage() {
             timer means the first read can fail on its own.
           */
           <div className="p-4 text-sm text-ink-700">
-            The register could not be read, so there is nothing to show yet — this is not an empty
-            register. The banner above says what the server answered. It will try again on its own,
-            and “Refresh now” asks immediately.
+            The register couldn&apos;t be loaded. It will try again on its own, or select
+            “Refresh now”.
           </div>
         ) : data === null ? (
           <div className="p-4 text-sm text-ink-700">Loading…</div>
@@ -846,8 +845,8 @@ export default function MinistryDashboardPage() {
               }
               body={
                 applied || standing
-                  ? "This searches only the workshops described above, which is the whole of what you can read here. Clear the filters to see them all."
-                  : "Nothing failed to load — this register is genuinely empty for the scope described above."
+                  ? "Only the workshops described above are searched. Clear the filters to see them all."
+                  : "There are no workshops here yet."
               }
             />
           </div>
@@ -952,7 +951,7 @@ function PeoplePanel({
   if (error) {
     return (
       <p role="alert" className="text-sm leading-6 text-red-700">
-        {error} This list could not be read, which is NOT the same as there being nobody in it.
+        {error} This list couldn&apos;t be loaded.
       </p>
     );
   }
@@ -1008,8 +1007,8 @@ function PeoplePanel({
       ) : null}
       {data.unpostedAccountsTruncated ? (
         <p className="text-xs leading-5 text-ink-500">
-          The account directory stopped at its own ceiling, so somebody holding nothing in this scope
-          may be missing from this list.
+          Not every account could be checked, so someone with no workshops here may be missing from
+          this list.
         </p>
       ) : null}
 

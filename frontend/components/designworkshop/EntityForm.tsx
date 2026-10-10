@@ -1814,7 +1814,7 @@ export function CollectionTable({
       ? null
       : capState === "over"
         ? `Stage over the ${STAGE_ROW_CAP}-entry save limit — ${stageHeld} held: ${capBreakdown}. ` +
-          `${stageFloor > STAGE_ROW_CAP ? "Saves are refused" : "Saves may be refused"} until rows here or on this ` +
+          `${stageFloor > STAGE_ROW_CAP ? "Saves will fail" : "Saves may fail"} until rows here or on this ` +
           `stage's other lists are deleted, or moved to another stage. Nothing recorded is lost.`
         : capState === "full"
           ? `Stage full — ${stageHeld} of ${STAGE_ROW_CAP} entries: ${capBreakdown}. It still saves; one more row does ` +
@@ -1937,8 +1937,7 @@ export function CollectionTable({
 
       {rows.length === 0 ? (
         <p className="rounded-md border border-dashed border-line-200 bg-surface-50 px-4 py-6 text-center text-sm text-ink-muted">
-          No {entity.title.toLowerCase()} yet. An empty list is a legitimate state on day one of a workshop — add one when
-          there is something to record.
+          No {entity.title.toLowerCase()} yet. Add one when there is something to record.
         </p>
       ) : (
         <ol className="grid gap-2">

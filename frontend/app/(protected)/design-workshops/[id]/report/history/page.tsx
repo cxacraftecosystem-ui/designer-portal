@@ -116,8 +116,7 @@ function Checksum({ value, onDevice }: { value: string | null; onDevice: boolean
             handset's own copy of this sentence (`DwReportHistoryScreen.kt`) already says the row is
             old. Two clients describing one archive must not disagree about what the archive holds. */}
         {onDevice
-          ? " A report the Android app generates does send one, so a row without it was made by a" +
-            " build that predates that."
+          ? " Reports made on the phone app normally record one."
           : ""}
       </span>
     );
@@ -300,17 +299,16 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
 
       {localOnly ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          This workshop was created on this device without a connection and has not reached the repository yet, so there
-          is no history to read — every .docx and .pdf recorded here is written by the server, and none has been. It is
-          created automatically on the next connection, and anything generated from then on is listed here. Nothing you
-          have captured is affected.
+          This workshop was created on this device without a connection and hasn&rsquo;t been uploaded yet, so no
+          report has been generated from it. It will upload automatically when you&rsquo;re back online, and reports
+          generated from then on are listed here. Nothing you have captured is affected.
         </div>
       ) : null}
 
       {offline ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          There is no connection, so the history cannot be read. It lists files generated on other devices by other
-          people, so unlike your stages it is not kept in this browser. Everything you have captured is still here.
+          You&rsquo;re offline, so the history can&rsquo;t be shown. Connect to the internet to see it. Everything you
+          have captured is still here.
         </div>
       ) : null}
 
@@ -443,7 +441,7 @@ function ExportCard({
           ) : (
             <span className="inline-flex items-center gap-1">
               <Server className="h-3 w-3" aria-hidden />
-              Made by the repository
+              Made online
             </span>
           )}
         </Chip>
@@ -647,8 +645,8 @@ function DiffPanel({
               ) : null}
               {diff.headerRowWritten === true ? (
                 <p className="mt-3 text-sm leading-6 text-ink-500" data-testid="header-verdict">
-                  The workshop&apos;s own row was written in this window. Saving any stage stamps that row too, so on
-                  its own this does not mean the cover details changed.
+                  The workshop&apos;s details were saved in this window. Saving any stage does that too, so on its own
+                  this doesn&rsquo;t mean the cover details changed.
                 </p>
               ) : null}
 
@@ -665,7 +663,7 @@ function DiffPanel({
                       {stage.rowsRemoved ? <Chip tone="warn">{stage.rowsRemoved} removed</Chip> : null}
                       {stage.rowsTransient ? (
                         <span className="text-xs text-ink-500">
-                          {stage.rowsTransient} row{stage.rowsTransient === 1 ? "" : "s"} added and removed again
+                          {stage.rowsTransient} {stage.rowsTransient === 1 ? "entry" : "entries"} added and removed again
                           between the two files, so neither document contains {stage.rowsTransient === 1 ? "it" : "them"}
                         </span>
                       ) : null}
@@ -676,8 +674,8 @@ function DiffPanel({
 
               {touched.length ? (
                 <p className="mt-2 text-xs leading-5 text-ink-500">
-                  A stage is saved whole, so every row it holds is stamped as written even when only one answer was
-                  corrected. &ldquo;Rewritten&rdquo; counts rows saved, not answers that differ.
+                  A stage is saved whole, so every entry in it counts as written even when only one answer was
+                  corrected. &ldquo;Rewritten&rdquo; counts entries saved, not answers that differ.
                 </p>
               ) : null}
 
@@ -686,7 +684,7 @@ function DiffPanel({
                   <h3 className="text-sm font-medium text-ink-900">
                     {diff.timelineComplete
                       ? "Identical in both files"
-                      : "Nothing written (the timeline was capped — see below)"}
+                      : "Nothing written (only part of the history was checked — see below)"}
                   </h3>
                   <ul className="mt-2 grid gap-1.5" data-testid="untouched-stages">
                     {untouched.map((stage) => (
@@ -755,8 +753,8 @@ function FileFacts({ diff, templateName }: { diff: ReportDiff; templateName: (id
   if (diff.formatDiffers) {
     facts.push(
       <>
-        One is a {diff.earlier.format} and the other a {diff.later.format}. Two formats of the same record are different
-        files by construction, not by revision.
+        One is a {diff.earlier.format} and the other a {diff.later.format}. Two formats of the same record are always
+        different files.
       </>
     );
   }
@@ -771,8 +769,8 @@ function FileFacts({ diff, templateName }: { diff: ReportDiff; templateName: (id
   if (diff.schemaVersionChanged) {
     facts.push(
       <>
-        The field registry itself moved between these two files, so a field may have been added, removed or retyped.
-        Row counts remain comparable; the shape of what a row holds may not be.
+        The form changed between these two files, so a field may have been added, removed or changed. Entry counts
+        can still be compared; the fields in each entry may differ.
       </>
     );
   }
@@ -811,22 +809,18 @@ function FileFacts({ diff, templateName }: { diff: ReportDiff; templateName: (id
 function Limits({ diff, history }: { diff: ReportDiff; history: DwReportHistory }) {
   return (
     <div className="mt-5 rounded-md bg-surface-50 p-3.5">
-      <h3 className="text-sm font-medium text-ink-900">What this comparison cannot tell you</h3>
+      <h3 className="text-sm font-medium text-ink-900">What this comparison doesn&rsquo;t show</h3>
       <ul className="mt-2 grid list-disc gap-1.5 pl-5 text-xs leading-5 text-ink-500">
         <li>
-          <strong className="text-ink-700">Which field changed, or what it changed from.</strong> No copy of the stage
-          data is kept when a report is generated — only the file&apos;s checksum, size, pages and template — so a
-          rewritten row can be reported as rewritten and no further. Storing a snapshot of the workshop alongside each
-          export is what would turn &ldquo;the costing stage was written to&rdquo; into &ldquo;the unit cost went from
-          ₹420 to ₹455&rdquo;, and would survive the row being deleted afterwards.
+          <strong className="text-ink-700">Which field changed, or what it changed from.</strong> Each report keeps
+          its checksum, size, pages and template, so a changed entry is shown as rewritten.
         </li>
         <li>
-          <strong className="text-ink-700">Whether a rewritten row&apos;s answers actually differ.</strong> A stage is
-          saved in one write, and every row in that save is stamped without being compared to what was stored. A stage
-          that nobody saved, on the other hand, is identical in both files with no such caveat.
+          <strong className="text-ink-700">Whether a rewritten entry&apos;s answers actually differ.</strong> A stage
+          is saved as a whole. A stage that nobody saved is identical in both files.
         </li>
         <li>
-          A row written twice between these two files counts once: each row remembers only when it was LAST written.
+          An entry saved twice between these two files counts once.
         </li>
         <li>
           Records this workshop points at — an artisan&apos;s name, a linked product, a photograph&apos;s caption — are
@@ -835,14 +829,14 @@ function Limits({ diff, history }: { diff: ReportDiff; history: DwReportHistory 
         {diff.deviceClockInvolved ? (
           <li>
             <strong className="text-ink-700">One of these files was made on a phone with no network</strong>, so its
-            timestamp is that device&apos;s clock while the stage edits are timed by the repository&apos;s. If the
-            handset&apos;s clock was wrong, this window is wrong by the same amount.
+            time comes from that phone&apos;s clock. If the phone&apos;s clock was wrong, this comparison is out by the
+            same amount.
           </li>
         ) : null}
         {!diff.timelineComplete ? (
           <li>
-            <strong className="text-ink-700">The stage timeline was capped</strong>, so rows are missing from the
-            evidence and no stage above can be called identical — only &ldquo;nothing written that we can see&rdquo;.
+            <strong className="text-ink-700">Only part of the stage history could be checked</strong>, so no stage
+            above can be called identical — only &ldquo;nothing written that we can see&rdquo;.
           </li>
         ) : null}
         {history.exportsTruncated ? (

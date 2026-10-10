@@ -724,7 +724,7 @@ function openDb(): Promise<IDBDatabase> {
         }
       };
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error("Cannot open the local workshop store"));
+      request.onerror = () => reject(request.error ?? new Error("Couldn't open the work saved on this device."));
     });
     // A failed open must not be cached forever — a private-mode tab that later allows storage should
     // get a working store rather than the first rejection for the rest of the session. Same rule and
@@ -740,7 +740,7 @@ function openDb(): Promise<IDBDatabase> {
 function req<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("The local workshop store refused a write"));
+    request.onerror = () => reject(request.error ?? new Error("Couldn't save to this device."));
   });
 }
 
@@ -767,8 +767,8 @@ async function transact<T>(
   const result = await body(stores);
   await new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error ?? new Error("The local workshop store aborted a write"));
-    transaction.onerror = () => reject(transaction.error ?? new Error("The local workshop store failed a write"));
+    transaction.onabort = () => reject(transaction.error ?? new Error("Saving to this device was interrupted."));
+    transaction.onerror = () => reject(transaction.error ?? new Error("Couldn't save to this device."));
   });
   return result;
 }
@@ -2786,7 +2786,7 @@ export function foldNotice(fold: DwStageFold): string | null {
   }
   const rowCount = Object.values(fold.addedRows).reduce((sum, n) => sum + n, 0);
   if (rowCount > 0) {
-    parts.push(`${rowCount} row${rowCount === 1 ? "" : "s"} in ${Object.keys(fold.addedRows).join(", ")}`);
+    parts.push(`${rowCount} ${rowCount === 1 ? "entry" : "entries"} in ${Object.keys(fold.addedRows).join(", ")}`);
   }
   if (fold.addedCustom.length > 0) {
     parts.push(
@@ -2794,25 +2794,24 @@ export function foldNotice(fold: DwStageFold): string | null {
     );
   }
 
-  let out = "This stage has now been read from the server. ";
+  let out = "This stage has been updated with what was already saved online. ";
   if (parts.length > 0) {
-    out += `${parts.join("; ")} were already there and not in this browser, and have been added below. `;
+    out += `${parts.join("; ")} were saved online but not on this device, and have been added below. `;
     out += "Nothing you had typed here was changed. ";
   }
   const swept = Object.values(fold.sweptRows).reduce((sum, n) => sum + n, 0);
   if (swept > 0) {
     const them = swept === 1 ? "it" : "them";
-    out += `You had deleted everything in ${Object.keys(fold.sweptRows).join(", ")} in this browser, so `;
-    out += `${swept} row${swept === 1 ? "" : "s"} the server still holds ${swept === 1 ? "there has" : "there have"} `;
-    out += `NOT been added back, and the next save will delete ${them} on the server — including anything `;
-    out += "added there by somebody else since you deleted. Your deletion stands, which is what you asked for. ";
+    out += `You had deleted everything in ${Object.keys(fold.sweptRows).join(", ")} on this device, so `;
+    out += `${swept} saved ${swept === 1 ? "entry there has" : "entries there have"} `;
+    out += `not been added back, and the next save will delete ${them} — including anything `;
+    out += "somebody else added there since you deleted. ";
     // The remedy has to be one the designer can actually carry out, and "add the rows back here" is
     // not: these are rows this browser has never shown them, so they cannot retype what they have not
     // seen. What is true is that the deletion is RECORDED rather than erased, so the sentence names
     // the fact that makes it fixable by somebody instead of an action that would fail.
-    out += `If you did not mean to delete ${them}, say so before this stage is submitted: the repository `;
-    out += `records a deletion rather than erasing the row, so ${swept === 1 ? "it" : "they"} can be `;
-    out += "brought back by whoever runs it.";
+    out += `If you didn't mean to delete ${them}, say so before this stage is submitted: deleted entries `;
+    out += `are kept, so an administrator can bring ${swept === 1 ? "it" : "them"} back.`;
   }
   return out.trim();
 }
@@ -4116,7 +4115,7 @@ export function placeStageErrors(
     if (!named.length) {
       // A scope refused with no field map at all: there is no box to mark, and the server still
       // refused something. Same sentence as the handset's, for the same reason.
-      unplaced.push(`${key}: refused, with no reason given`);
+      unplaced.push(`${key}: couldn't be saved (no reason given)`);
       continue;
     }
     const match = /^(.+)\[(\d+)\]$/.exec(key);
@@ -4588,7 +4587,7 @@ export function stageRefusalIsPassLevel(error: unknown): boolean {
  */
 export function mediaRefusal(name: string, cause: unknown, attempts: number): DwDraftFailure {
   const message =
-    typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "The server refused this file.";
+    typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "This file couldn't be uploaded.";
   /*
     THE SERVER'S OWN SENTENCE, NOT THE WRAPPER'S, AND THIS ARM IS THE ONE THAT NEEDED IT MOST.
 
@@ -4622,13 +4621,10 @@ export function mediaRefusal(name: string, cause: unknown, attempts: number): Dw
   const backOff = serverAskedForTime(cause);
   return failure(
     schemaRefusal
-      ? `The repository could not read what this copy of the app sent for “${name}”: ${answered.message} Nothing is ` +
-        "wrong with the file and nothing has been thrown away — this app and the repository are out of step, and it " +
-        "will be sent by itself the next time you open the app after either has been updated."
-      : `The repository refused the file “${name}”: ${message} It is still on this device, and the stage it ` +
-        "belongs to is waiting for it, but it will keep being refused until somebody changes something about the " +
-        "file — this is not a connection problem. Remove it from the stage, or attach it again in a format the " +
-        "repository accepts, and then use Try again.",
+      ? `“${name}” couldn't be uploaded: ${answered.message} Nothing is wrong with the file and nothing has been ` +
+        "thrown away. Reload the page to update the app, and it will upload by itself."
+      : `“${name}” couldn't be uploaded: ${message} It's still on this device. Remove it, or attach it again in ` +
+        "another format, then select Try again.",
     !backOff,
     attempts,
     schemaRefusal ? APP_RUN_ID : null
@@ -4689,10 +4685,10 @@ async function runSync(): Promise<DwSyncResult> {
           await mutate(draft.localId, (current) => ({
             ...current,
             failure: failure(
-              "This workshop was sent once and this browser never saw the answer, and the server now holds more than one " +
-                "workshop with this title — so this device cannot tell which one is yours, and sending it again could file " +
-                "it twice. Nothing has been thrown away. Open the list, check which of them is the one you started, and " +
-                "either rename this one or delete the copy you do not want, then use Try again.",
+              "This workshop was sent once but no reply arrived, and there are now several workshops with this title — " +
+                "so we can't tell which one is yours, and sending it again could create a duplicate. Nothing has been " +
+                "thrown away. Open the list, find the one you started, and either rename this one or delete the copy you " +
+                "don't want, then select Try again.",
               true,
               (current.failure?.attempts ?? 0) + 1
             )
@@ -4890,10 +4886,9 @@ async function runSync(): Promise<DwSyncResult> {
           await mutate(draft.localId, (current) => ({
             ...current,
             failure: failure(
-              "This workshop was created on the server, but this browser could not record its id — its storage refused the " +
-                "write, which usually means the disk or the browser's quota is full. Nothing has been thrown away and " +
-                "nothing further will be sent for it until this is cleared, so that a second copy of the workshop is not " +
-                "created. Free some space on this device, then use Try again.",
+              "This workshop was created online, but this browser couldn't save that fact — usually because the disk or " +
+                "the browser's storage is full. Nothing has been thrown away, and nothing more will be sent for it until " +
+                "this is fixed, so no duplicate is created. Free some space on this device, then select Try again.",
               true,
               (current.failure?.attempts ?? 0) + 1
             )
@@ -5081,7 +5076,7 @@ async function runSync(): Promise<DwSyncResult> {
         // Reachable only for a batch that landed something and refused something, which a one-file
         // batch cannot do — kept because this loop is not the only shape `uploadMediaBatch` serves,
         // and a silent fall-through would leave the bytes with no record of why they stayed.
-        await noteMediaFailure(media.id, failed[0]?.error ?? "The server refused this file.");
+        await noteMediaFailure(media.id, failed[0]?.error ?? "This file couldn't be uploaded.");
         if (media.stageKey) blocked.add(media.stageKey);
         // A per-file reason from a partly-landed batch is an answer the server gave, so it is
         // permanent by the same rule `mediaRefusal` applies to a thrown one.
@@ -5152,11 +5147,11 @@ async function runSync(): Promise<DwSyncResult> {
             stageKey,
             refusedNames.length
               ? failure(
-                  `This stage has not been sent because the repository refused ${refusedNames.length === 1 ? "a file" : "files"} ` +
-                    `attached to it (${refusedNames.join(", ")}), and sending the stage without ${refusedNames.length === 1 ? "it" : "them"} ` +
-                    "would delete whatever the repository already holds in that field. Nothing has been thrown away. Open the " +
+                  `This stage hasn't been sent because ${refusedNames.length === 1 ? "a file" : "files"} attached to it ` +
+                    `couldn't be uploaded (${refusedNames.join(", ")}), and sending the stage without ${refusedNames.length === 1 ? "it" : "them"} ` +
+                    "would delete what's already saved in that field. Nothing has been thrown away. Open the " +
                     `stage and either remove ${refusedNames.length === 1 ? "the file" : "those files"} or attach ` +
-                    `${refusedNames.length === 1 ? "it" : "them"} again in a format the repository accepts, then use Try again.`,
+                    `${refusedNames.length === 1 ? "it" : "them"} again in another format, then select Try again.`,
                   true,
                   (stage.failure?.attempts ?? 0) + 1
                 )
@@ -5203,8 +5198,8 @@ async function runSync(): Promise<DwSyncResult> {
             draft.localId,
             stageKey,
             failure(
-              `This build's field registry has no stage called “${stageKey}”, so its answers cannot be sent. They are still ` +
-                "on this device. Reload the page once you have a connection to pick up the current field list.",
+              `The form this page loaded has no stage called “${stageKey}”, so its answers couldn't be sent. They're still ` +
+                "on this device. Reload the page once you're online to update the app, then select Try again.",
               true,
               (stage.failure?.attempts ?? 0) + 1,
               // A SKEW LIKE ANY OTHER, and the one whose own sentence gave the instruction away: it
@@ -5377,11 +5372,9 @@ async function runSync(): Promise<DwSyncResult> {
             stageKey,
             failure(
               schemaRefusal
-                ? `The repository could not read what this copy of the app sent for stage “${stageKey}”: ${said} ` +
-                  "Nothing you typed is wrong and nothing has been thrown away — this app and the repository are out of " +
-                  "step, and no edit to the stage will clear it. Your work is safe on this device, and it will be sent by " +
-                  "itself the next time you open the app after either has been updated; you do not have to do anything. " +
-                  "Tell whoever runs the repository if it keeps happening."
+                ? `Stage “${stageKey}” couldn't be sent: ${said} Nothing you typed is wrong and nothing has been thrown ` +
+                  "away — your work is safe on this device. Reload the page to update the app, and it will send by " +
+                  "itself. If this keeps happening, contact your administrator."
                 : error.status === 403
                   ? /*
                       A 403 IS ABOUT WHO MAY WRITE THIS WORKSHOP, NEVER ABOUT AN ANSWER, so the sentence
@@ -5390,12 +5383,10 @@ async function runSync(): Promise<DwSyncResult> {
                       is holding a post on the workshop (`design_workshop_posts.write_refusal`, which
                       names the post and the remedy); the server's own sentence is quoted whole.
                     */
-                    `The repository refused stage “${stageKey}”: ${said} It is still on this device and nothing has been ` +
-                    "thrown away. This is about who may write this workshop, not about any answer in the stage, so no " +
-                    "edit to the stage will clear it."
-                  : `The repository refused stage “${stageKey}”: ${said} It is still on this device and nothing has been ` +
-                    "thrown away, but it will keep being refused until the answer that caused it is corrected — this is not a " +
-                    "connection problem. Open the stage, then use Try again.",
+                    `Stage “${stageKey}” couldn't be saved: ${said} It's still on this device and nothing has been ` +
+                    "thrown away. This is about who can edit this workshop, so changing the stage won't fix it."
+                  : `Stage “${stageKey}” couldn't be saved: ${said} It's still on this device and nothing has been ` +
+                    "thrown away. Open the stage, correct the answer that caused this, then select Try again.",
               true,
               (stage.failure?.attempts ?? 0) + 1,
               schemaRefusal ? APP_RUN_ID : null
@@ -5445,9 +5436,9 @@ async function runSync(): Promise<DwSyncResult> {
                 completeness: saved.completeness ?? target.completeness,
                 failure: rejected
                   ? failure(
-                      `The server refused ${rejected} answer${rejected === 1 ? "" : "s"} in this stage and kept what it ` +
-                        `already held for ${rejected === 1 ? "it" : "them"}. Everything else was saved and nothing you ` +
-                        "typed has been thrown away — open the stage to see which answers, and what the repository holds.",
+                      `${rejected} answer${rejected === 1 ? "" : "s"} in this stage couldn't be saved, so the previously ` +
+                        `saved ${rejected === 1 ? "value was" : "values were"} kept. Everything else was saved and nothing you ` +
+                        "typed has been thrown away — open the stage to see which answers, and what's saved for them.",
                       /*
                         `permanent: true` IS DELIBERATE HERE, AND IT IS NOT WHAT THE HANDSET WRITES.
 
@@ -5557,17 +5548,16 @@ async function runSync(): Promise<DwSyncResult> {
 
                  Nothing has been sent either way.
                */
-              "This workshop is no longer available to you on the server: it may have been deleted, or your access to it " +
-                "withdrawn. Nothing more can be sent to it, and everything you captured is still on this device. Ask an " +
-                "admin to restore it or to restore your access, then use Try again."
+              "This workshop is no longer available to you: it may have been deleted, or your access to it removed. " +
+                "Nothing more can be sent to it, and everything you captured is still on this device. Ask an admin to " +
+                "restore it or your access, then select Try again."
             : schemaDrift
-              ? `The repository could not read what this copy of the app sent for this workshop: ${schemaDrift.message} Nothing ` +
-                "you typed is wrong and nothing has been thrown away — this app and the repository are out of step. " +
-                "Everything you captured is safe on this device, and it will be sent by itself the next time you open the " +
-                "app after either has been updated; you do not have to do anything."
+              ? `This workshop couldn't be sent: ${schemaDrift.message} Nothing you typed is wrong and nothing has been ` +
+                "thrown away — everything you captured is safe on this device. Reload the page to update the app, and it " +
+                "will send by itself."
               : error instanceof Error
                 ? error.message
-                : "The server refused this workshop.",
+                : "This workshop couldn't be saved.",
           true,
           (current.failure?.attempts ?? 0) + 1,
           schemaDrift ? APP_RUN_ID : null
@@ -5616,7 +5606,7 @@ async function noteStageFailure(localDraftId: string, stageKey: string, next: Dw
  */
 async function noteMediaFailure(localMediaId: string, cause: unknown): Promise<void> {
   const message =
-    typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "The server refused this file.";
+    typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "This file couldn't be uploaded.";
   await transact([STORE_MEDIA], "readwrite", async (stores) => {
     const media = await req<DwDraftMedia | undefined>(
       stores[STORE_MEDIA].get(localMediaId) as IDBRequest<DwDraftMedia | undefined>

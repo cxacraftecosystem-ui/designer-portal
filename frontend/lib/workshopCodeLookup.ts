@@ -244,7 +244,7 @@ export async function lookUpWorkshopCode(ref: WorkshopCodeRef): Promise<Workshop
       return {
         ok: false,
         message:
-          "There is no connection, so the repository could not be asked about that code. Try again when there is signal — the code itself checked out, so the card is fine."
+          "There is no connection, so that code couldn't be looked up. The code itself is valid, so the card is fine. Try again when you have signal."
       };
     }
     // ONE sentence for "no such record" and "not yours". See the file header: the API answers 404 for
@@ -386,9 +386,9 @@ export const DESIGN_WORKSHOP_SCAN_COPY: Record<
     canOpen: false
   },
   UNKNOWN_NO_SIGNAL: {
-    headline: "Scanned — but this device cannot check it yet",
+    headline: "Scanned — checking it needs a connection",
     detail:
-      "There is no connection, so whether you are on this workshop is not something this device can answer. The code is valid and has been read correctly. Try again where there is signal.",
+      "There is no connection, so it can't be checked whether you are on this workshop. The code is valid and was read correctly. Try again when you have signal.",
     canOpen: false
   }
 };

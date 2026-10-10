@@ -205,7 +205,7 @@ function fullNotice(said: string, names: string[]): string {
   const one = names.length === 1;
   return (
     `${said} ${one ? "was" : "were"} not attached because that field is already full: ${names.join(", ")}. ` +
-    "Remove something it already holds — the stage form is where an attachment can be taken off — then " +
+    "Remove something it already holds on the stage form, then " +
     `attach ${one ? "it" : "them"} again.`
   );
 }
@@ -364,8 +364,8 @@ function useMeasurablePhotos(refs: string[]): MeasurePhotos {
         setState({
           status: "failed",
           reason: offline
-            ? "There is no connection, so photographs already uploaded from this row cannot be fetched back here. A photograph still held on this device can be measured with no connection at all."
-            : "None of the files this row points at could be opened in this browser — that is usually a file this account is not entitled to fetch back."
+            ? "There is no connection, so photographs already uploaded for this piece can't be shown here. A photograph still on this device can be measured without a connection."
+            : "None of this piece's files could be opened here — usually because your account doesn't have access to them."
         });
         return;
       }
@@ -783,7 +783,7 @@ export function UploadTabHost({
         await reload();
       } catch {
         if (!cancelled) {
-          setProblem("The sketches and prototypes of this workshop could not be read on this device.");
+          setProblem("This workshop's sketches and prototypes couldn't be loaded on this device.");
         }
       }
     })();
@@ -837,7 +837,7 @@ export function UploadTabHost({
         const stage = draft?.stages[target.stageKey];
         if (!draft || !stage) {
           setProblem(
-            "This file has not been attached: this browser holds no copy of the stage it belongs to. Open that stage once with a connection, then try again."
+            "This file wasn't attached because its stage hasn't been loaded on this device. Open that stage once while you have a connection, then try again."
           );
           return false;
         }
@@ -847,7 +847,7 @@ export function UploadTabHost({
           // The row went away between this tab reading it and the file being handed over — another
           // tab, or a colleague's deletion arriving on a sync. Naming it is the only honest answer.
           setProblem(
-            "This file has not been attached: the row it was headed for is no longer in this workshop. Reload the tab and choose another."
+            "This file wasn't attached because the piece it was for is no longer in this workshop. Reload the tab and choose another."
           );
           return false;
         }
@@ -898,13 +898,13 @@ export function UploadTabHost({
         });
         landed = rowLabel(row, index);
         await reload();
-        setNotice(`${what(took)} attached to “${landed}” on this device. Sending it to the repository…`);
+        setNotice(`${what(took)} attached to “${landed}” on this device. Uploading…`);
         // Both sentences stand together on a partial turn: the green one counts what landed, the red
         // one names what did not. Either alone would be a lie by omission about the other half.
         if (turnedAway.length) setProblem(fullNotice(what(turnedAway.length), turnedAway));
       } catch {
         setProblem(
-          "Nothing could be written to this device's storage. If the browser is in private mode or its storage is full, the file cannot be kept here — free some space and try again."
+          "Nothing could be written to this device's storage. If the browser is in private mode or its storage is full, use a normal window or free some space, then try again."
         );
         return false;
       } finally {
@@ -935,15 +935,15 @@ export function UploadTabHost({
             // a courtyard photograph cannot be re-taken. So on every outcome except a confirmed
             // landing, say that the copy here is kept — that is what makes the wait safe rather than
             // merely long.
-            (syncPassLanded(result) ? "" : " The copy on this device is kept until the repository confirms it.")
+            (syncPassLanded(result) ? "" : " The copy on this device is kept until the upload is confirmed.")
         );
       } catch (error) {
         // The file IS on this device — that happened above and is not in doubt here. Only the sending
         // is, so only the sending is what this sentence is about.
         setNotice(
           isUnreachable(error)
-            ? `${what(took)} is saved on this device. There is no connection, so it uploads itself when one returns, and the copy here is kept until the repository confirms it.`
-            : `${what(took)} is saved on this device, but sending it did not complete. It goes up with the next sync — the banner above the page follows it — and the copy here is kept until the repository confirms it.`
+            ? `${what(took)} is saved on this device. It will upload when you're back online, and the copy here is kept until the upload is confirmed.`
+            : `${what(took)} is saved on this device, but it didn't finish uploading. It will upload with the next sync — the banner at the top of the page shows its progress — and the copy here is kept until the upload is confirmed.`
         );
       }
       /*
@@ -1014,10 +1014,10 @@ export function UploadTabHost({
       if (!half?.stageKey) return;
       if (!half.reconciled) {
         setProblem(
-          "This device has not read this workshop's " +
+          "This workshop's " +
             (entityKey === "sketch" ? "sketches" : "prototypes") +
-            " yet, so a new one cannot be added here without risking the ones the repository holds. " +
-            "Open the workshop once with a connection, then come back."
+            " haven't been loaded on this device yet, so a new one can't be added here. " +
+            "Open the workshop once while you have a connection, then come back."
         );
         return;
       }
@@ -1057,7 +1057,7 @@ export function UploadTabHost({
             (current) => `${current ?? ""} ${syncPassNote(result, `the new ${entityKey} is`)}`.trim()
           );
         } catch {
-          setNotice((current) => `${current ?? ""} It will be sent when this device next has a connection.`.trim());
+          setNotice((current) => `${current ?? ""} It will upload when you're back online.`.trim());
         }
       } catch {
         setProblem(`A new ${entityKey} could not be created on this device.`);
@@ -1194,7 +1194,7 @@ export function UploadTabHost({
         const stage = draft?.stages[target.stageKey];
         if (!draft || !stage) {
           setProblem(
-            `That measurement has not been written: this browser holds no copy of the stage “${field.label}” belongs to. Open that stage once with a connection, then try again.`
+            `That measurement wasn't saved because the stage “${field.label}” belongs to hasn't been loaded on this device. Open that stage once while you have a connection, then try again.`
           );
           return;
         }
@@ -1204,7 +1204,7 @@ export function UploadTabHost({
           // The row went away between the picker reading it and the button being pressed — another
           // tab, or a colleague's deletion arriving on a sync. Naming it is the only honest answer.
           setProblem(
-            "That measurement has not been written: the row it was headed for is no longer in this workshop. Reload the tab and choose another."
+            "That measurement wasn't saved because the piece it was for is no longer in this workshop. Reload the tab and choose another."
           );
           return;
         }
@@ -1217,10 +1217,10 @@ export function UploadTabHost({
         });
         landed = rowLabel(row, index);
         await reload();
-        setNotice(`“${field.label}” on “${landed}” now reads ${shown} on this device. Sending it to the repository…`);
+        setNotice(`“${field.label}” on “${landed}” now reads ${shown} on this device. Uploading…`);
       } catch {
         setProblem(
-          "That measurement could not be written to this device's storage. If the browser is in private mode or its storage is full, nothing can be kept here — free some space and try again."
+          "That measurement couldn't be saved on this device. If the browser is in private mode or its storage is full, use a normal window or free some space, then try again."
         );
         return;
       } finally {
@@ -1233,15 +1233,15 @@ export function UploadTabHost({
         await reload();
         setNotice(
           `“${field.label}” on “${landed}” now reads ${shown}. ${syncPassNote(result, "this measurement is")}` +
-            (syncPassLanded(result) ? "" : " The copy on this device is kept until the repository confirms it.")
+            (syncPassLanded(result) ? "" : " The copy on this device is kept until the upload is confirmed.")
         );
       } catch (error) {
         // The figure IS on this device — that happened above and is not in doubt here. Only the
         // sending is, so only the sending is what this sentence is about.
         setNotice(
           isUnreachable(error)
-            ? `“${field.label}” on “${landed}” now reads ${shown} on this device. There is no connection, so it goes up when one returns, and the copy here is kept until the repository confirms it.`
-            : `“${field.label}” on “${landed}” now reads ${shown} on this device, but sending it did not complete. It goes up with the next sync — the banner above the page follows it.`
+            ? `“${field.label}” on “${landed}” now reads ${shown} on this device. It will upload when you're back online, and the copy here is kept until the upload is confirmed.`
+            : `“${field.label}” on “${landed}” now reads ${shown} on this device, but it didn't finish uploading. It will upload with the next sync — the banner at the top of the page shows its progress.`
         );
       }
     },
@@ -1277,21 +1277,21 @@ export function UploadTabHost({
    * wrong thing and sends them looking for a file they never chose. So the reason is shared and the
    * noun is the caller's, which is the same division `attach`'s `what` phrase-maker uses.
    */
-  function refuse(half: "sketch" | "prototype", said = "This file has not been attached") {
+  function refuse(half: "sketch" | "prototype", said = "This file wasn't attached") {
     const rows = half === "sketch" ? sketches : prototypes;
     const chosen = half === "sketch" ? sketchRow : prototypeRow;
     setNotice(null);
     setProblem(
       rows && rows.rows.length === 0
-        ? `${said}: there are no ${half}s in this workshop yet, so there is no record for it to belong to. Add one on its stage first.`
+        ? `${said}: there are no ${half}s in this workshop yet. Add one on its stage first.`
         : !chosen
           ? `${said}: choose which ${half} it belongs to first.`
-          : `${said}: the repository's copy of the ${half} stage could not be read, and writing into a list this browser has not downloaded would replace what the repository holds.`
+          : `${said}: the ${half} stage hasn't been loaded on this device. Open it once while you have a connection, then try again.`
     );
   }
 
   /** The lead clause `refuse` uses when what could not be written is a measured dimension. */
-  const MEASURE_REFUSED = "That measurement has not been written";
+  const MEASURE_REFUSED = "That measurement wasn't saved";
 
   return (
     <div className="grid gap-4">
@@ -1347,9 +1347,8 @@ export function UploadTabHost({
           <p className="mt-3 flex items-start gap-2 rounded-md border border-line-200 bg-amber-100 px-3 py-2 text-sm text-amber-800">
             <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             <span>
-              The repository&apos;s copy of these stages could not be read, so nothing can be attached from here yet —
-              writing into a list this browser has not downloaded would replace what the repository holds. Open the
-              stage once with a connection, or try again when there is signal.
+              These stages haven&apos;t been loaded on this device, so nothing can be attached from here. Open the stage
+              once while you have a connection, or try again when you have signal.
             </span>
           </p>
         ) : null}
@@ -1648,8 +1647,8 @@ export function UploadTabHost({
         */
         <p className="panel px-4 py-6 text-sm text-ink-muted">
           {registry === null
-            ? "This browser holds no field registry yet, so it cannot say which fields a sketch or a prototype has. Nothing can be attached or measured from here until it does — open the workshop once with a connection."
-            : "This build's field registry does not declare the image, line-art and 3D-model fields this tab writes into, so nothing can be attached from here, and the measuring card that sits in each of those sections is not rendered either. That is a schema mismatch rather than a permission — open a stage form, which renders whatever the registry does declare, its own measuring panel included."}
+            ? "The form couldn't be loaded, so nothing can be attached or measured here. Open the workshop once while you have a connection."
+            : "Nothing can be attached or measured here right now. Reload the page to update the app, then try again."}
         </p>
       )}
     </div>

@@ -46,7 +46,7 @@ function tallies(report: Report): Array<{ label: string; value: number; always?:
     { label: "withdrawn from the plan", value: report.withdrawn },
     { label: "in the plan but not in this sheet", value: report.absent },
     { label: "of those, already opened as workshops", value: report.absentPromoted },
-    { label: "corrected AFTER being opened as a workshop", value: report.updatedAfterPromotion }
+    { label: "corrected after being opened as a workshop", value: report.updatedAfterPromotion }
   ];
 }
 
@@ -150,7 +150,7 @@ export function PlanUploadReport({ report }: { report: Report }) {
           </h2>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
             {report.sheet ? `Read from the "${report.sheet}" sheet. ` : ""}
-            Uploading the same sheet again changes nothing — a row is only written when something in
+            Uploading the same sheet again changes nothing — an entry only changes when something in
             it actually differs.
           </p>
           <Tally report={report} />
@@ -205,8 +205,8 @@ export function PlanUploadReport({ report }: { report: Report }) {
           </div>
           {report.changesTruncated ? (
             <p className="mt-2 text-sm text-ink-muted">
-              Only the first {report.changes.length} changes are listed. More were made — re-upload
-              the same sheet to see nothing change, which is how you confirm the rest landed.
+              Only the first {report.changes.length} changes are listed; more were made. To confirm
+              they were all saved, upload the same sheet again — it should report no changes.
             </p>
           ) : null}
         </section>

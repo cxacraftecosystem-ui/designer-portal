@@ -189,7 +189,7 @@ export function MarketFindingsPanel({
         <Heading />
         <p className="text-sm leading-6 text-ink-700">
           {remoteFailed
-            ? "This device has not downloaded stage 8, and the repository could not be reached to ask it. " +
+            ? "Stage 8 hasn't been downloaded to this device, and couldn't be loaded without a connection. " +
               "Open stage 8 once with a connection and these findings are computed here from then on, with or " +
               "without one."
             : "Reading the market survey…"}
@@ -256,9 +256,9 @@ export function MarketFindingsPanel({
           ? `Computed on this device from ${findings.observations} price observation(s) in stage 8 and the rows ` +
             "on this page. Nothing here is written to stage 9 — these are findings beside your answers, not " +
             "instead of them."
-          : `Computed by the repository from ${findings.observations} price observation(s), because stage 8 has ` +
-            "not been downloaded to this device. It describes what has been SAVED, so anything typed above and " +
-            "not yet sent is not counted."}
+          : `Computed online from ${findings.observations} price observation(s), because stage 8 has ` +
+            "not been downloaded to this device. It only counts what has been saved, so anything typed above and " +
+            "not yet uploaded is not counted."}
       </p>
 
       {findings.bands.length ? (

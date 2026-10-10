@@ -2900,7 +2900,7 @@ export function dictationConsentSentence(consent: string | null | undefined): st
   }
   if (token === "REFUSED") {
     return (
-      "Recordings and material from this workshop may NOT be sent out — that is the answer on " +
+      "Recordings and material from this workshop may not be sent out — that is the answer on " +
       "record. Nothing from it is sent to a transcription service or to a writing model, so " +
       "dictation, proofreading, translation, captions and subtitles are all unavailable here. " +
       "Recording a new answer of “they agreed” is what re-opens them."
@@ -2936,9 +2936,9 @@ export function dictationConsentSentence(consent: string | null | undefined): st
  */
 export const DW_CONSENT_QUESTION =
   "May recordings and dictation from this workshop leave this device to be written down by a " +
-  "transcription service outside it? The recording goes to this project's server and on to the " +
-  "service that turns it into words. A passage dictated into a field is not kept afterwards — the " +
-  "words come back and the server stores no audio; a recording attached to this workshop as audio " +
+  "transcription service outside it? The recording is sent online to the service that turns it into " +
+  "words. A passage dictated into a field is not kept afterwards — only the words come back, and no " +
+  "audio is stored; a recording attached to this workshop as audio " +
   "is kept with the workshop, because it is there to be listened to again. Ask the artisan whose " +
   "voice it is, and record their answer here.";
 
@@ -3037,7 +3037,7 @@ export function dictationAnswerSentence(result: DwDictationResult): string {
     return "The transcription service is busy just now and could not take this recording. Wait a moment and dictate it again, or type the answer in — nothing is queued, so it will not arrive later.";
   }
   if (status === "FAILED") {
-    return "The server could not transcribe that recording. Try again, or type the answer in — and if it keeps failing, tell whoever runs the server.";
+    return "That recording couldn't be transcribed. Try again, or type the answer in — and if it keeps failing, contact your administrator.";
   }
   // EMPTY, or a status this build has not heard of. The round trip worked and there were no words in
   // it, so the next move is about the microphone and the room rather than about the connection.
@@ -3324,7 +3324,7 @@ export async function downloadDesignWorkshopReport(id: string, body: DwReportBod
     // headers go along so a password-gate 401 is told apart from an expired sign-in, as in `fetchFile`.
     throw new ApiError(
       response.status,
-      describeApiDetail(detail, response.statusText || `The server refused the request (HTTP ${response.status}).`),
+      describeApiDetail(detail, response.statusText || "Something went wrong. Please try again."),
       payload,
       response.headers
     );

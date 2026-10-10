@@ -183,11 +183,9 @@ export function CustomSectionsForm({
           {/* Colour never carries this on its own — the icon is decorative and the sentence says it. */}
           <HelpCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <p className="text-xs leading-5">
-            This browser has not read this workshop&apos;s own questions, so none are shown below. That is not
-            the same as the workshop having none: if the designer added questions to this stage, they are on
-            the server and this device has not seen them yet. Open this stage once with a connection and they
-            are kept here for every visit afterwards, including offline ones. Anything you fill in on the rest
-            of this form is unaffected.
+            This workshop&apos;s own questions haven&apos;t been loaded on this device yet, so none are shown below.
+            Open this stage once with a connection and they are kept here for every later visit, including offline
+            ones. Anything you fill in on the rest of this form is unaffected.
           </p>
         </div>
       </section>
@@ -221,10 +219,9 @@ export function CustomSectionsForm({
 
       {stale ? (
         <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          This workshop&apos;s own questions have been edited since this browser last read them, so what is
-          shown here may not be what is being asked now — a question may have been added to this stage, or one
-          on screen may have been reworded or retired. Reload this stage with a connection to pick up the
-          current set. Answers already recorded are not affected either way.
+          This workshop&apos;s own questions have changed since they were last loaded on this device, so what is
+          shown here may be out of date. Reload this stage with a connection to get the current questions.
+          Answers already recorded are not affected.
         </div>
       ) : null}
 
@@ -233,8 +230,8 @@ export function CustomSectionsForm({
         // looking at is not a detail, and saying so is the difference between "this stage does not ask
         // for that" and "this browser has not been told about it".
         <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">
-          The questions below are the copy saved in this browser, because the server could not be reached.
-          They are whatever was current the last time this laptop had a connection.
+          Couldn&apos;t connect, so the questions below are the copy saved on this device the last time it was
+          online.
         </div>
       ) : null}
 

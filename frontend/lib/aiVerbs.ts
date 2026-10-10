@@ -431,32 +431,10 @@ export function subtitleDesignWorkshopMedia(workshopId: string, sourceMediaId: s
   return verbPost(workshopId, "SUBTITLES", { sourceMediaId });
 }
 
-/**
- * THE ONE VERB THAT NEVER RUNS ON A DESIGNER'S OWN KEY, said out loud because no client can tell.
- *
- * Four of the five verbs pass `user_id=current_user.id` into `user_ai_keys.resolve`, which hands
- * back the designer's own key when they have one that can do the task and falls back to the
- * deployment's otherwise — so bring-your-own-key is invisible and needs no branch. `subtitle_ai_layer`
- * is different: it calls `ai.transcribe_timed_bytes(content, filename, mime, get_settings())`, and
- * that function's signature HAS NO `user_id` PARAMETER AT ALL. Subtitles therefore always run on the
- * deployment's key, even for a designer who supplied one that could transcribe.
- *
- * A backend asymmetry rather than a client one, and nothing here changes it — but a designer who
- * supplied a key expecting to pay for their own work is silently on the organisation's bill for this
- * verb alone, and the review sheet's provenance line will name whatever provider the deployment's
- * chain picked. Saying so is the alternative to a fabricated impression of provenance, which is the
- * failure this whole feature exists to prevent.
- */
-export const SUBTITLES_DEPLOYMENT_KEY_NOTE =
-  "Subtitles always run on this server's own transcription key, even if you have supplied one of " +
-  "your own — the other four verbs use yours when you have one. That is a limitation of the server " +
-  "rather than a choice made here, and it means the cost of this run falls on the organisation.";
-
 /** Said before the press on the one verb that costs an upload of bytes the archive already holds. */
 export const SUBTITLES_SECOND_UPLOAD_NOTE =
-  "Subtitling sends this recording to a transcription engine again. The timings are the whole point " +
-  "of it and nothing already stored has them, so even a recording this workshop has already " +
-  "transcribed has to go up a second time — which costs an upload and one run of today's allowance.";
+  "Subtitling sends this recording for transcription again, with timings, so it is uploaded once more " +
+  "and uses one of today's AI runs.";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The subtitle file
@@ -521,7 +499,7 @@ export async function downloadDesignWorkshopSubtitles(
     // headers go along so a password-gate 401 is told apart from an expired sign-in, as in `fetchFile`.
     throw new ApiError(
       response.status,
-      describeApiDetail(detail, response.statusText || `The server refused the request (HTTP ${response.status}).`),
+      describeApiDetail(detail, response.statusText || "Something went wrong. Please try again."),
       payload,
       response.headers
     );
@@ -718,15 +696,13 @@ export function selectedPassage(doc: RichDoc, range: DocRange): string {
  * screen earlier than that panel applies it.
  */
 export const NOTHING_SELECTED =
-  "Select the words you want worked on first. These verbs run over a passage rather than over the " +
-  "whole field, so what is selected is what is sent — and is what the layer records as its source.";
+  "Select the words you want worked on first. Only the selected passage is sent, and the layer " +
+  "records it as its source.";
 
 export function passageTooLong(chars: number): string {
   return (
     `That selection is ${chars.toLocaleString()} characters and at most ` +
-    `${MAX_VERB_TEXT_CHARS.toLocaleString()} can be sent. This is a bound on the evidence rather ` +
-    `than on the verb: a proofread of the first ten pages of a twelve-page note, recorded as a ` +
-    `proofread of the note, is a layer whose source is not what it says. Select a shorter passage.`
+    `${MAX_VERB_TEXT_CHARS.toLocaleString()} can be sent. Select a shorter passage.`
   );
 }
 
@@ -740,10 +716,8 @@ export function passageTooLong(chars: number): string {
  * words are in the stage draft in IndexedDB and are untouched.
  */
 export const VERBS_NEED_A_CONNECTION =
-  "These run on the server, so they need a connection. Nothing has been queued for later — a run " +
-  "spends real provider credit and counts against today's allowance, so one replayed in three days' " +
-  "time would be charged against a day you are not having. Your words are on this device and are " +
-  "untouched; reconnect and select the passage again.";
+  "These need a connection. Nothing was sent and nothing will be sent later. Your words are safe on " +
+  "this device; reconnect and select the passage again.";
 
 /**
  * The workshop has not been cleared to send anything, so no verb can run — the third pre-press state.
@@ -784,8 +758,7 @@ export function consentNotGranted(consent: string | null | undefined): string {
 
 /** A photograph still only on this device has no server id to send, which is a different refusal. */
 export const MEDIA_NOT_UPLOADED_YET =
-  "This file has not reached the server yet, so there is nothing to send — the verb runs on the " +
-  "server's copy. It will go up with the next sync, and you can describe it then.";
+  "This file hasn't uploaded yet. It will upload with the next sync, and you can describe it then.";
 
 /**
  * THE FIFTH PRE-PRESS STATE: the WORKSHOP itself has never reached the server, so no verb has a
@@ -822,10 +795,8 @@ export const MEDIA_NOT_UPLOADED_YET =
  * copy.
  */
 export const WORKSHOP_NOT_ON_SERVER_YET =
-  "This workshop is still only on this device, so there is nothing for a model to read — these run " +
-  "on the server's copy and the server has never seen this one. It goes up with the next sync and " +
-  "they become available then. Nothing you have written is at risk: it is in the draft here, and " +
-  "no run has been queued, because a run spends provider credit against the day it is made.";
+  "This workshop is still only on this device. These AI tools become available once it uploads with " +
+  "the next sync. Everything you have written is safe in the draft here, and nothing has been sent.";
 
 /**
  * THE PRE-PRESS LADDER AS A FUNCTION, so the thing that was wrong can be asserted about.
@@ -915,9 +886,8 @@ export function translationTargetRefusal(value: string): string | null {
   if (!token) return "Name the language to translate into — a name or a code, such as “Odia”, “or” or “English”.";
   if (token.toLowerCase() === "multi") {
     return (
-      "“multi” is something a recording can BE, not something a translation can be INTO. It is a " +
-      "real answer for the language a passage came FROM — these interviews code-switch mid-sentence " +
-      "— but a target is a choice somebody makes. Name the one language you want it in."
+      "“multi” can describe the mixed language a passage was spoken in, but not the language to " +
+      "translate into. Name the one language you want it in."
     );
   }
   if (token.length > MAX_VERB_LANGUAGE_CHARS) {

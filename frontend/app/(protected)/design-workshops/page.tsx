@@ -1068,7 +1068,7 @@ function DesignWorkshopsPageBody() {
         // restore it" was true of the API and unreachable in the product — nothing listed deleted
         // workshops, so the only admin who could act on this sentence was one who had written the id
         // down first. A promise a reader cannot follow is worse than no promise.
-        "Nothing is erased — this is a soft delete kept for the research record, and an admin can restore it from Settings → Deleted workshops."
+        "Nothing is erased — an admin can restore it from Settings → Deleted workshops."
       )
     );
     if (!ok) return;
@@ -1345,10 +1345,10 @@ function DesignWorkshopsPageBody() {
         // Says what is on screen and what is not. A list that silently shows only the local subset
         // is indistinguishable from a repository with three workshops in it.
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          There is no connection, so this shows only the design workshops started on this device and the ones holding changes
-          that have not been sent yet. Everything else in the repository — including workshops you have opened here before — is
-          not listed, and searching cannot reach it. What is here is fully editable, and the list fills in again the moment the
-          repository can be reached.
+          You&rsquo;re offline, so this shows only the design workshops started on this device and the ones with changes
+          waiting to upload. Other workshops — including ones you have opened here before — aren&rsquo;t listed and
+          can&rsquo;t be searched. What&rsquo;s here can be edited as usual, and the full list comes back once you&rsquo;re
+          online.
         </div>
       ) : null}
 
@@ -1793,7 +1793,7 @@ function DesignWorkshopsPageBody() {
               <span className="font-display text-lg font-bold text-ink-900">Designers on a workshop</span>
               <span className="mt-1 block text-sm leading-6 text-ink-muted">
                 Add designers to a design &amp; prototype workshop so they can open it and fill in its stages. A designer
-                who is not on this list is told the workshop does not exist.
+                who isn&rsquo;t on this list can&rsquo;t open the workshop.
               </span>
             </span>
             <span aria-hidden className="shrink-0 text-sm text-ink-500">
@@ -1897,7 +1897,7 @@ function DesignWorkshopsPageBody() {
                       // Every clause below is a fact about what the SCOPE can ever contain, so it
                       // survives any filter being set, which is what lets the panel under it stand
                       // unconditionally too.
-                      "This list is the workshops you opened and the ones you were named on as a designer. Being named as a workshop's supervising officer is a different scope and does not put it here, so a repository full of workshops you supervise still shows you nothing on this screen."
+                      "This list shows the workshops you opened and the ones you were named on as a designer. Workshops you supervise are listed on a separate screen, not here."
                     : allowWork
                       ? // An empty list is the worst moment to be vague at a designer: there is nothing
                         // on screen to explain itself, so this is the whole answer — why there is no
@@ -1926,8 +1926,8 @@ function DesignWorkshopsPageBody() {
               <div className="mt-4 rounded-md border border-line-200 bg-surface-50 p-4">
                 <h3 className="text-sm font-medium text-ink-900">Where your workshops are</h3>
                 <p className="mt-1 text-sm leading-6 text-ink-700">
-                  The repository scopes this list to what you opened yourself and what you were named on. Supervision is
-                  recorded on a different table and read on a different screen:
+                  This list shows what you opened yourself and what you were named on as a designer. Workshops you
+                  supervise are here:
                 </p>
                 <ul className="mt-3 grid gap-2">
                   {emptyScopeDoors.map((door) => (

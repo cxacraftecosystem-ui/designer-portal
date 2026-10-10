@@ -304,7 +304,7 @@ export function IdentityCardReader({
               : // Naming the second route matters here and not on the artisan form: this reader
                 // still holds the file, so unticking and pressing again costs nothing.
                 offered === true
-                ? "No Aadhaar number could be read on this computer. Untick “Read it on this computer” and press again to send the photograph to the reader on the server, which reads a worn card better and can also read a Pehchan card — or type the number in."
+                ? "No Aadhaar number could be read on this computer. Untick “Read it on this computer” and press again to have the photograph read online, which reads a worn card better and can also read a Pehchan card — or type the number in."
                 : "No Aadhaar number could be read on this computer. Take another photograph with the whole card in frame and no glare across the digits, or type the number in."
           );
           return;
@@ -392,8 +392,8 @@ export function IdentityCardReader({
           />
           <span>
             Read it on this computer — the photograph is not sent anywhere, and this works with no connection. Unticked,
-            the photograph is sent to the reader on the server, which reads a worn or angled card better and is the only
-            one that can read a Pehchan card.
+            the photograph is read online, which reads a worn or angled card better and is the only way to read a
+            Pehchan card.
           </span>
         </label>
       ) : null}

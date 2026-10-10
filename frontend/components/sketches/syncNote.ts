@@ -46,10 +46,10 @@ export function syncPassLanded(result: DwSyncResult): boolean {
 
 export function syncPassNote(result: DwSyncResult, subject: string): string {
   if (result.stoppedOffline) {
-    return "Saved on this device. There is no connection, so it sends itself when one returns.";
+    return "Saved on this device. It will upload when you're back online.";
   }
   if (result.failed > 0) {
-    return "Saved on this device, but the repository refused something in this workshop — the sync banner names what.";
+    return "Saved on this device, but something in this workshop couldn't be uploaded — the sync banner says what.";
   }
   /*
     TWO STOPS THAT ARE ABOUT THE SESSION, AND BOTH MUST BE ASKED BEFORE `pending`. Each pass reports
@@ -58,15 +58,15 @@ export function syncPassNote(result: DwSyncResult, subject: string): string {
     new password or a new sign-in, and the sentence says which.
   */
   if (result.passwordChangeRequired) {
-    return "Saved on this device. It sends itself once your new password is set.";
+    return "Saved on this device. It will upload once your new password is set.";
   }
   if (result.credentialExpired) {
-    return "Saved on this device. Your sign-in has expired, so it sends itself once you sign in again.";
+    return "Saved on this device. Your sign-in has expired, so it will upload once you sign in again.";
   }
   if (result.pending > 0) {
     return result.stagesSent === 0
-      ? `Saved on this device. Another sync is already running, so ${subject} going up with that pass rather than this one — the sync banner follows it.`
-      : "Saved on this device and a sync ran, but this device still has work outstanding, which the sync banner names.";
+      ? `Saved on this device. Another sync is already running, so ${subject} going up with that one — the sync banner shows its progress.`
+      : "Saved on this device and a sync ran, but some work is still waiting to upload — the sync banner shows what.";
   }
-  return "Saved, and sent to the repository.";
+  return "Saved, and uploaded.";
 }

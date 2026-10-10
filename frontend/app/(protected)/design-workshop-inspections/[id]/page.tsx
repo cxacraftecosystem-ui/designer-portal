@@ -125,20 +125,20 @@ import type { User } from "@/lib/types";
  */
 function describeFailure(error: unknown, user: User | null | undefined): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so this workshop could not be read. Nothing is missing from the record — nothing was read at all.";
+    return "Couldn't connect, so this workshop couldn't be loaded. Check your connection and try again.";
   }
   if (inspectionRefusalMeansNoPosts(error, user)) {
     // An administering tier the server will not yet show this surface to holds no inspection posts
     // anywhere — so none here either. Said as that, not as the server's door-shaped sentence.
-    return "This workshop is not open to you to inspect: you do not hold any inspection posts. A Ministry Admin, an admin or the master admin appoints inspectors on Workshop oversight.";
+    return "You haven't been appointed to inspect any workshop, so this one isn't open to you. A Ministry Admin, an Admin or the Master Admin appoints inspectors on Workshop oversight.";
   }
   if (error.status === 403) {
     return error.message;
   }
   if (error.status === 404) {
-    return "This workshop is not open to you. Either you have not been appointed to inspect it, or it has been deleted since your list was loaded. A Ministry Admin, an admin or the master admin appoints inspectors on Workshop oversight.";
+    return "This workshop isn't open to you. You may not have been appointed to inspect it, or it may have been deleted. A Ministry Admin, an Admin or the Master Admin appoints inspectors on Workshop oversight.";
   }
-  return error.message || "This workshop could not be read.";
+  return error.message || "This workshop couldn't be loaded.";
 }
 
 /** One field's label, value and authorship — the whole of what a read shows about one answer. */
@@ -165,8 +165,7 @@ function ReadField({
         // COUNTED AND EXPLAINED, never an empty frame. "No photograph" and "a photograph this read
         // does not carry" are different facts and the reader has no other way to tell them apart.
         <span className="text-sm text-ink-500">
-          {reading.count} file{reading.count === 1 ? "" : "s"} recorded here. An inspection read does not carry
-          photographs, recordings or attachments.
+          {reading.count} file{reading.count === 1 ? "" : "s"} recorded here.
         </span>
       ) : (
         <span className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{reading.text}</span>
@@ -286,9 +285,7 @@ function ReadStage({
       {nothingRecorded ? (
         <p className="pt-3 text-sm text-ink-500">
           Nothing has been recorded on this stage.
-          {stage.optionalStage
-            ? " The source document marks it as one a workshop may legitimately skip."
-            : ""}
+          {stage.optionalStage ? " This stage is optional." : ""}
         </p>
       ) : (
         <div className="grid gap-4 pt-3">
@@ -312,7 +309,7 @@ function ReadStage({
             return (
               <div key={entity.key}>
                 <h3 className="mb-1 text-sm font-medium text-ink-700">
-                  {entity.title} · {rows.length} {rows.length === 1 ? "row" : "rows"}
+                  {entity.title} · {rows.length} {rows.length === 1 ? "entry" : "entries"}
                 </h3>
                 <div className="grid gap-3">
                   {rows.map((row, index) => (
@@ -342,10 +339,8 @@ function ReadStage({
 
           {customAnswers > 0 ? (
             <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-              {customAnswers} answer{customAnswers === 1 ? "" : "s"} to question{customAnswers === 1 ? "" : "s"} this
-              workshop&apos;s designer added to this stage {customAnswers === 1 ? "is" : "are"} recorded. The questions
-              themselves are read through a route an inspection does not reach, so the answers are not shown without
-              them.
+              {customAnswers} answer{customAnswers === 1 ? "" : "s"} recorded to question{customAnswers === 1 ? "" : "s"}{" "}
+              this workshop&apos;s designer added to this stage.
             </p>
           ) : null}
         </div>
@@ -397,6 +392,8 @@ function FeedbackPanel({
 
   const rows = detail?.inspectionFeedback ?? [];
   const rounds = dwFeedbackRounds(rows);
+  /** A suggestion names its stage by title, never by its stored key; an unknown key is shown as stored. */
+  const stageTitle = (key: string) => stages.find((stage) => stage.key === key)?.title ?? key;
   /*
     FAILS CLOSED ON AN ABSENT KEY. A server that predates this feature sends no `mayRecordFeedback`,
     and the dangerous default is the permissive one: a box that posts to a route that is not there.
@@ -448,15 +445,12 @@ function FeedbackPanel({
       );
     } catch (err) {
       if (isUnreachable(err)) {
-        setProblem(
-          "The repository could not be reached, so nothing was filed. There is no offline queue on an " +
-            "inspection — what you have typed is still in the box; try again when you have signal."
-        );
+        setProblem("Couldn't send your note. Check your connection and try again — your text is still in the box.");
       } else {
         setProblem(
           err instanceof Error && err.message.trim()
             ? `Nothing was filed: ${err.message}`
-            : "Nothing was filed, and the repository did not say why."
+            : "Something went wrong, so nothing was filed. Please try again."
         );
       }
     } finally {
@@ -487,7 +481,7 @@ function FeedbackPanel({
                       Restrict — but a name column can be blank, and attributing an instruction to
                       the wrong officer is worse than not naming one. */}
                   {row.actorName?.trim() || "An officer no longer named"}
-                  {row.stageKey ? ` · about ${row.stageKey}` : " · about the report as a whole"}
+                  {row.stageKey ? ` · about ${stageTitle(row.stageKey)}` : " · about the report as a whole"}
                   {row.sentBack ? " · sent the report back" : ""}
                 </p>
               </li>
@@ -499,18 +493,15 @@ function FeedbackPanel({
       {!mayRecord ? (
         /* SAID, NOT DRAWN GREY. A disabled box refuses a press without saying why, which is how
            somebody concludes the app is broken. */
-        <p className="text-sm leading-6 text-ink-700">
-          This build cannot file a suggestion about this workshop. Either the repository is older than this page, or
-          this inspection is not yours to write on.
-        </p>
+        <p className="text-sm leading-6 text-ink-700">Filing suggestions isn&apos;t available right now.</p>
       ) : !underReview ? (
         /* THE SERVER'S OWN REFUSAL, SAID BEFORE THE PRESS. `POST /feedback` answers 422 on a report
            nobody has handed in, because a suggestion belongs to a submission cycle and there is not
            one yet. Printing it here saves the officer typing a paragraph into a box that cannot
            take it. */
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-          This report has not been handed in for inspection yet, so there is nothing to comment on. Its designers hand
-          it in from the workshop&apos;s own screen; the box opens then.
+          This report hasn&apos;t been handed in for inspection yet, so there is nothing to comment on. You can file
+          suggestions once its designers hand it in.
         </p>
       ) : (
         <div className="grid gap-2">
@@ -630,9 +621,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
         // A SEPARATE FAILURE FROM THE WORKSHOP READ, because it means something different: the
         // answers are in hand and the field list that names them is not. Folding it into the error
         // above would tell an inspector the workshop could not be read when it was.
-        setRegistryError(
-          "The field list could not be loaded, so the stages below cannot be named or labelled. The workshop itself was read; try again."
-        );
+        setRegistryError("The form couldn't be loaded. Check your connection and try again.");
       });
     return () => {
       cancelled = true;
@@ -663,9 +652,9 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
             Inspector / Reviewer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            A workshop under inspection is read by whoever was appointed to inspect it — the Inspector / Reviewer
-            tier, a Ministry Admin, an admin or the master admin. Designers read design &amp; prototype workshops on
-            Design workshops instead.
+            Only someone appointed to inspect a workshop can open it here: an Inspector / Reviewer, a Ministry
+            Admin, an Admin or the Master Admin. Designers open their design &amp; prototype workshops from Design
+            workshops.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
@@ -722,9 +711,8 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
           Save on it looks the same as a screen whose Save has not loaded yet. */}
       {detail && readOnly ? (
         <p className="mb-4 rounded-md border border-purple-300 bg-purple-50 px-3 py-2 text-xs leading-5 text-ink-700">
-          <span className="font-semibold text-purple-700">Read-only.</span> This is an inspection: every stage below is
-          shown as the designers recorded it, with who wrote each field, and nothing here can be edited, submitted or
-          deleted. Photographs, recordings and attachments are not carried on an inspection read.
+          <span className="font-semibold text-purple-700">Read-only.</span> Every stage below is shown as the designers
+          recorded it, with who wrote each field. Nothing here can be edited, submitted or deleted.
         </p>
       ) : null}
 
@@ -785,7 +773,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
 
           {registry === null ? (
             registryError ? null : (
-              <section className="panel p-4 text-sm text-ink-700">Loading the field list…</section>
+              <section className="panel p-4 text-sm text-ink-700">Loading the form…</section>
             )
           ) : (
             <div className="grid gap-4">

@@ -68,17 +68,15 @@ export const CHOOSER_NO_WORKSHOPS_BODY =
  * server's, because access is decided by rows this client never sees and can be withdrawn without
  * it hearing, so a cache of a past answer may not be turned into an offer.
  */
-export const CHOOSER_OFFLINE_TITLE = "The repository could not be reached";
+export const CHOOSER_OFFLINE_TITLE = "Couldn't connect";
 
 /**
  * The distinction said out loud, because a reader cannot infer it: an empty list and an unaskable
  * one look identical on screen unless one of them says which it is.
  */
 export const CHOOSER_OFFLINE_BODY =
-  "This is not an empty archive — it is a list that could not be loaded. Which workshops you can" +
-  " open is decided by the repository and can change while a browser is away, so this chooser is" +
-  " not offered from a saved copy: an old list would offer a workshop that may no longer be yours," +
-  " and anything filed against it would be refused when the connection returns.";
+  "This isn't an empty list — your design workshops couldn't be loaded without a connection." +
+  " Check your connection and try again.";
 
 /**
  * WHERE THE WORK CAN STILL BE DONE, in three parts because the middle one is a link.
@@ -104,4 +102,4 @@ export const CHOOSER_OFFLINE_ROUTE_NOTE =
  * {@link CHOOSER_REFUSED_FALLBACK} standing in when it said nothing usable.
  */
 export const CHOOSER_REFUSED_TITLE = "Your design workshops could not be listed";
-export const CHOOSER_REFUSED_FALLBACK = "The repository could not list your design workshops.";
+export const CHOOSER_REFUSED_FALLBACK = "Something went wrong while loading your design workshops.";

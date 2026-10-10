@@ -59,8 +59,8 @@ function tallies(report: ArtisanImportReport): Array<{ label: string; value: num
     // somebody already in the repository was added to its roster. Nothing was created and nothing
     // was changed on their record.
     { label: "already recorded, linked to this workshop", value: report.artisansLinked },
-    { label: "rows refused", value: report.rowsRefused },
-    { label: "participant rows added to stage 3", value: report.participantsCreated }
+    { label: "rows not imported", value: report.rowsRefused },
+    { label: "participants added to stage 3", value: report.participantsCreated }
   ];
 }
 
@@ -134,7 +134,7 @@ export function ImportReport({ report }: { report: ArtisanImportReport }) {
         <div className="mt-4">
           <h4 className="flex items-center gap-2 text-sm font-medium text-ink-900">
             <Info className="h-4 w-4 text-ink-500" aria-hidden />
-            Rows the import had to assume something about — these WERE imported
+            Rows the import had to assume something about — these were imported
           </h4>
           <ProblemList problems={warnings} tone="warning" />
         </div>
@@ -143,16 +143,15 @@ export function ImportReport({ report }: { report: ArtisanImportReport }) {
       {!errors.length && !warnings.length ? (
         <p className="mt-4 flex items-center gap-2 text-sm text-ink-700">
           <CheckCircle2 className="h-4 w-4 text-success-600" aria-hidden />
-          Every row was read exactly as it was typed. Nothing was assumed and nothing was refused.
+          Every row was read exactly as it was typed. Nothing was assumed and nothing was left out.
         </p>
       ) : null}
 
       <p className="mt-4 text-xs leading-5 text-ink-500">
-        Nobody was created twice and nothing was overwritten. Where an artisan on this list was
-        already in the repository they were added to this workshop’s participant list and their
-        existing record was left exactly as it is — including anywhere the spreadsheet disagreed with
-        it. This upload is kept as a record: it is listed under this workshop’s imports with the
-        counts above and the rows it could not read. The workbook itself was not stored.
+        Nobody was added twice and nothing was overwritten. Artisans already on record were added to
+        this workshop’s participant list and their existing records were left as they are, even where
+        the spreadsheet says something different. This upload is listed under Earlier uploads with
+        the counts above and the rows it could not read. The file itself was not kept.
       </p>
     </section>
   );

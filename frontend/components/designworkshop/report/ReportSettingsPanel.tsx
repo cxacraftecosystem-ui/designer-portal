@@ -164,7 +164,7 @@ export function ReportSettingsPanel({
         // exactly the sentence the download handler on this page's parent was written to stop
         // telling people. A server that spoke gets its own words shown.
         isUnreachable(err)
-          ? "These settings are stored on the server, so they cannot be saved without a connection. Nothing has been lost — the boxes still hold what you typed."
+          ? "Connect to the internet to save these settings. Nothing has been lost — the boxes still hold what you typed."
           : err instanceof Error
             ? err.message
             : "Unable to save the report settings"
@@ -194,7 +194,7 @@ export function ReportSettingsPanel({
             <div className="min-w-0">
               <h2 className="font-display text-base font-bold text-ink-900">Report settings</h2>
               <p className="mt-1 text-sm leading-6 text-ink-muted">
-                Saved on stage 20 and read by the server when it builds this report. The transcript annexure, the page size
+                Saved on stage 20 and used when this report is built. The transcript annexure, the page size
                 and the running head and foot are also applied to the file this page generates.
               </p>
             </div>
@@ -217,9 +217,8 @@ export function ReportSettingsPanel({
 
         {draftPending ? (
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-            Stage 20 has changes saved on this device that have not reached the server yet. Saving from here would be undone
-            the moment those changes sync, so the Save button is off until they have — open stage 20 and let it send, then
-            come back.
+            Stage 20 has changes saved on this device that haven&rsquo;t been uploaded yet, and they would replace anything
+            saved here, so Save is off until they have — open stage 20 and let it upload, then come back.
           </p>
         ) : null}
 
@@ -253,7 +252,7 @@ export function ReportSettingsPanel({
             {readOnlyReason ? (
               <span className="text-sm text-ink-muted">{readOnlyReason}</span>
             ) : !online ? (
-              <span className="text-sm text-ink-muted">No connection — these are stored on the server.</span>
+              <span className="text-sm text-ink-muted">You&rsquo;re offline — connect to save these.</span>
             ) : !dirty ? (
               <span className="text-sm text-ink-muted">
                 {saved ? (
@@ -267,7 +266,7 @@ export function ReportSettingsPanel({
               </span>
             ) : (
               <span className="text-sm text-ink-muted">
-                Unsaved. The preview below still shows the settings the server holds.
+                Unsaved. The preview below still shows the saved settings.
               </span>
             )}
           </div>

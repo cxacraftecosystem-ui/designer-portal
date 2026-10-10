@@ -195,9 +195,9 @@ export function CostFindingsPanel({
       {unsynced ? (
         <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           {unsynced} of {sheets.length} cost sheet{sheets.length === 1 ? "" : "s"} {unsynced === 1 ? "has" : "have"} not
-          reached the repository yet, so lines entered against {unsynced === 1 ? "it" : "them"} cannot name their sheet
+          uploaded yet, so lines entered against {unsynced === 1 ? "it" : "them"} cannot name their sheet
           and are in no subtotal below. Nothing is lost and nothing needs re-entering — the sheets are on this screen and
-          the check completes itself once the workshop has been sent.
+          the check completes itself once the workshop has uploaded.
         </p>
       ) : null}
 
@@ -241,8 +241,8 @@ export function CostFindingsPanel({
           ? `Computed on this device from ${findings.sheetCount} cost sheet(s), ${materialLines.length} material ` +
             `line(s) and ${labourLines.length} labour line(s) on this page. Nothing here is written into this stage ` +
             "— a subtotal you typed stays exactly as you typed it."
-          : "Computed by the repository, because stage 17 has not been downloaded to this device. It describes what " +
-            "has been SAVED, so anything typed above and not yet sent is not counted. Nothing here is written back."}
+          : "Computed online, because stage 17 has not been downloaded to this device. It only counts what has " +
+            "been saved, so anything typed above and not yet uploaded is not counted. Nothing here is written back."}
       </p>
 
       <div className="grid gap-3">

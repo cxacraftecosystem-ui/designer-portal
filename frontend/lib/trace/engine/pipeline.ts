@@ -417,8 +417,8 @@ export async function run(
       // is written down instead. A background separation the user switched on and that silently did
       // not happen is precisely the bug this mode was added to fix.
       ctx.note(
-        `Background separation was set to "${String(p.matte.mode)}", which this build does not ` +
-          'know how to run, so the whole frame was traced.',
+        `Background separation was set to "${String(p.matte.mode)}", which isn't available, ` +
+          'so the whole frame was traced.',
       );
     }
     if (alpha !== null) {

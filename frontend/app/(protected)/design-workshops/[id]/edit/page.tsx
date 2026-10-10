@@ -193,15 +193,14 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
           not what is stored. See this file's header.
         */
         <section className="panel grid gap-3 p-4">
-          <h2 className="text-sm font-medium text-ink-900">The repository could not be reached</h2>
+          <h2 className="text-sm font-medium text-ink-900">You&rsquo;re offline</h2>
           <p className="text-sm leading-6 text-ink-700">
             The workshop&apos;s own details — its title, report template, craft, cluster, place, dates, notes and linked
-            workshop — can only be corrected while there is a connection. Unlike your stages, a change to the workshop
-            record itself is not held in the offline queue, so this screen does not offer boxes it could not save.
+            workshop — can only be changed while you&rsquo;re online.
           </p>
           <p className="text-sm leading-6 text-ink-700">
-            Everything else on this workshop still works with no signal: the 22 stages, the photographs and the
-            workshop&apos;s own questions are all kept in this browser and sent when the connection returns.
+            Everything else on this workshop still works offline: the 22 stages, the photographs and the
+            workshop&apos;s own questions are kept on this device and upload when you&rsquo;re back online.
           </p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className="field-button" onClick={retry}>
@@ -229,9 +228,9 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
         <section className="panel grid gap-3 p-4">
           <h2 className="text-sm font-medium text-ink-900">This workshop is still only on this device</h2>
           <p className="text-sm leading-6 text-ink-700">
-            It was created here and has not reached the repository yet, so there is no record to correct. Everything you
-            have typed is saved in this browser and nothing is at risk. Sync it from the design workshops list — the
-            details can be corrected the moment it lands.
+            It was created here and hasn&rsquo;t been uploaded yet, so its details can&rsquo;t be changed here. Everything
+            you have typed is saved on this device and nothing is at risk. Sync it from the design workshops list — then
+            you can change the details.
           </p>
           <div className="flex flex-wrap gap-2">
             <Link href="/design-workshops" className="field-button">
@@ -255,10 +254,10 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
         */
         <section className="panel grid gap-3 p-4">
           <h2 className="text-sm font-medium text-ink-900">
-            There is no design workshop at this address that this account can open
+            There is no design workshop at this address that you can open
           </h2>
           <p className="text-sm leading-6 text-ink-700">
-            Either no such workshop exists, or it belongs to another designer and has not been shared with you. If a
+            Either no such workshop exists, or it belongs to another designer and hasn&rsquo;t been shared with you. If a
             colleague sent you this link, ask them to add you as a viewer of their workshop — an administrator can also
             do it — and then open the link again.
           </p>

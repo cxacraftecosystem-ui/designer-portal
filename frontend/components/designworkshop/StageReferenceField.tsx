@@ -313,7 +313,7 @@ export function scopeNoticeLines(
   */
   if (field.refScope === "WORKSHOP" && payload.scopedToWorkshop && !payload.filtered && !payload.options.length) {
     lines.push(
-      "Nothing is documented under this design workshop’s linked workshop yet — this list is narrowed to that workshop rather than to the whole repository. Create the record here, or link the existing one to the workshop and it will appear."
+      "Nothing is documented under this design workshop’s linked workshop yet. Create the record here, or link the existing one to the workshop and it will appear."
     );
   }
   /*
@@ -355,7 +355,7 @@ export function scopeNoticeLines(
     */
     lines.push(
       showsTentative
-        ? `Only the first ${REFERENCE_PAGE} matches are listed and the cap falls on the rest first — type more of the name to narrow them.`
+        ? `Only the first ${REFERENCE_PAGE} matches are listed, tentative ones first — type more of the name to narrow them.`
         : `Only the first ${REFERENCE_PAGE} matches are listed — type more of the name to narrow them.`
     );
   }
@@ -622,9 +622,8 @@ export function inlineSeed({
  * outbox owns the entry now.
  */
 const QUEUED_OFFLINE_NOTICE =
-  "There is no connection, so this record has been saved on this device and will be sent when there is signal. " +
-  "It has no repository id yet, so nothing could be linked here — reopen this list once it has been sent and " +
-  "choose it then.";
+  "There is no connection, so this record has been saved on this device and will upload when you are back online. " +
+  "It can be linked here once it has uploaded — reopen this list then and choose it.";
 
 /**
  * The two things the craft picker can say about a craft that is not in the register, by rank.
@@ -739,7 +738,7 @@ export function scanTypeRefusal(field: DwField, ref: WorkshopCodeRef): string | 
   if (!wanted) {
     return (
       `That code names ${article(scanned)} ${scanned}. “${field.label}” holds a row recorded in this design ` +
-      `workshop, and rows of that kind carry no printed code — choose one from the list instead.`
+      `workshop, and entries of that kind carry no printed code — choose one from the list instead.`
     );
   }
   const noun = pickerNoun(field);
@@ -799,8 +798,8 @@ function outOfScopeRefusal(option: DwReferenceOption): string {
 function unresolvedRefusal(field: DwField, cascadeLabel: string): string {
   const noun = pickerNoun(field);
   const reasons = [
-    "it may not be in the repository",
-    "it may belong to work this account cannot open",
+    "it may not be in the records",
+    "it may belong to work you don't have access to",
     ...(cascadeLabel ? [`it may not belong to the ${cascadeLabel.toLowerCase()} chosen on this row`] : [])
   ];
   return (
@@ -1507,7 +1506,7 @@ export function StageReferenceSelect({
         // save", and the next move is to edit it again.
         setNotice({
           tone: "warn",
-          text: "Your changes were saved to the record, but this list cannot describe it just now, so the boxes on this row still show what it said before. Re-open the list and pick it again to refresh them."
+          text: "Your changes were saved to the record, but its details couldn't be loaded just now, so the boxes on this row still show what it said before. Re-open the list and pick it again to refresh them."
         });
         return;
       }
@@ -1603,8 +1602,8 @@ export function StageReferenceSelect({
         setNotice({
           tone: "warn",
           text: previous
-            ? "The record was saved and linked, but this list cannot describe it just now — so the boxes the previous record had filled in have been CLEARED rather than left standing under the new record's name. Fill them in by hand, or reopen the list and search for it."
-            : "The record was saved and linked, but this list cannot describe it just now, so the boxes it would have filled in are still blank. Fill them in by hand, or reopen the list and search for it — a required box left blank is refused when the stage is submitted."
+            ? "The record was saved and linked, but its details couldn't be loaded just now, so the boxes the previous record filled in have been cleared. Fill them in by hand, or reopen the list and search for it."
+            : "The record was saved and linked, but its details couldn't be loaded just now, so the boxes it would have filled in are still blank. Fill them in by hand, or reopen the list and search for it — a required box left blank will stop the stage being submitted."
         });
       }
 
@@ -2128,7 +2127,7 @@ export function StageReferenceSelect({
       */}
       {pending ? (
         <p className="text-xs leading-5 text-ink-500">
-          Filling in what the repository holds about “{pending.label || "the new record"}”…
+          Filling in the saved details of “{pending.label || "the new record"}”…
         </p>
       ) : null}
 
@@ -2417,7 +2416,7 @@ export function StageReferenceMultiPicker({
       setDescribing(null);
       if (!option) {
         setCreateProblem(
-          "The record was saved, but this list cannot describe it just now, so it has not been ticked. Search for its name above and tick it there."
+          "The record was saved, but its details couldn't be loaded just now, so it has not been ticked. Search for its name above and tick it there."
         );
         return;
       }
@@ -2587,7 +2586,7 @@ export function StageReferenceMultiPicker({
 
           {describing ? (
             <p className="border-t border-line-200 px-3 py-2 text-xs leading-5 text-ink-500">
-              Reading back what the repository holds about “{describing}”…
+              Loading the saved details of “{describing}”…
             </p>
           ) : null}
           {createProblem ? (

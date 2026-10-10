@@ -574,8 +574,8 @@ export default function SanctionOrdersPage() {
                 so is the difference between an officer who forwards it and a designer who waits for a
                 message that is never coming. */}
             <p className="text-xs leading-5 text-ink-500">
-              Nothing has been emailed — send this yourself, by whatever you already use. The link is
-              shown once, works once, and expires {formatLinkExpiry(entry.link.expiresAt)}.
+              Send this to them yourself, by email or message. The link is shown only once, works
+              once, and expires {formatLinkExpiry(entry.link.expiresAt)}.
             </p>
           </div>
         );
@@ -862,8 +862,8 @@ export default function SanctionOrdersPage() {
                      report cover is doing something legitimate; what an officer needs is to SEE
                      that the document about to be printed says something the register does not. */
                   <p className="text-xs leading-5 text-amber-800">
-                    The report cover says something different from this order. The register is this
-                    row; the cover is the designer&apos;s stage&nbsp;1.
+                    The report cover says something different from this order. The cover comes from
+                    the designer&apos;s stage&nbsp;1; this order is the register&apos;s record.
                   </p>
                 ) : null}
                 {order.notes ? <p className="text-xs leading-5 text-ink-500">{order.notes}</p> : null}

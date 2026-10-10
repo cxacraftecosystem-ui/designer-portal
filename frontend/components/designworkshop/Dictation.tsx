@@ -376,8 +376,8 @@ export function DictationButton({
           setProblem(
             detail ||
               (error instanceof Error
-                ? `The server could not transcribe that recording: ${error.message}`
-                : "The server could not transcribe that recording.")
+                ? `That recording couldn't be transcribed: ${error.message}`
+                : "That recording couldn't be transcribed. Try again.")
           );
         } finally {
           setTranscribing(false);
@@ -463,7 +463,7 @@ export function DictationButton({
           // has used dictation in Chrome will otherwise stand there waiting for words that only
           // arrive when they press Stop.
           <span className="text-xs text-ink-500">
-            This browser has no built-in dictation, so the recording is transcribed after you press Stop.
+            The recording is transcribed after you press Stop.
           </span>
         ) : null}
 
@@ -479,7 +479,7 @@ export function DictationButton({
         */}
         {mode === "server" && allowance && allowance.dictationsRemaining !== null ? (
           <span className="text-xs text-ink-500">
-            {allowance.dictationsRemaining} server dictation
+            {allowance.dictationsRemaining} dictation
             {allowance.dictationsRemaining === 1 ? "" : "s"} left today ({allowance.dictationDay}).
           </span>
         ) : null}

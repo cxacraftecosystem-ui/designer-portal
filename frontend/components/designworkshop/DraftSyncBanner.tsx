@@ -85,7 +85,7 @@ export function syncOutcome(result: {
     return {
       kind: "refused",
       tone: "error",
-      title: `${result.failed} ${result.failed === 1 ? "item was" : "items were"} refused`
+      title: `${result.failed} ${result.failed === 1 ? "item" : "items"} couldn't be saved`
     };
   }
   // The sign-in is finished: nothing more goes until somebody signs in again, and one sign-in sends
@@ -235,8 +235,8 @@ export function DesignWorkshopDraftBanner() {
             tone: outcome.tone,
             title: outcome.title,
             description: result.credentialExpired
-              ? `Your sign-in expired part way through, so the rest did not go — ${result.pending} workshop(s) still ` +
-                "waiting on this device, and nothing has been thrown away. Sign in again and they send themselves."
+              ? `Your sign-in expired before everything was sent. ${result.pending} workshop(s) still ` +
+                "waiting on this device, and nothing has been thrown away. Sign in again to send them."
               : result.pending
                 ? `${result.pending} workshop(s) still waiting.`
                 : "Everything on this device has been sent."
@@ -264,11 +264,11 @@ export function DesignWorkshopDraftBanner() {
               outcome.kind === "refused"
                 ? "Nothing has been thrown away. Each one is listed below with what it needs."
                 : outcome.kind === "offline"
-                  ? "Everything stays queued on this device. Try again once you have signal."
+                  ? "Everything is still waiting on this device. Try again once you have signal."
                   : outcome.kind === "expired"
-                    ? "Nothing has been sent and nothing has been thrown away — everything is still on this device. Sign in again and it sends itself."
+                    ? "Nothing has been sent and nothing has been thrown away — everything is still on this device. Sign in again to send it."
                     : outcome.kind === "password"
-                      ? "Nothing has been sent and nothing has been thrown away. It sends itself once your new password is set."
+                      ? "Nothing has been sent and nothing has been thrown away. It will send once you've set your new password."
                       : undefined
           });
         }
@@ -367,11 +367,11 @@ export function DesignWorkshopDraftBanner() {
       <div className="flex items-start gap-2">
         <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error-600" aria-hidden />
         <div>
-          <h2 className="font-display text-sm font-bold">This browser&rsquo;s local store is not answering</h2>
+          <h2 className="font-display text-sm font-bold">This browser&rsquo;s storage isn&rsquo;t responding</h2>
           <p className="mt-0.5 text-xs text-ink-700">
             {health.writeFailedAt
-              ? "Something could not be written to this device's storage — usually a full disk, or a private-mode window whose storage the browser will not keep. Recent edits may not have been saved here, and this panel cannot tell you what is still waiting to be sent. Free some space, then reload before typing anything else."
-              : "This device's storage could not be read, so the app cannot say what design-workshop work is still waiting here. Do NOT clear this browser's data and do not hand the laptop on: what is here may still be recoverable. Reload the page, and if this persists tell whoever runs the repository."}
+              ? "Your latest edits may not have been saved on this device, and the list of work waiting to upload may be incomplete. This usually means the disk is full or you're using a private window. Free some space, then reload the page before typing anything else."
+              : "Your design-workshop work on this device couldn't be read, so we can't show what's still waiting to upload. Don't clear this browser's data or hand the laptop on — your work may still be recoverable. Reload the page, and if this keeps happening, contact your administrator."}
           </p>
         </div>
       </div>
@@ -403,8 +403,8 @@ export function DesignWorkshopDraftBanner() {
             </h2>
             <p className="mt-0.5 text-xs text-ink-700">
               {waiting
-                ? "They were captured without a connection and have not reached the repository yet. They send themselves when the connection returns — but they live in this browser, so do not clear its data or hand the laptop on until everything here has sent."
-                : "Nothing is waiting on the network. The workshops below were refused by the server and need a decision."}
+                ? "They were saved without a connection and will upload when you're back online. Until then they're only in this browser, so don't clear its data or hand the laptop on."
+                : "Nothing is waiting for a connection. The workshops below couldn't be saved and need your attention."}
             </p>
           </div>
         </div>
@@ -433,7 +433,7 @@ export function DesignWorkshopDraftBanner() {
                 {/* Every number on screen is a real count of a real thing, and the sentence says
                     which. A bare "pending" tells a designer nothing about whether they may pack up. */}
                 {[
-                  state.neverSent ? "not yet created on the server" : null,
+                  state.neverSent ? "not uploaded yet" : null,
                   state.stages ? `${state.stages} stage(s) waiting` : null,
                   state.headerOnly && !state.neverSent ? "workshop details waiting" : null
                 ]

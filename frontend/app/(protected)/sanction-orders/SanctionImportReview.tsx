@@ -442,8 +442,8 @@ export function SanctionImportReview({
             What was assumed ({preview.problems.filter((p) => p.severity !== "error").length})
           </h3>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
-            These rows are ready. Each line says what the read had to assume, so you can check it
-            against the paper rather than being asked about it.
+            These rows are ready. Each line says what the import had to assume, so you can check it
+            against the paper.
           </p>
           <ul className="mt-2 rounded-md border border-line-200 bg-surface-50">
             {preview.problems

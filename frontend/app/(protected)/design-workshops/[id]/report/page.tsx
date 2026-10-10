@@ -499,9 +499,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           // while the real fault sits in a response nobody sees. The download handler below already
           // made this split by hand — see its note — and this is the same rule.
           isUnreachable(err)
-            ? "The preview is built by the server, so it cannot be refreshed without a connection. Everything you have captured is " +
-                "safe on this device; the report can be generated as soon as there is signal, or on the Android app, which " +
-                "generates it on the handset."
+            ? "Connect to the internet to refresh the preview. Everything you have captured is safe on this device."
             : err instanceof Error
               ? err.message
               : "Unable to build the report preview"
@@ -749,11 +747,9 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
       const serverAnswered = err instanceof ApiError;
       setError(
         serverAnswered
-          ? `The server could not generate the ${format}: ${(err as ApiError).message} ` +
+          ? `The ${format} couldn't be generated: ${(err as ApiError).message} ` +
               "The workshop itself is safe — nothing you have entered was affected."
-          : `The ${format} is written by the server, so it cannot be generated without a connection. Nothing has been lost — ` +
-              "the workshop is on this device and the file can be generated the moment there is signal. The Android app " +
-              "generates the same document on the handset if you need it before then."
+          : `Connect to the internet to generate the ${format}. Nothing has been lost — the workshop is saved on this device.`
       );
     } finally {
       setDownloading(null);
@@ -791,9 +787,9 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           detail
             ? `Generated from “${detail.title}” — the same document the .docx and .pdf are written from.`
             : localOnly
-              ? "This workshop has not reached the repository yet, and the report is written by the server from the copy it holds."
+              ? "This workshop hasn't been uploaded yet. The report can be generated once it has."
               : previewFailed
-                ? "This workshop could not be loaded. The panel at the foot of the page offers a retry."
+                ? "This workshop couldn't be loaded. Use Try again at the foot of the page."
                 : "Loading…"
         }
         icon={<FileText className="h-5 w-5" aria-hidden />}
@@ -907,8 +903,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               <p aria-live="polite" className="font-medium text-ink-700">
                 {acceptedLayersUnknown ? (
                   <>
-                    This page could not read the workshop&rsquo;s layers just now, so it cannot say how many would be
-                    printed. The report will still carry whatever is accepted — open{" "}
+                    The number of accepted items couldn&rsquo;t be loaded just now. The report will still carry whatever is accepted — open{" "}
                     <Link href={`/design-workshops/${id}/ai-layers`} className="underline">
                       AI layers
                     </Link>{" "}
@@ -1007,16 +1002,15 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               }
               if (!online) {
                 setError(
-                  "There is no connection, so this colour cannot be saved to the workshop yet. It is still applied to any " +
+                  "You're offline, so this colour can't be saved to the workshop. It is still applied to any " +
                     "file you download from this page right now."
                 );
                 return;
               }
               if (stage20Pending) {
                 setError(
-                  "Stage 20 has changes on this device that have not reached the repository. Saving the colour from here " +
-                    "would be undone the moment those changes sync, so it has not been saved — send them first, from the " +
-                    "stage itself, and then set the colour."
+                  "Stage 20 has changes on this device that haven't been uploaded, and they would replace a colour saved " +
+                    "here, so it hasn't been saved. Upload those changes from the stage first, then set the colour."
                 );
                 return;
               }
@@ -1081,13 +1075,11 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
             <p className="flex items-start gap-1.5 font-semibold">
               <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-              This workshop has not reached the repository yet
+              This workshop hasn&rsquo;t been uploaded yet
             </p>
             <p className="mt-1 leading-6">
-              It was created on this device without a connection and everything in it is saved here — nothing is lost. The
-              preview, the .docx and the .pdf are all written by the server from the copy it holds, and it has no copy yet.
-              It is created automatically on the next connection; open this page again then and it works. The Android app
-              generates the same document on the handset in the meantime.
+              It was created on this device without a connection, and everything in it is saved here. It will upload
+              automatically when you&rsquo;re back online — open this page again then to generate the report.
             </p>
           </div>
         ) : null}
@@ -1102,11 +1094,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               The report needs a connection
             </p>
             <p className="mt-1 leading-6">
-              The preview, the .docx and the .pdf are all produced by the server from the record it holds, and this browser
-              deliberately has no renderer of its own — a fifth one would eventually disagree with the four that write the file a
-              ministry receives. Everything you have captured is safe on this device and nothing is waiting on you. Generate the
-              report once there is signal, or use the Android app, which writes the same .docx and .pdf on the handset. The
-              pages below can still be printed from this browser with Ctrl+P.
+              Connect to the internet to generate the report. Everything you have captured is safe on this device. The pages
+              below can still be printed from this browser with Ctrl+P.
             </p>
           </div>
         ) : null}
@@ -1114,9 +1103,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         {unsentStages ? (
           <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
             {unsentStages} stage{unsentStages === 1 ? " is" : "s are"} saved on this device only and{" "}
-            {unsentStages === 1 ? "has" : "have"} not reached the repository yet. The report is generated from the server&apos;s
-            copy, so anything in {unsentStages === 1 ? "that stage" : "those stages"} will be missing from the file until it
-            syncs — and the file itself will not say so.
+            {unsentStages === 1 ? "hasn't" : "haven't"} been uploaded yet. Anything in{" "}
+            {unsentStages === 1 ? "that stage" : "those stages"} won&rsquo;t appear in the report until it uploads.
           </div>
         ) : null}
 
@@ -1166,7 +1154,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               {/* Stated because the header is capped at 900 characters server-side, and a list that
                   quietly stops is indistinguishable from a list that ended. */}
               <p className="mt-1 text-xs">
-                Long warning lists are truncated in transit — the preview warnings below are the complete set.
+                A long list of warnings may be shortened here — the full list is with the preview below.
               </p>
             </div>
           ) : (
@@ -1275,7 +1263,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             Open a stage to correct something the preview shows
           </summary>
           <p className="mt-2 text-xs leading-5 text-ink-500">
-            The pages below print each stage&rsquo;s own saved answers, not the repository records they were
+            The pages below print each stage&rsquo;s own saved answers, not the artisan or product records they were
             copied from — so a value that is filled in but wrong is corrected on its stage, and a report already
             handed over is never changed by editing an artisan or a product afterwards.
           </p>
@@ -1312,8 +1300,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         // so `_runs_for` cannot carry CODE into the .docx or the .pdf — the words survive, the face
         // does not. Drawing it without saying so would be the preview lying about the file.
         <section className="mb-5 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-          {codeSpans} run{codeSpans === 1 ? " is" : "s are"} marked as code below. That mark is shown here and is NOT carried
-          into the .docx or the .pdf — the words appear in the file as ordinary text.
+          {codeSpans} passage{codeSpans === 1 ? " is" : "s are"} marked as code below. In the .docx and the .pdf the words
+          appear as ordinary text.
         </section>
       ) : null}
 
@@ -1340,8 +1328,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           ) : previewFailed ? (
             <div className="grid justify-items-start gap-2">
               <p className="text-sm text-ink-700">
-                The preview could not be built. The banner at the top of this page says what the server or the connection
-                answered; nothing you have captured is affected.
+                The preview couldn&rsquo;t be built. The message at the top of this page says why; nothing you have
+                captured is affected.
               </p>
               <button type="button" className="field-button-secondary" onClick={retryPreview}>
                 Try again

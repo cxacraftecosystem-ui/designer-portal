@@ -235,7 +235,7 @@ export function eligibleViewerNotice({
   searched: boolean;
 }): string {
   if (truncated && offered === 0) {
-    return "Some eligible accounts could not be listed, and no search can reach them — the server log says why.";
+    return "Some eligible accounts couldn't be listed right now. Please try again later.";
   }
   if (truncated && !searched) {
     return "Too many accounts to show them all — search a name or email to reach the rest.";
@@ -312,15 +312,15 @@ export function viewerAdministrationFailure(
   readerIsAdmin: boolean
 ): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so nothing was sent and nothing has changed. Check the connection and try again.";
+    return "Couldn't connect, so nothing was saved and nothing has changed. Check your connection and try again.";
   }
   if (error.status === 403) {
     return readerIsAdmin
-      ? `The repository refused this. ${error.message}`
-      : `The repository refused this. ${error.message} Deciding who may see a design workshop is administration, so it is open to admins and the master admin only.`;
+      ? `This couldn't be saved. ${error.message}`
+      : `This couldn't be saved. ${error.message} Only admins and the master admin can decide who may see a design workshop.`;
   }
   if (error.status === 409 || error.status === 422) {
-    return `The repository would not accept this. ${error.message}`;
+    return `This couldn't be saved. ${error.message}`;
   }
   if (error.status === 404) {
     return `${error.message} This workshop may have been deleted since the list was loaded — reload the page to see the current list.`;

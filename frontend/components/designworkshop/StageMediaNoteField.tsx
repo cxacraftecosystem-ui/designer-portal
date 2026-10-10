@@ -481,7 +481,7 @@ export function StageMediaNoteField({
   const disagrees = Boolean(recordCount && claim && claim !== recordCount);
   const gridSentence =
     gridFrames > 0
-      ? `${gridFrames} measurement-grid frame${gridFrames === 1 ? " is" : "s are"} attached and deliberately not counted — a photograph of ruled paper is not footage of the subject.`
+      ? `${gridFrames} measurement-grid frame${gridFrames === 1 ? " is" : "s are"} attached and not counted — a photograph of ruled paper is not footage of the subject.`
       : "";
 
   return (
@@ -543,10 +543,9 @@ export function StageMediaNoteField({
                 record" used to be. It is the right behaviour and it is invisible until it happens.
               */}
               <p className="text-xs text-ink-500">
-                This is your answer now rather than the record&apos;s: the provenance line under this box will name you
-                instead of the {role.subject} record, and an admin&apos;s divergence audit stops comparing this box
-                against the record at all. Clearing the box entirely puts it back — hydration refills a blank on the
-                next save.
+                This is your own answer now rather than the record&apos;s: the line under this box will name you
+                instead of the {role.subject} record. Clear the box entirely to go back — it is filled in from the
+                record again on the next save.
               </p>
             </>
           ) : (
@@ -579,7 +578,7 @@ export function StageMediaNoteField({
             */
             <p className="text-xs font-medium leading-5 text-error-600">
               Naming those {picked.length} files would make the sentence {refusedOverrun} character
-              {refusedOverrun === 1 ? "" : "s"} longer than the {field.maxLength} this field stores, so nothing was
+              {refusedOverrun === 1 ? "" : "s"} longer than the {field.maxLength} characters this field allows, so nothing was
               written and the box is unchanged. Name fewer files, or shorten the sentence in the box by hand first.
             </p>
           ) : null}
@@ -602,7 +601,7 @@ export function StageMediaNoteField({
           No files are listed against the {role.subject} record{gridFrames > 0 ? ", other than grid frames" : ""}, so
           there is nothing to point at. {gridSentence}
           {claim
-            ? " The sentence in the box was written when this stage was last saved — either the record has lost files since, or the ones it counted are linked in a way this listing does not follow. It is left exactly as it is."
+            ? " The sentence in the box was written when this stage was last saved — either the record has lost files since, or some of the ones it counted are not shown in this list. It is left exactly as it is."
             : ""}
         </p>
       )}
@@ -616,8 +615,8 @@ export function StageMediaNoteField({
           the SERVER's, taken over every row, and is the one number here that is complete.
         */
         <p className="text-xs text-ink-500">
-          Only the {rows.length} most recent of {total} attached files are listed here, so nothing on this screen can
-          state the record&apos;s own total. The count already in the box was taken over all {total} by the server.
+          Only the {rows.length} most recent of {total} attached files are listed here. The count already in the box
+          covers all {total}.
         </p>
       ) : null}
 
@@ -632,7 +631,7 @@ export function StageMediaNoteField({
         <p className="text-xs text-ink-500">
           The count in the box and the files listed here do not agree. The box says
           {" "}
-          <span className="font-medium">{claim}</span> — written by the server when this stage was last saved — and the{" "}
+          <span className="font-medium">{claim}</span> — written when this stage was last saved — and the{" "}
           {countable.length} file{countable.length === 1 ? "" : "s"} listed now add up to{" "}
           <span className="font-medium">{recordCount}</span>{" "}
           <button
@@ -660,8 +659,8 @@ export function StageMediaNoteField({
           sentence would do.
         */
         <p className="text-xs text-ink-500">
-          The sentence in the box already names particular files. Which files those were is recorded nowhere — only how
-          many of each kind — so ticking here replaces that clause rather than adding to it.
+          The sentence in the box already names particular files, so ticking here replaces that part of it rather than
+          adding to it.
         </p>
       ) : null}
     </div>

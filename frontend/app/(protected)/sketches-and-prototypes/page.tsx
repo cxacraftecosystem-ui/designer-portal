@@ -520,7 +520,7 @@ function ChooseWorkshopThenSketches() {
           note:
             error instanceof Error && error.message
               ? error.message
-              : "The repository could not say whether that workshop can be opened."
+              : "Something went wrong."
         });
       }
     })();
@@ -622,9 +622,9 @@ function ChooseWorkshopThenSketches() {
               heading list with no top level. Not copied for the sake of symmetry. */}
           <h2 className="font-display text-xl font-bold tracking-tight text-ink-900">Designer access required</h2>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Sketches and prototypes are a named designer&apos;s work in progress, uploaded to a workshop and then
-            ranked against other designers&apos; pieces under the name of whoever ranked them. So this page belongs to
-            designers, admins and the master admin.
+            Sketches and prototypes are a designer&apos;s work in progress, added to a workshop and ranked by other
+            designers. This page is open to designers, Assistant Directors, Regional Directors, Ministry Admins, admins
+            and the master admin.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>. An admin can
@@ -841,13 +841,12 @@ function ChooseWorkshopThenSketches() {
           <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-field-200 text-field-600">
             <CloudOff className="h-5 w-5" aria-hidden />
           </div>
-          <h2 className="text-base font-medium text-ink">That workshop could not be checked</h2>
+          <h2 className="text-base font-medium text-ink">That workshop couldn&apos;t be checked</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
             {uncheckableNote
-              ? `It is not one of the workshops in the chooser above, so the repository was asked about it directly and answered with an error: ${uncheckableNote}`
-              : "It is not one of the workshops in the chooser above, so the repository had to be asked about it directly and could not be reached."}{" "}
-            This says nothing about whether the workshop is yours — nothing has refused it. Try again, or choose one of
-            the workshops above in the meantime.
+              ? `It isn't in the chooser above, and checking it didn't work: ${uncheckableNote}`
+              : "It isn't in the chooser above, and checking it needs a connection."}{" "}
+            This doesn&apos;t mean you can&apos;t open it. Try again, or choose one of the workshops above.
           </p>
           <button type="button" className="field-button-secondary mt-4" onClick={retry}>
             Try again
@@ -869,11 +868,10 @@ function ChooseWorkshopThenSketches() {
           gone with the cached list.
         */
         <section className="panel px-4 py-6" aria-live="polite">
-          <h2 className="text-base font-medium text-ink">That workshop is not one this account can open</h2>
+          <h2 className="text-base font-medium text-ink">You can&apos;t open that workshop</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
-            The link may be old, the id may be mistyped, the workshop may have been deleted, or it may belong to
-            designers who have not given this account access — the repository answers all four the same way and so does
-            this page. Choose one of your own workshops above.
+            The link may be old, the id may be mistyped, the workshop may have been deleted, or you may not have been
+            given access to it. Choose one of your own workshops above.
           </p>
           <Link href="/design-workshops" className="field-button-secondary mt-4 inline-flex">
             Open the workshops list

@@ -453,18 +453,18 @@ export function inspectorAdministrationFailure(
   readerMayAssign: boolean
 ): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so nothing was sent and nothing has changed. Check the connection and try again.";
+    return "Couldn't connect, so nothing was changed. Check your connection and try again.";
   }
   if (error.status === 403) {
     return readerMayAssign
-      ? `The repository refused this. ${error.message}`
-      : `The repository refused this. ${error.message} Choosing who inspects a workshop is administration, so it is open to a Ministry Admin, an admin and the master admin.`;
+      ? `This couldn't be saved. ${error.message}`
+      : `This couldn't be saved. ${error.message} Only a Ministry Admin, an Admin or the Master Admin can choose who inspects a workshop.`;
   }
   if (error.status === 409 || error.status === 422) {
-    return `The repository would not accept this. ${error.message}`;
+    return `This couldn't be saved. ${error.message}`;
   }
   if (error.status === 404) {
-    return `${error.message} This workshop may have been deleted since the list was loaded — reload the page to see the current list.`;
+    return `${error.message} This workshop may have been deleted. Reload the page to see the current list.`;
   }
   return error.message || fallback;
 }
@@ -505,11 +505,11 @@ export function inspectionEmptyState(searched: boolean): { title: string; body: 
   return searched
     ? {
         title: "No workshop you inspect matches that search",
-        body: "This searches only the workshops you have been appointed to inspect, which is the whole of what you can read here. Clear the search to see them all."
+        body: "Only the workshops you have been appointed to inspect are searched. Clear the search to see them all."
       }
     : {
         title: "You do not hold any inspection posts",
-        body: "A Ministry Admin, an admin or the master admin appoints a workshop's inspectors one workshop at a time, on Workshop oversight. Until somebody appoints you there is nothing here to read — this page is not hiding anything from you, and nothing failed to load."
+        body: "A Ministry Admin, an Admin or the Master Admin appoints each workshop's inspectors on Workshop oversight. The workshops you are appointed to will appear here."
       };
 }
 
@@ -675,7 +675,7 @@ export function inspectionFieldReading(
       const named = referenceDisplayHint(entity, field, row).trim();
       // NEVER the raw id as a fallback. A cuid asks an inspector to recognise a record they cannot
       // possibly recognise, and on this surface there is no picker to open and check it against.
-      return named ? { kind: "text", text: named } : { kind: "text", text: "A linked record this read cannot name" };
+      return named ? { kind: "text", text: named } : { kind: "text", text: "A linked record" };
     }
     default: {
       const text = inputValue(value).trim();

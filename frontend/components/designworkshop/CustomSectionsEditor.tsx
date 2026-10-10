@@ -593,9 +593,7 @@ export function CustomSectionsEditor({
         // See the block comment above: a question does not move between sections by gesture.
         if (fromSection !== toSection) {
           setCrossSectionRefusal(
-            "A question can only be reordered inside its own section. Moving one to another section " +
-              "would change the stage it is asked at and re-file the answers already recorded under " +
-              "it, so it is not something a drag can do."
+            "A question can only be moved within its own section."
           );
           // REFUSED, AND THE HOOK IS TOLD SO. Without this the polite live region announced the move
           // as done — with a position from the target section and a total from the source one, so
@@ -686,7 +684,7 @@ export function CustomSectionsEditor({
             // this browser's unsent ones — and a handset with a stage still in its own outbox is
             // outside both. It now says what was actually checked, which is a smaller claim and a true
             // one; the designer knows what else is out there and this screen does not.
-            "No answer to it has reached the server, and none is waiting to be sent from this browser."
+            "Nobody has answered it, online or on this device."
           )
     );
     if (!ok) return;
@@ -714,7 +712,7 @@ export function CustomSectionsEditor({
             "Delete this section?",
             `"${section.title || section.key}" and its ${liveFields(section).length} question(s) are removed.`,
             // The same correction as the per-question dialog above, for the same reason.
-            "No answers to them have reached the server, and none are waiting to be sent from this browser."
+            "Nobody has answered them, online or on this device."
           )
     );
     if (!ok) return;
@@ -789,10 +787,8 @@ export function CustomSectionsEditor({
         <div className="flex items-start gap-2 rounded-md bg-amber-100 p-3 text-amber-800">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <p className="text-xs leading-5">
-            This workshop exists only on this device — it has not been created on the repository yet, and a
-            workshop&apos;s own questions are held there. Everything captured here is safe and nothing is waiting on
-            this screen: the workshop is created, with all of it, the moment there is a connection. Come back then
-            and the questions can be added, and every answer already recorded stays exactly as it is.
+            This workshop is only on this device so far. Its own questions can be added once it has uploaded, which
+            happens automatically when you are online. Everything captured here is safe.
           </p>
         </div>
       </section>
@@ -807,7 +803,7 @@ export function CustomSectionsEditor({
             <p>{refusals[0]}</p>
           ) : (
             <>
-              <p className="font-medium">The server refused this definition for {refusals.length} reasons:</p>
+              <p className="font-medium">These questions couldn&apos;t be saved, for {refusals.length} reasons:</p>
               <ul className="mt-1 grid gap-1 text-xs leading-5">
                 {refusals.map((problem) => (
                   <li key={problem}>{problem}</li>
@@ -1059,8 +1055,8 @@ export function CustomSectionsEditor({
                 />
                 <p className="text-xs leading-5 text-ink-500">
                   {sectionHolds
-                    ? "Fixed: answers have been recorded here, and they are stored with the stage they were asked at. To ask these questions somewhere else, retire this section and add a new one on the other stage — everything already recorded stays readable."
-                    : "Where the answers are stored and where they count towards that stage's completeness. If the section should print at the back of the report, it still belongs to the stage it is asked at."}
+                    ? "Fixed: answers have been recorded here. To ask these questions at another stage, retire this section and add a new one there — everything already recorded stays readable."
+                    : "The stage where these questions are asked and count towards completeness, even if the section prints at the back of the report."}
                 </p>
               </div>
               <label className="grid min-w-0 gap-1 md:col-span-2">
@@ -1100,7 +1096,7 @@ export function CustomSectionsEditor({
                       // amber-100 / amber-800 are the palette's tinted-card pair; amber-50 and amber-200
                       // are stock Tailwind and do not pair with them.
                       <p className="mb-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-                        This question already has answers, and you have changed its wording. Saving will KEEP
+                        This question already has answers, and you have changed its wording. Saving will keep
                         the original question and its answers as they are — under “{cost.was}” — and add your
                         new wording as a separate question with no answers yet. Nothing is overwritten, and
                         both print in the report. Everything else about it (help text, unit, whether it is
@@ -1140,7 +1136,7 @@ export function CustomSectionsEditor({
                         />
                         <span className="text-xs leading-5 text-ink-500">
                           {locked
-                            ? "Fixed once saved. This is what every answer is filed under, so renaming it would orphan them."
+                            ? "Fixed once saved, because every answer is filed under it."
                             : "Lower-case letter first, then letters and digits. It is never shown to anybody, and it cannot be changed after the first save."}
                         </span>
                       </label>
@@ -1253,10 +1249,8 @@ export function CustomSectionsEditor({
                             }
                           />
                           <span className="text-xs leading-5 text-ink-500">
-                            One option per line. Write <code>COTTON | Cotton (unbleached)</code> to store one
-                            token and print another; a line with no printed form prints the token itself,
-                            which is the honest behaviour — inventing “Cotton” from <code>COTTON</code> would
-                            be guessing at a word that goes into a ministry document.
+                            One option per line. Write <code>COTTON | Cotton (unbleached)</code> to save one
+                            code and print another; a line without a printed form prints the code itself.
                           </span>
                         </label>
                       ) : null}
@@ -1630,11 +1624,9 @@ export function CustomSectionsEditor({
                   true is narrower and worse: the refusal comes back on EVERY save, naming a value they did
                   not type on that visit, and the stage cannot be submitted until it is retyped. */}
               <p className="mt-1">
-                The server accepts this and changes nothing about the answers already recorded, so they stay
-                in the record exactly as they were given — but they were written in the old form. Every later
-                save of that stage goes through, and comes back refusing that one answer by name and leaving
-                the value already stored exactly where it is; the stage cannot be submitted until somebody
-                retypes it into the new form. If the answers already given are still right as they stand,
+                The answers already recorded stay exactly as they were given, in the old form. Every later save
+                of that stage will flag each such answer by name, and the stage can&apos;t be submitted until
+                somebody retypes it in the new form. If the answers already given are still right as they stand,
                 leave the kind of answer alone; if the question really has changed, reword it as well, and it
                 becomes a new question with the old one kept beside it.
               </p>
@@ -1649,8 +1641,7 @@ export function CustomSectionsEditor({
           <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
             {diff.movedSections.map((title) => `“${title}”`).join(", ")} cannot be moved to another stage,
             because answers have already been recorded against{" "}
-            {diff.movedSections.length === 1 ? "it" : "them"} and they are stored with the stage they were
-            asked at. Put the stage back, or retire the section here and add a new one on the other stage —
+            {diff.movedSections.length === 1 ? "it" : "them"}. Put the stage back, or retire the section here and add a new one on the other stage —
             the answers already given stay readable either way.
           </p>
         ) : null}

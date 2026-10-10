@@ -148,7 +148,7 @@ export const EXPORT_FORMATS = [
     attachable: true,
     /** The words on this format’s take-away button. Pinned by `e2e/sketch-trace-panel.spec.ts`. */
     download: "Download the trace (SVG)",
-    hint: "The traced paths themselves. Scales to any size without ever going blocky, opens in Illustrator, Inkscape and CorelDRAW, and is what the “Line art” field is declared for."
+    hint: "The traced paths themselves. Scales to any size without ever going blocky, opens in Illustrator, Inkscape and CorelDRAW, and is what the “Line art” field takes."
   },
   {
     id: "png",
@@ -354,8 +354,8 @@ export function exportSvgFile(
  * does not depend on the connection coming back.
  */
 const WRITER_UNAVAILABLE =
-  "That format’s writer could not be loaded — check your connection and reload the page. The SVG " +
-  "download needs nothing extra and works either way.";
+  "That format couldn't be prepared — check your connection and reload the page. The SVG " +
+  "download works either way.";
 
 /**
  * Write the traced geometry as a PDF, an EPS or a DXF.

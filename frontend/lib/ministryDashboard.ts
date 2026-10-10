@@ -443,9 +443,9 @@ export function personProgressSentence(person: RegisterPerson): string {
     case "noWorkshops":
       return "No workshops in this scope";
     case "capped":
-      return "Not scored — this page is longer than the scoring ceiling";
+      return "Not scored — too many workshops on this page to score at once";
     case "unreadable":
-      return "Not scored — the stage rows could not be read";
+      return "Not scored — progress couldn't be loaded";
     default:
       return "Not scored";
   }
@@ -515,12 +515,12 @@ export function downloadBeneficiaries() {
  * that was not done has to be visible as not done, and so does work nobody could look at.
  */
 export function progressSentence(progress: RegisterProgress | null | undefined): string {
-  if (!progress) return "Progress was not read for this workshop.";
+  if (!progress) return "Progress isn't available for this workshop.";
   if (progress.unscoredReason === "capped") {
-    return "Not scored on this page — there are more workshops here than one read scores. Narrow the list or turn the page to score this one.";
+    return "Not scored on this page — there are too many workshops here to score at once. Narrow the list or go to another page to score this one.";
   }
   if (progress.percent === null || progress.stagesComplete === null) {
-    return "Progress could not be read for this workshop. This is not zero progress — nothing was scored.";
+    return "Progress couldn't be loaded for this workshop, so it hasn't been scored.";
   }
   const outstanding = (progress.requiredTotal ?? 0) - (progress.requiredFilled ?? 0);
   const stages = `${progress.stagesComplete} of ${progress.stagesTotal} stages complete`;
@@ -586,6 +586,6 @@ function humaniseStanding(status: string): string {
 export function unclassifiedSentence(count: number): string | null {
   if (count <= 0) return null;
   return count === 1
-    ? "1 workshop is in a standing this page does not recognise, so it is in the total and in none of the groups. It is still listed under “Everything”."
-    : `${count} workshops are in a standing this page does not recognise, so they are in the total and in none of the groups. They are still listed under “Everything”.`;
+    ? "1 workshop has a status that isn't in any group, so it counts only in the total. It is still listed under “Everything”."
+    : `${count} workshops have a status that isn't in any group, so they count only in the total. They are still listed under “Everything”.`;
 }

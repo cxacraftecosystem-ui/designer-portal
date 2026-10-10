@@ -452,7 +452,7 @@ export function layerKindLabel(kind: string | null | undefined): string {
   // A kind this build has never heard of degrades to an honest note carrying the server's own word,
   // never to a blank. The row still shows its tier, its model and its acceptance — all of which are
   // readable without knowing what the kind means.
-  return kind ? `A layer kind this screen does not know (${kind})` : "A layer with no kind recorded";
+  return kind ? `An unfamiliar kind of layer (${kind})` : "A layer with no kind recorded";
 }
 
 /**
@@ -475,9 +475,9 @@ export function layerKindNoun(kind: string | null | undefined): string {
 const KIND_NOTES: Record<DwAiLayerKind, string> = {
   RAW_TRANSCRIPT: "The words a transcription model produced from the recording, as it produced them.",
   CLEANED_TRANSCRIPT:
-    "Something rewrote the transcript into a readable dialogue. On a default deployment that rewrite " +
-    "also translates it into English, so this may not be the language the artisan spoke — and the row " +
-    "records no author, because a transcript a person corrected by hand arrives in exactly this shape.",
+    "The transcript rewritten as a readable dialogue. The rewrite is usually translated into English " +
+    "too, so this may not be the language the artisan spoke. Who made the rewrite is not recorded — it " +
+    "may include a person's own corrections.",
   SUMMARY: "Prose a model wrote about the transcript. It is the model's words, not the artisan's.",
   OCR_TEXT: "The text a model read off the photograph.",
   STRUCTURED_TEXT: "Named fields a model picked out of the text read off the photograph.",
@@ -486,27 +486,24 @@ const KIND_NOTES: Record<DwAiLayerKind, string> = {
   /* Each of the five names what the machine WAS and WAS NOT allowed to change, because that is the
      question somebody about to quote the passage actually has. */
   PROOFREAD:
-    "Spelling, grammar and punctuation only. The model was refused permission to translate, to " +
-    "restructure or to shorten, and it was given the craft vocabulary as a do-not-touch list so " +
-    "that “dabu” is not “corrected” to “double”. The original is untouched and stays beside this.",
+    "Spelling, grammar and punctuation only. The model was not allowed to translate, restructure or " +
+    "shorten, and it was given the craft vocabulary to leave alone, so that “dabu” is not “corrected” " +
+    "to “double”. The original is unchanged and stays beside this.",
   EXPANDED:
     "A machine wrote these sentences from a short note the designer made. It is the only kind here " +
-    "that INVENTS: anything in it that is not in the note — a detail, a reason, a connection " +
+    "that invents: anything in it that is not in the note — a detail, a reason, a connection " +
     "between two things — was supplied by the model and was not recorded in the field. Treat the " +
     "note as the record and this as a reading of it, and check any specific claim against the " +
-    "workshop's own material before quoting it. Nothing may be derived from an expansion.",
+    "workshop's own material before quoting it. Nothing can be made from an expansion.",
   TRANSLATION:
-    "A translation that stands BESIDE the original rather than replacing it, so a reader who wants " +
-    "the artisan's own words can still have them. The row records which language it came from as " +
-    "well as which it went into, because a translated passage nobody can trace back is a passage " +
-    "nobody can check.",
+    "A translation added beside the original, never replacing it, so the artisan's own words are " +
+    "kept. It records the language it came from and the language it went into, so it can be checked.",
   CAPTION:
     "One sentence a model wrote about the photograph or video — for the media annexure, and for a " +
     "screen reader. Check it against the picture, which is the evidence it stands on.",
   SUBTITLES:
-    "Timed captions: a cue list with a start and an end for every line. The timings are the whole " +
-    "verb — a subtitle without them is a transcript. Any speaker labels are the engine's own guess " +
-    "about how many people were in the room, which nobody told it."
+    "Timed captions, with a start and an end for every line. Any speaker labels are the AI's own " +
+    "guess at who was speaking."
 };
 
 /** The sentence under a kind's heading, or null for a kind this build does not know. */
@@ -550,8 +547,7 @@ export function tierSentence(tier: string | null | undefined): string {
   const known = TIER_SENTENCES[(tier ?? "") as DwAiTier];
   if (known) return known;
   return (
-    "This server recorded a tier this screen does not know, so where the model ran cannot be stated " +
-    "in words here. The stored value is shown as it was sent."
+    "Where this model ran can't be described here. Reload the page to update the app."
   );
 }
 
@@ -931,7 +927,7 @@ export function readAiPayload(payload: unknown): DwAiPayloadView {
   } catch {
     // A payload with a cycle in it cannot come off the wire, but it can be handed here by a caller
     // holding something else. A crash in a renderer is worse than a coarse description.
-    return { shape: "JSON", json: "This payload could not be shown as text.", truncated: false };
+    return { shape: "JSON", json: "This content couldn't be shown.", truncated: false };
   }
   if (json.length <= AI_PAYLOAD_JSON_CHARS) return { shape: "JSON", json, truncated: false };
   return { shape: "JSON", json: json.slice(0, AI_PAYLOAD_JSON_CHARS), truncated: true };
@@ -952,10 +948,9 @@ export function readAiPayload(payload: unknown): DwAiPayloadView {
  * that did not happen. So the sentence says what did NOT happen, and then what to do about it.
  */
 const NO_CONNECTION =
-  "These layers are held on the server, so they cannot be read or changed without a connection. " +
-  "Nothing has been queued for later — an acceptance is a signature and this app deliberately does " +
-  "not bank one offline — so reconnect and press Reload to try again. The workshop's own stages are " +
-  "on this device and are untouched.";
+  "AI layers can't be read or changed without a connection. Nothing was saved and nothing will be " +
+  "sent later, so reconnect and press Reload to try again. The workshop's own stages are safe on " +
+  "this device.";
 
 /**
  * Did the SERVER put a sentence in this response, or is `ApiError.message` `apiFetch`'s last resort?
@@ -1011,9 +1006,8 @@ export function aiLayerProblem(error: unknown, fallback: string): string {
     // status the server put no words behind falls through to a sentence written on this side.
     if (isUnreachable(error)) return NO_CONNECTION;
     return (
-      "The server answered this request without saying why it refused, so there is nothing to pass " +
-      "on here. Press Reload to see where these layers actually stand before trying again — this " +
-      "screen cannot tell whether the change was recorded."
+      "Something went wrong, and it isn't clear whether your change was saved. Press Reload to check " +
+      "before trying again."
     );
   }
   if (isUnreachable(error)) return NO_CONNECTION;

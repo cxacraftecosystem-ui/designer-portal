@@ -401,7 +401,7 @@ function readSegments(bytes: Uint8Array, version: number): SegmentOutcome {
     return {
       ok: false,
       reason: "UNSUPPORTED_VERSION",
-      message: "This code is larger than any code this app can read. Type the code printed under the QR instead."
+      message: "This code is too large to read. Type the code printed under the QR instead."
     };
   }
 
@@ -448,7 +448,7 @@ function readSegments(bytes: Uint8Array, version: number): SegmentOutcome {
         ok: false,
         reason: "UNSUPPORTED_CONTENT",
         message:
-          "This is one part of a code that was split across several symbols. This app does not print those, so it is not one of ours — type the code printed under the QR instead."
+          "This is one part of a code split across several QR symbols, so it isn't a workshop code. Type the code printed under the QR instead."
       };
     }
 
@@ -456,7 +456,7 @@ function readSegments(bytes: Uint8Array, version: number): SegmentOutcome {
       return {
         ok: false,
         reason: "UNSUPPORTED_CONTENT",
-        message: "This code carries Japanese text rather than a record reference, so it is not one this app printed."
+        message: "This code holds Japanese text, not a record reference, so it isn't a workshop code."
       };
     }
 
@@ -650,7 +650,7 @@ export function decodeQrMatrix(matrix: boolean[][]): QrDecodeResult {
       ok: false,
       reason: "UNSUPPORTED_VERSION",
       message:
-        "This is a QR code, but it is bigger than any card or tag this app prints — so it is not one of ours. A shop barcode, a payment code or a shipping label will not open a record here."
+        "This QR code is bigger than any workshop card or tag, so it isn't a workshop code. A shop barcode, a payment code or a shipping label won't open a record here."
     };
   }
 
@@ -1598,7 +1598,7 @@ export function decodeQrFromGrey(plane: GreyPlane): QrDecodeResult {
       ok: false,
       reason: "UNSUPPORTED_VERSION",
       message:
-        "This is a QR code, but it is bigger than any card or tag this app prints — so it is not one of ours. A shop barcode, a payment code or a shipping label will not open a record here.",
+        "This QR code is bigger than any workshop card or tag, so it isn't a workshop code. A shop barcode, a payment code or a shipping label won't open a record here.",
       region
     };
   }

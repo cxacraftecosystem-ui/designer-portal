@@ -134,7 +134,7 @@ export const ALL: readonly StylePreset[] = [
     'tattoo-outline',
     'Tattoo outline',
     GROUP_DRAWING,
-    'Bold closed outlines with heavy simplification. Small detail is dropped deliberately.',
+    'Bold closed outlines with heavy simplification. Small detail is dropped.',
     {
       edge: { engine: EdgeEngine.XDOG, dogSigma: 1.4, xdogPhi: 40 },
       cleanup: { skeletonize: false, closeRadius: 2, minBlobArea: 120, fillHolesUpTo: 64 },
@@ -209,7 +209,7 @@ export const ALL: readonly StylePreset[] = [
     'continuous-line',
     'Continuous line',
     GROUP_LINE_ART,
-    'One long path where possible: maximum endpoint bridging and the largest component only.',
+    'One long path where possible: stroke ends joined as far as they will go, and the largest shape only.',
     {
       edge: { engine: EdgeEngine.FDOG, flow: { sigmaM: 6 } },
       cleanup: {

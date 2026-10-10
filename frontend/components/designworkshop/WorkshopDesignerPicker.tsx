@@ -474,7 +474,7 @@ export function WorkshopDesignerPicker({
   const notice = offline
     ? "There is no connection, so the list of designers cannot be read. Start the workshop now and name its designers once this device is back online — nothing is lost by leaving it."
     : featureMissing
-      ? "This server does not offer the designer list yet. The workshop can still be started; stage 1 will carry whoever created it."
+      ? "The designer list isn't available right now. The workshop can still be started; stage 1 will carry whoever created it."
       : loadError
         ? loadError
         : searching && searchTerm
@@ -495,7 +495,7 @@ export function WorkshopDesignerPicker({
               `eligible`, which may hold only the excluded reader — an empty offer all the same.
             */
             !searchTerm && !truncated && eligible !== null && offerable.length === 0
-            ? "No account on this repository may be named as this workshop's designer yet. A designer has to be empanelled on the roster before a workshop can be opened for them; this one can still be started, and stage 1 will carry whoever creates it."
+            ? "No one can be named as this workshop's designer yet. A designer has to be empanelled on the roster before a workshop can be opened for them; this one can still be started, and stage 1 will carry whoever creates it."
             : eligibleViewerNotice({
                 truncated,
                 offered: offerable.length,
@@ -551,7 +551,7 @@ export function WorkshopDesignerPicker({
           disabled={disabled || offline}
           emptyLabel={
             eligibleList.kind === "ok"
-              ? "No account on this repository may be named as this workshop's designer."
+              ? "No one can be named as this workshop's designer."
               : workshopEmptyLabel(eligibleList, eligibleVoice)
           }
           onChange={(next) => {
@@ -575,7 +575,7 @@ export function WorkshopDesignerPicker({
           // And therefore this sentence: `searchable={false}` does not switch the RENDER CAP off, so
           // on a real repository the cap notice fires here and its default last clause would tell an
           // admin to type into a filter box this control deliberately does not have.
-          capHint="Use the search box above to reach the rest — it asks the repository, so it sees every eligible account."
+          capHint="Use the search box above to find the rest — it searches every eligible account."
           values={values}
         />
         {atCap ? (

@@ -1232,7 +1232,7 @@ export function ReportSheets({
               assumed one is an assumption about where the pages fall. Said here rather than left in
               a code comment, because the reader is the person it would mislead. */}
           {geometry.marginAssumed
-            ? ` · ${geometry.marginMm} mm margins assumed (the preview payload does not carry the margin)`
+            ? ` · ${geometry.marginMm} mm margins assumed`
             : ` · ${geometry.marginMm} mm margins`}
         </span>
         {/* ─ WHAT THE PAGE COUNT IS WORTH, NOW THAT IT IS A REAL ONE ─────────────────────────
@@ -1247,7 +1247,7 @@ export function ReportSheets({
         <span>
           Pages are measured in this browser, so a line that wraps differently in Word or in the
           generated .pdf can move a break: treat the &ldquo;of {sheets.length}&rdquo; in each running foot below as a
-          close estimate of the file&rsquo;s own count rather than as the file&rsquo;s own count.
+          close estimate of the file&rsquo;s own page count.
         </span>
         {scale < 0.995 || scale > 1.005 ? (
           <span>
@@ -1277,8 +1277,8 @@ export function ReportSheets({
             className="rounded-md border border-amber-500/40 bg-amber-100 px-2 py-0.5 text-amber-800"
           >
             {overflow.pages} page{overflow.pages === 1 ? "" : "s"} of content overruns the sheet by up
-            to {overflow.worstPx} px and is clipped below. This is a fault in the preview&rsquo;s
-            measurement, not in the document — open the generated file to see the section in full.
+            to {overflow.worstPx} px and is clipped below. The document itself is complete — open the
+            generated file to see the section in full.
           </span>
         ) : null}
         {packed?.abandoned.length ? (

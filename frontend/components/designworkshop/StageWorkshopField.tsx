@@ -273,7 +273,7 @@ export function StageWorkshopField({
         <p className="text-xs text-ink-500">
           {withheld} workshop{withheld === 1 ? "" : "s"} {withheld === 1 ? "is" : "are"} not listed because{" "}
           {withheld === 1 ? "its title is" : "their titles are"} longer than the {field.maxLength} characters this field
-          stores. Type a shortened title instead.
+          allows. Type a shortened title instead.
         </p>
       ) : null}
     </div>

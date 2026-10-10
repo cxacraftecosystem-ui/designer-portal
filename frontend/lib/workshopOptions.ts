@@ -1060,12 +1060,12 @@ export function workshopListNotice<Row>(state: WorkshopListState<Row>, voice: Wo
           voice.reassurance ?? "Nothing you have entered is at risk — this record can be saved without it."
         }`
       : voice.accessList === false
-        ? `This device has not received the ${noun} list yet, so there is nothing to pick here. That is not a claim that there are none. ${
+        ? `This device has not received the ${noun} list yet, so there is nothing to pick here. ${
             voice.cached
               ? "Connect once and the list is kept on the device from then on."
               : "Connect and it will load."
           }`
-        : `This device has not received the ${noun} list yet, so there is nothing to pick here. That is not a claim that there are none. Connect and it will load; this list is never kept on the device, because a stored copy of who may file where reads a revoked grant as a grant.`;
+        : `This device has not received the ${noun} list yet, so there is nothing to pick here. Connect and it will load; this list is never kept on the device, so it always shows current access.`;
   }
   /*
     THE CACHED ROWS COME BEFORE THE ROW COUNT, AND BEFORE THE EMPTY ARM.

@@ -123,7 +123,7 @@ export const MINISTRY_DESK: readonly MinistryDestination[] = [
     label: "Design workshops",
     href: "/design-workshops",
     icon: DraftingCompass,
-    note: "The workshops you may open — and, since you are in the workshop set, write in",
+    note: "The workshops you can open and fill in",
     can: canRunDesignWorkshops
   },
   {

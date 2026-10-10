@@ -217,7 +217,7 @@ const TILE_GROUPS = [
   {
     id: "admin" as const,
     title: "Admin",
-    note: "Who may do what, and how this deployment is configured.",
+    note: "Who may do what, and how the app is set up.",
     tone: "steward" as MegaTone,
     icon: Settings
   }
@@ -856,9 +856,8 @@ function DashboardView() {
                        a permanent empty slot in a two-column grid for a branch that has never fired.
                        If it ever DOES fire, the tiles it is reporting are in this same card. */
                     <p className="mt-3 text-xs leading-5 text-ink-500">
-                      {visible.length - seen.size} of your entries could not be filed under a heading
-                      and are not shown above. This is a fault in this screen, not a change to what
-                      you may open — every one of them is still in the navigation menu.
+                      {visible.length - seen.size} of your entries could not be shown under a heading.
+                      Every one of them is still in the navigation menu.
                     </p>
                   ) : null}
                 </MegaCard>
@@ -878,7 +877,7 @@ function DashboardView() {
             Browse records
           </Link>{" "}
           and add to it. Opening a new artisan, product, process or tool needs Researcher access — ask an admin to
-          raise your tier.{" "}
+          change your role.{" "}
           <Link href="/guide" className="font-medium text-purple-700 underline-offset-2 hover:underline">
             Open the walkthrough
           </Link>
@@ -889,7 +888,7 @@ function DashboardView() {
       <section className="mt-8">
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <h2 className="font-display text-lg font-bold text-ink-900">At a glance</h2>
-          <p className="text-xs text-ink-500">Everything in the repository, not only your own entries.</p>
+          <p className="text-xs text-ink-500">Across all records, not only your own entries.</p>
         </div>
         {!stats && !error ? (
           <div className="panel p-4 text-sm text-ink-500">Loading...</div>
@@ -963,7 +962,7 @@ function DashboardView() {
         <div className="border-b border-line-200 px-4 py-3">
           <h2 className="font-display font-bold text-ink-900">Recent submissions</h2>
           <p className="mt-0.5 text-xs text-ink-500">
-            The newest entries across the repository, whoever filed them.
+            The newest entries across all records, whoever filed them.
           </p>
         </div>
         {!stats ? (

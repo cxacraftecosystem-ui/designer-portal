@@ -199,9 +199,8 @@ export function SanctionImportReport({
               {report.accountsCreated} designer{report.accountsCreated === 1 ? "" : "s"} now
               {report.accountsCreated === 1 ? " has" : " have"} an account and no sign-in link.
             </span>{" "}
-            An import issues none: a link is shown once and can never be shown again, and nothing is
-            emailed by this product. Use “Re-issue sign-in link” on each order below when you are
-            ready to send them.
+            Use “Re-issue sign-in link” on each order below when you are ready to send them one. Each
+            link is shown only once.
           </span>
         </p>
       ) : null}

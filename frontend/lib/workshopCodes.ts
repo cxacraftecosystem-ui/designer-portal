@@ -516,7 +516,7 @@ export function encodeWorkshopCode(ref: {
       ok: false,
       reason: "ID_NOT_AN_IDENTIFIER",
       message:
-        "That is not an identifier this repository issues, so no code can be printed for it. Identifiers are the lower-case ids the app allocates when a record is saved."
+        "That isn't a record identifier, so no code can be printed for it. Identifiers are the lower-case ids a record is given when it is saved."
     };
   }
 
@@ -590,7 +590,7 @@ export function decodeWorkshopCode(input: string | null | undefined): DecodeResu
     return {
       ok: false,
       reason: "NEWER_VERSION",
-      message: `This card was printed by a newer version of the app (code format ${version}) than the one on this device. Update the app to read it, or open the record from the list instead.`
+      message: `This card was printed by a newer version of the app (code format ${version}). Reload the page to update the app, then try again, or open the record from the list instead.`
     };
   }
 
@@ -599,7 +599,7 @@ export function decodeWorkshopCode(input: string | null | undefined): DecodeResu
     return {
       ok: false,
       reason: "UNKNOWN_RECORD_TYPE",
-      message: "This is a workshop code, but it points at a kind of record this version of the app does not open."
+      message: "This is a workshop code, but it points at a kind of record that can't be opened here. Reload the page to update the app, then try again."
     };
   }
 
@@ -676,7 +676,7 @@ export function unresolvedWorkshopCodeMessage(recordType: WorkshopRecordType): s
   if (recordType === "prototype") {
     // A prototype is a row inside one design workshop rather than a repository record, so the two
     // places it can be — another workshop, or a device this one has not synced with — are named.
-    return "No prototype in this workshop matches that tag. It may belong to another workshop, or the row may not have reached this device yet — open the workshop that made it, or find the prototype in the list.";
+    return "No prototype in this workshop matches that tag. It may belong to another workshop, or it may not be on this device yet — open the workshop that made it, or find the prototype in the list.";
   }
   if (recordType === "designWorkshop") {
     /*
@@ -702,7 +702,7 @@ export function unresolvedWorkshopCodeMessage(recordType: WorkshopRecordType): s
     return "No design workshop you can open matches that code. If a colleague has just shared it with you, the workshop is there and you have not been added to it yet — only an admin can do that, so send them the code and ask to be put on it. Everything you have already recorded on this device stays where it is.";
   }
   const noun = TYPE_LABEL[recordType].toLowerCase();
-  return `No ${noun} you can open matches that code. It may not be in the repository, or it may belong to work you do not have access to — search for the ${noun} by name instead.`;
+  return `No ${noun} you can open matches that code. It may not have been recorded, or it may belong to work you don't have access to — search for the ${noun} by name instead.`;
 }
 
 /**

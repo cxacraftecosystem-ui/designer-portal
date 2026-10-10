@@ -285,7 +285,7 @@ export function WorkshopCodeScanner({
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setProblem(
-        "This browser will not open a camera on this page — that usually means the site is not being served over https. " +
+        "This browser won't open a camera on this page. " +
           "Upload a picture of the code instead, or type the code printed under the QR."
       );
       return;

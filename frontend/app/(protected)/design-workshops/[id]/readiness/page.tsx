@@ -120,8 +120,8 @@ import {
  */
 export const STAGE_CHECK_IS =
   "A stage check — “Save and check required fields”, the second button at the foot of any stage — is the only " +
-  "act in this app that an empty required field refuses. It saves the stage either way, then refuses THAT ONE " +
-  "STAGE while any of its Basic-tier fields is empty, and names the ones it is waiting for.";
+  "step that an empty required field stops. It saves the stage either way, then marks that stage incomplete " +
+  "while any of its Basic fields is empty, and names the ones still needed.";
 
 /**
  * The other half of the same vocabulary, printed beside {@link STAGE_CHECK_IS} on both screens.
@@ -160,8 +160,7 @@ export const STAGE_CHECK_IS =
 export const WORKSHOP_STATUS_IS =
   "The workshop’s status — what the buttons on the Submission card of the workshop itself write, " +
   "“Mark complete” and “Hand in for inspection” among them — records where the whole workshop stands " +
-  "and is never refused for an empty field: requirement 12 is explicit that a report may be handed in " +
-  "part-filled.";
+  "and is never blocked by an empty field: a report may be handed in before every field is filled in.";
 
 /** The outstanding fields of one stage, under one heading a designer can recognise. */
 function StageGroup({ stageNumber, stageTitle, items }: { stageNumber: number; stageTitle: string; items: ReadinessItem[] }) {
@@ -192,7 +191,7 @@ function StageGroup({ stageNumber, stageTitle, items }: { stageNumber: number; s
                   {item.address ? item.address.entityTitle : item.label}
                   {item.address && item.address.occurrences > 1
                     ? // The denominator is what makes this sizeable work rather than one forgotten box.
-                      ` · missing in ${item.address.occurrences} of ${item.address.rowCount} rows`
+                      ` · missing in ${item.address.occurrences} of ${item.address.rowCount} entries`
                     : null}
                   {/* Honest about a link that will land on the stage rather than on the box. Silence
                       here would look like the same promise the addressed rows make and quietly not
@@ -255,8 +254,8 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
         // read is the single worst thing this page could do.
         setError(
           err instanceof Error
-            ? `The list of fields could not be loaded and this browser has no saved copy of it: ${err.message}`
-            : "The list of fields could not be loaded and this browser has no saved copy of it."
+            ? `The form couldn't be loaded, and there's no copy saved on this device: ${err.message}`
+            : "The form couldn't be loaded, and there's no copy saved on this device. Check your connection and try again."
         );
         return;
       }
@@ -331,7 +330,7 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
         // a designer to go and look at their signal for it sends them to fix the wrong thing.
         if (isUnreachable(err)) {
           setOffline(true);
-          if (!local) setError("There is no connection and this browser has no copy of this workshop.");
+          if (!local) setError("You're offline and this workshop isn't saved on this device.");
           return;
         }
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
@@ -398,7 +397,7 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
 
       {offline ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          There is no connection, so this is worked out from the copy saved in this browser.
+          You&rsquo;re offline, so this is worked out from the copy saved on this device.
           {/* THE PARITY CLAIM IS CONDITIONAL NOW, AND IT HAS TO BE. It used to assert flatly that
               "nothing on this page needs a server to be right" — which is true of the field registry
               and false of the workshop's own questions, since those live only on the server and in
@@ -406,8 +405,8 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
               is true is the same false green as the success block below, in a banner a designer is
               more likely to believe precisely because it is explaining itself. */}
           {uncountedQuestions
-            ? " The 22 stages' own field list is saved here, so that half is exact — but this workshop's own questions are not, and they are not counted below."
-            : " That is the same arithmetic the repository does — nothing on this page needs a server to be right."}
+            ? " The 22 standard stages are counted exactly, but this workshop's own questions aren't saved here and aren't counted below."
+            : " The counts are the same as they would be online."}
         </div>
       ) : null}
 
@@ -426,9 +425,8 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
           definition written by a build this browser cannot parse).
         */
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-          This browser could not read the questions this workshop adds of its own, so anything they ask is NOT counted
-          below. A required question among them would refuse its own stage&apos;s check without ever appearing on this
-          page. Open this workshop again with a connection to read them.
+          This workshop&apos;s own questions couldn&rsquo;t be loaded, so they aren&rsquo;t counted below — including
+          any required ones. Open this workshop again with a connection to include them.
         </div>
       ) : null}
 
@@ -458,8 +456,8 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
               </div>
             </div>
             <p className="text-xs leading-5 text-ink-500">
-              Only Basic-tier fields are counted here, because those are the ones a stage check refuses without. A
-              stage that asks for no required fields reads as complete rather than as 0%.
+              Only Basic fields are counted here, because those are the ones a stage check needs. A stage with no
+              required fields counts as complete.
             </p>
           </section>
 
@@ -484,14 +482,13 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
               <p className="text-sm leading-6 text-ink-700">
                 {uncountedQuestions ? (
                   <>
-                    All {readiness.requiredTotal} of them. This workshop&apos;s own questions could not be read here, so
-                    whether a stage check would be refused for one of those is not something this page can answer
+                    All {readiness.requiredTotal} of them. This workshop&apos;s own questions couldn&rsquo;t be loaded, so
+                    they aren&rsquo;t included
                     {readiness.checks.length ? "; the report also has something to say below." : "."}
                   </>
                 ) : (
                   <>
-                    All {readiness.requiredTotal} of them. No stage would be refused a stage check for a missing Basic
-                    field{readiness.checks.length ? ", though the report has something to say below." : "."}
+                    All {readiness.requiredTotal} of them. Every stage would pass a stage check{readiness.checks.length ? ", though the report has something to say below." : "."}
                   </>
                 )}
               </p>
@@ -537,7 +534,7 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
                     the screen where the distinction does no work: these refuse NEITHER act. Said that way, with
                     both names, so the sentence cannot be read as ranking them below only one of the two. */}
                 <p className="mt-0.5 text-xs leading-5 text-ink-500">
-                  These refuse neither a stage check nor the workshop&apos;s status. They change the file that gets
+                  These don&rsquo;t block a stage check or the workshop&apos;s status. They change the report that gets
                   delivered.
                 </p>
               </div>
@@ -569,8 +566,8 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
                 {readiness.advisory.length === 1 ? "" : "s"})
               </summary>
               <p className="mt-2 text-xs leading-5 text-ink-500">
-                Standard- and Advanced-tier fields. None of these blocks a submission or produces a report warning —
-                they are the depth a report gains when there is time for it.
+                Standard and Advanced fields. None of these blocks a submission or produces a report warning — they add
+                depth to the report when there is time for them.
               </p>
               <ul className="mt-3 grid gap-1">
                 {readiness.advisory.map((gap) => (

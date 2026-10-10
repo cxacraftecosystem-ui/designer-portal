@@ -143,7 +143,6 @@ import { Dropdown, MultiSelectDropdown, type DropdownOption } from "@/components
 import { apiFetch } from "@/lib/api";
 import {
   DW_DEFAULT_MAX_ITEMS,
-  fieldTypeName,
   inputValue,
   listStageReferences,
   listValue,
@@ -777,8 +776,8 @@ export function FieldInput({
     dictationDropped > 0 ? (
       <p className="text-xs font-medium leading-5 text-error-600">
         What you just dictated was not added: it would make this answer {dictationDropped} character
-        {dictationDropped === 1 ? "" : "s"} longer than the {field.maxLength} this field stores, and a sentence cut to
-        fit is worse than one not written. The box is unchanged — shorten what is in it, then dictate again.
+        {dictationDropped === 1 ? "" : "s"} longer than the {field.maxLength} characters this field allows. The box is
+        unchanged — shorten what is in it, then dictate again.
       </p>
     ) : null;
 
@@ -1838,7 +1837,6 @@ export function FieldInput({
         degrades an unknown token to TEXT, so the handset drew an ordinary editable box and the
         designer typed into it.
       */
-      const raw = fieldTypeName(String(field.type as string));
       const noteId = `${controlId}-unsupported`;
       return labelled(
         <>
@@ -1855,7 +1853,7 @@ export function FieldInput({
             value={inputValue(value)}
           />
           <p id={noteId} className="text-xs leading-5 text-ink-500">
-            This question is a {raw}, which this version of the form cannot draw. Whatever is already
+            This question can&apos;t be shown here. Reload the page to update the app. Whatever is already
             recorded against it is kept and is not changed by anything you do here.
           </p>
         </>
@@ -2235,7 +2233,7 @@ function orphanRow(id: string): DropdownOption {
   return {
     value: id,
     label: `Linked record ${id.slice(0, 8)}`,
-    hint: "already on this field, and not in the list the repository returned"
+    hint: "already on this field, and not in the current list"
   };
 }
 
@@ -2429,7 +2427,7 @@ export function referenceMultiNotice({
         loading
           ? "Searching…"
           : scopeExplainsEmpty
-            ? `Nothing matches “${term}” here, and this list is narrowed to this design workshop's linked workshop rather than to the whole repository — a record documented elsewhere will not appear in it.`
+            ? `Nothing matches “${term}” here. This list only shows records documented under this design workshop's linked workshop.`
             : `Nothing matches “${term}”.`
       );
     } else if (payload.filtered) {
@@ -2445,7 +2443,7 @@ export function referenceMultiNotice({
       );
     } else if (!scopeExplainsEmpty) {
       lines.push(
-        `Nothing this field can link to has been documented yet, so ${field.label} cannot be answered from this list. The record has to exist in the repository first — this control links to records, it does not create them.`
+        `Nothing this field can link to has been documented yet, so ${field.label} cannot be answered from this list. Create the record first, then link it here — this list links to records, it does not create them.`
       );
     }
   }
@@ -2772,7 +2770,7 @@ function ReferenceMultiSelect({
         capHint={
           awaitingCascade
             ? `Answer ${parentLabel || "the field above"} first — this list is narrowed to the record chosen there.`
-            : "Use the search box above to reach the rest — it asks the repository, so it sees every record this field can link to."
+            : "Use the search box above to find the rest — it searches every record this field can link to."
         }
         confirmLabel="Confirm"
       />
@@ -3450,7 +3448,7 @@ function MediaField({
     }
     onChange(multiple ? [...ids, ...refs] : refs[0]);
     setNotice(
-      `${refs.length} file${refs.length === 1 ? " is" : "s are"} saved on this device only. ${refs.length === 1 ? "It uploads" : "They upload"} when the connection returns, and the copy here is kept until the server confirms it.`
+      `${refs.length} file${refs.length === 1 ? " is" : "s are"} saved on this device only. ${refs.length === 1 ? "It uploads" : "They upload"} when the connection returns, and the copy here is kept until the upload is confirmed.`
     );
   }
 
@@ -3598,8 +3596,8 @@ function MediaField({
           } catch (stageError) {
             setProblem(
               stageError instanceof Error
-                ? `The upload failed and this browser would not keep a copy either: ${stageError.message}`
-                : "The upload failed and this browser would not keep a copy either."
+                ? `The upload failed, and the file couldn't be kept on this device either: ${stageError.message}`
+                : "The upload failed, and the file couldn't be kept on this device either."
             );
             return;
           }
@@ -4285,7 +4283,7 @@ function MediaField({
                 */}
                 {file && !file.url ? (
                   <span className="shrink-0 rounded-full bg-field-200 px-2 py-0.5 text-xs font-medium text-ink-700">
-                    Not openable by this account
+                    You don&apos;t have access to this file
                   </span>
                 ) : null}
                 <button
@@ -4501,8 +4499,8 @@ function MediaField({
         title={multiple ? `Add to ${field.label.toLowerCase()}` : field.label}
         description={
           multiple
-            ? "Every file attached here uploads straight away and joins this field when it lands. Audio is queued for transcription."
-            : "The file attached here uploads straight away and replaces whatever this field held. Audio is queued for transcription."
+            ? "Every file attached here uploads straight away and joins this field once it has uploaded. Audio is then transcribed."
+            : "The file attached here uploads straight away and replaces whatever this field held. Audio is then transcribed."
         }
         allowedTypes={ALLOWED_TYPES[field.type]}
         allowDocuments={field.type === "FILE"}

@@ -657,7 +657,7 @@ export function encodeQr(text: string, level: QrEccLevel = "Q"): QrSymbol {
   if (!version) {
     throw new QrEncodeError(
       "TOO_LONG",
-      `This code is ${text.length} characters, and the largest symbol this app draws holds ${qrCapacity(MAX_VERSION, level)}.`
+      `This code is ${text.length} characters, which is too long for a printed QR code. The most it can hold is ${qrCapacity(MAX_VERSION, level)}.`
     );
   }
 

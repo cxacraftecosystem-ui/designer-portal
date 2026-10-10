@@ -138,8 +138,8 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         if (cancelled) return;
         setError(
           err instanceof Error
-            ? `The list of stages could not be loaded and this browser has no saved copy of it: ${err.message}`
-            : "The list of stages could not be loaded and this browser has no saved copy of it."
+            ? `The list of stages couldn't be loaded, and there's no copy saved on this device: ${err.message}`
+            : "The list of stages couldn't be loaded, and there's no copy saved on this device."
         );
         return;
       }
@@ -168,7 +168,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         // already drawn from the local copy must not be replaced by an error box.
         if (isUnreachable(err)) {
           setOffline(true);
-          if (!local) setError("There is no connection and this browser has no copy of this workshop.");
+          if (!local) setError("You're offline and this workshop isn't saved on this device.");
           return;
         }
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
@@ -244,7 +244,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         return {
           ok: true,
           label: rowTitle(prototypeEntity.entity, prototypeRows[index], index),
-          detail: `${prototypeEntity.stage.title} · row ${index + 1}${
+          detail: `${prototypeEntity.stage.title} · entry ${index + 1}${
             inputValue(prototypeRows[index].prototypeCode) ? ` · ${inputValue(prototypeRows[index].prototypeCode)}` : ""
           }`
         };
@@ -276,7 +276,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
           ref.recordType === "artisan"
             ? // Said out loud, because it changes what the designer should do next: this person is
               // documented but is not in this workshop, so enrolling them is the missing step.
-              `${answer.hit.detail || "In the repository"} · not on this workshop's roster`
+              `${answer.hit.detail || "In the records"} · not on this workshop's roster`
             : answer.hit.detail
       };
     },
@@ -312,8 +312,8 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         // Which copy is on screen is not guessable from the sheet, and it decides whether a
         // missing tag means "nobody has entered that prototype" or "this device has not seen it".
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          There is no connection, so these are the artisans and prototypes saved in this browser. Printing works exactly the
-          same; anything recorded on another device is not here yet.
+          You&rsquo;re offline, so these are the artisans and prototypes saved on this device. Printing works the same;
+          anything recorded on another device will appear once you reconnect.
         </div>
       ) : null}
 
@@ -335,7 +335,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         resolve={resolve}
         // A media file is named here too: `lookUpWorkshopCode` resolves one, so leaving it out of the
         // sentence understates what this box answers by exactly one record type.
-        description="A tag or card printed by this app, for any kind of record — a prototype or an artisan from this workshop, or a craft, product, process, tool, interview or media file from the repository. Nothing about the record is inside the code: it holds a reference and a check, and nothing else."
+        description="A tag or card printed here, for any kind of record — a prototype or an artisan from this workshop, or a craft, product, process, tool, interview or media file from the records. The code holds only a reference to the record, not its details."
       />
       {/* Only for a record that HAS a page. A prototype is a row inside this workshop's draft and has
           no route of its own, so a prototype scan reports and stops there — which is correct: the
@@ -353,9 +353,8 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
           /* Not the same as "there is nothing to print", and confusing the two would send a
              designer looking for rows they never entered instead of reporting a broken build. */
           <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-            This version of the app cannot find {kind === "prototype" ? "the prototype list" : "the artisan roster"} in the
-            field registry it was served, so it cannot print{" "}
-            {kind === "prototype" ? "prototype tags" : "artisan cards"}. Nothing is missing from your workshop — update the app.
+            {kind === "prototype" ? "Prototype tags" : "Artisan cards"} can&rsquo;t be printed right now. Nothing is missing
+            from your workshop — reload the page to update the app.
           </p>
         ) : (
           <WorkshopCodeSheet

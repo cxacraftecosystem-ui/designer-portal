@@ -143,10 +143,10 @@ export function DictationConsentCard({
         // fortnight, not an error — but it must not be reported as "recorded and sent".
         setOutcome(
           stored
-            ? "Recorded on this device. This workshop has not reached the repository yet, so the answer goes up with it."
+            ? "Recorded on this device. It will upload with the workshop."
             : null
         );
-        if (!stored) setProblem("This browser could not store the answer, and there is no workshop on the server to send it to. Nothing has been recorded — try again.");
+        if (!stored) setProblem("The answer couldn't be saved on this device, and the workshop hasn't uploaded yet. Nothing has been recorded — try again.");
         onRecorded();
         return;
       }
@@ -159,17 +159,16 @@ export function DictationConsentCard({
           recordedAt: stored?.consent?.recordedAt ?? null
         });
         if (draftLocalId) await markDraftConsentSynced(draftLocalId);
-        setOutcome("Recorded, and the repository has it.");
+        setOutcome("Recorded and saved online.");
       } catch (err) {
         // THE ANSWER IS STILL RECORDED. What the designer could not otherwise know is that the
         // SERVER's gate has not moved — so dictation and the AI verbs on this workshop will still be
         // refused until the next sync, and saying so is the whole value of this branch.
         setProblem(
-          `${aiLayerProblem(err, "The repository did not accept the answer.")} ` +
+          `${aiLayerProblem(err, "The answer couldn't be saved.")} ` +
             (stored
-              ? "The answer is recorded on this device and will be sent with the next sync. Until it arrives, " +
-                "dictation and the AI controls on this workshop will still be refused, because the server reads " +
-                "its own copy."
+              ? "The answer is recorded on this device and will upload with the next sync. Until it does, " +
+                "dictation and the AI tools on this workshop stay unavailable."
               : "It could not be stored on this device either, so nothing has been recorded — try again.")
         );
       }
@@ -221,9 +220,8 @@ export function DictationConsentCard({
         <p className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
           <CloudOff className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>
-            This answer is on this device and has not reached the repository yet. The server checks its own copy, so
-            dictation and the AI controls on this workshop will go on being refused until it arrives — it is sent with
-            the next sync and nothing needs to be typed again.
+            This answer is on this device and hasn&apos;t uploaded yet. Dictation and the AI tools on this workshop stay
+            unavailable until it does — it uploads with the next sync and nothing needs to be typed again.
           </span>
         </p>
       ) : null}

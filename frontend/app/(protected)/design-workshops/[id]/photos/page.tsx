@@ -540,7 +540,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
       if (attached) {
         setNotice(
           `${attached} photograph${attached === 1 ? "" : "s"} attached on this device across ${touched.size} stage${touched.size === 1 ? "" : "s"}. ` +
-            "They upload themselves when this laptop next has a connection, and the copy here is kept until the repository confirms each one."
+            "They'll upload when this laptop is next online, and the copy here is kept until each one has uploaded."
         );
       }
       /*
@@ -565,7 +565,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
       const complaints: string[] = [];
       if (missed.length) {
         complaints.push(
-          `${missed.length} could not be placed because the row they were headed for is no longer in this workshop: ${missed.join(", ")}. Pick them again and choose another destination.`
+          `${missed.length} could not be placed because the entry they were headed for is no longer in this workshop: ${missed.join(", ")}. Pick them again and choose another destination.`
         );
       }
       if (full.length) {

@@ -305,7 +305,7 @@ function ReportImage({
     return (
       <span className={`rp-photo-missing ${className ?? ""}`}>
         <ImageOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        This photograph is not readable from here — it will still be embedded in the file if the server can read it.
+        This photograph can&rsquo;t be shown here — it will still be included in the generated file if it can be read.
       </span>
     );
   }

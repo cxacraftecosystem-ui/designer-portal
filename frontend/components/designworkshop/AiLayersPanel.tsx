@@ -256,8 +256,8 @@ export function AiLayersPanel({
             // The disjunction, unresolved on purpose, exactly as the app's 404 page leaves it. A GET
             // that 404s here is either a server older than these routes or a workshop this account
             // cannot open, and naming only the first would assert that the workshop exists.
-            "This workshop's AI layers could not be read. This server may not offer them yet, or this " +
-              "may not be a workshop this account can open."
+            "This workshop's AI layers couldn't be loaded. They may not be available right now, or you may not " +
+              "have access to this workshop."
           )
         );
       } finally {
@@ -402,10 +402,10 @@ export function AiLayersPanel({
       body: (
         <>
           Accepting records <strong>you</strong>, by name and at this moment, as the person who read this text and stands
-          behind it. Accepted layers are the ones a report is allowed to print, and it prints them named as AI-produced —
-          so these words can reach a document handed to a ministry officer with your name attached to them.{" "}
+          behind it. Only accepted layers can be printed in a report, marked as AI-produced — so these words can reach a
+          document handed to a ministry officer with your name attached to them.{" "}
           {provenance.unrecorded
-            ? "Nothing was recorded about what produced this text: no provider and no model. If it turns out to be wrong in six months, there is nothing to trace it back to."
+            ? "No provider or model was recorded for this text, so a later error can't be traced back to its source."
             : `It was produced by ${provenance.provider}, model ${provenance.model}, ${tierLabel(layer.tier).toLowerCase()}.`}
         </>
       ),
@@ -414,9 +414,8 @@ export function AiLayersPanel({
           {readable
             ? null
             : "The full text is not on screen. Press “Show the full text” and read it before you accept — an acceptance says you did. "}
-          Nobody else can accept it after you: the server refuses a second acceptance because it would overwrite your name.
-          You can withdraw yours later and the withdrawal is recorded too, but a report generated in the meantime will still
-          say you accepted it.
+          Once you accept it, nobody else can. You can withdraw your acceptance later and the withdrawal is recorded too,
+          but a report generated in the meantime will still say you accepted it.
         </>
       )
     });
@@ -446,8 +445,8 @@ export function AiLayersPanel({
       setDecisions((current) => ({ ...current, [layer.id]: result.decisions }));
       setWithdrawing(null);
       setNotice(
-        "Your acceptance has been withdrawn and the reason kept. The layer itself is untouched and can be accepted again. " +
-          "Any report already generated still names it as accepted, because that document does not change."
+        "Your acceptance has been withdrawn and your reason saved. The layer itself is unchanged and can be accepted again. " +
+          "Reports already generated still name it as accepted."
       );
       await refresh();
     } catch (err) {
@@ -464,14 +463,14 @@ export function AiLayersPanel({
       confirmLabel: "Decline it",
       body: (
         <>
-          It stops being offered and nothing can print it. The row is kept rather than erased, so “a model proposed this and
-          a person said no” stays answerable — which is the only place that fact is recorded at all.
+          It won&apos;t be offered again and can&apos;t be printed. It is kept, not erased, as the record that a person
+          said no.
         </>
       ),
       note: (
         <>
-          The recording it was made from is not touched, and neither is the layer above it in the chain. If something was
-          produced FROM this one, the server will refuse until that has been declined first.
+          The recording it was made from is not changed, and neither is the layer above it. Anything produced from this
+          layer has to be declined first.
         </>
       )
     });
@@ -482,7 +481,7 @@ export function AiLayersPanel({
     setNotice(null);
     try {
       await deleteDesignWorkshopAiLayer(workshopId, layer.id);
-      setNotice("Declined. It is kept as the record that a person said no, and can be registered again if the material is still wanted.");
+      setNotice("Declined. It is kept as the record that a person said no. Register the material again if it is still wanted.");
       await refresh();
     } catch (err) {
       setError(aiLayerProblem(err, "That layer could not be declined."));
@@ -507,9 +506,9 @@ export function AiLayersPanel({
       const result = await registerDesignWorkshopAiLayer(workshopId, { sourceMediaId: item.mediaId });
       setNotice(
         result.total > 1
-          ? `Registered as ${result.total} layers: the provider's own words, and the rewritten version derived from them. ` +
-              "Both are inert until somebody accepts them."
-          : "Registered as one layer. It is inert until somebody accepts it."
+          ? `Registered as ${result.total} layers: the original transcript, and the rewritten version made from it. ` +
+              "Neither is printed until somebody accepts it."
+          : "Registered as one layer. It isn't printed until somebody accepts it."
       );
       await refresh();
     } catch (err) {
@@ -532,16 +531,13 @@ export function AiLayersPanel({
           <div className="min-w-0">
             <h2 className="font-display text-base font-bold text-ink-900">What a model produced, and who accepted it</h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              Every row here is something a machine wrote from this workshop&apos;s own material — never an edit of it. Each
-              one says which machine ran the model, which model it was, and what it was produced from, so a systematic error
-              found in six months can be traced back to the material it damaged. <strong>Nothing is printed until a person
-              accepts it</strong>, and an acceptance records who and when.
+              Every entry here is text an AI model produced from this workshop&apos;s own material — it never edits that
+              material. Each one says where the model ran, which model it was and what it was made from, so a later error
+              can be traced back. <strong>Nothing is printed until a person accepts it</strong>, and an acceptance records
+              who and when.
             </p>
             <p className="mt-2 text-sm leading-6 text-ink-muted">
-              These layers are annexure material and suggestions. None of them feeds a stage field: the same recording
-              through a model on the handset and a model in the cloud produces different text, legitimately and for ever, so
-              an AI value in a field the handset and the server compare would break that agreement by design rather than by
-              accident.
+              These layers are annexure material and suggestions. They never fill in a stage field.
             </p>
           </div>
         </div>
@@ -588,14 +584,6 @@ export function AiLayersPanel({
             {loading ? "Reading…" : "Reload"}
           </button>
         </div>
-
-        {!withText ? (
-          <p className="text-xs leading-5 text-ink-500">
-            This server has no way to read one layer&apos;s text on its own, so “Show the full text” fetches the text of
-            every layer on this screen in a single request. A workshop can hold twenty-five interviews, which is why the
-            list does not carry it by default.
-          </p>
-        ) : null}
 
         {/* WHERE AN ACCEPTANCE ACTUALLY LANDS, READ OFF THE SERVER RATHER THAN REMEMBERED — and the
             correction of a sentence that stood here and was false in the dangerous direction. An
@@ -699,10 +687,10 @@ export function AiLayersPanel({
                 {recording
                   ? `${recording.stageTitle} · ${recording.fieldLabel} · ${recording.durationText}`
                   : transcriptsFailed
-                    ? "The recordings could not be listed, so this one cannot be named here. The chain below is unaffected."
+                    ? "The recordings couldn't be loaded, so this one can't be named here. The layers below are unaffected."
                     : // A photograph's OCR chain roots on an IMAGE, which the transcripts endpoint does
                       // not list at all — so "not in that list" is an ordinary answer, not a fault.
-                      "Not in this workshop's transcript list — it may be a photograph, or a recording this account cannot read."}
+                      "Not in this workshop's transcripts — it may be a photograph, or a recording you don't have access to."}
                 {" · "}
                 <span className="font-mono">{group.mediaId}</span>
               </p>
@@ -756,9 +744,8 @@ export function AiLayersPanel({
               workshop
             </h3>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              These stand on a passage a designer sent — a note being written, or a selection from a stage field —
-              rather than on a recording. The words themselves travel with the layer, because there is no row to point
-              at: the passage was sent before anything was saved, which is the moment these verbs exist for.
+              These were made from a passage a designer sent — a note being written, or a selection from a stage field —
+              rather than from a recording. The original words are kept with each layer.
             </p>
           </div>
           <ul className="grid gap-3">
@@ -797,8 +784,7 @@ export function AiLayersPanel({
                 with nothing in it, and that confusion is the most repeated defect class in this
                 repository. Each reason gets its own sentence because each has a different next move. */}
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              They are listed anyway rather than hidden, because a layer that vanished from this screen would look exactly
-              like a layer that was never made.
+              They are still listed here, so you can review them.
             </p>
           </div>
           <ul className="grid gap-3">
@@ -806,7 +792,7 @@ export function AiLayersPanel({
               <li key={entry.node.layer.id} className="grid gap-2">
                 <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
                   {entry.reason === "NO_SOURCE"
-                    ? "This row does not say what it was made from, which is a shape the database itself refuses — it can only have arrived around the API. It cannot be printed or trusted until the row is repaired."
+                    ? "This layer doesn't record what it was made from, so it can't be printed until it is repaired. Ask an administrator to check it."
                     : entry.reason === "SOURCE_NOT_LISTED"
                       ? "The layer this was made from is not in this list. Tick “Show declined layers” above — it may have been declined."
                       : entry.reason === "UNKNOWN_SOURCE"
@@ -814,8 +800,8 @@ export function AiLayersPanel({
                           // as one: this build simply does not know the kind of thing the server says
                           // this layer was made from. The honest answer is to say so and to name the
                           // remedy, which is an update to this app rather than a repair to the data.
-                          `This layer says it was made from a “${entry.node.layer.source?.kind ?? ""}”, which this screen does not know about. Its provenance below is complete; only its place in the chain cannot be drawn. This app is probably older than the server it is talking to.`
-                        : "This layer's chain leads back to itself, so the recording underneath it cannot be found. It cannot be printed until the row is repaired."}
+                          "What this layer was made from can't be shown here. Its details below are complete; only its place in the chain can't be drawn. Reload the page to update the app."
+                        : "This layer's chain leads back to itself, so the recording it was made from can't be found. It can't be printed until it is repaired."}
                 </p>
                 <ul className="grid gap-3">
                   <LayerRow
@@ -995,7 +981,7 @@ function LayerRow({
               {parentKind
                 ? `Produced from the ${layerKindNoun(parentKind)} above it.`
                 : "Produced from the recording or photograph itself."}
-              {note ? ` ${note}` : " This screen does not know this kind, so it cannot say what the row contains."}
+              {note ? ` ${note}` : " Reload the page to update the app and see what this layer holds."}
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -1055,8 +1041,7 @@ function LayerRow({
 
         {provenance.unrecorded ? (
           <p className="text-xs leading-5 text-ink-500">
-            Nothing was stored about which provider or model produced this, so it is stated as not recorded rather than
-            guessed at. A systematic model error found later cannot be traced back through this row.
+            No provider or model was recorded for this layer, so a later error can&apos;t be traced back through it.
           </p>
         ) : null}
 
@@ -1070,7 +1055,7 @@ function LayerRow({
                   // from a roster this account may not be allowed to read would be worse than an id
                   // that can at least be quoted to an administrator.
                   "by another account."
-              : "— but no account is recorded against it, which should not be possible."}
+              : "— who accepted it wasn't recorded."}
             {layer.acceptedById && layer.acceptedById !== userId ? (
               <span className="ml-1 font-mono text-ink-500">{layer.acceptedById}</span>
             ) : null}
@@ -1081,9 +1066,8 @@ function LayerRow({
           <p className="flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-2 py-1.5 text-xs leading-5 text-ink-700">
             <EyeOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-500" aria-hidden />
             <span>
-              The recording at the foot of this chain is not one this account may read, so the text, the preview and the
-              structured payload are withheld — being able to open the workshop and being allowed to read a recording are
-              two different permissions here. The provenance above is not the recording&apos;s content and is shown in full.
+              You don&apos;t have access to the recording this layer was made from, so its text is hidden. The details above
+              are shown in full.
             </span>
           </p>
         ) : withText && typeof layer.text === "string" && layer.text.trim() ? (
@@ -1095,7 +1079,7 @@ function LayerRow({
         ) : layer.preview ? (
           <p className="line-clamp-2 text-xs leading-5 text-ink-500">{layer.preview}</p>
         ) : layer.textChars === 0 ? (
-          <p className="text-xs leading-5 text-ink-500">This layer carries no text; its content is the structure below.</p>
+          <p className="text-xs leading-5 text-ink-500">This layer has no text; its content is shown below.</p>
         ) : null}
 
         {!layer.textWithheld && layer.textChars ? (
@@ -1119,20 +1103,13 @@ function LayerRow({
                 </li>
               ))}
             </ul>
-            {/* The log is authoritative and complete on the server; this screen only ever sees the
-                slice an action on this visit returned, and saying so stops a short list being read as
-                a layer with a short history. */}
-            <p className="mt-1 text-xs leading-5 text-ink-500">
-              Earlier decisions are kept by the server but cannot be read from this screen — there is no endpoint for the
-              history on its own.
-            </p>
           </div>
         ) : null}
 
         {declined ? (
           <p className="text-xs leading-5 text-ink-500">
-            Declined layers cannot be accepted, withdrawn or declined again. Register the material afresh if it is still
-            wanted; this row stays as the record that somebody said no.
+            A declined layer can&apos;t be accepted or declined again. Register the material again if it is still wanted;
+            this entry stays as the record that somebody said no.
           </p>
         ) : withdrawing === layer.id ? (
           <WithdrawForm busy={busy} onCancel={() => onWithdrawOpen(null)} onSubmit={(text) => onWithdraw(layer, text)} />
@@ -1195,9 +1172,8 @@ function LayerRow({
               // ("press Show the full text and read it before you accept") can never be followed for
               // one of these: `includeText` does not lift the withholding, and the route says so.
               <p className="text-xs leading-5 text-ink-500">
-                Accepting is not offered for this one. An acceptance says a person read this text and the report prints
-                their name beside it, and this account cannot open the recording it was made from. Ask whoever uploaded
-                the recording for access to their media, or ask them to accept it themselves.
+                You can&apos;t accept this layer because you don&apos;t have access to the recording it was made from. Ask
+                whoever uploaded the recording for access, or ask them to accept it.
               </p>
             ) : null}
 
@@ -1208,13 +1184,11 @@ function LayerRow({
               // is predictable from what is already on the page — with one exception, which the last
               // sentence names: somebody else may have declined them since this list was read.
               <p className="text-xs leading-5 text-ink-500">
-                Declining is not offered while{" "}
+                To decline this layer, first decline{" "}
                 {liveChildren.length === 1
-                  ? `the ${layerKindNoun(liveChildren[0].layer.kind)} below`
-                  : `${liveChildren.length} layers below`}{" "}
-                {liveChildren.length === 1 ? "stands" : "stand"} on this one — {liveChildren.length === 1 ? "it" : "they"}{" "}
-                would be left describing something no screen will show. Decline{" "}
-                {liveChildren.length === 1 ? "it" : "those"} first. If somebody has already done so, press Reload above.
+                  ? `the ${layerKindNoun(liveChildren[0].layer.kind)} below, which was made from it`
+                  : `the ${liveChildren.length} layers below, which were made from it`}
+                . If somebody has already done so, press Reload above.
               </p>
             ) : null}
           </div>
@@ -1407,9 +1381,8 @@ function LayerVerbs({
         layer.textWithheld ? (
           // A GUARANTEED 403, so the reason stands where the buttons would have been.
           <p className="text-xs leading-5 text-ink-500">
-            Running a model over this one is not offered. This account cannot read the recording it was made from, and
-            the result would put its words in front of you by another route. Ask whoever uploaded the recording for
-            access to their media.
+            You can&apos;t proofread or translate this layer because you don&apos;t have access to the recording it was made
+            from. Ask whoever uploaded the recording for access.
           </p>
         ) : blocked !== null ? (
           /*
@@ -1474,8 +1447,8 @@ function LayerVerbs({
                   onChange={(event) => setTarget(event.target.value)}
                 />
                 <p className="text-xs leading-5 text-ink-500">
-                  The translation stands BESIDE this layer and never replaces it, so a reader who wants the
-                  artisan&apos;s own words can still have them.
+                  The translation is added beside this layer and never replaces it, so the artisan&apos;s own words are
+                  kept.
                 </p>
                 {target.trim() && translationTargetRefusal(target) ? (
                   <p className="text-xs leading-5 text-error-600">{translationTargetRefusal(target)}</p>
@@ -1538,8 +1511,8 @@ function WithdrawForm({
   return (
     <div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2">
       <p className="text-xs leading-5 text-amber-800">
-        Taking your name off does not delete the layer and does not change any report already generated — that document
-        named you, and it does not change under an officer who is holding it. Say why, if there is a reason worth keeping.
+        Withdrawing doesn&apos;t delete the layer or change reports already generated. Say why, if there is a reason worth
+        keeping.
       </p>
       <label className="grid gap-1 text-xs font-medium text-amber-800">
         Why (optional)
@@ -1608,7 +1581,7 @@ function PayloadView({ view }: { view: NonNullable<DwAiPayloadView> }) {
       {/* Every truncation says so. A payload that quietly stopped would be read as the whole answer. */}
       {view.truncated ? (
         <p className="mt-1 text-xs leading-5 text-ink-500">
-          This is the opening of a longer payload; the rest is stored but is not shown here.
+          Showing the first part only. The rest is saved but not shown here.
         </p>
       ) : null}
     </div>
@@ -1651,10 +1624,10 @@ function RegisterPanel({
   if (failed) {
     return (
       <div className="panel grid gap-2 p-4">
-        <h3 className="font-display text-sm font-bold text-ink-900">The recordings could not be listed</h3>
+        <h3 className="font-display text-sm font-bold text-ink-900">The recordings couldn&apos;t be loaded</h3>
         <p className="text-sm leading-6 text-ink-muted">
-          So nothing can be offered for registration here. The layers above are unaffected — they are read from a different
-          endpoint. Open the report screen&apos;s transcript annexure to see what state the recordings are in.
+          Nothing can be registered until they load. The layers above are unaffected. Open the report screen&apos;s
+          transcript annexure to see the state of each recording.
         </p>
       </div>
     );
@@ -1666,23 +1639,18 @@ function RegisterPanel({
       <div>
         <h3 className="font-display text-sm font-bold text-ink-900">Recordings with no layer yet</h3>
         <p className="mt-1 text-sm leading-6 text-ink-muted">
-          Registering records a transcript this server produced <em>months ago and never attributed</em> as a layer, with
-          its provenance. It reaches no provider, produces no new text and spends nothing — the words are already stored.
-          On a default deployment it writes two rows, because the transcript was rewritten after the provider produced it
-          and the two are different rungs of the same chain.
+          Registering adds a recording&apos;s existing transcript here as a layer, with its details. It runs no AI,
+          produces no new text and uses up no AI runs — the words are already saved. It usually adds two layers: the
+          original transcript and the rewritten version made from it.
         </p>
         <p className="mt-2 text-sm leading-6 text-ink-muted">
-          It will read as <strong>not recorded</strong> for the provider and the model, and that is the truthful answer:
-          the transcription queue has never stored which of its four providers ran. There is deliberately no box here to
-          type one into — a guess in that column is worse than an admitted gap.
+          The provider and the model will show as <strong>not recorded</strong> for these transcripts.
         </p>
       </div>
 
       {!layersKnown ? (
         <p className="text-sm leading-6 text-ink-700">
-          Waiting for this workshop&apos;s existing layers. Until they have been read, this cannot say which recordings
-          already have one, so nothing is offered here — registering a recording twice is refused, and finding that out
-          from a refusal is no way to be told.
+          Loading this workshop&apos;s existing layers… Recordings you can register will appear here once they have loaded.
         </p>
       ) : items.length ? (
         <ul className="grid gap-2">
@@ -1725,7 +1693,7 @@ function RegisterPanel({
               ) : (
                 <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-800">
                   <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
-                  Waiting on the queue
+                  Waiting for transcription
                 </span>
               )}
             </li>

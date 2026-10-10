@@ -136,7 +136,7 @@ import {
 } from "./reviewRanking";
 
 const UNREACHABLE =
-  "The server could not be reached, so the scores and the reviews are not on this screen. This is not an empty list — it is a list that could not be loaded.";
+  "Couldn't connect, so the scores and reviews couldn't be loaded. This isn't an empty list. Check your connection and try again.";
 
 /** How long the list stays quiet before an arrangement is written. See the header. */
 const QUIET_MS = 1200;
@@ -256,7 +256,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
           ? UNREACHABLE
           : refusalText(
               error,
-              "This round could not be read. If this workshop's pieces have not been declared finished, there is nothing in the wider round yet."
+              "This round couldn't be loaded. If none of this workshop's pieces has been declared finished, there is nothing in the wider pool to review."
             )
       );
     } finally {
@@ -334,7 +334,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
       const target = draftId.current;
       if (!target || !stageKey) {
         setOrderProblem(
-          "This arrangement has not been saved: this browser has no local copy of the stage these pieces live in. Open the stage once with a connection, then try again."
+          "This arrangement wasn't saved because this stage hasn't been loaded on this device. Open the stage once while you have a connection, then try again."
         );
         return;
       }
@@ -356,7 +356,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
           const stage = draft?.stages[stageKey];
           if (!draft || !stage) {
             setOrderProblem(
-              "This arrangement has not been saved: the local copy of this stage has gone. Reload the page and try again."
+              "This arrangement wasn't saved because this stage is no longer on this device. Reload the page and try again."
             );
             return;
           }
@@ -373,7 +373,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
           */
           if (held.length === 0 && next.length > 0) {
             setOrderProblem(
-              "This arrangement has not been saved: this browser has not been able to read the stage these pieces live in, so there is nothing here to rearrange. Open that stage once with a connection, then try again."
+              "This arrangement wasn't saved because this stage couldn't be loaded on this device. Open the stage once while you have a connection, then try again."
             );
             return;
           }
@@ -398,7 +398,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
           const knownToServer = held.some((row) => typeof row._entryId === "string" && row._entryId);
           if (nextStamp === null && neverRead && knownToServer) {
             setOrderProblem(
-              "The list is still in the designers' order. Returning to score order cannot be sent from here yet: this browser has never read the repository's copy of this stage, so its saves are merges — the repository keeps every field this device leaves blank, and clearing the stamp IS a blank. Open this stage once with a connection, then return to score order."
+              "The list is still in the designers' order. Open this stage once while you have a connection, then return to score order."
             );
             return;
           }
@@ -418,7 +418,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
           setOrderProblem(
             refusalText(
               error,
-              "This arrangement could not be saved on this device. If the browser is in private mode or its storage is full, nothing can be kept here."
+              "This arrangement couldn't be saved on this device. If the browser is in private mode or its storage is full, use a normal window or free some space, then try again."
             )
           );
           return;
@@ -427,8 +427,8 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
         setStamp(nextStamp);
         setOrderNote(
           nextStamp
-            ? "Saved on this device. Sending it to the repository…"
-            : "Back to score order, saved on this device. Sending it to the repository…"
+            ? "Saved on this device. Uploading…"
+            : "Back to score order, saved on this device. Uploading…"
         );
         try {
           setOrderNote(sendNote(await syncDesignWorkshopDrafts(), nextStamp !== null));
@@ -437,8 +437,8 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
           // Only the sending is, so only the sending is what this sentence is about.
           setOrderNote(
             isUnreachable(error)
-              ? "Saved on this device. There is no connection, so it sends itself when one returns."
-              : "Saved on this device, but sending it did not complete. It goes up with the next sync — the banner above the page follows it."
+              ? "Saved on this device. It will upload when you're back online."
+              : "Saved on this device, but it didn't finish uploading. It will upload with the next sync — the banner at the top of the page shows its progress."
           );
         }
       } finally {
@@ -487,7 +487,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
     const by = (user?.name ?? "").trim() || (user?.email ?? "").trim();
     if (!by) {
       setOrderProblem(
-        "This arrangement has not been saved: this session has no name to record against it, and an order fixed by nobody is not a decision anyone can read back."
+        "This arrangement wasn't saved because your name couldn't be read. Sign in again, then try again."
       );
       return;
     }
@@ -499,7 +499,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
     */
     waiting.current = { order: next, stamp: { by, at: todayStamp() } };
     setOrderProblem(null);
-    setOrderNote("Arranged. Keep going — this is written to the device a moment after you stop.");
+    setOrderNote("Arranged. Keep going — it saves a moment after you stop.");
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       timer.current = null;
@@ -550,8 +550,8 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
           {fixedBy ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-ink-700">
-                <span className="font-semibold text-ink-900">This order was settled deliberately</span> — fixed by{" "}
-                {fixedBy.by} on {formatDate(fixedBy.at)}. A new rating changes the scores on the cards and does not move
+                <span className="font-semibold text-ink-900">This order was set by hand</span> — fixed by{" "}
+                {fixedBy.by} on {formatDate(fixedBy.at)}. A new rating changes the scores on the cards but does not move
                 them.
               </p>
               {canArrange ? (
@@ -616,8 +616,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
             */
             <p className="text-ink-700">
               <span className="font-semibold text-ink-900">These are in score order</span> — highest first, and pieces
-              nobody has rated yet at the end. Whether this workshop&apos;s own designers have settled an order of
-              their own is not on this response, so this page does not claim either way.
+              nobody has rated yet at the end.
             </p>
           )}
         </div>
@@ -686,7 +685,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
                   ) : null}
                 </span>
                 <span className="block text-xs text-ink-muted">
-                  {rowSubtitle(row) || "On this device — its score and its reviews are on the server."}
+                  {rowSubtitle(row) || "On this device — its score and reviews show when you're online."}
                 </span>
               </span>
             </li>
@@ -714,7 +713,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
         <p className="panel px-4 py-6 text-center text-sm text-ink-muted">
           {round === "PEER"
             ? "There is nothing to review in this workshop yet. Pieces appear here as they are added to the stage they belong to."
-            : "Nothing in this workshop has been declared finished, so nothing is open to the wider pool yet. A piece is opened by its “Peer review closed on” date, which is set on the piece’s own stage form, one piece at a time. This page holds no copy of those pieces, so it cannot say how many are waiting."}
+            : "Nothing in this workshop has been declared finished, so nothing is open to the wider pool yet. A piece opens to the pool when its “Peer review closed on” date is set on its own stage form."}
         </p>
       ) : null}
 
@@ -747,14 +746,14 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
             canArrange
               ? null
               : !readsStageRows
-                ? "The order here is the score order, and it is not yours to rearrange: the placed order is the makers' own stage row order, which only that workshop's designers and an admin can change. Your rating is what you contribute to the ranking on this page."
+                ? "This list is in score order. Only that workshop's own designers and an admin can rearrange it; your rating is what you add to the ranking here."
                 : readOnlyReason
                   ? // A post on THIS workshop, after the round and before what this browser holds: it
                     // is a permission, and the server's own sentence names it and the remedy.
                     readOnlyReason
                   : items !== null && !mayArrange(items)
-                    ? "This list is not yours to rearrange: the placed order is the makers' own stage row order, and the repository sends it as a position only to that workshop's own designers and to an admin. Your rating is what you contribute to the ranking on this page."
-                    : "This arrangement cannot be changed from here: this browser has no local copy of the stage these pieces live in. Open this workshop's stage once with a connection and the arrows and the drag handle come back."
+                    ? "Only this workshop's own designers and an admin can rearrange this list. Your rating is what you add to the ranking here."
+                    : "To rearrange this list, open this workshop's stage once while you have a connection. The arrows and the drag handle then come back."
           }
           renderItem={(id) => {
             const item = byId.get(id);
@@ -812,8 +811,8 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
 
       {registry === null ? (
         <p className="text-xs text-ink-muted">
-          This browser holds no field registry yet, so the stage these pieces live in could not be named. Open the
-          workshop once with a connection.{" "}
+          The form for these pieces couldn&apos;t be loaded on this device. Open the workshop once while you have a
+          connection.{" "}
           <Link href={`/design-workshops/${workshopId}`} className="underline">
             Open the workshop
           </Link>
