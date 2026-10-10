@@ -583,7 +583,7 @@ class WorkshopPickerTest {
         val served = workshopTypeHint(served = true)
         val floor = workshopTypeHint(served = false)
         assertTrue(served.contains("It is not saved on this record"))
-        assertTrue(floor.contains("built-in types of workshop"))
+        assertTrue(floor.contains("standard types of workshop"))
         assertTrue("both arms owe the reader the not-saved fact", floor.contains("not saved on this record"))
         assertFalse("the served arm must not apologise for a list that is right", served.contains("built-in"))
     }

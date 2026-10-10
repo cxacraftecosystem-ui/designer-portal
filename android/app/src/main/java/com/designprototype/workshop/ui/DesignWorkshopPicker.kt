@@ -351,7 +351,7 @@ internal fun workshopTypeHint(served: Boolean): String = if (served) {
     "Chooses which workshops the box below lists. It is not saved on this record — the workshop you " +
         "pick already carries its own type."
 } else {
-    "These are this app's built-in types of workshop — connect once to refresh them. They choose " +
+    "These are the standard types of workshop — connect once to refresh them. They choose " +
         "which workshops the box below lists, and are not saved on this record."
 }
 
