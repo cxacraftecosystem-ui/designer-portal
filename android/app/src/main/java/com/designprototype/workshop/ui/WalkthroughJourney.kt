@@ -873,8 +873,8 @@ private val WALKTHROUGH_FIELDS: Map<String, List<String>> = mapOf(
  * better is a table nothing can hold to anything, and the sentences a reader acts on are in
  * [WalkStep.body], which IS written from this app's own Kotlin.
  *
- * `inspection-feedback` has no entry because this deck has no such step — see
- * [walkthroughInspectorOmissions] for the register and `WalkthroughSteps.kt` for the greps.
+ * All four of the web's inspector cards have an entry: `inspection-feedback` joined the deck when the
+ * feedback box landed on `InspectionDetailScreen`, and [walkthroughInspectorOmissions] is empty.
  */
 private val WALKTHROUGH_INSPECTOR_FIELDS: Map<String, List<String>> = mapOf(
     "inspection-list" to listOf(
@@ -888,6 +888,12 @@ private val WALKTHROUGH_INSPECTOR_FIELDS: Map<String, List<String>> = mapOf(
         "Each stage, numbered and titled, with its own required-field count",
         "Under each value: who wrote it, and where it was copied from",
         "Media fields, as a count — “3 files recorded here”",
+    ),
+    "inspection-feedback" to listOf(
+        "What should be corrected?",
+        "Which stage is it about? — “The report as a whole”, or one named stage",
+        "“File a suggestion” — leaves the report where it is",
+        "“Send the report back” — moves it to Needs revision",
     ),
     "inspection-review-queue" to listOf(
         "The queue, newest first, with the record's type, title and who submitted it",

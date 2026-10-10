@@ -1,8 +1,14 @@
 # Open findings
 
-**Status: 33 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
-heading on 2026-10-10 (15 + 18 opened by the Android copy sweep that day); earlier counts on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
+**Status: 31 open, 1 decision recorded and 1 deferral, 98 closed.** Every count re-counted by
+heading on 2026-10-10 (15 + 18 opened by the Android copy sweep that day, less the 2 of those closed
+the same day); earlier counts on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
+
+**Three Android gaps were closed on 2026-10-10 by building them**: correction suggestions on the
+handset, its own review queue, and inspections that work without signal. Two of them had been opened
+that day by the Android copy sweep and leave the open list; the review queue had no entry and is
+recorded already closed. 33 − 2 = 31 open; 95 + 3 = 98 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -640,7 +646,9 @@ new build goes out in a body. The entry stays open until that build has replaced
 the same, and neither form closes the browser's history.
 
 
-**Eighteen entries below were opened on 2026-10-10 by the Android copy sweep.** The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
+**Eighteen entries were opened on 2026-10-10 by the Android copy sweep; sixteen are below.** The
+other two — correction suggestions on the handset, and inspections without signal — were built and
+closed the same day, under *Closed on 2026-10-10*. The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
 or a known defect, because a screen shown to field staff and ministry officials must describe a
 product that works. The gaps themselves are not closed by that, so each one is recorded here, one
 heading each, and closes only with the change that builds or fixes it.
@@ -720,19 +728,6 @@ The inspection read carries counts only, and a workshop's own custom-question an
 not shown. Files: `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionDetailScreen.kt`,
 `android/app/src/main/java/com/designprototype/workshop/data/DesignWorkshopInspections.kt`.
 
-### [LOW] An inspector cannot file a correction, send a report back, or read filed suggestions on the handset (android) — opened 2026-10-10
-
-The handset has no client for the inspection feedback and send-back routes, and no screen reads the
-suggestions the inspection payload already carries; the inspector walkthrough still omits that card
-(`walkthroughInspectorOmissions`). Its closing card no longer says so. File:
-`android/app/src/main/java/com/designprototype/workshop/ui/WalkthroughSteps.kt`.
-
-### [LOW] Inspections need a connection every time (android) — opened 2026-10-10
-
-The list and the read are fetched on each visit and nothing is kept on the phone; the copy now says
-only that a connection is needed. File:
-`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionListScreen.kt`.
-
 ### [LOW] The record editor offers Save on another person's record to roles below Professor (android) — opened 2026-10-10
 
 Editing someone else's record is Professor and above, but the handset's editor does not check
@@ -771,6 +766,47 @@ They change together with `frontend/components/guide/steps.ts`, `frontend/compon
 `docs/WALKTHROUGH.md`, `frontend/app/(protected)/dashboard/page.tsx` and `frontend/lib/workshopCodes.ts`.
 
 ---
+
+## Closed on 2026-10-10
+
+Three Android parity gaps that the handset's own screens and walkthrough admitted in so many words,
+found by the sweep of customer-visible copy (items F6, F7 and F12 of that sweep) and closed by
+building the features. None moved a permission: the handset calls the routes the web calls, behind
+the same doors.
+
+### [MEDIUM] An inspector on the handset could not read the correction suggestions on a workshop, file one, or send a report back (android) — **CLOSED 2026-10-10**
+
+The walkthrough's closing card said "FILING A CORRECTION IS A BROWSER JOB … this app cannot show you
+the suggestions already filed on a workshop either", and the web's inspector recap said the same.
+Both were true: `WorkshopRepositoryApi` declared no `POST …/feedback` or `…/send-back`, and nothing
+under `ui/` read the `inspectionFeedback` rows the payload carried. `InspectionDetailScreen` now draws
+`InspectionFeedbackPanel` above the stages — the register round by round with who filed each row,
+the box, the stage choice, and the two buttons, the send-back behind a confirmation — gated on the
+payload's `mayRecordFeedback` and on the report being under review, exactly as the web's panel is.
+The inspector deck teaches the `inspection-feedback` card and `walkthroughInspectorOmissions` is
+empty. Pinned by `InspectionNotesSyncTest` (routes, bodies, answers) and `WalkthroughDecksTest`.
+
+### [MEDIUM] The handset had no review queue of its own (android) — **CLOSED 2026-10-10**
+
+The menu's Review row opened the record browser and the walkthrough said "THIS HANDSET HAS NO
+SEPARATE REVIEW QUEUE". Review now opens `Screen.ReviewQueue`: for an Inspector / Reviewer, the
+assigned workshops whose report is waiting for a decision, the ones sent back below them, a count of
+the rest and a line on any of the inspector's notes still on the phone; then the record queue every
+reviewer shares. Pinned by `DesignWorkshopInspectionFeedbackTest` (the split) and
+`InspectionNotesSyncTest` (the list read, live and kept).
+
+### [MEDIUM] An inspection could not be read or annotated without signal (android) — **CLOSED 2026-10-10**
+
+`InspectionListScreen` said "This screen needs a connection … never kept on this phone". The last
+read of each assigned workshop and the last list are now kept per account and shown with the day
+they were saved; a read that answers 404 deletes them. A suggestion or send-back is kept on the phone
+first and sent when there is signal, after the workshop is read again: a report no longer under
+review, or handed in again since the note was written, holds the note with the reason and sends
+nothing; the server's own refusal (the 422 the web shows when a report has moved on) holds it the same
+way; an answer lost on the way back is recognised on the register by its device moment and not filed
+twice; nothing queued is deleted except by its author. The pass also runs on the app's
+"network came back" hook. Pinned by `InspectionNotesSyncTest` and
+`DesignWorkshopInspectionFeedbackTest`.
 
 ## Closed on 2026-10-09
 

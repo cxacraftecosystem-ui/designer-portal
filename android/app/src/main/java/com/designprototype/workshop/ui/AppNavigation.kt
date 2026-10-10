@@ -538,12 +538,11 @@ enum class NavGroup(val label: String) {
  *    the same capability "Browse records", so that is the label now — it maps to `EntryMode.SEARCH`.
  *  - [VIEW_DATA] is the web's `/data`, the whole repository as a directory tree, which on Android is
  *    `EntryMode.DATA_BROWSER` (the drawer used to label that one "Data Browser").
- *  - [REVIEW] is new to the menu. The web has a dedicated `/review` queue; Android has no such
- *    screen — reviewing happens INSIDE the record browser, which is why `HomeScreen` hands
- *    `canReview` to `ViewDataScreen`. So this entry maps to `EntryMode.VIEW_DATA`, the one surface
- *    where a reviewer can actually act, and it is the reason that mode is absent from this list
- *    under its own name (its `actionTitle` is the string "Browse records", which would otherwise
- *    collide head-on with [BROWSE_RECORDS] above while opening a different screen).
+ *  - [REVIEW] is the web's `/review`, a screen of its own (`Screen.ReviewQueue`): an Inspector /
+ *    Reviewer's workshops waiting for a decision, then the record queue every reviewer shares. The
+ *    record browser (`EntryMode.VIEW_DATA`) still carries the same record queue card for a reviewer
+ *    who arrives there, and is absent from this list under its own name (its `actionTitle` is the
+ *    string "Browse records", which would otherwise collide head-on with [BROWSE_RECORDS] above).
  *  - "Request workshop access" is gone from the menu, because the web has no such nav entry — it
  *    lives inside the Workshops page and the admin hub. Its dashboard tile is untouched, so the
  *    screen is still one tap from the dashboard.
