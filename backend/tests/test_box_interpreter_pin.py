@@ -104,6 +104,23 @@ def test_both_files_install_into_the_same_versioned_directory():
         )
 
 
+def test_both_files_byte_compile_the_standard_library_before_the_rename():
+    # The install_only tarball ships the stdlib as source (3 .pyc for 1,059 modules), and the units
+    # run as a user who cannot write __pycache__ into the root-owned install, so without this every
+    # API and queue-worker start recompiles every stdlib module it imports, inside the restart window
+    # (deploy-backend.yml's install step has the measurement). In staging, so a failure installs nothing.
+    for path in (DEPLOY, USER_DATA):
+        text = path.read_text(encoding="utf-8")
+        compile_at = text.find("-m compileall")
+        rename_at = text.find('mv -T "$stage/python"')
+        assert compile_at != -1, (
+            f"{path.name} no longer byte-compiles the pinned interpreter's standard library"
+        )
+        assert rename_at != -1 and compile_at < rename_at, (
+            f"{path.name} must byte-compile in the staging directory, before the rename into place"
+        )
+
+
 def test_no_apt_source_is_asked_for_python_any_more():
     # The deadsnakes PPA was the 24.04 source until 2026-10-09; comments may still say why it went.
     for path in (DEPLOY, USER_DATA):

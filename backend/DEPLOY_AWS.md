@@ -76,19 +76,24 @@ sudo apt install -y git libatomic1 curl ca-certificates openssl
 
 # UPSTREAM CPYTHON 3.14.8 — what every release venv is built with, the same pinned python-build-standalone
 # build the deploy installs (BOX_PYTHON_* in .github/workflows/deploy-backend.yml; take the four values
-# from there, never from memory). The digest is checked BEFORE anything is unpacked, and the directory
-# is root-owned and named for the version and the build.
-PY_VERSION=3.14.8 PY_BUILD=20261003
+# from there, never from memory). These are that step's own commands: a private root-owned staging
+# directory beside the target, the digest checked BEFORE anything is unpacked, the standard library
+# byte-compiled as root (the units' user cannot write __pycache__ there), and one rename into a
+# root-owned directory named for the version and the build.
+PY_VERSION=3.14.8 PY_BUILD=20261009
 PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PY_BUILD}/cpython-${PY_VERSION}%2B${PY_BUILD}-x86_64-unknown-linux-gnu-install_only.tar.gz"
-PY_SHA256=371b6c281bbb09b29279e9e3a2996bab4ae2ea03cca52bf869f8bd89286b0ae8
+PY_SHA256=83f9cb480b702548c592443f86209cf0fc03448d90692df257f095c01791dccc
 PY_HOME="/opt/cpython/${PY_VERSION}+${PY_BUILD}"
-curl -fsSL -o /tmp/cpython.tar.gz "$PY_URL"
-echo "${PY_SHA256}  /tmp/cpython.tar.gz" | sha256sum -c -          # stop here if this says FAILED
 sudo install -d -o root -g root -m 0755 /opt/cpython
-sudo tar -xzf /tmp/cpython.tar.gz -C /tmp --no-same-owner && sudo chown -R root:root /tmp/python
-echo "$PY_SHA256" | sudo tee /tmp/python/.pbs-sha256 >/dev/null   # the deploy checks this marker
-echo "$PY_URL" | sudo tee /tmp/python/.pbs-url >/dev/null
-sudo mv -T /tmp/python "$PY_HOME" && rm -f /tmp/cpython.tar.gz
+STAGE="$(sudo mktemp -d /opt/cpython/.incoming.XXXXXX)"
+sudo curl -fsSL -o "$STAGE/python.tar.gz" "$PY_URL"
+echo "${PY_SHA256}  $STAGE/python.tar.gz" | sudo sha256sum -c -   # stop here if this says FAILED
+sudo tar -xzf "$STAGE/python.tar.gz" -C "$STAGE" --no-same-owner && sudo rm -f "$STAGE/python.tar.gz"
+sudo "$STAGE/python/bin/python3.14" -I -m compileall -q "$STAGE/python/lib/python3.14"
+echo "$PY_SHA256" | sudo tee "$STAGE/python/.pbs-sha256" >/dev/null   # the deploy checks this marker
+echo "$PY_URL" | sudo tee "$STAGE/python/.pbs-url" >/dev/null
+sudo chown -R root:root "$STAGE/python" && sudo chmod -R go-w "$STAGE/python"
+sudo mv -T "$STAGE/python" "$PY_HOME" && sudo rm -rf "$STAGE"
 "$PY_HOME/bin/python3.14" -VV
 
 # The release layout the deploy expects. See §3.1 — do not clone into /home/ubuntu/app/backend.
@@ -477,9 +482,10 @@ secret key; never commit them.
 the Ubuntu 26.04 `t3.medium` with an encrypted root, and an encrypted root cannot be added to the
 running instance, so every plan proposes replacing it — terminating production and moving the Elastic
 IP onto an empty box. `prevent_destroy` makes that plan an error. The blue/green procedure that
-replaces it (forget the old instance in the state, create the new one with `-target`, deploy to it,
-move the Elastic IP, stop the old one) is written out on the `lifecycle` block of `aws_instance.api`
-in `infra/terraform/main.tf`.
+replaces it (forget the old instance in the state, create the new one with `-target`, wait for its
+first boot to finish — `cloud-init status --wait` over SSM — deploy to it, move the Elastic IP, stop
+the old one) is written out on the `lifecycle` block of `aws_instance.api` in
+`infra/terraform/main.tf`.
 
 ### 8.2 GitHub Actions secrets (auto-deploy on push)
 

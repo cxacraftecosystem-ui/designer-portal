@@ -852,7 +852,12 @@ resource "aws_instance" "api" {
   #      terraform apply -target=aws_instance.api
   #        Creates the 26.04 t3.medium; user_data.sh installs the pinned CPython at first boot.
   #        `aws_eip.api` is outside the target, so the address stays on the old box.
-  #   3. Point the EC2_HOST secret at the new box's own public IP (`terraform state show
+  #   3. Wait for the new box's first boot to finish: over SSM, `cloud-init status --wait` must end
+  #      `status: done`, and /var/log/cloud-init-output.log ends on the pinned interpreter's
+  #      "CPython 3.14.8 from /opt/cpython/..." line. `apply` returns when the instance is running,
+  #      minutes before user_data.sh has installed nginx, the units and that interpreter, and a deploy
+  #      started earlier races it for apt and /opt/cpython. Every such race fails safe, but it fails.
+  #      Then point the EC2_HOST secret at the new box's own public IP (`terraform state show
   #      aws_instance.api`, `public_ip`), run deploy-backend.yml by workflow_dispatch, and read
   #      /health/ready and the CORS answer it asserts.
   #   4. terraform plan -target=aws_eip.api && terraform apply -target=aws_eip.api

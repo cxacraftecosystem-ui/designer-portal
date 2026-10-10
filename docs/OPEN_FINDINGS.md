@@ -610,10 +610,12 @@ was raised to its newest release on 2026-10-09; this one cannot be, and it now h
 * **PostgreSQL 18.** The 5.17 schema engine predates it, so `prisma migrate` is unproven there. Local
   and CI databases stay on 17, production's major — which the production provider caps at 17 anyway.
 * **Python 3.15**, released on python.org on 2026-10-09: the project was never tested on it upstream
-  and will not be. It was one of five reasons the API boxes were pinned to 3.14.8 that day, beside
-  python-build-standalone, setup-python and Docker Hub not carrying 3.15.0 yet and two of
-  uvicorn[standard]'s dependencies shipping no cp315 wheel (`.github/workflows/deploy-backend.yml`'s
-  job env has the list).
+  and will not be. It is one of four reasons the API boxes stayed on 3.14.8 that day, beside
+  setup-python and Docker Hub not carrying 3.15.0 yet and PyYAML, a uvicorn[standard] dependency,
+  shipping no cp315 wheel; httptools, the other one, gained cp315 wheels in 0.9.0 that evening, and
+  the lock still pins 0.8.0 (`.github/workflows/deploy-backend.yml`'s job env has the list).
+  python-build-standalone, the source of the boxes' interpreter, carried 3.15.0 from its 20261009
+  release that afternoon, so it no longer holds anything back.
 
 It also forces one patch to generated code. The client it writes for this schema is 675,391 lines of
 TypedDicts without `from __future__ import annotations`, which Python 3.14 imports in tens of minutes

@@ -495,11 +495,14 @@ jobs:
     # rebuilt box's first boot, and backend/tests/test_box_interpreter_pin.py fails the suite when
     # the two files disagree.
     #
-    # VERIFIED 2026-10-09: 20261003 is the newest python-build-standalone release carrying 3.14.8
-    # (20261001 carries it as well); its SHA256SUMS line, GitHub's own digest for the asset and a
-    # sha256sum of the downloaded file agree, and `gh attestation verify` finds that release
-    # workflow's SLSA provenance for the digest. It bundles OpenSSL 3.5.9 and reads the system's CA
-    # certificates from /etc/ssl/certs, measured on ubuntu:24.04 and ubuntu:26.04.
+    # VERIFIED 2026-10-10: 20261009 is the newest python-build-standalone release carrying 3.14.8.
+    # This pin was first written for 20261003, and 20261009 was published at 16:38Z on 2026-10-09,
+    # an hour after that check; it carries the same CPython with libffi 3.4.8 -> 3.8.0 and expat
+    # 2.8.5 -> 2.9.0 (20261001 carries 3.14.8 too). Its SHA256SUMS line, GitHub's own digest for the
+    # asset and a sha256sum of the file downloaded from this URL agree, and `gh attestation verify`
+    # finds the SLSA provenance signed by that repository's release.yml on main for the digest. It
+    # bundles OpenSSL 3.5.9, SQLite 3.53.1 and expat 2.9.0, and reads the system's CA certificates
+    # from /etc/ssl/certs, measured on ubuntu:24.04 and ubuntu:26.04.
     #
     # WHY NOT UBUNTU'S OR DEADSNAKES' PYTHON, which this file named until the same evening — though no
     # deploy ever ran with them: the box was still on its 3.12 releases. 26.04's python3.14 is 3.14.4
@@ -509,14 +512,17 @@ jobs:
     # is "at your own risk". Neither apt source is consulted for Python any more, on either release
     # of Ubuntu.
     #
-    # WHY 3.14.8 AND NOT 3.15.0, which python.org published on 2026-10-09. Measured that day, nothing
-    # on this path carries it yet: python-build-standalone's newest release (20261003) has 3.15.0rc3;
-    # actions/setup-python's manifest stops at 3.15.0-rc.3; Docker Hub has no python:3.15 image for
-    # backend/Dockerfile; httptools 0.8.0 and PyYAML 6.0.3 (both uvicorn[standard]'s, both their
-    # newest release) ship no cp315 wheel, so the box would have to compile them; and prisma-client-py
-    # 0.15.0 is archived and was never tested on 3.15 (docs/OPEN_FINDINGS.md). deadsnakes published
-    # python3.15 for noble that afternoon, which no longer matters here. Move when the first four
-    # have it, and re-measure the generated client's import on the new minor before shipping it.
+    # WHY 3.14.8 AND NOT 3.15.0, which python.org published on 2026-10-09. Measured that day and
+    # again at 18:20Z, the rest of this path does not carry it yet: actions/setup-python's manifest
+    # stops at 3.15.0-rc.3, so neither CI nor the runner-side generator below could run it; Docker
+    # Hub has only python:3.15-rc images for backend/Dockerfile; PyYAML 6.0.3, uvicorn[standard]'s
+    # and its newest release, ships no cp315 wheel, so the box would have to compile it (httptools,
+    # the other one, gained cp315 wheels in 0.9.0 at 19:53Z that day; the lock still pins 0.8.0,
+    # which has none); and prisma-client-py 0.15.0 is archived and was never tested on 3.15
+    # (docs/OPEN_FINDINGS.md). python-build-standalone itself does carry 3.15.0, from its 20261009
+    # release, and deadsnakes published python3.15 for noble that afternoon. Neither is enough on its
+    # own. Move when those four have it, and re-measure the generated client's import on the new
+    # minor before shipping it.
     #
     # TO RAISE IT: take the newest release at github.com/astral-sh/python-build-standalone/releases
     # that carries the target version, copy its `install_only` x86_64-unknown-linux-gnu line from
@@ -532,9 +538,9 @@ jobs:
     # the next deploy builds the new one beside the old. Never lower it.
     env:
       BOX_PYTHON_VERSION: "3.14.8"
-      BOX_PYTHON_BUILD: "20261003"
-      BOX_PYTHON_URL: "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.14.8%2B20261003-x86_64-unknown-linux-gnu-install_only.tar.gz"
-      BOX_PYTHON_SHA256: "371b6c281bbb09b29279e9e3a2996bab4ae2ea03cca52bf869f8bd89286b0ae8"
+      BOX_PYTHON_BUILD: "20261009"
+      BOX_PYTHON_URL: "https://github.com/astral-sh/python-build-standalone/releases/download/20261009/cpython-3.14.8%2B20261009-x86_64-unknown-linux-gnu-install_only.tar.gz"
+      BOX_PYTHON_SHA256: "83f9cb480b702548c592443f86209cf0fc03448d90692df257f095c01791dccc"
       PRISMA_CLI_NODE_VERSION: "26.11.1"
     steps:
       - name: Checkout
@@ -957,10 +963,21 @@ jobs:
       # serving, and nothing of the tarball unpacked.
       #
       # THE BUILD IS PART OF THE DIRECTORY NAME, NOT ONLY THE VERSION. python-build-standalone
-      # republishes a CPython version with newer bundled libraries (20261001 and 20261003 both carry
-      # 3.14.8; the second is a rebuild), so the version alone does not name the bytes. Raising either
-      # value installs a new directory BESIDE the old one. Nothing here replaces an interpreter in
-      # place, under a running process or under a rollback target's venv.
+      # republishes a CPython version with newer bundled libraries (20261001, 20261003 and 20261009
+      # all carry 3.14.8; the last moved libffi and expat), so the version alone does not name the
+      # bytes. Raising either value installs a new directory BESIDE the old one. Nothing here replaces
+      # an interpreter in place, under a running process or under a rollback target's venv.
+      #
+      # THE STANDARD LIBRARY IS BYTE-COMPILED AT INSTALL, AS ROOT, BECAUSE NOBODY ELSE CAN (2026-10-10).
+      # The install_only tarball ships the stdlib as source: 3 .pyc files for 1,059 modules. The units
+      # run as the deploy user, who cannot create __pycache__ in this root-owned tree, so without this
+      # step every start of the API and of the queue worker would recompile every stdlib module it
+      # imports, in memory, every time — measured in an ubuntu:26.04 container, a stdlib-heavy import
+      # took 1.8-3.0 s as that user against 0.5-0.6 s once compiled, and those seconds fall inside the
+      # restart the deploy waits out with /health down. Ubuntu's own python packages byte-compile at
+      # install for the same reason. It happens in the staging directory, before the rename, so a
+      # failure leaves nothing installed; the compiled files record the staging path and the import
+      # system rewrites a code object's filename to the real one when it loads it.
       #
       # WHAT IS DELIBERATELY LEFT ALONE, BECAUSE ROLLBACK RUNS ON IT. A release keeps the interpreter
       # it was built with: every release on the 24.04 box as of 2026-10-09 runs /usr/bin/python3.12,
@@ -1070,11 +1087,14 @@ jobs:
             sudo tar -xzf "$stage/python.tar.gz" -C "$stage" --no-same-owner
             sudo rm -f "$stage/python.tar.gz"
             [ -x "$stage/python/bin/python${minor}" ] || { echo "::error::the verified archive has no python/bin/python${minor}; it is not an install_only build."; exit 1; }
+            # One process, not -j: this runs once per pin, and a pool is one more thing to go wrong.
+            sudo "$stage/python/bin/python${minor}" -I -m compileall -q "$stage/python/lib/python${minor}"
+            printf '%s\n' "$BOX_PYTHON_SHA256" | sudo tee "$stage/python/.pbs-sha256" >/dev/null
+            printf '%s\n' "$BOX_PYTHON_URL" | sudo tee "$stage/python/.pbs-url" >/dev/null
+            # LAST, so they cover everything above, whatever umask sudo ran it under.
             sudo chown -R root:root "$stage/python"
             sudo chmod -R go-w "$stage/python"
             prove "$stage/python/bin/python${minor}" "$stage/python"
-            printf '%s\n' "$BOX_PYTHON_SHA256" | sudo tee "$stage/python/.pbs-sha256" >/dev/null
-            printf '%s\n' "$BOX_PYTHON_URL" | sudo tee "$stage/python/.pbs-url" >/dev/null
             sudo mv -T "$stage/python" "$home"
             sudo rm -rf "$stage"
             trap - EXIT

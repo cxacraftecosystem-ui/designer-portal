@@ -480,16 +480,18 @@ overnight with no commit behind it.
 stable release of everything, production included, and because the Python that resolves the lock
 must be the Python that runs it. Since 2026-10-09 that is 3.14 everywhere: the EC2 box builds every
 release venv with **upstream CPython 3.14.8**, a python-build-standalone build pinned by URL and
-SHA-256 and installed root-owned under `/opt/cpython/3.14.8+20261003` (`BOX_PYTHON_*` in
+SHA-256 and installed root-owned under `/opt/cpython/3.14.8+20261009` (`BOX_PYTHON_*` in
 `deploy-backend.yml`, the same four values in `infra/terraform/user_data.sh`, held together by
 `backend/tests/test_box_interpreter_pin.py`) — not Ubuntu 26.04's own 3.14.4 and not the deadsnakes
 PPA; `backend/Dockerfile` is on `python:3.14-slim-trixie`; CI's two backend jobs and `e2e-live.yml`
 run 3.14 with `check-latest`, and the backend job annotates any run whose patch has moved past the
 box's pin; and `backend/pyproject.toml` requires `>= 3.14`. **3.15.0 reached python.org on
-2026-10-09 and is not the target yet**: that day python-build-standalone's newest release carried
-3.15.0rc3, setup-python's manifest stopped at 3.15.0-rc.3, Docker Hub had no `python:3.15`,
-httptools 0.8.0 and PyYAML 6.0.3 (uvicorn[standard]'s, both their newest) had no cp315 wheel, and
-prisma-client-py was never tested on it. `deploy-backend.yml`'s job env says how to raise the pin.
+2026-10-09 and is not the target yet**: that evening setup-python's manifest stopped at
+3.15.0-rc.3, Docker Hub had only `python:3.15-rc`, PyYAML 6.0.3 (uvicorn[standard]'s, its newest)
+had no cp315 wheel, and prisma-client-py was never tested on it — python-build-standalone alone
+carried 3.15.0, from its 20261009 release. (httptools, uvicorn[standard]'s other compiled
+dependency, gained cp315 wheels in 0.9.0 at 19:53Z that day; the lock still pins 0.8.0.)
+`deploy-backend.yml`'s job env says how to raise the pin.
 Linux and not a developer's Windows venv, because a lock compiled there carries that platform's
 environment markers: `uvloop` is marker-excluded on Windows and would silently drop out of the
 production install. Refresh it deliberately, never as a side effect of something else:

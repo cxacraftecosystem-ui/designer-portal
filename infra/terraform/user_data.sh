@@ -224,9 +224,9 @@ chown -R ubuntu:ubuntu /home/ubuntu/app
 # the box otherwise provisioned, cloud-init's log says why, and the first deploy tries again.
 # (EC2 caps user data at 16 KB, which `terraform validate` enforces: keep these comments short.)
 BOX_PYTHON_VERSION="3.14.8"
-BOX_PYTHON_BUILD="20261003"
-BOX_PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.14.8%2B20261003-x86_64-unknown-linux-gnu-install_only.tar.gz"
-BOX_PYTHON_SHA256="371b6c281bbb09b29279e9e3a2996bab4ae2ea03cca52bf869f8bd89286b0ae8"
+BOX_PYTHON_BUILD="20261009"
+BOX_PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261009/cpython-3.14.8%2B20261009-x86_64-unknown-linux-gnu-install_only.tar.gz"
+BOX_PYTHON_SHA256="83f9cb480b702548c592443f86209cf0fc03448d90692df257f095c01791dccc"
 box_python_home="/opt/cpython/${BOX_PYTHON_VERSION}+${BOX_PYTHON_BUILD}"
 if [ ! -e "$box_python_home" ]; then
   install -d -o root -g root -m 0755 /opt/cpython
@@ -238,10 +238,12 @@ if [ ! -e "$box_python_home" ]; then
   echo "${BOX_PYTHON_SHA256}  $stage/python.tar.gz" | sha256sum -c -
   tar -xzf "$stage/python.tar.gz" -C "$stage" --no-same-owner
   rm -f "$stage/python.tar.gz"
-  chown -R root:root "$stage/python"
-  chmod -R go-w "$stage/python"
+  # Byte-compile the stdlib now: the units' user cannot write __pycache__ here (the workflow says why).
+  "$stage/python/bin/python${BOX_PYTHON_VERSION%.*}" -I -m compileall -q "$stage/python/lib/python${BOX_PYTHON_VERSION%.*}"
   printf '%s\n' "$BOX_PYTHON_SHA256" > "$stage/python/.pbs-sha256"
   printf '%s\n' "$BOX_PYTHON_URL" > "$stage/python/.pbs-url"
+  chown -R root:root "$stage/python"
+  chmod -R go-w "$stage/python"
   mv -T "$stage/python" "$box_python_home"
   rm -rf "$stage"
   trap - EXIT

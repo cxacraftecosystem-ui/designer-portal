@@ -148,12 +148,13 @@ jobs:
           # by digest (BOX_PYTHON_* in deploy-backend.yml) — the Dockerfile is on
           # python:3.14-slim-trixie, and pyproject requires >= 3.14, so this job proves the suite on
           # production's interpreter, and the next step says on every run whether the patch still
-          # matches. 3.15.0 reached python.org on 2026-10-09; this action's manifest, Docker Hub and
-          # python-build-standalone did not carry it that day, and deploy-backend.yml's job env lists
-          # what else holds it back. `check-latest` makes the patch python.org's newest rather than
-          # whatever the runner image cached (3.14.7 in the ubuntu-26.04 image of 2026-09-27, when
-          # 3.14.8 was current). The 37 integration failures of 2026-10-01 to 2026-10-09 were plugin
-          # order, not the interpreter: see `addopts` in backend/pyproject.toml.
+          # matches. 3.15.0 reached python.org on 2026-10-09; this action's manifest and Docker Hub did
+          # not carry it that evening (python-build-standalone did, from its 20261009 release), and
+          # deploy-backend.yml's job env lists what else holds it back. `check-latest` makes the
+          # patch python.org's newest rather than whatever the runner image cached (3.14.7 in the
+          # ubuntu-26.04 image of 2026-09-27, when 3.14.8 was current). The 37 integration failures
+          # of 2026-10-01 to 2026-10-09 were plugin order, not the interpreter: see `addopts` in
+          # backend/pyproject.toml.
           python-version: "3.14"
           check-latest: true
           cache: pip
