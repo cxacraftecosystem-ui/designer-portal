@@ -105,9 +105,8 @@ sealed interface UsageReadState {
  * file's header for why that promise is false here.
  */
 internal fun usageOfflineLine(noun: String): String =
-    "This device has no connection, so the $noun could not be read. That is not a claim that there " +
-        "are none — nothing about them is kept on this phone, so this screen has nothing to show " +
-        "until it can ask the server. Try again where there is a signal."
+    "This device has no connection, so the $noun could not be read. They are not kept on this " +
+        "phone, so there is nothing to show until it connects. Try again where there is a signal."
 
 /**
  * ONLINE AND THE READ FAILED — the server answered with something other than the figures.
@@ -120,8 +119,8 @@ internal fun usageOfflineLine(noun: String): String =
  */
 internal fun usageCouldNotReadLine(noun: String): String =
     "The $noun could not be read, so this is not showing what was recorded. This phone has a " +
-        "connection, so trying again may work; if it keeps failing, the figures are still on the " +
-        "server and nothing has been lost."
+        "connection, so trying again may work; if it keeps failing, the figures are still saved " +
+        "online and nothing has been lost."
 
 /**
  * The sentence for the state a usage read is actually in, or null when it has nothing to say.
@@ -313,7 +312,7 @@ internal fun usageDecisionLine(row: UsageConsentDecisionDto): String {
     val heard = usageMoment(row.createdAt)
     val when_ = when {
         ticked != null && heard != null && ticked != heard ->
-            " on $ticked (this server heard it on $heard)"
+            " on $ticked (received on $heard)"
         ticked != null -> " on $ticked"
         heard != null -> " on $heard"
         else -> ""

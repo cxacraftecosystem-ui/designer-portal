@@ -164,9 +164,9 @@ internal fun reportSourceFor(
 
     val deviceOnlyNote = when {
         remoteId == null ->
-            "This workshop has not been created on the server yet, so this report can only contain " +
-                "what is saved on this device. Send it to the server first if work recorded " +
-                "elsewhere has to appear in the document."
+            "This workshop has not been uploaded yet, so this report contains only what is saved " +
+                "on this device. Upload it first if work recorded elsewhere should appear in the " +
+                "report."
         // NAMED AS WHAT WAS OBSERVED, NOT AS A DIAGNOSIS. All this code saw is that the read
         // returned nothing; it did not see a radio. A refused token, a 500, a captive portal and a
         // genuinely empty sky all arrive here identically, and "There is no connection" shown to a
@@ -174,10 +174,10 @@ internal fun reportSourceFor(
         // NEXT one, the one that is true. [StageScreen] says "there is no connection, or the
         // request failed" on exactly this evidence and this follows it.
         remote == null ->
-            "This workshop could not be read from the server — there is no connection, or the " +
-                "request failed. So this report can only contain what is saved on this device: " +
-                "anything recorded on another phone or on the web is NOT in it. Say so before " +
-                "handing this copy to an officer."
+            "The latest copy of this workshop could not be read — there is no connection, or the " +
+                "connection failed. This report contains only what is saved on this device, so " +
+                "anything recorded on other devices is not in it. Say so before handing this copy " +
+                "to an officer."
         else -> null
     }
 
@@ -246,16 +246,15 @@ private fun builtFromLine(serverAnswered: Boolean, fromServer: Int, fromDevice: 
     !serverAnswered ->
         "Built from the $fromDevice stage(s) saved on this device."
     fromServer == 0 && fromDevice == 0 ->
-        "The server holds nothing for this workshop yet, and neither does this device."
+        "Nothing has been recorded for this workshop yet."
     fromServer == 0 ->
-        "Built from the $fromDevice stage(s) saved on this device. The server was read just now " +
-            "and holds nothing this device does not already have."
+        "Built from the $fromDevice stage(s) saved on this device. Nothing more has been recorded " +
+            "online."
     fromDevice == 0 ->
-        "Built from the $fromServer stage(s) downloaded from the server just now."
+        "Built from the $fromServer stage(s) downloaded just now."
     else ->
-        "Built from the $fromServer stage(s) downloaded from the server just now, plus the " +
-            "$fromDevice stage(s) saved on this device — this device's copy is kept wherever both " +
-            "hold the same stage."
+        "Built from the $fromServer stage(s) downloaded just now, plus the $fromDevice stage(s) " +
+            "saved on this device — where both have the same stage, this device's copy is used."
 }
 
 /**

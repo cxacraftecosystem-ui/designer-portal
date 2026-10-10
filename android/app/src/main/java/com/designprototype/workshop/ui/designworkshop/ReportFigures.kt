@@ -650,8 +650,7 @@ internal fun renderMap(
     // copies of one report this file exists to prevent.
     if (artisans.total > artisans.placed) {
         sentences += "${artisans.total - artisans.placed} participant(s) have no surveyed position " +
-            "on this copy, which was generated on a handset; the office's copy resolves their stated " +
-            "addresses through a place atlas this device does not carry."
+            "and are not shown on this map."
     }
     if (points.isEmpty()) {
         sentences += "No address in the record could be resolved to a position; the map shows the " +

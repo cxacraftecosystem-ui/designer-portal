@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import Field, model_validator
 
 from app.core.security import MAX_PASSWORD_LENGTH
@@ -58,6 +60,10 @@ class IssuePasswordLinkRequest(APIModel):
     """
 
     userId: str = Field(min_length=1, max_length=64)
+    #: ``COPY_LINK`` (the default, and all a client that predates e-mail ever sends): the link comes
+    #: back to be copied. ``EMAIL``: it is queued to the account's own address and does not come
+    #: back at all. Refused with a 422 when mail is not configured.
+    delivery: Literal["COPY_LINK", "EMAIL"] = "COPY_LINK"
 
 
 class PasswordLinkCheckRequest(APIModel):

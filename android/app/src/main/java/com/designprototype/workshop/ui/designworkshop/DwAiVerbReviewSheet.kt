@@ -42,7 +42,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.designprototype.workshop.data.DW_SUBTITLES_DEPLOYMENT_KEY_NOTE
 import com.designprototype.workshop.data.DwAiLayerDto
 import com.designprototype.workshop.data.DwAiVerbResultDto
 import com.designprototype.workshop.data.DwSubtitleFormat
@@ -164,8 +163,8 @@ internal fun DwAiVerbReviewSheet(
                     } else {
                         // Unreachable through these five routes today; drawn from the flags rather
                         // than from a constant so that a server which one day answers differently is
-                        // reported rather than contradicted.
-                        "This layer's acceptance state came back as the server recorded it."
+                        // not contradicted.
+                        "Read it before you rely on it."
                     },
                     color = MaterialTheme.field.body,
                     fontSize = 13.sp,
@@ -470,9 +469,8 @@ private fun DwVerbCueList(
             // for a payload that is not a cue list at all, which is a different fact from a cue list
             // with nothing in it, and only one of the two is something a designer can act on.
             Text(
-                "This layer's stored cue list is not in a shape this build can read, so the cues " +
-                    "cannot be shown here. The file below is built by the server from the same rows " +
-                    "and is still worth saving.",
+                "Update the app to see these cues here. You can still save the subtitle file " +
+                    "below.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp,
                 lineHeight = 17.sp,
@@ -548,10 +546,9 @@ private fun DwVerbCueList(
                 Switch(checked = speakers, onCheckedChange = onSpeakers, enabled = !busy)
                 Text(
                     "Put the speaker label in front of each line. The labels are the engine's own " +
-                        "guess — nobody told it how many people were in the room or who they were, " +
-                        "and it can merge two quiet voices or split one person who moved away from " +
-                        "the microphone. The .vtt carries that caution inside the file; SubRip has " +
-                        "no comment syntax and cannot, so a .srt carries the labels alone.",
+                        "guess — it can merge two quiet voices or split one person who moved away " +
+                        "from the microphone. A .vtt file carries that caution inside it; a .srt " +
+                        "file carries the labels alone.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
@@ -639,16 +636,6 @@ private fun DwVerbProvenance(layer: DwAiLayerDto) {
                 Text(
                     "From ${dwLanguageWords(layer.sourceLanguage)} into " +
                         dwLanguageWords(layer.targetLanguage) + ".",
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                )
-            }
-            if (layer.kind == "SUBTITLES") {
-                // THE ONE VERB THAT NEVER RUNS ON THE DESIGNER'S OWN KEY, said beside the provenance
-                // line that would otherwise imply it might have.
-                Text(
-                    DW_SUBTITLES_DEPLOYMENT_KEY_NOTE,
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,

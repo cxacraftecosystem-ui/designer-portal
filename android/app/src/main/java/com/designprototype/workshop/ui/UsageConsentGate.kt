@@ -379,8 +379,8 @@ fun UsageNoticeBody(notice: UsageNoticeDto, modifier: Modifier = Modifier) {
                 // Keyed by route on the wire. Printed as "route — who", because the route name is
                 // what a reader can go and check, and dropping it would leave four promises about
                 // "aggregates" with nothing to attach them to.
-                notice.readableBy.forEach { (route, who) ->
-                    Text("$route — $who", color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+                notice.readableBy.forEach { (_, who) ->
+                    Text(who, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
                 }
             }
         }
@@ -888,7 +888,7 @@ fun UsageConsentGateScreen(
                                     // body ONCE — never ask the same failure twice.
                                     sendError = failure.apiErrorMessage(
                                         if (online) {
-                                            "Your answer did not reach the server, so it has not " +
+                                            "Your answer could not be sent, so it has not " +
                                                 "been recorded. Try again."
                                         } else {
                                             "This phone has no connection, so your answer was not " +

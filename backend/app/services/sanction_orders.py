@@ -688,7 +688,7 @@ def _refuse_if_the_officer_named_themselves(officer: Any, keys: list[str]) -> No
     ── WHY A REFUSAL AND NOT A NARROWER GATE ─────────────────────────────────────────────────────
 
     The three other candidates all cost more than they buy. Withholding ``credentialLink`` from the
-    officer breaks the feature's stated transport (there is no mailer in this repository; the
+    officer breaks the feature's stated transport (the sanction register does not e-mail; the
     officer's clipboard IS the delivery, argued at :func:`_issue_first_credential`). Requiring an
     admin-decided allow-list row first makes the same-morning start impossible, which is the whole
     requirement. Narrowing the gate to ADMIN deletes the feature. What is actually wrong is one
@@ -1727,13 +1727,12 @@ async def _issue_first_credential(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The designer's first sign-in link — and the three cases where there is honestly nothing.
 
-    THE TRANSPORT IS THE OFFICER'S CLIPBOARD AND THE SCREEN SAYS SO. ``credential_links.delivery()``
-    hard-returns ``CopyLinkDelivery``, which logs one line WITHOUT the link and answers
-    ``"COPY_LINK"``. No mail leaves this server, because there is no mailer in this repository and
-    adding one needs a verified sending identity, SES production access, IAM credentials on the API
-    box and a DMARC-aligned From domain — an infrastructure ticket, not a line in this change. The
-    officer's screen therefore offers the link to copy and a prewritten message to paste, and says
-    in words that nothing has been emailed.
+    THE TRANSPORT IS THE OFFICER'S CLIPBOARD AND THE SCREEN SAYS SO. ``issue_link`` is called with
+    the default delivery, ``CopyLinkDelivery``, which logs one line WITHOUT the link and answers
+    ``"COPY_LINK"``. The product's e-mail (``credential_links.EmailDelivery``, 2026-10-10) is offered
+    on Users, by a provisioner; the sanction register does not use it. The officer's screen therefore
+    offers the link to copy and a prewritten message to paste, and says in words that nothing has
+    been emailed.
 
     NO LINK IS MINTED, AND THE SCREEN SAYS WHICH:
       * the account already existed — they sign in as they always do, and minting a RESET here would

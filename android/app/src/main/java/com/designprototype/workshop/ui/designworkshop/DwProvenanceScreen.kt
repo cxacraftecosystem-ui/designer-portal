@@ -231,9 +231,8 @@ fun DwProvenanceScreen(
 
         if (!onServer) {
             Text(
-                "This workshop has not been sent to the server yet, so it has copied nothing from " +
-                    "the shared records and there is nothing to compare. Send it from the workshop " +
-                    "list first.",
+                "This workshop is still only on this phone, so there is nothing to compare yet. " +
+                    "Send it from the workshop list first.",
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp
             )
@@ -468,14 +467,14 @@ private fun Throwable.provenanceFailure(): String {
         // The workshop is gone, or this account cannot see it. `load_workshop_or_404` deliberately
         // admits admins to SOFT-DELETED workshops — an audit of who wrote what is most needed on a
         // record somebody deleted — so a 404 reaching an admin means the row is not there at all.
-        404 -> "This workshop is not on the server. Nothing has been deleted from this phone."
+        404 -> "This workshop could not be found online. Nothing has been deleted from this phone."
         // NOT AN HTTP ANSWER AT ALL: no signal, a dropped socket, a body this build cannot parse.
         // Nothing was refused and nothing was found missing — the request never got an answer — so
         // the sentence says what is actually known, which is that the phone could not reach the
         // repository. Naming it as a missing workshop would send an admin looking for a deletion
         // that did not happen.
-        null -> "This phone could not reach the repository, so there is nothing to compare against " +
-            "yet. The comparison is a live read of the shared records and cannot be held offline."
+        null -> "Could not connect, so there is nothing to compare against yet. This comparison needs a " +
+            "connection. Check your connection and try again."
         else -> served ?: DW_PROVENANCE_LOAD_FAILED
     }
 }

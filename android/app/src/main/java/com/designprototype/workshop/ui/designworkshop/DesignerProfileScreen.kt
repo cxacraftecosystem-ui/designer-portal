@@ -1461,9 +1461,8 @@ fun DesignerProfileScreen(
                             */
                             if (designerProfileAddressIsFormatted(storedAddressLine)) {
                                 Text(
-                                    "This address was formatted on the web. It is shown here as " +
-                                        "plain text and is saved with its formatting intact — but " +
-                                        "editing it here replaces it with what is in the box.",
+                                    "This address was formatted on the web. Editing it here " +
+                                        "saves it as plain text.",
                                     color = MaterialTheme.field.muted,
                                     fontSize = 11.sp
                                 )
@@ -1485,9 +1484,8 @@ fun DesignerProfileScreen(
                             */
                             if (form.addressLine.length >= ADDRESS_LINE_MAX) {
                                 Text(
-                                    "This box is full — it holds $ADDRESS_LINE_MAX characters, " +
-                                        "which is what the column stores. Anything spoken or typed " +
-                                        "beyond that is not added.",
+                                    "This box is full — it holds $ADDRESS_LINE_MAX characters. " +
+                                        "Anything spoken or typed beyond that is not added.",
                                     color = MaterialTheme.field.muted,
                                     fontSize = 11.sp
                                 )
@@ -1907,12 +1905,10 @@ fun DesignerProfileScreen(
                       screen where deleting what is on screen does not delete what is stored.
                     */
                     Text(
-                        "An empty box CLEARS that value on the server — nothing here is left behind " +
-                            "when you delete it. Two exceptions: the four boxes marked * cannot be " +
-                            "emptied, because every report you generate is signed with them; and " +
-                            "your district and map point can be REPLACED but not removed, because " +
-                            "they are stored as a row of their own that a save rewrites rather than " +
-                            "deletes.",
+                        "Emptying a box and saving clears that value. Two exceptions: the four " +
+                            "boxes marked * cannot be emptied, because every report you generate is " +
+                            "signed with them; and your district and map point can be replaced but " +
+                            "not removed.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -2312,7 +2308,7 @@ private fun DistrictOrTown(
             )
         } else if (state.isNotBlank()) {
             Text(
-                "This deployment does not have a district list for $state, so type the town above.",
+                "No district list is available for $state. Type the town above.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )

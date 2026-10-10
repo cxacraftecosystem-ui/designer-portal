@@ -71,22 +71,24 @@ export function signInHintHeading(hint: SignInHint): string | null {
 /**
  * One issued link.
  *
- * `deliveredBy` is `"COPY_LINK"` today, which means the server sent nothing and the administrator
- * hands the link over themselves — the owner's decision of 2026-08-30, and the reason no mail
- * dependency was added. **Branch on this field, never assume it**: the transport sits behind an
- * interface on the server precisely so that adding SES later is a config change, and a screen that
- * hard-codes "copy this" would go on saying so after the mail started going out.
+ * `deliveredBy` is `"COPY_LINK"` when the administrator hands the link over themselves (the
+ * default), and `"EMAIL"` when they chose to have it e-mailed to the account's own address — in
+ * which case `link` is null: the administrator is not handed a second copy of the credential.
+ * **Branch on this field, never assume it.**
  *
  * There is no `token` field beside `link`, deliberately: a credential appearing twice in one answer
  * is a credential in two places to keep out of logs.
  */
 export type IssuedPasswordLink = {
   id: string;
-  link: string;
+  link: string | null;
   expiresAt: string;
   purpose: "INVITE" | "RESET";
-  deliveredBy: string;
+  deliveredBy: "COPY_LINK" | "EMAIL" | string;
 };
+
+/** How a link reaches its holder. `EMAIL` is offered only when `fetchNotificationPreferences().available`. */
+export type PasswordLinkDelivery = "COPY_LINK" | "EMAIL";
 
 /**
  * Mint a link for an account the caller provisions — an account provisioner, on an account it
@@ -97,10 +99,14 @@ export type IssuedPasswordLink = {
  * established account that merely predates the record gets the short one. A Google-only account (no
  * password) is a 422 — giving it a password is a decision, taken through "Set temporary password".
  */
-export async function issuePasswordLink(userId: string): Promise<IssuedPasswordLink> {
+export async function issuePasswordLink(
+  userId: string,
+  delivery: PasswordLinkDelivery = "COPY_LINK"
+): Promise<IssuedPasswordLink> {
   return apiFetch<IssuedPasswordLink>("/auth/password-links", {
     method: "POST",
-    body: JSON.stringify({ userId })
+    // The default is left off the wire, so a copy-link request is byte-for-byte what it always was.
+    body: JSON.stringify(delivery === "EMAIL" ? { userId, delivery } : { userId })
   });
 }
 

@@ -340,7 +340,7 @@ class ReportSourceTest {
 
         val note = source.deviceOnlyNote
         assertNotNull("a device-only export must be announced before the file is handed over", note)
-        assertTrue(note!!.contains("not been created on the server"))
+        assertTrue(note!!.contains("has not been uploaded yet"))
         assertEquals(onDevice.stages, source.draft!!.stages)
         assertTrue(source.builtFromLine.isNotEmpty())
     }

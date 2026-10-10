@@ -717,8 +717,8 @@ class DwSketchChooserSentenceTest {
     @Test
     fun `only a landed push claims the repository has it`() {
         val sent = dwChooserSaveNote(StagePush.Sent(StageSaveResultDto()), "This sketch")
-        assertTrue(sent.contains("reached the repository"))
-        assertTrue(dwChooserSaveNote(StagePush.AlreadySent, "This sketch").contains("already holds it"))
+        assertTrue(sent.contains("saved on this phone and online"))
+        assertTrue(dwChooserSaveNote(StagePush.AlreadySent, "This sketch").contains("already online"))
 
         // EVERY OTHER ANSWER IS A LOCAL SUCCESS WITH THE SENDING STILL OPEN, and none of them may
         // read as "the repository has this" — that is the promise this application must not make on
@@ -735,7 +735,7 @@ class DwSketchChooserSentenceTest {
             assertTrue("$push must say the work is safe on the phone", note.contains("on this phone"))
             assertFalse(
                 "$push must not claim the repository has it",
-                note.contains("reached the repository") || note.contains("already holds it"),
+                note.contains("and online") || note.contains("already online"),
             )
             assertTrue("$push must name the thing it is about", note.startsWith("This prototype"))
         }
@@ -761,7 +761,7 @@ class DwSketchChooserSentenceTest {
             "the push has not been attempted yet and must not be reported as having failed",
             interim.contains("did not complete"),
         )
-        assertFalse(interim.contains("reached the repository"))
+        assertFalse(interim.contains("online"))
         assertTrue("the ellipsis is the only promise it makes about the repository", interim.endsWith("…"))
         // AND IT IS NOT ANY OF THE FIVE VERDICTS. Sharing a string with one of them is how the two
         // states come to be indistinguishable on screen and then in the code.

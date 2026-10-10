@@ -53,7 +53,7 @@ class DwSketchTraceSessionTest {
         val failure = runCatching { runBlocking { DwTraceSession(host).hello() } }.exceptionOrNull()
         assertTrue(failure is DwTraceHostFailure)
         assertEquals(DwTraceFailureKind.BUNDLE_CONTRACT_MISMATCH, (failure as DwTraceHostFailure).kind)
-        assertTrue("the refusal must name both versions", failure.message!!.contains("99"))
+        assertTrue("the refusal must name both versions", failure.detail.contains("99"))
     }
 
     @Test
