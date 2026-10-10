@@ -1,9 +1,10 @@
 import java.io.File
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // No `org.jetbrains.kotlin.android`: AGP 9 compiles Kotlin itself. See the root build.gradle.kts.
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
@@ -59,7 +60,7 @@ val localProperties = Properties().apply {
 // handset carrying a locally built 1.1.19 (versionCode 1,001,019) cannot install this over the top —
 // Android refuses a downgrade — and the in-app updater will not offer it either. Uninstall first on
 // any such device. No FIELD device is affected, because no build was ever published to one.
-val appVersionName = "0.0.15"
+val appVersionName = "0.0.16"
 val appVersionCode = appVersionName.split(".").let { parts ->
     val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
     val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
@@ -108,12 +109,52 @@ if (releaseKeystorePath != null && !hasReleaseSigningKey) {
 
 android {
     namespace = "com.designprototype.workshop"
-    compileSdk = 35
+    /**
+     * THE NEWEST STABLE PLATFORM, 37.2 — Android 17's second minor release — as of 2026-10-09.
+     *
+     * Not a free choice in the other direction either: the current core-ktx, Compose UI,
+     * lifecycle-compose, OkHttp and Coil AARs each declare `minCompileSdk=37` in their own
+     * `aar-metadata.properties`, so anything older fails `checkDebugAarMetadata` before a line is
+     * compiled. A minor level only ADDS APIs and nothing here calls one of them yet; `targetSdk`, which
+     * is what changes behaviour, has no minor level and is 37 below. CI installs
+     * `platforms;android-37.2` for this in android-build.yml, android-emulator.yml and
+     * publish-android.yml — move the four together.
+     */
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 2
+        }
+    }
+    /**
+     * Pinned rather than left to AGP's default (36.0.0 for AGP 9.4), so the `aapt2` and `apksigner`
+     * that publish-android.yml uses to PROVE the signer and read the packaged manifest are the same
+     * 37.0.0 this build packaged with. `BUILD_TOOLS_VERSION` there moves with this line.
+     */
+    buildToolsVersion = "37.0.0"
 
     defaultConfig {
         applicationId = "com.designprototype.workshop"
         minSdk = 26
-        targetSdk = 35
+        /**
+         * Android 17. What that switches on for THIS app, checked against the code on 2026-10-09
+         * rather than copied from the release notes:
+         *
+         *  * Edge-to-edge with no opt-out (targetSdk 35 already enforced it on Android 15, and this
+         *    app never opted out): the activity's root pays the system-bar and cutout insets once,
+         *    `SystemBarsInsetsRoot` in ui/Theme.kt.
+         *  * Predictive back: nothing overrides `onBackPressed` or reads KEYCODE_BACK; every back
+         *    path is a Compose `BackHandler`, which the system's back callback reaches.
+         *  * Orientation and resizability limits ignored at 600dp and wider: the manifest sets none.
+         *  * ACCESS_LOCAL_NETWORK for private-address hosts: only a developer's `apiBaseUrl` override
+         *    is one, so only the DEBUG manifest declares it and `MainActivity` asks for it when
+         *    `apiHostNeedsLocalNetwork` says the configured host needs it.
+         *  * Background audio: a hidden app's playback is silenced, so both players in
+         *    ui/MediaPlayers.kt pause when the app leaves the screen.
+         *  * Certificate Transparency and Encrypted Client Hello on by default: every production host
+         *    has a publicly-trusted certificate (res/xml/network_security_config.xml).
+         *  * Native libraries loaded by PATH must be read-only: nothing here calls `System.load`.
+         */
+        targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersionName
         // Instrumented tests. There are none of the usual kind here and this is not the start of a
@@ -194,8 +235,9 @@ android {
          *     `abiFilters` is applied at PACKAGING time. An intermediate directory is not evidence
          *     here, and checking one is how this measurement was nearly got wrong.
          *  2. `defaultConfig` also narrows DEBUG, which takes away the x86_64 emulator — the only
-         *     machine a contributor without a handset has, on a project whose CI runs no
-         *     instrumented tests at all.
+         *     machine a contributor without a handset has, and the one
+         *     `.github/workflows/android-emulator.yml` installs this debug APK on (on demand, and
+         *     never a gate — the only device CI this project has, since 2026-09-03).
          */
     }
 
@@ -218,21 +260,25 @@ android {
      * WHY THIS IS SAFE TO TURN ON, which is the question that kept it off until it was checked
      * rather than assumed. The libraries that are reached REFLECTIVELY — and therefore the ones R8
      * cannot see the use of — all ship their own consumer rules inside their artifacts, which R8
-     * applies automatically. Verified by unzipping them out of the Gradle cache rather than trusted:
-     * `kotlinx-serialization-core` carries `META-INF/proguard/kotlinx-serialization-common.pro`
-     * (and the `META-INF/com.android.tools/proguard/` copy), `retrofit-2.11.0` carries
-     * `META-INF/proguard/retrofit2.pro`, `okhttp-4.12.0` carries `META-INF/proguard/okhttp3.pro`.
-     * `proguard-rules.pro` therefore holds only what is specific to this app: our own
-     * `@Serializable` wire types and the two Retrofit interfaces reached through a dynamic proxy.
+     * applies automatically. Verified by unzipping them rather than trusted, and re-read on
+     * 2026-10-09 for the versions this file now names: `kotlinx-serialization-core-jvm-1.11.0`
+     * carries `META-INF/proguard/kotlinx-serialization-common.pro` (and the
+     * `META-INF/com.android.tools/` proguard and r8 copies), `retrofit-3.0.0` carries
+     * `META-INF/proguard/retrofit2.pro`, and OkHttp 5's Android artifact, `okhttp-android-5.5.0.aar`,
+     * carries a consumer `proguard.txt` — `-dontwarn` lines only, because OkHttp needs no keep rule.
+     * `proguard-rules.pro` therefore holds what is specific to this app or that no library ships: our
+     * own `@Serializable` wire types, two of the seven Retrofit interfaces by name (Retrofit's own
+     * `-if interface * { @retrofit2.http.* <methods>; }` rule keeps all seven), `-dontoptimize`, the
+     * ML Kit registrars' constructors, the sherpa-onnx binding, and Credential Manager's provider.
      *
-     * WHAT IS STILL NOT PROVEN, stated because a shrunk build fails in a way that a green build
-     * hides. R8's failure mode is not a compile error — it is a `SerializationException` or a
-     * `NoSuchMethodError` at the first sync, on a build that installed and ran fine on a desk. This
-     * machine has no device and no emulator (`adb` is not installed), so nothing here exercises the
-     * shrunk APK at runtime. What IS checked is: the release build completes, the mapping is
-     * emitted, and `r8-removed.txt` is read to confirm nothing load-bearing was dropped. Before this
-     * ships, a release build must be run on real hardware through the offline loop — the same
-     * hardware gap the handover already records against the offline claim itself.
+     * WHAT IS PROVEN, AND WHAT IS STILL NOT. R8's failure mode is not a compile error — it is a
+     * `SerializationException` or a `NoSuchMethodError` at the first sync, on a build that installed
+     * and ran fine on a desk. On 2026-10-09 this shrunk build ran on the API 37 emulator (runs
+     * 37949869530, 37951774101, 37953735603; docs/CI.md §1.5): sign-in, both set-password
+     * link forms, the designer profile's Coil pictures, no crash or R8-shaped exception, and every
+     * class reached by name present. Never run shrunk: sync and media upload, dictation on ARM, a
+     * live camera, Credential Manager — so a release still goes through the offline loop on real
+     * hardware before it ships, the gap the handover records against the offline claim itself.
      *
      * `isShrinkResources` needs `isMinifyEnabled`; enabling it alone is an error rather than a
      * smaller APK.
@@ -364,7 +410,8 @@ android {
              * There is no device inventory here to say the risk is zero, so it is not assumed to be.
              * With a roster of what the designers actually carry, this is a one-line change.
              *
-             * THE EMULATOR, because dropping x86 drops it and this project has no device CI. `debug`
+             * THE EMULATOR, because dropping x86 drops it and this project's only device CI is the
+             * on-demand android-emulator.yml. `debug`
              * below is left unfiltered on purpose, so day-to-day work on an x86_64 emulator is
              * untouched. For the one case that needs more — smoke-testing a SHRUNK release build with
              * no handset in reach, which is exactly what the R8 section of this file says must not be
@@ -386,10 +433,19 @@ android {
             isShrinkResources = true
             proguardFiles(
                 // The AGP-supplied baseline, which already carries the Android platform and Compose
-                // keeps. `-optimize` is deliberately NOT used: it is the aggressive variant, and the
-                // extra few per cent is not worth a second variable in a change that cannot be
-                // exercised on hardware here.
-                getDefaultProguardFile("proguard-android.txt"),
+                // keeps. R8's OPTIMISATION pass is still deliberately off: it is the aggressive
+                // variant, and the extra few per cent is not worth a second variable in a build that
+                // cannot be exercised on hardware here.
+                //
+                // `-optimize.txt` IS NAMED BELOW ONLY BECAUSE AGP 9 REFUSES THE OTHER ONE. Until
+                // 2026-10-09 this line read `proguard-android.txt` — AGP's common rules plus a
+                // `-dontoptimize` — and AGP 9 rejects that file outright
+                // (`android.r8.proguardAndroidTxt.disallowed`). AGP's own error message prescribes
+                // the replacement, which is what is done: the optimize baseline here, and the
+                // `-dontoptimize` carried by `proguard-rules.pro` itself, so R8 still does not
+                // optimise. Turning optimisation ON is deleting that one line there — a separate
+                // decision, to be taken with a release build running on a handset.
+                getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
         }
@@ -399,7 +455,8 @@ android {
             // development point at an obfuscated name for no benefit.
             //
             // AND DELIBERATELY LEFT WITHOUT `abiFilters`, which is the other half of the release
-            // block's narrowing. There is no device CI on this project, so the emulator is how a
+            // block's narrowing. The only device CI here is the on-demand android-emulator.yml, so the
+            // emulator is how a
             // developer with no handset runs anything at all — and a standard AVD is x86_64. The
             // debug APK is never downloaded over a mobile connection by anybody, so the ABIs it
             // carries cost nothing that matters. Narrowing both build types would have saved no
@@ -408,13 +465,18 @@ android {
         }
     }
 
+    /**
+     * THE BYTECODE LEVEL IS JAVA 17, AND IT STAYS 17 WHATEVER JDK RUNS GRADLE.
+     *
+     * 17 is the newest Java level Android documents for any platform (Android 14 / API 34 maps to
+     * Java 17 — developer.android.com/build/jdks), so it is a ceiling, not a version to chase. CI runs
+     * Gradle on JDK 25 since 2026-10-09; these two pins and the `kotlin { }` block after `android { }`
+     * are what keep the class files at major version 61 regardless. (The `kotlinOptions { }` block that
+     * used to sit here is gone from AGP 9's DSL; `compilerOptions` is its replacement.)
+     */
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     /**
@@ -439,32 +501,65 @@ android {
     }
 }
 
+// The Kotlin half of the Java 17 pin in `compileOptions` above — see the note there. Explicit rather
+// than inherited from `targetCompatibility`, which AGP 9's built-in Kotlin would also do, so that the
+// four vendored engine modules and this one state the same target in the same words.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+/*
+ * EVERY VERSION BELOW IS THE NEWEST STABLE RELEASE AS OF 2026-10-09, read off Google Maven's and Maven
+ * Central's own `maven-metadata.xml` that day with alpha, beta and rc builds excluded. Two rows are
+ * older than that and say why where they stand: `material-icons-extended`, which the Compose BOM still
+ * maps to its final 1.7.8, and `junit:junit`, whose 4.13.2 is JUnit 4's last release.
+ * `.github/dependabot.yml` watches this file from that date on, so it does not freeze again.
+ */
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+    // Compose UI/foundation/runtime 1.12.1 and material3 1.4.0.
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
     // Instrumented-test only: nothing here reaches the shipped APK, so it costs no download size.
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
 
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.compose.material3:material3")
+    // Frozen upstream at 1.7.8 (last published 2025-02-12); the BOM above still maps it. If a later
+    // BOM stops doing so, pin 1.7.8 here or move to Material Symbols vector assets.
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
-    implementation("com.google.android.libraries.identity.googleid:googleid:1.2.0")
-    implementation("io.coil-kt:coil-compose:2.7.0")
-    implementation("io.coil-kt:coil-video:2.7.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.2.1")
 
-    // In-app video/audio playback
-    implementation("androidx.media3:media3-exoplayer:1.4.1")
-    implementation("androidx.media3:media3-ui:1.4.1")
+    /**
+     * Coil 3, which moved to its own group (`io.coil-kt.coil3`) and package (`coil3.*`); Coil 2's
+     * 2.7.0 was its final release.
+     *
+     * `coil-network-okhttp` IS NOT OPTIONAL. Coil 3's core no longer fetches http(s) URLs by itself:
+     * without a network artifact every remote `AsyncImage` fails quietly into its placeholder, with
+     * nothing in the build to say so. It registers itself through Coil's service loader, on its own
+     * OkHttp client — as Coil 2's built-in fetcher did — so no image request carries this app's
+     * session. Coil 3 also caps a decoded image at 4096×4096 by default, which is a smaller bitmap
+     * on the cheapest phones in the field rather than a lost one.
+     */
+    implementation("io.coil-kt.coil3:coil-compose:3.6.3")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
+    implementation("io.coil-kt.coil3:coil-video:3.6.3")
+
+    // In-app video/audio playback. media3 1.11 merges `android.permission.WAKE_LOCK` into the
+    // manifest, for its default wake-lock handling while playing.
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-ui:1.11.1")
 
     /**
      * On-device text recognition, so an identity card can be read with NO CONNECTION.
@@ -501,20 +596,33 @@ dependencies {
      *
      * ── WHERE IT COMES FROM, AND WHY IT IS A FILE IN `app/libs` ───────────────────────────────
      *
-     * `sherpa-onnx-static-link-onnxruntime-1.13.5.aar`, 37,749,854 bytes, SHA-256
-     * `508b79be1aeef3cbb92b8d4325b9b1dad0fa9a4eb1991de0d3d1826b8a09c358`, downloaded from the
-     * `k2-fsa/sherpa-onnx` GitHub release `v1.13.5`. `docs/ASR-RUNTIME-MEASUREMENT.md` §1 proved
-     * through the Gradle resolver — not through a web search — that no spelling of these
-     * coordinates resolves from `google()` or `mavenCentral()`: six coordinates, six live 404s.
-     * The `flatDir` that reaches this file is declared in `settings.gradle.kts`, which explains why
-     * it has to live there.
+     * `sherpa-onnx-static-link-onnxruntime-1.13.8.aar`, 38,691,998 bytes, SHA-256
+     * `b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471`, downloaded from the
+     * `k2-fsa/sherpa-onnx` GitHub release `v1.13.8` — the newest release as of 2026-10-09, and the
+     * digest is the one GitHub publishes for the asset as well as the one read off the downloaded
+     * file. `docs/ASR-RUNTIME-MEASUREMENT.md` §1 proved through the Gradle resolver — not through a
+     * web search — that no spelling of these coordinates resolves from `google()` or
+     * `mavenCentral()`: six coordinates, six live 404s. The `flatDir` that reaches this file is
+     * declared in `settings.gradle.kts`, which explains why it has to live there.
+     *
+     * ── 1.13.8 SINCE 2026-10-09; EVERY MEASUREMENT CITED HERE WAS TAKEN ON 1.13.5 ───────────────
+     *
+     * What moved, read out of the two AARs rather than the release notes: the same fifteen entries
+     * and the same four ABIs; `javap` prints every class this app imports from the binding
+     * (`OfflineRecognizer`, its config classes, `OfflineStream`, `WaveReader` and the result type)
+     * identically; the native code is onnxruntime 1.28.2 in place of 1.27.1, and the ARM pair grew by
+     * 807,680 bytes (arm64-v8a 23,646,824 → 24,169,352, armeabi-v7a 16,152,132 → 16,437,284). What
+     * a desk cannot re-establish is the on-device behaviour, so the engine probes
+     * (`DwAsrEngineProbeTest` on android-emulator.yml, then the handset) are run again before a
+     * release carries it.
      *
      * ── WHY THE STATIC-LINK VARIANT AND NOT THE DEFAULT ONE ───────────────────────────────────
      *
-     * Recommendation 2 of that document, measured on eight real packaged APKs and NOT re-derived
-     * here: the ARM pair costs **+39,811,828 bytes** with this AAR against **+53,308,196** with
-     * `sherpa-onnx-1.13.5.aar`. The difference is 13,496,368 bytes and it is free — the static-link
-     * build has `libonnxruntime.so` linked into `libsherpa-onnx-jni.so` instead of beside it.
+     * Recommendation 2 of that document, measured on eight real packaged APKs at 1.13.5 and NOT
+     * re-derived here: the ARM pair costs **+39,811,828 bytes** with the static-link AAR against
+     * **+53,308,196** with `sherpa-onnx-1.13.5.aar`. The difference is 13,496,368 bytes and it is
+     * free — the static-link build has `libonnxruntime.so` linked into `libsherpa-onnx-jni.so`
+     * instead of beside it.
      *
      * ── AND THIS CONTRADICTS `docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md`, WHICH IS THE FINDING ────
      *
@@ -536,7 +644,7 @@ dependencies {
      * constructors exist to prevent). Whoever wants the opt-in shape back must first answer a
      * question nobody has: how a downloaded `.so` reaches this binding at all.
      */
-    implementation(":sherpa-onnx-static-link-onnxruntime-1.13.5@aar")
+    implementation(":sherpa-onnx-static-link-onnxruntime-1.13.8@aar")
 
     /**
      * READING a QR code — off the camera, and off a screenshot somebody was sent.
@@ -625,11 +733,12 @@ dependencies {
      *    runs THAT decoder on the desktop over symbols this app's own `DwQrEncode` produced. The
      *    seam that makes both true is `data/DwQrFrameReader.kt`.
      *
-     * WHAT IS STILL TRUE AND IS WHY THIS LINE STAYS: ZXing is pure Java, it is 607,650 bytes
-     * (re-measured on this machine on 2026-08-28, unchanged), and it is the only QR reader in this
-     * build that a machine with no handset can make any accuracy claim about at all.
+     * WHAT IS STILL TRUE AND IS WHY THIS LINE STAYS: ZXing is pure Java, it is 610,364 bytes at
+     * 3.5.4 (read off Maven Central on 2026-10-09; 3.5.3 was the 607,650 re-measured on this machine
+     * on 2026-08-28), and it is the only QR reader in this build that a machine with no handset can
+     * make any accuracy claim about at all.
      */
-    implementation("com.google.zxing:core:3.5.3")
+    implementation("com.google.zxing:core:3.5.4")
 
     /**
      * READING A QR OFF A LIVE FRAME — ML Kit, BUNDLED, added 2026-08-28.
@@ -749,6 +858,33 @@ dependencies {
      *
      * ── THE FOUR LINES, AND WHAT ELSE ARRIVES WITH THEM ────────────────────────────────────────
      *
+     * AT 1.6.2, read off `dl.google.com/dl/android/maven2` on 2026-10-09: `camera-core` 1,213,194
+     * bytes, `camera-camera2` 1,184,080, `camera-lifecycle` 54,987, `camera-compose` 42,565.
+     * `camera-camera2` nearly doubled because 1.6 rebuilt its internals on CameraPipe, the stack
+     * Google's own camera app runs on, which now arrives as an artifact of its own. Every other row
+     * on the release classpath that nothing but CameraX asks for, worked out from the dump
+     * regenerated that day (`android/deps.txt`) and read off the same hosts (Maven Central for the
+     * non-AndroidX rows):
+     *
+     *     androidx.camera:camera-camera2-pipe:1.6.2                    1,585,622 bytes
+     *     androidx.camera.viewfinder:viewfinder-core:1.6.2                91,706
+     *     androidx.camera.viewfinder:viewfinder-compose:1.6.2             66,150
+     *     com.google.dagger:dagger:2.59                                   55,480
+     *     androidx.lifecycle:lifecycle-livedata:2.11.0                    54,902
+     *     org.jetbrains.kotlinx:atomicfu-jvm:0.28.0                       48,578
+     *     androidx.core:core-backported-fixes:1.0.0                       18,905
+     *     androidx.camera.featurecombinationquery:…:1.6.2                 18,525
+     *     jakarta.inject:jakarta.inject-api:2.0.1                         10,681
+     *     androidx.tracing:tracing-ktx:1.3.0                               6,095
+     *     com.google.auto.value:auto-value-annotations:1.6.3               5,906
+     *     androidx.lifecycle:lifecycle-livedata-core-ktx:2.11.0            5,663
+     *     androidx.concurrent:concurrent-futures-ktx:1.1.0                 5,605
+     *
+     * CameraPipe, Dagger, `jakarta.inject-api` and `core-backported-fixes` are new with 1.6: the
+     * 1.5.3 POMs name none of them. (`javax.inject:1`, which Dagger also wants, was already there
+     * through ML Kit.) The table and the paragraph after it are the reading taken when CameraX first
+     * arrived, at 1.5.3, and are kept as that record.
+     *
      * Sizes read off `dl.google.com/dl/android/maven2` on 2026-08-24 — never inferred from a version
      * bump, which is what that document requires of a size claim:
      *
@@ -764,14 +900,17 @@ dependencies {
      *                                                          ─────────────────────
      *                                                          2,122,923  (2.02 MiB)
      *
-     * The last two are the ONLY genuinely new non-camera rows and they were checked against
-     * `android/deps.txt` rather than assumed: `lifecycle-livedata-CORE:2.8.7` is already there
-     * (fourteen times), the full `lifecycle-livedata` is not, and `concurrent-futures-ktx` is not.
-     * Everything else CameraX asks for already resolves on `releaseRuntimeClasspath` —
-     * `concurrent-futures:1.1.0` (deps.txt line 64), `tracing:1.2.0` (line 104), `jspecify:1.0.0`
-     * (line 596), the empty `listenablefuture` stub already forced to `9999.0`,
-     * `kotlinx-coroutines-android` (already forced to 1.9.0, above camera-core's 1.8.1 request),
-     * `fragment:1.5.7` and `appcompat:1.6.1` (arriving via credentials → biometric).
+     * The last two were counted then as the ONLY genuinely new non-camera rows, checked against the
+     * pre-CameraX `android/deps.txt`: `lifecycle-livedata-CORE:2.8.7` was there (fourteen times),
+     * the full `lifecycle-livedata` was not, and `concurrent-futures-ktx` was not. That count missed
+     * three small rows the 1.5.3 POMs name as well, none of them in the pre-CameraX dump:
+     * `auto-value-annotations` (camera-core), `tracing-ktx` (camera-lifecycle) and `atomicfu`
+     * (viewfinder-core). Everything else CameraX asks for is pulled in by something else too, and
+     * the dump regenerated on 2026-10-09 lists it above the camera rows: `concurrent-futures:1.1.0`
+     * (deps.txt line 67), `tracing` (1.3.0 now, line 117), `jspecify:1.0.0` (line 87), the empty
+     * `listenablefuture` stub forced to `9999.0` (line 69), `kotlinx-coroutines-android` (1.10.2 now,
+     * above camera-core's 1.9.0 request), `fragment:1.5.7` and `appcompat` (1.7.1 now, 1.6.1 then),
+     * both arriving via credentials → biometric.
      *
      * `lifecycle-livedata` arrives because `CameraInfo.getTorchState()` is a `LiveData<Integer>` and
      * is read to drive the torch button. That is not an accident of the dependency graph — a torch
@@ -779,31 +918,39 @@ dependencies {
      * asynchronous and the platform turns the torch off on unbind, so a stale `true` leaves a lit
      * icon over a dark frame. `DwQrLiveScanner` reads the platform's own state instead.
      *
-     * ── 1.5.3 AND NOT 1.6.x, MEASURED FROM THE AARs' OWN METADATA ─────────────────────────────
+     * ── 1.6.2 SINCE 2026-10-09, AND WHY IT WAS 1.5.3 UNTIL THEN ─────────────────────────────────
      *
-     * `META-INF/com/android/build/gradle/aar-metadata.properties`, unzipped out of three
-     * `camera-core` artifacts:
+     * `META-INF/com/android/build/gradle/aar-metadata.properties`, unzipped out of the `camera-core`
+     * artifacts (the 1.6.2 row read on 2026-10-09, the others when CameraX arrived):
      *
      *     1.4.2  minCompileSdk 34   minAndroidGradlePluginVersion 1.0.0
      *     1.5.3  minCompileSdk 35   minAndroidGradlePluginVersion 8.6.0
      *     1.6.1  minCompileSdk 36   minAndroidGradlePluginVersion 8.9.1
+     *     1.6.2  minCompileSdk 36   minAndroidGradlePluginVersion 8.9.1
      *
-     * This build is `compileSdk = 35` on AGP 8.7.3, so 1.6.x FAILS the metadata check outright — it
-     * would require a compileSdk and an AGP bump in the same commit as a scanner, on a release path
-     * that also carries R8 keep rules, four-ABI packaging, a vendored 37 MB AAR and a signing
-     * arrangement built to fail loudly. Two changes, two commits. 1.4.2 clears the check and its
-     * `camera-core` is 246 KB smaller, and it is still the wrong choice: its `camera-compose` is a
-     * 1,449-byte STUB against 1.5.3's real 45,173-byte module, so 1.4.2 forces `camera-view` and
-     * `PreviewView` instead of the Compose viewfinder. That is the deciding fact, not the version.
+     * Until 2026-10-09 this build was `compileSdk = 35` on AGP 8.7.3, so 1.6.x failed the metadata
+     * check outright, and moving it would have meant a compileSdk and an AGP bump in the same commit
+     * as a scanner. The toolchain change of that date (compileSdk 37.2, AGP 9.4.1) removed the
+     * blocker, and 1.6.2 — the newest stable release — moved in with it. Its four entry points this
+     * app calls (`CameraXViewfinder`, `ViewPort`/`UseCaseGroup`, `ImageAnalysis`, `awaitInstance`)
+     * compiled unchanged, but CameraPipe is a new engine underneath them, so live QR reading, the
+     * torch state and the reticle crop are re-checked on the handset before a release carries it.
+     * (The Android 17 crash CameraX 1.6 is known for — a dynamic-range profile it did not recognise —
+     * was fixed in 1.5.2 as well, so it is not the reason for the move.)
+     *
+     * 1.4.2 cleared the old check, its `camera-core` is 246 KB smaller, and it was still the wrong
+     * choice: its `camera-compose` is a 1,449-byte STUB against 1.5.3's real 45,173-byte module, so
+     * 1.4.2 forces `camera-view` and `PreviewView` instead of the Compose viewfinder.
      *
      * ── `camera-compose` AND NOT `camera-view`, WHICH WOULD HAVE COST NO NEW ARTIFACT ──────────
      *
-     * `appcompat:1.6.1` and `fragment:1.5.7` are already on the release classpath, so `PreviewView`
-     * was free. `CameraXViewfinder` is taken anyway because it is a Compose composable in a codebase
-     * that is Compose all the way down, and because wrapping a `PreviewView` in an `AndroidView`
-     * inside a `Dialog` is the shape that produces the black-first-frame reports. What it does NOT
-     * buy is the reticle mapping: see `dwQrCropInBuffer`, which uses `ImageProxy.cropRect` and a
-     * `ViewPort` rather than the coordinate transformer, and says why.
+     * `appcompat` (1.7.1 since 2026-10-09) and `fragment:1.5.7` are already on the release
+     * classpath, so `PreviewView` was free. `CameraXViewfinder` is taken anyway because it is a
+     * Compose composable in a codebase that is Compose all the way down, and because wrapping a
+     * `PreviewView` in an `AndroidView` inside a `Dialog` is the shape that produces the
+     * black-first-frame reports. What it does NOT buy is the reticle mapping: see
+     * `dwQrCropInBuffer`, which uses `ImageProxy.cropRect` and a `ViewPort` rather than the
+     * coordinate transformer, and says why.
      *
      * ── THE APK COST IS AN ESTIMATE AND IS LABELLED AS ONE ────────────────────────────────────
      *
@@ -813,7 +960,8 @@ dependencies {
      *     ./gradlew :app:assembleRelease
      *     stat -c %s app/build/outputs/apk/release/app-release.apk
      *
-     * (Written as two lines with the file named rather than as one line with a glob, because a glob
+     * (`app-release-unsigned.apk` when no key is configured, which is what CI builds.) (Written as
+     * two lines with the file named rather than as one line with a glob, because a glob
      * before `.apk` spells the end of a block comment and silently ate this whole paragraph once.)
      *
      * What can be said with evidence: release R8 is ON (`isMinifyEnabled` + `isShrinkResources`
@@ -824,9 +972,16 @@ dependencies {
      * R8 ate almost all of it") will FLATTER CameraX, though: ML Kit's Java was mostly unreached
      * API surface, whereas `camera-core` plus `camera-camera2` is a pipeline entered wholesale
      * through `bindToLifecycle` whose ~100 device-quirk classes are reached by enumeration. Estimate
-     * +700 KB to +1.2 MB of dex, which against the last measured shipping figure
+     * +700 KB to +1.2 MB of dex, which against the shipping figure measured at the time
      * (`docs/ASR-RUNTIME-MEASUREMENT.md` row E, 66,056,244 bytes) is 1.1%–1.8%. Do not quote it as
      * a measurement.
+     *
+     * That estimate is the 1.5.3 one, and 1.6.2 roughly doubles the camera bytecode R8 has to work
+     * through (CameraPipe, Dagger, atomicfu), so expect more. The whole release APK was read once on
+     * 2026-10-09, from a CI build of the 1.6.2 tree with every other upgrade of that day (android-build
+     * run 37931290718, ARM pair, R8 on, UNSIGNED): 78,637,438 bytes, against 77,451,931 for the
+     * signed 0.0.15 APK published 2026-09-20. That is a whole-app difference across three weeks of
+     * source, not CameraX's share, and it is still no measurement of CameraX.
      *
      * ── NO NEW PERMISSION AND NOTHING NEW IN THE INSTALL DIALOG ───────────────────────────────
      *
@@ -834,16 +989,35 @@ dependencies {
      * unexported `androidx.camera.core.impl.MetadataHolderService`, and the rest contribute only
      * `<uses-sdk android:minSdkVersion="23"/>`, which the merger discards under this module's 26.
      * No `uses-permission`, no `uses-feature`. `android.permission.CAMERA` was already declared.
+     * Re-read at 1.6.2 on 2026-10-09: the same, with `camera-camera2` now adding its config
+     * `<meta-data>` under that same disabled service.
      */
-    implementation("androidx.camera:camera-core:1.5.3")
-    implementation("androidx.camera:camera-camera2:1.5.3")
-    implementation("androidx.camera:camera-lifecycle:1.5.3")
-    implementation("androidx.camera:camera-compose:1.5.3")
+    implementation("androidx.camera:camera-core:1.6.2")
+    implementation("androidx.camera:camera-camera2:1.6.2")
+    implementation("androidx.camera:camera-lifecycle:1.6.2")
+    implementation("androidx.camera:camera-compose:1.6.2")
 
-    implementation("com.squareup.retrofit2:retrofit:2.11.0")
-    implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    /**
+     * Retrofit 3 and OkHttp 5. Retrofit 3.0.0 is binary-compatible with 2.x and only raised its OkHttp
+     * floor; OkHttp 5 stays binary-compatible for CALLERS, and Gradle module metadata picks its
+     * Android artifact (`okhttp-android`) on its own. Two things did move: `Response.body` is no
+     * longer nullable, so a few `?:` fallbacks in this app are dead code now (compiler warnings, not
+     * errors), and OkHttp 5.3 added members to `okhttp3.Call`, which the JVM tests' canned calls
+     * implement.
+     *
+     * The converter is Retrofit's own `converter-kotlinx-serialization`, the same code Jake
+     * Wharton's `retrofit2-kotlinx-serialization-converter:1.0.0` shipped (Retrofit imported it
+     * "unchanged" in 2.10.0); that repository is archived and its README says DEPRECATED, so the
+     * coordinate and the import moved to `retrofit2.converter.kotlinx.serialization`.
+     *
+     * OkHttp 5 also connects with Happy Eyeballs (RFC 8305) by default — racing IPv6 against IPv4.
+     * The CloudFront host was chosen because it answers on IPv6-only networks (see `apiBaseUrl`
+     * above), so sign-in and sync on such a network are among the handset checks before a release.
+     */
+    implementation("com.squareup.retrofit2:retrofit:3.0.0")
+    implementation("com.squareup.retrofit2:converter-kotlinx-serialization:3.0.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:5.5.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
     /**
      * THE VENDORED TRACE ENGINE — the only way this app turns a photograph into vectors.
@@ -888,16 +1062,18 @@ dependencies {
      * a wall of unresolved references in code that never changed.
      *
      * VERSION ALIGNMENT, CHECKED RATHER THAN ASSUMED. `:core-pipeline` asks for
-     * `kotlinx-serialization-json:1.7.3` and the line directly above asks for the same 1.7.3, so
+     * `kotlinx-serialization-json:1.11.0` and the line directly above asks for the same 1.11.0, so
      * there is no conflict for Gradle to resolve and no chance of the engine being handed a
-     * different serialization runtime from the one the app's DTOs use. The serialization COMPILER
-     * PLUGIN `:core-pipeline` applies is declared in the root `build.gradle.kts` at 2.0.21 —
-     * the version this module already applies.
+     * different serialization runtime from the one the app's DTOs use. Move the two together. The
+     * serialization COMPILER PLUGIN `:core-pipeline` applies is declared in the root
+     * `build.gradle.kts` at 2.4.21 — the version this module already applies.
      *
      * JVM TARGET. Upstream builds these with `jvmToolchain(17)`; this module compiles at
-     * `jvmTarget = "17"` with `sourceCompatibility`/`targetCompatibility` 17. See the note in each
+     * `jvmTarget = JVM_17` with `sourceCompatibility`/`targetCompatibility` 17. See the note in each
      * vendored `build.gradle.kts` for how the two were reconciled — the bytecode level is the same
-     * 17 either way, but the toolchain form demands a JDK 17 that does not exist on this machine.
+     * 17 either way, but the toolchain form demands a JDK 17 that does not exist on this machine —
+     * and for the `-Xjdk-release=17` that keeps the engine compiling against the JDK 17 API now that
+     * CI runs Gradle on JDK 25.
      */
     implementation(project(":core-imaging"))
     implementation(project(":core-vector"))
@@ -909,6 +1085,7 @@ dependencies {
     // JUnit 4 rather than 5: AGP's `testDebugUnitTest` runs JUnit 4 out of the box, and a JUnit 5
     // platform here would need a third-party Gradle plugin to be fetched before a single assertion
     // could run — a dependency on the network in the one repository whose entire premise is working
-    // without one.
+    // without one. 4.13.2 is JUnit 4's final release (2021-02-13), so it is the newest there is;
+    // moving off it is a change of test framework, not a version bump.
     testImplementation("junit:junit:4.13.2")
 }

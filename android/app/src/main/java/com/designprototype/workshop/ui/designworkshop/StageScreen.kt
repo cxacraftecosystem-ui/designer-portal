@@ -489,7 +489,7 @@ fun StageScreen(
         runCatching {
             val schema = repository.designWorkshopSchema(appContext)
             val spec = schema.stages.firstOrNull { it.key == stageKey }
-                ?: error("This build's field registry has no stage called $stageKey.")
+                ?: error("This stage is not in the form layout on this phone. Update the app to open it.")
 
             val draft = WorkshopDraftStore.load(appContext, workshopId)
             mediaIndex = draft?.media.orEmpty().associateBy { it.id }
@@ -761,9 +761,9 @@ fun StageScreen(
             showAdvanced = focusOpensAdvanced(spec, focus)
             saveState = SaveState.CLEAN
             noteTitle = when {
-                loaded.foldNotice != null -> "This stage has been read from the server"
+                loaded.foldNotice != null -> "This stage has been updated"
                 loaded.downloadFailed && loaded.heldWorkAlready ->
-                    "This stage has not been read from the server yet"
+                    "This stage has not been downloaded yet"
                 else -> null
             }
             downloadNote = when {
@@ -774,20 +774,18 @@ fun StageScreen(
                 // The frightening case: a blank screen that is not an empty stage.
                 !loaded.heldWorkAlready ->
                     "This stage could not be downloaded — there is no connection, or the request " +
-                        "failed. What you type here will be saved and sent, but anything already on " +
-                        "the server for this stage is NOT shown below and will not be replaced by it."
+                        "failed. What you type here will be saved and sent, but anything already saved " +
+                        "online for this stage is not shown below and will not be replaced by it."
                 // The duller case, and it needs its own words rather than the ones above: the work on
                 // screen IS this designer's, nothing is hidden from them, and the single consequence
                 // is the one they would otherwise discover from an officer — that emptying a box here
                 // does not empty it there until this stage has been read once with a connection.
                 else ->
-                    "This stage has not been read from the server on this device — there is no " +
-                        "connection, or the request failed. Everything you have typed is here and " +
-                        "will be sent. Until it has been read once, clearing an answer or deleting " +
-                        "a row here does NOT clear or delete it on the server: that is deliberate, " +
-                        "because this phone cannot yet tell an answer you removed from one it has " +
-                        "never seen. The deletion is remembered and goes up on the first save after " +
-                        "the stage has been read."
+                    "This stage has not been downloaded on this device — there is no connection, " +
+                        "or the request failed. Everything you have typed is here and will be sent. " +
+                        "Until it has been downloaded once, clearing an answer or deleting an entry " +
+                        "here does not clear or delete it online. The deletion is remembered and is " +
+                        "sent on the first save after the stage has been downloaded."
             }
             // Whatever the draft last recorded the designer emptying, carried forward so a deletion
             // made offline yesterday still reaches the server today.
@@ -988,9 +986,8 @@ fun StageScreen(
                     // The server did not recognise these keys and threw them away. Said out loud
                     // because a field that vanishes on every sync, silently, is a data loss nobody
                     // notices until the report is short a column.
-                    "The server did not recognise ${push.result.droppedKeys.size} field(s) and did " +
-                        "not store them: ${push.result.droppedKeys.joinToString(", ").take(160)}. " +
-                        "This phone is running a newer field registry than the server."
+                    "${push.result.droppedKeys.size} field(s) in this stage could not be saved, " +
+                        "because the form has changed. Nothing you typed is lost."
                 }
                 /*
                   THE ANSWERS THE REPOSITORY REFUSED, DECODED AGAINST THE PAYLOAD THAT PRODUCED THEM.
@@ -1072,9 +1069,9 @@ fun StageScreen(
                 // looks broken; a stage that says which photographs it is waiting for is a stage the
                 // designer knows will finish itself the next time there is signal.
                 saveState = SaveState.ON_DEVICE
-                syncNote = "Saved on this device. ${push.files} attached file(s) have not reached " +
-                    "the server yet, so this stage waits for them — it sends itself as soon as they " +
-                    "upload, and nothing has been thrown away."
+                syncNote = "Saved on this device. ${push.files} attached file(s) have not been " +
+                    "uploaded yet, so this stage waits for them — it sends itself as soon as they " +
+                    "upload, and nothing has been lost."
             }
             StagePush.NoRemoteYet, StagePush.NothingToSend, StagePush.NotSent -> {
                 saveState = SaveState.ON_DEVICE
@@ -1476,10 +1473,8 @@ fun StageScreen(
                           the line now says what is actually true and who can act on it.
                         */
                         Text(
-                            "• $line — neither this app nor the browser can show which box that " +
-                                "is: the repository filed it against a position this stage did not " +
-                                "send. Nothing you typed has been lost. Send this line to whoever " +
-                                "runs the repository.",
+                            "• $line — this answer could not be matched to a box on this stage. " +
+                                "Nothing you typed has been lost. Show this line to an administrator.",
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             fontSize = 11.sp
                         )
@@ -1698,8 +1693,8 @@ private fun StageHeader(
                 // Named precisely. "Saved" alone would let a designer believe the work had left the
                 // handset, and this app's whole premise is that for most of a fortnight it has not.
                 SaveState.ON_DEVICE -> if (localOnly) {
-                    "$percent% complete · saved on this device. This workshop has not been created on " +
-                        "the server yet — send it from the workshop list once you have a connection."
+                    "$percent% complete · saved on this device. This workshop has not been uploaded " +
+                        "yet — upload it from the workshop list once you have a connection."
                 } else {
                     "$percent% complete · saved on this device, not yet synced"
                 }
@@ -1718,7 +1713,7 @@ private fun StageHeader(
                 SaveState.SYNCED -> when {
                     refused > 0 -> "$percent% complete · saved, and $refused answer" +
                         (if (refused == 1) " was" else "s were") +
-                        " refused — see below. Everything else is on the server." +
+                        " not accepted — see below. Everything else is saved online." +
                         // Both at once, and the second gets its own words because its remedy is a
                         // refresh of the sections rather than a correction of the answer.
                         if (notStored > 0) {
@@ -1734,7 +1729,7 @@ private fun StageHeader(
                         (if (notStored == 1) " was" else "s were") +
                         " not stored because the sections no longer ask " +
                         (if (notStored == 1) "it" else "them") +
-                        " — see below. Everything else is on the server."
+                        " — see below. Everything else is saved online."
                     else -> "$percent% complete · saved and synced"
                 }
             },

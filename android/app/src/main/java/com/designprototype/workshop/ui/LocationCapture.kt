@@ -205,10 +205,28 @@ private fun freshCachedFix(context: Context, manager: LocationManager): Location
     if (!hasLocationPermission(context)) return null
     val cutoff = System.currentTimeMillis() - CACHED_FIX_MAX_AGE_MS
     return listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
-        .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
+        .mapNotNull { provider -> lastKnownOrNull(manager, provider) }
         .filter { it.time >= cutoff }
         .minByOrNull { it.accuracy }
 }
+
+/**
+ * One provider's last fix, or null. The permission failure is caught BY NAME, because the
+ * `runCatching` that stood here read to lint (`MissingPermission`) as code that had never
+ * considered it — and it is a real case: the permission [hasLocationPermission] saw can be revoked
+ * from the system settings between that check and this call. Anything else the platform throws —
+ * documented, an `IllegalArgumentException` for a provider this handset does not have; otherwise an
+ * OEM's own — is still caught, as `runCatching` caught it. Every way it fails means "no cached
+ * fix", which the card already knows how to show.
+ */
+private fun lastKnownOrNull(manager: LocationManager, provider: String): Location? =
+    try {
+        manager.getLastKnownLocation(provider)
+    } catch (revoked: SecurityException) {
+        null
+    } catch (other: RuntimeException) {
+        null
+    }
 
 private fun Location.toRequest(): LocationRequest = LocationRequest(
     latitude = latitude,
@@ -502,8 +520,15 @@ fun LocationCaptureCard(
                 if (metres <= GOOD_ENOUGH_FIX_METRES) listening = false
             }
             listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).forEach { provider ->
-                runCatching {
+                // Caught the way [lastKnownOrNull] catches, for the same reasons: a permission revoked
+                // since the check above, by name, and anything else — a provider this handset does
+                // not have, most often — as before. The other provider still listens.
+                try {
                     locationManager.requestLocationUpdates(provider, 1000L, 0f, listener, Looper.getMainLooper())
+                } catch (revoked: SecurityException) {
+                    Unit
+                } catch (other: RuntimeException) {
+                    Unit
                 }
             }
             onDispose { runCatching { locationManager.removeUpdates(listener) } }

@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -92,12 +93,12 @@ const val DW_INSPECTION_LIST_TITLE = "Workshops to inspect"
  * "nothing is assigned to me" from "the load failed" — and collapsing the first two is how a broken
  * connection comes to read as a withdrawn assignment.
  *
- * ── NOT CACHED, AND THE REASON IS THE SCOPE ITSELF ───────────────────────────────────────────────
+ * ── KEPT FOR THE COURTYARD, AND SAID TO BE KEPT ──────────────────────────────────────────────────
  *
- * This screen does not fall back to the device and holds nothing between visits. An admin who ends
- * an inspection this morning has ended it; a cached list would go on offering a workshop this
- * account may no longer open, and the detail screen would then answer 404 to a card the app itself
- * drew. See the block comment above the inspection methods in `WorkshopRepository`.
+ * Page one of the unsearched list is kept on this phone for the account that read it, and shown —
+ * under a notice naming the day it was saved — when nothing answers. A workshop whose read answers
+ * "not open to you" is dropped from the kept list at once, so an ended assignment does not linger.
+ * See `DesignWorkshopInspectionFeedback.kt`.
  *
  * ── PAGED, AND DELIBERATELY NOT WALKED ───────────────────────────────────────────────────────────
  *
@@ -135,6 +136,10 @@ fun InspectionListScreen(
     var loadError by remember { mutableStateOf<String?>(null) }
     /** The term the list on screen was actually fetched for — never the text in the box. */
     var answeredFor by remember { mutableStateOf<String?>(null) }
+    /** When the list on screen was saved on this phone; null while it is a live answer. */
+    var savedAt by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val appContext = remember(context) { context.applicationContext }
 
     LaunchedEffect(page, reload, query, mayInspect) {
         if (!mayInspect) {
@@ -149,17 +154,19 @@ fun InspectionListScreen(
         loading = true
         loadError = null
         runCatching {
-            repository.inspectableDesignWorkshops(
+            repository.readInspectableWorkshops(
+                context = appContext,
                 page = page,
                 pageSize = INSPECTION_PAGE_SIZE,
                 search = term
             )
         }
-            .onSuccess { answered ->
+            .onSuccess { (answered, kept) ->
                 rows = answered.items
                 total = answered.total
                 pages = answered.pages
                 answeredFor = term
+                savedAt = kept
             }
             .onFailure { error ->
                 // A CANCELLED LOAD IS NOT A FAILED ONE. This effect is keyed on the search box, so
@@ -189,10 +196,10 @@ fun InspectionListScreen(
         // ── The refusal, and it is the one refusal in this app an ADMIN also meets ───────────────
         if (!mayInspect) {
             InspectionNotice(
-                "The inspection surface belongs to the Inspector / Reviewer tier, and is scoped to " +
-                    "the workshops an admin has assigned to that account. Designers and admins read " +
-                    "design & prototype workshops on Design workshops instead; an admin chooses who " +
-                    "inspects a workshop from that workshop's own stage index.",
+                "Workshops to inspect is for Inspector / Reviewer accounts, and shows the workshops " +
+                    "an admin has assigned to you. Designers and admins open design & prototype " +
+                    "workshops from Design workshops; an admin chooses who inspects a workshop from " +
+                    "that workshop's own stage index.",
                 warning = true
             )
             return@Column
@@ -204,15 +211,16 @@ fun InspectionListScreen(
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
-        // Said before anything fails, not after. An inspection is read from the server every time,
-        // and an inspector who does not know that reads an offline moment as a withdrawn assignment.
-        Text(
-            "This screen needs a connection. An inspection is read from the repository each time and " +
-                "is never kept on this phone — an assignment an admin ends today has ended, and a " +
-                "copy held here could not know that.",
-            color = MaterialTheme.field.muted,
-            fontSize = 11.sp
-        )
+        // A KEPT LIST SAYS SO, with the moment it was saved: an inspector must be able to tell the
+        // copy on this phone from a list that has just been read.
+        savedAt?.let {
+            InspectionNotice(
+                "No connection — these are the workshops this phone last saw assigned to you, on " +
+                    "${it.take(10)}. Open one to read the copy kept here and write suggestions; they " +
+                    "are sent when you are back online.",
+                warning = true
+            )
+        }
 
         OutlinedTextField(
             value = query,
@@ -278,8 +286,7 @@ fun InspectionListScreen(
                     fontSize = 16.sp
                 )
                 Text(
-                    "This searches only the workshops assigned to you, which is the whole of what " +
-                        "you can read here. Clear the search to see them all.",
+                    "This searches only the workshops assigned to you. Clear the search to see them all.",
                     color = MaterialTheme.field.muted,
                     fontSize = 13.sp
                 )
@@ -294,8 +301,7 @@ fun InspectionListScreen(
                 )
                 Text(
                     "An admin assigns inspections one workshop at a time, from that workshop's own " +
-                        "stage index. Until they have, there is nothing here to read — this screen " +
-                        "is not hiding anything from you, and nothing failed to load.",
+                        "stage index. Workshops assigned to you will appear here.",
                     color = MaterialTheme.field.muted,
                     fontSize = 13.sp
                 )

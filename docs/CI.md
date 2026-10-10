@@ -130,7 +130,7 @@ Three properties of that wait are worth knowing before you rely on it:
 |---|---|---|---|---|
 | 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>-<run_id>.<attempt>` (per deploy ATTEMPT, so a re-run never writes into the tree that is serving) → write that release's `.env` → build or reuse a venv from `requirements.lock` → `prisma migrate deploy` → **flip the `current` symlink** → restart `fieldrepo` + `fieldrepo-queue` → poll `/health`. See §1.2 for the release layout and the rollback command. |
 | 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** (and, since 2026-10-09, *warn* when the project's Node.js Version differs from the build's major or the pulled env holds a database credential) → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → `vercel alias set` onto the production alias → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
-| 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 17 → `compileDebugKotlin` → `testDebugUnitTest` → `lintDebug` (advisory) → `assembleDebug` → upload APK |
+| 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 25 → `compileDebugKotlin` → `testDebugUnitTest` plus the four `:core-*` engine suites → `lintDebug` (advisory) → `assembleDebug` → upload APK |
 | — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Four independent jobs plus a packaging job. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is the fourth and is deliberately advisory** — a `postgres:16` service container, `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. |
 
 **The other six workflows in this repository.** Naming them rather than counting them is the rule
@@ -593,9 +593,57 @@ that only exists on a real Android runtime and that no JVM unit test can replace
 gh workflow run "Android instrumented tests" --ref <branch>
 ```
 
-It takes one input, `api-level`, defaulting to **34**; the emulator is `google_apis` / `x86_64` on a
-`Nexus 6` profile with animations disabled, and the job runs `./gradlew :app:connectedDebugAndroidTest`
-under JDK 17 with an explicit KVM udev step.
+It takes one input, `api-level`, defaulting to **`37.0`** — a string with the minor level, because
+the SDK publishes Android 17's platform and system images only as `android-37.0` and the runner
+builds both package names from the value verbatim. The emulator is `google_apis` / `x86_64` on a
+`Nexus 6` profile with animations disabled, 4 GB of RAM and an 8 GB data partition, and the job runs
+`./gradlew :app:connectedDebugAndroidTest` under JDK 25 with an explicit KVM udev step. It fetches and
+verifies the sherpa-onnx AAR the same way `android-build.yml` does — until 2026-10-09 it did not, so
+no run of it could have compiled — and it stages the speech model `DW_ASR_MODELS` pins at
+`/data/local/tmp/dwasr`, digest-checked from the release tarball `DwAsrModel.kt` names, because
+`DwAsrEngineProbeTest` fails rather than measure nothing.
+
+**A green run means tests ran, since 2026-10-09.** The workflow's first run that day (37930568222)
+went green with nothing executed: the debug APK did not fit the emulator's default data partition,
+and AGP 9.4's `connectedDebugAndroidTest` logged the failed install, ended `BUILD SUCCESSFUL` and
+wrote a report counting 0 tests. The job now reads that report after the emulator step and fails
+when no test executed or one failed, writes the counts to the job summary, and keeps what the probes
+printed as `probes-logcat.txt` in the `android-instrumented-results` artifact.
+
+The second run (37935344589) failed that check, correctly, and its logcat showed why: SurfaceFlinger
+aborting in a loop (`!rcEnc->featureInfo()->hasReadColorBufferDma`), so the install found no package
+service. The runner image ships SDK Command-line Tools 12.0, whose avdmanager writes
+`target=android-0` for a minor-versioned image such as `android-37.0`; the emulator then boots it as
+API 3 without the graphics features Android 17 needs (ReactiveCircus/android-emulator-runner#482).
+So the job replaces `cmdline-tools/latest` with 23.0, the newest stable release on 2026-10-09,
+refuses an AVD whose `target=` is not the API level asked for, and builds both APKs before the
+emulator boots, so the compile does not compete with it for the runner's cores.
+
+The third run (37937482647) was the first to execute the tests: 22 of 24 passed. One failure was a
+real defect — Pause and Cancel on a speech-model download let the transfer run on to the end of the
+file — fixed in 25ec2cd. The fourth (37939404066) failed the other one, `DwAsrModelTransferProbeTest`'s
+speed check: the download meter's window began when the response headers arrived, so a host that
+waited three seconds before its first byte read as "3 kB/s · about 6 hr 50 min left". `DwTransferMeter`
+now measures the rate from the first byte and keeps the stall clock on the headers (c9d4a34), and the
+fifth run (37944158602) passed all 24. As of 2026-10-09 a run on `upgrade/dp-android` is green.
+
+**The R8-shrunk release build was launched on the same emulator before the upgrade was tagged**, by a
+temporary `release-smoke` job that lived in this workflow on `upgrade/dp-android` only and was removed
+again once it had run green. It built `assembleRelease` with the `debugSignRelease`, `releaseAllAbis`
+and loopback `apiBaseUrl` opt-ins `android/app/build.gradle.kts` documents — no secret read — checked
+the APK for everything reached by name (manifest classes and their constructors, R8-renamed
+`META-INF/services` files, sherpa-onnx's native methods against the library's exports, Credential
+Manager's provider, the seven Retrofit interfaces), then drove the app against a local stub: the
+sign-in card, set-password links in fragment and query form through the POST-404-GET fallback, a
+password sign-in, and the designer profile's https and loopback pictures drawn by Coil. It ran green
+three times — 37949869530, 37951774101 and 37953735603, the last on 20c04fe — with no crash, no
+R8-shaped exception and no link token in the app's own log lines; its stub, driver and static checks
+are in that branch's history at 20c04fe, removed in the commit after. Its last run also put the keyboard
+over the designer profile's lowest text box: the window panned the focused box to sit directly above
+the keyboard, so `SystemBarsInsetsRoot` leaving the IME inset alone does not hide the box being typed
+in on Android 17; the line under it and anything further down stay behind the keyboard until it
+closes. Sync, uploads, dictation on ARM, a live camera and Credential Manager were not exercised
+shrunk, and stay on the handset checklist.
 
 **It is not wired into branch protection and must not be**: a required check a human has to remember
 to trigger is a required check that blocks every pull request forever.
@@ -616,13 +664,19 @@ Three things are *not* pinned and all three are on the record. `deploy-frontend.
 `vercel@latest` — deliberate, because the CLI must match a platform that changes under it. Every job
 that installs with npm installs `npm@12` first (2026-10-09; no Node release ships npm 12 yet), which
 follows its major the way `node-version-file`'s `engines.node` of `24.x` does, and is deleted once the
-Node that field resolves to brings npm 12 itself. And the Android toolchain (Gradle, AGP) under
-`android/` is outside this rule.
+Node that field resolves to brings npm 12 itself. And the Android toolchain under `android/` is pinned
+by VERSION, not by digest, with two exceptions: since 2026-10-09 the Gradle wrapper carries a
+`distributionSha256Sum`, so a tampered distribution fails the wrapper's own check, and the vendored
+sherpa-onnx AAR, which no repository serves, is checked against its SHA-256 and byte size in all three
+Android workflows. AGP, Kotlin and every other library resolve by version, with no Gradle
+dependency-verification file.
 
 Pinning introduces its own failure mode, which is a pin that rots. `.github/dependabot.yml` is what
 closes it: **github-actions weekly** (Monday 04:00 Asia/Kolkata, at most 3 open PRs, `ci` commit
 prefix), plus **npm on `/frontend`** and **pip on `/backend`** monthly, minor-and-patch grouped and
-majors left individual. It does **not** refresh `backend/requirements.lock` — that is pip-compile
+majors left individual, plus **gradle on `/android`** monthly since 2026-10-09 (the Kotlin compiler
+and its two plugins grouped so they move as one, and the Gradle wrapper bumped with the rest). It
+does **not** refresh `backend/requirements.lock` — that is pip-compile
 output, so a pip PR moves the range in `pyproject.toml` and the lock has to be recompiled in the same
 PR (§1.3). `pip` also ignores **ruff** (minor and major) and **bcrypt** (entirely).
 
@@ -799,24 +853,30 @@ same value in two places. Change one there and re-run this workflow (or push) to
   nothing**, and neither is `frontend/scripts/pw-smoke.mjs`. Those need a running app and a
   database, so they remain a genuinely larger job — but the cheap half is no longer an argument for
   postponing it, because the cheap half is done.
-- **Android Lint is advisory.** `./gradlew :app:lintDebug` on the current tree reports
-  *1 error, 44 warnings* and aborts. The error is pre-existing and unrelated to any code change:
-  `AndroidManifest.xml:6 PermissionImpliesUnsupportedChromeOsHardware` — `CAMERA` is requested with
-  no matching `<uses-feature android:name="android.hardware.camera" android:required="false"/>`.
-  Making lint a hard gate today would fail every run and train everyone to ignore red. The HTML/XML
-  report is uploaded on every run. Fix the manifest (or commit a `lint-baseline.xml`), then delete
-  `continue-on-error` from the lint step and it becomes a real gate.
+- **Android Lint is advisory, and nothing but that flag keeps it so** (as of 2026-10-09). It was made
+  advisory because `./gradlew :app:lintDebug` reported *1 error, 44 warnings* and aborted on a
+  pre-existing manifest nit (`PermissionImpliesUnsupportedChromeOsHardware`: `CAMERA` with no
+  `<uses-feature android:name="android.hardware.camera" android:required="false"/>`). The toolchain
+  move of 2026-10-09 brought AGP 9.4's lint and the Compose and lifecycle libraries' own checks, which
+  found six more; all seven were fixed in the code, that manifest line among them, and run
+  [37929056714](https://github.com/cxacraftecosystem-ui/designer-portal/actions/runs/37929056714)
+  measured *0 errors, 99 warnings, 47 hints*. The HTML/XML report is uploaded on every run. Deleting
+  `continue-on-error` from the lint step now makes it a real gate — an owner's decision, since a lint
+  rule a library adds in a minor release can then block a pull request that touched no Android code.
 - ~~**There are no Android tests.**~~ **The Android unit suite is a REAL GATE — corrected
   2026-08-19, and this is the one bullet in §5 that had inverted.** `android/app/src` no longer
   contains only `main/`: there is a unit source set and an instrumented one, with the counts in
   [REPO_FACTS.md](REPO_FACTS.md), which also records that the generated table itself once asserted
   this absence and had never looked. The **Unit tests** step in `android-build.yml` branches on
   whether `app/src/test` holds sources — it now takes the "running them for real" branch, and it
-  carries no `continue-on-error`, so a failing Kotlin test fails the workflow. **The step's own
-  comment still describes the NO-SOURCE case as the current state** and needs the same correction;
-  it belongs to the Android workstream, not to this document. Instrumented tests are still not run —
-  they need an emulator; add a separate job with an emulator action rather than bolting one onto
-  this build, which is what that step's comment says and is still right.
+  carries no `continue-on-error`, so a failing Kotlin test fails the workflow. The step's own
+  comment, which used to describe the NO-SOURCE case, has been corrected to say so. **Since
+  2026-10-09 the step also runs the vendored engine's four suites** (`:core-imaging:test`,
+  `:core-vector:test`, `:core-pipeline:test`, `:core-export:test`), so `:core-pipeline`'s
+  `ParityTest` — the reason `frontend/lib/trace/**` is in the workflow's `paths:` filter — finally
+  runs in CI; before that date nothing in CI ran it. Instrumented tests are still not run here:
+  they need an emulator, and `android-emulator.yml` (§1.5) runs them on demand rather than in
+  front of every compile.
 - ~~**No web typecheck/lint gate of its own.**~~ **BUILT — 2026-08-20.** The `Web typecheck, lint and
   unit specs` job runs `npx tsc --noEmit` and `npx eslint . --max-warnings=0` on every pull request,
   so the answer arrives before the merge rather than as a `next build` failure after the backend has
@@ -947,10 +1007,12 @@ connected to the Vercel project. Disconnect it from the project rather than dele
 one by one, and leave the integration and the store alone ([DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md)
 §2.3).
 
-**Android build fails on the SDK.** The workflow installs `platforms;android-35` and
-`build-tools;35.0.0` explicitly because runner images drift. If `compileSdk` in
-`android/app/build.gradle.kts` moves, update that step and the JDK pin together — the JDK 17 pin
-tracks `sourceCompatibility`/`jvmTarget` in the same file.
+**Android build fails on the SDK.** The three Android workflows install `platforms;android-37.2`
+and `build-tools;37.0.0` explicitly because runner images drift. If `compileSdk` or
+`buildToolsVersion` in `android/app/build.gradle.kts` moves, update those steps and
+`publish-android.yml`'s `BUILD_TOOLS_VERSION` with it. The JDK pin (25) is a separate choice: it is
+the JDK that runs Gradle, while the Java 17 bytecode level is set by `compileOptions` and
+`jvmTarget` in the build files and does not follow it.
 
 **A deploy hangs on the health poll.** Stage 1 polls `http://127.0.0.1:8000/health` 40 times at 2 s
 and dumps `journalctl -u fieldrepo -n 80` on failure. Read that output first; the usual causes are a

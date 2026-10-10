@@ -271,7 +271,7 @@ class DwCustomSectionsTest {
     fun `the unsupported note names the raw token as it arrived`() {
         // A note that will not say what the type was is a note a designer cannot report, and the only
         // person who will ever stand in that cluster is the one reading it.
-        assertTrue(dwCustomUnsupportedNote("SIGNATURE").contains("SIGNATURE"))
+        assertTrue(dwCustomUnsupportedNote("SIGNATURE").contains("Update the app to answer this question"))
         assertTrue(dwCustomUnsupportedNote("").isNotBlank())
     }
 

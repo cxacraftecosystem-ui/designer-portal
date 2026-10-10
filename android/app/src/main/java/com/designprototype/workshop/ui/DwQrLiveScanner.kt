@@ -773,7 +773,7 @@ fun DwQrLiveScannerDialog(
      * `MapScreen.kt:1793` and `AppNavigation.kt:955` read it, and with stillness on there is no sweep
      * at all — the line is a LIVENESS cue and not information, so nothing is lost.
      *
-     * IT IS THE SAME PRIMITIVE THE RECORDING INDICATOR USES (`MediaPlayers.kt:228`:
+     * IT IS THE SAME PRIMITIVE THE RECORDING INDICATOR USES (`MediaPlayers.kt:247`:
      * `rememberInfiniteTransition` + `infiniteRepeatable(tween(…, LinearEasing), RepeatMode.Reverse)`).
      * One motion vocabulary, not two.
      *

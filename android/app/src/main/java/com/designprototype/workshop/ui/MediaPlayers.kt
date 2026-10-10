@@ -51,13 +51,17 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import coil.ImageLoader
-import coil.compose.AsyncImage
-import coil.decode.VideoFrameDecoder
-import coil.request.ImageRequest
+import coil3.ImageLoader
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+// An extension in Coil 3, not a builder member as it was in Coil 2, so it needs its own import.
+import coil3.request.crossfade
+import coil3.video.VideoFrameDecoder
 import kotlinx.coroutines.delay
 
 /** A Coil loader that can decode a frame from a video file/URL for use as a thumbnail. */
@@ -124,6 +128,13 @@ fun VideoPlayer(uri: Uri, modifier: Modifier = Modifier) {
     DisposableEffect(Unit) {
         onDispose { player.release() }
     }
+    // PLAYBACK STOPS WHEN THE APP STOPS BEING SEEN, and since 2026-10-09 that is the platform's rule
+    // as well as this file's. The app targets API 37, and Android 17 silences a hidden app's audio
+    // unless a foreground service is playing it — without an error, so a player left running keeps
+    // "playing" into nothing, may be frozen, and can resume out loud when the app is thawed,
+    // possibly hours later. This app plays media only inside its own viewer and has no such
+    // service, so the honest behaviour is to pause on ON_STOP and let the person press Play again.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { player.pause() }
     AndroidView(
         modifier = modifier
             .fillMaxWidth()
@@ -166,6 +177,14 @@ fun AudioPlayer(uri: Uri, modifier: Modifier = Modifier) {
     }
     DisposableEffect(Unit) {
         onDispose { runCatching { player.release() } }
+    }
+    // Paused on ON_STOP for the reason `VideoPlayer` gives; `playing` goes false with it, so the
+    // button says Play when the person comes back rather than claiming a sound nobody can hear.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        if (playing) {
+            runCatching { player.pause() }
+            playing = false
+        }
     }
     LaunchedEffect(playing) {
         while (playing) {

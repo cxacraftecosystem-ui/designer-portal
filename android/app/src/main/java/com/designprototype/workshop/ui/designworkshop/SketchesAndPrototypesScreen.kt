@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
@@ -23,12 +26,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DesignWorkshopDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.isConnectionFailure
+import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
@@ -179,6 +184,18 @@ fun SketchesAndPrototypesScreen(
      */
     @Suppress("UNUSED_PARAMETER") onError: (String) -> Unit,
 ) {
+    /*
+     * THE ROLE, ASKED FIRST — the gate `DesignReviewScreen` draws, for the same reason. The menu hides
+     * this row from an account that is not a designer, an admin or the master admin, but the
+     * walkthrough's "Open" button reaches every screen it teaches, and without this such an account
+     * landed on a picker whose list could not be read, with nothing on screen saying why.
+     */
+    val user = remember { repository.cachedUser() }
+    if (user == null || !FieldPermissions.canRunDesignWorkshops(user)) {
+        SketchesAccessRefusal(roleLabel = FieldPermissions.label(user?.role))
+        return
+    }
+
     var workshops by remember { mutableStateOf<List<DesignWorkshopDto>?>(null) }
     var truncated by remember { mutableIntStateOf(0) }
     /**
@@ -443,9 +460,8 @@ fun SketchesAndPrototypesScreen(
             // RULE 10: EVERY CAP SAYS SO — and only when it bites, so an ordinary designer on four
             // workshops never reads a sentence about a ceiling they cannot reach.
             Text(
-                "$truncated more workshop${if (truncated == 1) "" else "s"} not shown, so a " +
-                    "workshop missing from this picker is not a workshop you cannot open. Design " +
-                    "workshops searches the whole list, and its sketch and prototype stages open " +
+                "$truncated more workshop${if (truncated == 1) "" else "s"} not shown here. " +
+                    "Design workshops lists them all, and their sketch and prototype stages open " +
                     "from a workshop opened there.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
@@ -507,6 +523,60 @@ fun SketchesAndPrototypesScreen(
 }
 
 /**
+ * The role refusal, said before the picker is drawn — the shape of `DesignReviewScreen`'s.
+ *
+ * It names who the screen is for and offers nothing to press, because the way in is an administrator
+ * granting designer access.
+ */
+@Composable
+private fun SketchesAccessRefusal(roleLabel: String) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "Sketches & prototypes",
+            display = true,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 22.sp,
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                Icons.Filled.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.field.muted,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                "Designer access required",
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+            )
+        }
+        Text(
+            DW_SKETCH_CHOOSER_DESIGNERS_ONLY,
+            color = MaterialTheme.field.muted,
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+        )
+        Text(
+            "You are signed in as $roleLabel. An administrator can give you designer access.",
+            color = MaterialTheme.field.muted,
+            fontSize = 11.sp,
+        )
+    }
+}
+
+/** Who this screen is for, said in place of the picker to every other account. */
+internal const val DW_SKETCH_CHOOSER_DESIGNERS_ONLY: String =
+    "Sketches and prototypes are added and rated by a workshop's designers, so this screen is open " +
+        "to designers, admins and the master admin."
+
+/**
  * **WHAT THIS SCREEN IS FOR, IN THE FIRST PARAGRAPH A DESIGNER READS — and it named the wrong place.**
  *
  * ── THE CLAUSE THAT WENT STALE, AND WHY IT IS THE MOST EXPENSIVE ONE ON THE SCREEN ────────────
@@ -543,10 +613,9 @@ fun SketchesAndPrototypesScreen(
  * screen may put an act this tab mounts a panel for somewhere else.
  */
 internal const val DW_SKETCH_CHOOSER_SUBTITLE: String =
-    "Pick a workshop, then add and file its sketches and prototypes under Upload, or see how its " +
-        "peer round has ranked them under Review. Upload is also where a photograph already on a " +
-        "row is traced into line art, straightened into a plate or measured against — one " +
-        "photograph, and every panel on the tab follows it. Naming a piece, its caption, its stage " +
+    "Pick a workshop, then add its sketches and prototypes under Upload, or see how its peer " +
+        "round has ranked them under Review. Upload is also where a photograph is traced into line " +
+        "art, straightened into a plate or measured against. Naming a piece, its caption, its stage " +
         "log and typing a dimension in by hand are on the workshop's own sketch and prototype " +
         "stages, which both tabs open."
 
@@ -590,7 +659,7 @@ internal const val DW_SKETCH_CHOOSER_OFFLINE: String =
 
 /** COULD NOT ASK, and the repository said why. The fallback for when it did not. */
 internal const val DW_SKETCH_CHOOSER_REFUSED: String =
-    "The repository could not list your design workshops."
+    "Your design workshops could not be listed. Try again in a moment."
 
 /**
  * WHAT A FAILED LIST COSTS, which is nothing, said under both failure sentences.
@@ -621,9 +690,8 @@ internal const val DW_SKETCH_CHOOSER_REFUSED: String =
  */
 internal const val DW_SKETCH_CHOOSER_NOTHING_LOST: String =
     "Nothing is lost: a workshop has to be chosen before anything here can be added or attached, " +
-        "and this list failed before that, so nothing on this handset has changed. Design workshops " +
-        "still lists what is stored on this device, and the sketch and prototype stages open from a " +
-        "workshop opened there."
+        "so nothing on this phone has changed. Design workshops still lists what is stored on this " +
+        "phone, and the sketch and prototype stages open from a workshop opened there."
 
 /**
  * WHY THE PICKER FILLED ITSELF IN WHEN THE SERVER HAD NO ANSWER.
@@ -636,8 +704,8 @@ internal const val DW_SKETCH_CHOOSER_NOTHING_LOST: String =
  * they were recently added to a workshop on the strength of a request that never answered.
  */
 internal const val DW_SKETCH_CHOOSER_FALLBACK_PREFILL: String =
-    "Filled in with your most recently created design workshop, because the repository did not say " +
-        "which one you last worked on. Change it if this is not the one."
+    "Filled in with your most recently created design workshop, because the one you last worked " +
+        "on could not be looked up. Change it if this is not the one."
 
 /**
  * WHY THE TABS ARE OFF WHILE NO WORKSHOP IS CHOSEN.
@@ -754,13 +822,10 @@ internal const val DW_SKETCH_CHOOSER_PICK_FIRST: String =
  * piece.
  */
 internal const val DW_PROTOTYPE_3D_IN_THE_REPORT: String =
-    "On stage 13 a prototype takes a “3D model” file and a “360° capture”, and only one of them " +
-        "prints. The ministry document places image fields as pictures and prints every other kind " +
-        "of attachment as a count — a 3D model appears in it as the words “1 document attached”, " +
-        "and no viewer built into this application can change that, because the limit is in the " +
-        "document generator rather than in the app. The file is kept with the record and stays " +
-        "downloadable for the next designer, but a turn of photographs is the only form of this " +
-        "prototype that reaches the printed page — so photograph the piece as well."
+    "On stage 13 a prototype takes a “3D model” file and a “360° capture”. The report places the " +
+        "360° capture's photographs on the page and lists the 3D model as “1 document attached”, " +
+        "and the file stays with the record for anyone to download. The photographs are what an " +
+        "officer sees of the piece in the report, so photograph the piece as well."
 
 /**
  * HOW TO SHOOT A TURN THAT IS WORTH PRINTING. `PrototypeModelField.tsx`'s second paragraph, verbatim.
@@ -813,12 +878,9 @@ internal const val DW_TURNTABLE_CAPTURE_ADVICE: String =
  * the first, and it is here.
  */
 internal const val DW_PROTOTYPE_MODEL_FORMATS: String =
-    "The “3D model” box takes GLB, glTF, STL, OBJ, PLY, 3MF, FBX or USDZ — or any other file, which " +
-        "is stored and stays downloadable but may not open for the next designer. GLB travels best: " +
-        "it is one self-contained file, where an OBJ arrives as a mesh plus a separate .mtl plus a " +
-        "folder of textures, and this box holds one file. Nothing here refuses anything — this " +
-        "phone's file chooser does not filter by format, so the list is what to look for rather " +
-        "than what is allowed."
+    "The “3D model” box takes GLB, glTF, STL, OBJ, PLY, 3MF, FBX or USDZ. GLB travels best: it is " +
+        "one self-contained file, while an OBJ comes as a mesh, a separate .mtl and a folder of " +
+        "textures, and this box holds one file."
 
 /**
  * How many workshops this screen asks for.

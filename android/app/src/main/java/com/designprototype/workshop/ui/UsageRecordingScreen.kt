@@ -204,7 +204,7 @@ fun UsageRecordingScreen(
                         // Unreachable in practice — the server always has an answer, even if it is
                         // NOT_RECORDED — and written anyway, because "unreachable" is what everybody
                         // said about the states the six shared sentences exist for.
-                        emptyLine = "This server did not say what your answer is."
+                        emptyLine = "Your answer could not be shown. Try again."
                     )?.let {
                         Text(it, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 18.sp)
                     }
@@ -418,7 +418,7 @@ fun UsageRecordingScreen(
                             // quietly stops is indistinguishable from a short list, and here the
                             // short reading would be "this is everything the platform holds".
                             "This is the newest $TRAIL_PAGE of your recorded requests, not all of " +
-                                "them. The server will not send more than ${log.maxRows} in one go.",
+                                "them. At most ${log.maxRows} can be shown at once.",
                             color = MaterialTheme.field.muted,
                             fontSize = 12.sp,
                             lineHeight = 17.sp
@@ -519,7 +519,7 @@ private fun TrailRow(event: UsageEventDto) {
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         Text(
-            "${event.method} ${event.routeTemplate}",
+            event.routeTemplate,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurface,
             fontSize = 12.sp,
@@ -529,7 +529,7 @@ private fun TrailRow(event: UsageEventDto) {
             buildString {
                 append(usageMoment(event.at) ?: event.at)
                 append(" · ")
-                append(event.statusCode)
+                append(if (event.statusCode in 1..399) "Worked" else "Failed")
                 append(" · ")
                 append(usageDurationText(event.durationMs))
                 if (event.clientApp.isNotBlank()) {
@@ -554,7 +554,7 @@ private fun TrailRow(event: UsageEventDto) {
  */
 private fun Throwable.usageWriteFailureLine(online: Boolean): String = apiErrorMessage(
     if (online) {
-        "Your answer did not reach the server, so nothing has been changed. Try again."
+        "Your answer could not be sent, so nothing has been changed. Try again."
     } else {
         "This phone has no connection, so your answer was not sent and nothing has been changed. " +
             "Try again where there is a signal."

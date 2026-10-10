@@ -93,7 +93,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.designprototype.workshop.data.DataCrumbDto
 import com.designprototype.workshop.data.DataFolderInfoDto
 import com.designprototype.workshop.data.DataManifestFileDto
@@ -514,8 +514,8 @@ fun DataBrowserScreen(
                         )
                     }
                     Text(
-                        "Browse the repository as a directory tree, preview media and transcripts, " +
-                            "and download any folder as a zip with content-type filters.",
+                        "Browse all records as folders, preview media and transcripts, and " +
+                            "download any folder as a zip, filtered by file type.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -564,8 +564,8 @@ fun DataBrowserScreen(
                     }
                     if (state.truncated) {
                         NoticeBox(
-                            "This listing was truncated at the server cap — open subfolders to see " +
-                                "everything it holds.",
+                            "Only part of this folder is shown. Open its subfolders to see " +
+                                "everything in it.",
                             container = MaterialTheme.field.warningContainer,
                             content = MaterialTheme.field.onWarningContainer
                         )
@@ -985,7 +985,7 @@ private fun JumpToRecordPanel(
         OutlinedTextField(
             value = filters.query,
             onValueChange = { onFiltersChange(filters.copy(query = it)) },
-            label = { Text("Search the repository") },
+            label = { Text("Search all records") },
             singleLine = true,
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
             trailingIcon = {
@@ -1085,7 +1085,7 @@ private fun TaxonomySwitcher(
         }
         // The descriptions are the only place the folder shapes are spelled out.
         Text(
-            active?.description ?: "Pick how the repository should be grouped.",
+            active?.description ?: "Pick how the records should be grouped.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

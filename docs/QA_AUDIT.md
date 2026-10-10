@@ -28,7 +28,7 @@ flowchart LR
     V4["Review actions and the late gate<br/><i>test_review_edit_authority ·<br/>test_review_queue_truncation</i>"]
   end
   subgraph untested["Not covered by any automated test"]
-    U2["Every Android SCREEN<br/><i>src/androidTest exists; no job runs it</i>"]
+    U2["Every Android SCREEN<br/><i>src/androidTest runs on demand only; no class in it drives a screen</i>"]
     U7["Anything needing a real device<br/>camera · permissions · storage"]
   end
   subgraph gated["Enforced in CI"]
@@ -209,14 +209,30 @@ Both source sets exist; the counts are generated into [REPO_FACTS.md](REPO_FACTS
 restated here. The unit suite is a **real gate**: the *Unit tests* step in
 `.github/workflows/android-build.yml` branches on whether `app/src/test` holds Kotlin or Java
 sources, takes the "running them for real" branch today, and carries no `continue-on-error` — so a
-failing Kotlin test fails the workflow. The instrumented set is **not** run: it needs an emulator,
-and the step's comment says to add a separate job with an emulator action rather than bolt one on.
+failing Kotlin test fails the workflow. The instrumented set is **not** run there: it needs an
+emulator, and the step's comment sends it to `.github/workflows/android-emulator.yml` instead — on
+demand and never a gate, since 2026-09-03. No run of it executed a test until 37937482647 on
+2026-10-09 (22 of 24 passed); the two failures were fixed the same day and run 37944158602 passed all
+24. [CI.md](CI.md) §1.5 records the runs.
 
 The gates on Android are therefore: it compiles, and its unit tests pass. Lint is advisory (§4).
 
+**The inspector's note queue is the newest offline path, and it is pinned in the unit suite rather
+than on a device** (2026-10-10). `InspectionNotesSyncTest` drives `WorkshopRepository` over a real
+Retrofit and a scripted transport: a suggestion and a send-back reach their two routes with the
+device's `recordedAt` and no round; a note written without signal is kept and waits; a report that
+moved on (withdrawn, or handed in again) HOLDS the note and posts nothing; the server's
+not-under-review 422 holds it too; a 5xx leaves it waiting; an answer lost on the way back is found
+on the register and not filed twice; a 404 holds every note on that workshop and deletes the kept
+read. `DesignWorkshopInspectionFeedbackTest` pins the pure rules and the file store (another
+account's notes and reads are never handed back; a damaged notes file is set aside, never emptied).
+What no automated check drives is the panel itself and a real loss of signal on a device — the
+same gap as the rest of the outbox, named in the next paragraph.
+
 **What is still genuinely untested on Android is the UI and anything needing a device** — the
-instrumented set exists but nothing runs it, so no automated check exercises a screen, a permission
-prompt, the camera, or the offline outbox against real storage. That is the coverage gap; "no tests
+instrumented set runs only when somebody dispatches the emulator job, and none of its classes drives
+a screen, a permission prompt, the camera, or the offline outbox against real storage, so no
+automated check exercises any of them. That is the coverage gap; "no tests
 at all" was the wrong shape of it, and the wrong shape sends someone to build a harness that is
 already there.
 
@@ -372,8 +388,8 @@ under the table before treating any of them as closed.**
 | ~~**Backend tests**~~ | ~~Not in any workflow — `grep -rn pytest .github/workflows/*.yml` is empty.~~ **Struck 2026-08-20.** That grep now returns `checks.yml`. The `Backend tests` job runs the whole suite with a `ci.invalid` DSN, so the database-backed modules skip by design: 2862 passed, 381 skipped. The ~28 modules that need Postgres are still ungated, and adding a service container is a separate decision (§1). |
 | ~~**Web e2e / smoke**~~ | ~~Playwright specs exist and nothing runs them.~~ **Half struck 2026-08-20.** `npm run test:unit` runs the `*-unit.spec.ts` selection — minus two files excluded by name — in the `Web typecheck, lint and unit specs` job: no dev server, no browser download, seconds not minutes. **No total is written here on purpose**; this row said "536 tests" after the number had moved, and Playwright prints the count in the step's own log every run. **The server-dependent specs and `frontend/scripts/pw-smoke.mjs` are still gated by nothing**, and they are the ones that drive screens. |
 | ~~**Web typecheck / lint as a separate step**~~ | ~~`next build` fails on TS and ESLint errors … but it fails **after the backend has already deployed**.~~ **Struck 2026-08-20.** The same job runs `npx tsc --noEmit` and `npx eslint . --max-warnings=0` on the PR, before any deploy. |
-| **Android lint** | Advisory. One pre-existing error (`PermissionImpliesUnsupportedChromeOsHardware` — `CAMERA` with no matching optional `<uses-feature>`) would fail every run if it were a gate. |
-| ~~**Android tests**~~ | ~~None exist.~~ **This row is wrong and is struck rather than removed, because it was quoted onward.** The Android unit suite is a gate (§1.3). What is not gated is the **instrumented** set — it exists and needs an emulator, and no job provides one. |
+| **Android lint** | Advisory by `continue-on-error` alone since 2026-10-09: the one pre-existing error (`PermissionImpliesUnsupportedChromeOsHardware`) and the six AGP 9.4's lint added were fixed, and run 37929056714 measured 0 errors, 99 warnings, 47 hints. Making it a gate is deleting that flag — an owner's decision (CI.md §5). |
+| ~~**Android tests**~~ | ~~None exist.~~ **This row is wrong and is struck rather than removed, because it was quoted onward.** The Android unit suite is a gate (§1.3). What is not gated is the **instrumented** set — it needs an emulator, and the only job that provides one, `android-emulator.yml`, runs on demand and is never a gate. |
 | ~~**The documentation checker**~~ | ~~`node docs/tools/check-docs.mjs` runs in no workflow.~~ **Struck 2026-08-20**: it is the `Docs check` job. |
 | **Anything on `main` after the merge button** | **This is the row the other four turned into, and it is the one to read.** `checks.yml` is a workflow of its own; GitHub cannot `needs:` across workflow files, so `deploy-backend.yml` and `deploy-frontend.yml` — both on `push: branches: [main]` — start alongside a red Checks run rather than behind it. Until the three job names above are added as **required status checks in branch protection**, which is repository configuration and lives nowhere in this repository, a commit that breaks the backend suite still ships. |
 
@@ -452,9 +468,9 @@ cd frontend && npm run test:unit
 # silencing the check rather than scoping it. Measured 2026-08-20 with nothing listening on :3000.
 cd frontend && npx playwright test ".*-unit\.spec\.ts"
 
-# Android compiles, and its unit tests run.
+# Android compiles, and its unit tests run — the app's and the vendored engine's, as android-build.yml runs them.
 cd android && ./gradlew :app:compileDebugKotlin -q
-cd android && ./gradlew :app:testDebugUnitTest --console=plain
+cd android && ./gradlew :app:testDebugUnitTest :core-imaging:test :core-vector:test :core-pipeline:test :core-export:test --console=plain
 
 # Documentation itself: paths, citations, count drift, and role-ladder parity across the two clients.
 # Run it on a CLEAN tree: REPO_FACTS.md's line counts are read off disk, so regenerating from a dirty

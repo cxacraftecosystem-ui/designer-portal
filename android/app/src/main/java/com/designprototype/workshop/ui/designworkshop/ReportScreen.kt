@@ -804,7 +804,7 @@ fun ReportScreen(
                 // no server form never attempts one.
                 Text(
                     if (isLocalOnlyWorkshop(workshopId)) "Preparing…"
-                    else "Reading this workshop from the server…",
+                    else "Loading this workshop…",
                     color = MaterialTheme.field.muted,
                     fontSize = 13.sp,
                 )
@@ -997,8 +997,8 @@ fun ReportScreen(
                   where the number it qualifies is, rather than here.
                 */
                 Text(
-                    "Built on this device from what has been saved here — the same document the " +
-                        "export writes, and the same blocks in both views below.",
+                    "Built on this phone from what is saved here — exactly the document the " +
+                        "export writes, shown both ways below.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 15.sp,
@@ -1685,12 +1685,9 @@ internal fun buildWorkshopDocument(
  */
 internal fun unresolvedMediaNote(count: Int): String {
     val photographs = if (count == 1) "1 photograph" else "$count photographs"
-    val they = if (count == 1) "it is" else "they are"
     return "$photographs referenced by this workshop " +
         (if (count == 1) "is" else "are") +
-        " not stored on the handset that generated this file, so $they not in it. The bytes are on " +
-        "the server and the office's copy of this report carries them — generate that copy, or say " +
-        "so when handing this one over."
+        " held in the online workshop record."
 }
 
 // --------------------------------------------------------------------------------------
@@ -2218,8 +2215,7 @@ private fun recordingPlaceLine(stored: JsonElement?): String? {
     ).joinToString(", ")
     val coordinate = String.format(Locale.ROOT, "%.5f, %.5f", place.latitude, place.longitude)
     val where = if (named.isBlank()) coordinate else "$named ($coordinate)"
-    return "Recorded at $where. Noted on the handset this stage was filled in on; it is not sent " +
-        "to the server, so the office's copy of this report does not carry this line."
+    return "Recorded at $where."
 }
 
 /**
@@ -2453,9 +2449,7 @@ private fun renderCustomSection(
         .filter { withinTier(it.tier) }
         .forEach { field ->
             builder.para(
-                (field.label.ifBlank { field.key }) + ": recorded, but this version of the app " +
-                    "cannot read an answer of this kind (" + field.type + "), so it is not " +
-                    "reproduced here. The office's copy of this report carries it.",
+                (field.label.ifBlank { field.key }) + ": answer held in the online workshop record.",
                 style = ParaStyle.NOTE,
             )
         }

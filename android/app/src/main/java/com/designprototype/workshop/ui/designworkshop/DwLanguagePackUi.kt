@@ -320,13 +320,22 @@ internal class DwLanguagePackController(
         }
         val answer = withTimeoutOrNull(PACK_CHECK_TIMEOUT_MS) {
             suspendCancellableCoroutine<Result<DwRecognitionSupport>> { continuation ->
-                checkSupport(
-                    engine = engine,
-                    // `isActive` guards a service that calls back twice, which would otherwise throw
-                    // IllegalStateException out of somebody else's binder thread.
-                    onAnswer = { answer -> if (continuation.isActive) continuation.resume(Result.success(answer)) },
-                    onFailure = { code -> if (continuation.isActive) continuation.resume(Result.failure(DwPackCheckFailure(code))) },
-                )
+                // THE API-33 GATE, WRITTEN A THIRD TIME, HERE, WHERE LINT CAN SEE IT. `refresh` has
+                // already returned below TIRAMISU and `engine()` answers null there, so the `else`
+                // never runs; but lint's NewApi check cannot follow either gate into this lambda and
+                // reported the call as an error. A suppression would also have hidden the real
+                // regression — somebody deleting the first two gates — so the gate is stated.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    checkSupport(
+                        engine = engine,
+                        // `isActive` guards a service that calls back twice, which would otherwise
+                        // throw IllegalStateException out of somebody else's binder thread.
+                        onAnswer = { answer -> if (continuation.isActive) continuation.resume(Result.success(answer)) },
+                        onFailure = { code -> if (continuation.isActive) continuation.resume(Result.failure(DwPackCheckFailure(code))) },
+                    )
+                } else {
+                    continuation.resume(Result.failure(DwPackCheckFailure(SpeechRecognizer.ERROR_CLIENT)))
+                }
             }
         }
         checking = false
@@ -366,7 +375,7 @@ internal class DwLanguagePackController(
             // good list and replace nineteen honest rows with nineteen "unknown"s.
             answer != null -> {
                 val code = (answer.exceptionOrNull() as? DwPackCheckFailure)?.code
-                cannotAsk = "This phone would not say which language packs it has (code $code). " +
+                cannotAsk = "This phone would not say which language packs it has. " +
                     "Dictation still works and still says when a language is missing."
             }
             else -> {
@@ -513,7 +522,7 @@ internal class DwLanguagePackController(
 
             override fun onError(error: Int) {
                 requests[tag] = DwPackRequestNote(
-                    "$label could not be fetched (code $error). Check the connection and try again, " +
+                    "$label could not be fetched. Check the connection and try again, " +
                         "or add it in the phone's own speech or keyboard settings.",
                     failed = true,
                 )

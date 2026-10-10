@@ -982,8 +982,7 @@ private const val ACCESS_NO_MATCH_TITLE = "Nobody matches these filters"
 private const val ACCESS_NO_MATCH_BODY =
     "Clear them to see everyone this application has ever admitted, refused or suspended — the " +
         "refused and suspended entries included, which are the ones that explain why somebody " +
-        "cannot sign in. The filters are applied on the server, over the whole list and not only " +
-        "the rows this page had loaded."
+        "cannot sign in. The filters search the whole list, not only the entries already shown."
 
 /**
  * THE LIST IS GENUINELY EMPTY, ANSWERED AND NONE. §3.5's *genuinely-empty, unscoped*.

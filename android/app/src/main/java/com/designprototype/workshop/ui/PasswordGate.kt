@@ -392,7 +392,9 @@ fun PasswordGateScreen(
  *
  * ── A FAILED CHECK IS NOT A DEAD LINK ────────────────────────────────────────────────────────────
  *
- * `GET /auth/set-password` is asked first because its six reason words are the only way to say
+ * The link check is asked first — `POST /auth/set-password/check`, with the token in its body, or
+ * the older `GET /auth/set-password` on a server without that route (see
+ * `WorkshopRepository.checkPasswordLink`) — because its six reason words are the only way to say
  * WHICH refusal this is — expired, withdrawn, already used — and "invalid link" leaves a person with
  * no next action. But a check that could not be MADE says nothing about the link: the phone may
  * simply have no signal, and telling somebody their link is dead when it has not been examined sends
@@ -419,7 +421,11 @@ fun SetPasswordLinkScreen(
     initialLink: String = "",
 ) {
     val scope = rememberCoroutineScope()
-    var pasted by remember { mutableStateOf(initialLink) }
+    // Keyed on the link it was opened with, so a SECOND link tapped while this screen is up replaces
+    // the first in the box — `MainActivity` hands it over as a new [initialLink] — instead of being
+    // dropped behind a box that still holds the stale one. A paste does not change [initialLink], so
+    // what somebody types or pastes here is never overwritten.
+    var pasted by remember(initialLink) { mutableStateOf(initialLink) }
     var next by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var reveal by remember { mutableStateOf(false) }

@@ -5,7 +5,7 @@ name: Android build
 # ─── WHY LAST, AND WHY IT STILL RUNS WHEN A DEPLOY FAILED ─────────────────────────────
 # This stage builds and checks the APK; it does not deploy anything. (Shipping a build to
 # devices is a separate, deliberate act: the in-app OTA updater compares versionCode against
-# a release-signed APK uploaded by a master admin — see android/README.md. Nothing here can
+# a release-signed APK published by a `v*` tag push — publish-android.yml, docs/CI.md §1.4. Nothing here can
 # reach a phone.) So it is ordered last purely as a dependency courtesy: it is the cheapest
 # stage and the least urgent, and putting it ahead of the deploys would delay them.
 #
@@ -125,22 +125,26 @@ jobs:
         working-directory: android
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # On a workflow_run trigger the default ref is the tip of main, which may have
           # moved past the commit that was deployed. Build the commit that went out.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+      - name: Set up JDK 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          # 17 is not a free choice: android/app/build.gradle.kts pins
-          # sourceCompatibility/targetCompatibility to VERSION_17 and kotlinOptions.jvmTarget
-          # to "17". AGP 8.7 rejects a lower JDK, and a higher one changes the default
-          # bytecode target, so this must track that file.
-          java-version: "17"
-          # Caches ~/.gradle/caches and the wrapper distribution (Gradle 8.9, ~130 MB),
+          # The JDK that RUNS Gradle: 25, the newest LTS (Temurin), since 2026-10-09. It does
+          # NOT set the bytecode level — android/app/build.gradle.kts pins compileOptions and
+          # the Kotlin jvmTarget to 17, Android's documented ceiling (API 34 maps to Java 17),
+          # and the four core-* engine modules pin jvmTarget 17 plus -Xjdk-release=17, so the
+          # class files stay at major version 61 whatever runs the build. Gradle 9.8.1 runs on
+          # 17 to 27 and AGP 9.4 needs 17 or newer. Keep publish-android.yml and
+          # android-emulator.yml on the same value: a release built on a different JDK than
+          # the one this pipeline tests is a variable nobody wants.
+          java-version: "25"
+          # Caches ~/.gradle/caches and the wrapper distribution (Gradle 9.8.1, ~150 MB),
           # keyed on the gradle files. Without it every run re-downloads the whole
           # AndroidX/Compose dependency graph, which dominates the wall-clock time.
           cache: gradle
@@ -151,15 +155,16 @@ jobs:
         run: chmod +x gradlew
 
       - name: Ensure the required Android SDK packages are installed
-        # ubuntu-latest ships an Android SDK, but which platform/build-tools versions are
-        # preinstalled drifts with the runner image. compileSdk/targetSdk are 35 and AGP
-        # 8.7.3 wants build-tools 35.x, so install them explicitly rather than betting on
-        # the image. Both are no-ops when already present.
+        # The runner image ships an Android SDK, but which platform/build-tools versions are
+        # preinstalled drifts with the image. android/app/build.gradle.kts compiles against
+        # the 37.2 platform (Android 17, minor release 2; targetSdk 37) and pins
+        # buildToolsVersion 37.0.0, which is also above AGP 9.4's 36.0.0 floor — so install
+        # exactly those rather than betting on the image. Both are no-ops when already present.
         run: |
           set -euo pipefail
           sdkmanager="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
-          "$sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          "$sdkmanager" "platforms;android-37.2" "build-tools;37.0.0" > /dev/null
 
       # android/local.properties is gitignored, so it does not exist here. Two consequences,
       # both intended:
@@ -170,33 +175,37 @@ jobs:
 
       - name: Fetch the vendored sherpa-onnx AAR
         # WITHOUT THIS STEP THIS WORKFLOW CANNOT COMPILE, and it failed for exactly that
-        # reason from the moment the offline speech engine landed:
+        # reason from the moment the offline speech engine landed (at 1.13.5 then):
         #   Could not find :sherpa-onnx-static-link-onnxruntime-1.13.5:
         #
         # The engine is on NO Maven repository — `docs/ASR-RUNTIME-MEASUREMENT.md` §1 proved
         # that through the Gradle resolver rather than by searching: six coordinate spellings,
         # six live 404s. So `app/build.gradle.kts` binds it as a bare file through the
         # `flatDir` in settings.gradle.kts, and `.gitignore` excludes `android/app/libs/`
-        # because the file is 36 MB — correctly, as a binary that size does not belong in
+        # because the file is 37 MB — correctly, as a binary that size does not belong in
         # git history. The consequence is that it exists on a developer's machine and has
         # never existed on a runner, so the break was invisible locally and total in CI.
         #
         # VERIFIED AGAINST THE DIGEST `build.gradle.kts` ALREADY DOCUMENTS, and that check is
-        # the point of the step rather than a flourish: this pulls 36 MB of native code that
+        # the point of the step rather than a flourish: this pulls 37 MB of native code that
         # ships inside the APK, so "downloaded successfully" is not the question — "is it the
         # artifact we measured" is. The size and SHA-256 below are the ones recorded beside
         # the `implementation` line, both re-checked against the upstream release asset and
         # against the local file. A mismatch fails the build rather than warning: an engine
         # that is not the one that was measured is not one to sign an APK around.
+        #
+        # 1.13.8 since 2026-10-09, the newest sherpa-onnx release that day. The name, the
+        # digest and the size move together here, in publish-android.yml, in
+        # android-emulator.yml and beside the `implementation` line: four places, one value.
         run: |
           set -euo pipefail
-          aar="app/libs/sherpa-onnx-static-link-onnxruntime-1.13.5.aar"
-          sha="508b79be1aeef3cbb92b8d4325b9b1dad0fa9a4eb1991de0d3d1826b8a09c358"
+          aar="app/libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"
+          sha="b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471"
           mkdir -p app/libs
           curl -fsSL --retry 3 --retry-delay 5 -o "$aar" \
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-static-link-onnxruntime-1.13.5.aar"
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"
           echo "$sha  $aar" | sha256sum -c -
-          test "$(stat -c%s "$aar")" = "37749854"
+          test "$(stat -c%s "$aar")" = "38691998"
 
       - name: Compile Kotlin (debug)
         id: compile
@@ -220,6 +229,14 @@ jobs:
         # edit that stops the test source set being seen turns this step green in seconds while
         # asserting nothing at all, which is indistinguishable from "the tests passed" in the tick
         # on the PR. The warning is the only thing that would tell you.
+        #
+        # THE VENDORED ENGINE'S OWN SUITES RUN HERE TOO, since 2026-10-09. The `paths:` note at
+        # the top of this file sends a pull request that moves `frontend/lib/trace/**` to this
+        # job BECAUSE `:core-pipeline`'s ParityTest holds the Kotlin engine to the TypeScript's
+        # numbers — and until that date this step ran only `:app`, so the test that note relies
+        # on never ran in CI at all. The four `:core-*:test` tasks are the engine's 760 tests,
+        # ParityTest among them; they are plain JVM tests and cost about a minute and a half,
+        # nearly all of it compiling them.
         run: |
           set -euo pipefail
           if [ -d app/src/test ] && [ -n "$(find app/src/test -name '*.kt' -o -name '*.java' 2>/dev/null | head -1)" ]; then
@@ -227,27 +244,29 @@ jobs:
           else
             echo "::warning::No app/src/test sources exist; :app:testDebugUnitTest is a placeholder (NO-SOURCE) and asserts nothing."
           fi
-          ./gradlew :app:testDebugUnitTest --console=plain
+          ./gradlew :app:testDebugUnitTest \
+            :core-imaging:test :core-vector:test :core-pipeline:test :core-export:test \
+            --console=plain
           # Instrumented tests (app/src/androidTest, 8 files) are NOT run here: they need an
           # emulator/AVD on the runner, which this job has not got. They are device PROBES —
           # DwAsrEngineProbeTest and friends measure the on-device speech engine — so they are
-          # not a substitute for the unit set and are not silently missing coverage. Add a
-          # separate job with an emulator action if they are ever to run; do not bolt them
-          # onto this one, which would put a 10-minute emulator boot in front of the compile
-          # result every contributor is actually waiting for.
+          # not a substitute for the unit set and are not silently missing coverage. They run in
+          # android-emulator.yml, by hand; do not bolt them onto this job, which would put a
+          # 10-minute emulator boot in front of the compile result every contributor is
+          # actually waiting for.
 
       - name: Android Lint (debug)
-        # Non-blocking ON PURPOSE, and this is a measured decision, not a guess: running
-        # `./gradlew :app:lintDebug` on this tree today gives "Lint found 1 errors, 44
-        # warnings" and aborts — the error is
-        #   AndroidManifest.xml:6  PermissionImpliesUnsupportedChromeOsHardware
-        #   (uses-permission CAMERA with no matching <uses-feature required="false">)
-        # which is a pre-existing manifest nit, unrelated to any change being tested. A
-        # hard gate would therefore fail 100% of runs from day one and train everyone to
-        # ignore red. The report is uploaded on every run instead. Fix that manifest entry
-        # (or commit a lint-baseline.xml), then delete continue-on-error below and this
-        # becomes a real gate — the fix is one <uses-feature> line, but AndroidManifest.xml
-        # belongs to the Android workstream, not to this CI change.
+        # Non-blocking, and the reason it was is now gone. It was made advisory because
+        # `./gradlew :app:lintDebug` reported "1 errors, 44 warnings" and aborted on a
+        # pre-existing manifest nit (PermissionImpliesUnsupportedChromeOsHardware: CAMERA with
+        # no <uses-feature required="false">), so a hard gate would have failed every run from
+        # day one and trained everyone to ignore red. The toolchain move of 2026-10-09 brought
+        # AGP 9.4's lint and the Compose and lifecycle libraries' own checks, which found six
+        # more errors; all seven were fixed in the code, the manifest line among them, and
+        # run 37929056714 measured "0 errors, 99 warnings, 47 hints". The report is uploaded on
+        # every run. Deleting continue-on-error below now makes this a real gate; that is a
+        # policy decision for the repository's owner, because a lint rule a library ships in
+        # an ordinary minor release can then block a pull request that touched no Android code.
         id: lint
         continue-on-error: true
         run: ./gradlew :app:lintDebug --console=plain
@@ -266,8 +285,8 @@ jobs:
           # DEBUG-SIGNED build. It is a compile artifact for testers to sideload, NOT a
           # release: the in-app OTA updater only accepts APKs signed with the release key,
           # and Android refuses to install an APK whose signature differs from the one
-          # already on the device. Cutting a real release is still the manual, key-holding
-          # process in android/README.md.
+          # already on the device. Cutting a real release is a `v*` tag push to
+          # publish-android.yml, the one workflow that holds the key (docs/CI.md §1.4).
           name: app-debug-${{ github.event.workflow_run.head_sha || github.sha }}
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
@@ -289,7 +308,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-unit-test-results
-          path: android/app/build/reports/tests/
+          # The engine modules' reports too, since their suites run in the same step.
+          path: |
+            android/app/build/reports/tests/
+            android/core-*/build/reports/tests/
           # `warn`, not `error`. There ARE test sources now, so a report is expected — but this
           # step runs with `always()`, including on a run where compileDebugKotlin failed and the
           # test task never started. Failing the upload there would replace the compile error on
@@ -306,7 +328,7 @@ jobs:
             echo "| step | result |"
             echo "|---|---|"
             echo "| compileDebugKotlin | ${{ steps.compile.outcome }} |"
-            echo "| testDebugUnitTest | ${{ steps.tests.outcome }} |"
+            echo "| unit tests (:app, :core-*) | ${{ steps.tests.outcome }} |"
             echo "| lintDebug | ${{ steps.lint.outcome }} (advisory, does not fail the build) |"
             echo "| assembleDebug | ${{ steps.assemble.outcome }} |"
             echo "| APK | \`app-debug.apk\` — debug-signed, NOT an OTA release |"

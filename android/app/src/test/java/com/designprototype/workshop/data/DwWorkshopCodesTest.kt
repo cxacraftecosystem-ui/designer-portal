@@ -193,7 +193,8 @@ class DwWorkshopCodesTest {
         )
         assertEquals("Nothing was scanned or typed.", messageOf(decodeWorkshopCode(null)))
         assertEquals(
-            "This is a workshop code, but it points at a kind of record this version of the app does not open.",
+            "This is a workshop code for a kind of record that needs a newer version of the app. " +
+                "Update the app, then scan it again.",
             messageOf(decodeWorkshopCode("DPW1:Z:CMSIK2JG8000EH8XC1LCY661A:VZCR"))
         )
         assertEquals(
@@ -202,7 +203,7 @@ class DwWorkshopCodesTest {
             messageOf(decodeWorkshopCode("DPW1:A:CM:NEWD"))
         )
         assertEquals(
-            "No code can be printed for a “designer” — codes exist for artisans, crafts, workshops, " +
+            "No code can be printed for this kind of record — codes exist for artisans, crafts, workshops, " +
                 "products, processes, tools, interviews, media files, design workshops and prototypes.",
             messageOf(encodeWorkshopCode("designer", ARTISAN_ID))
         )
@@ -211,8 +212,8 @@ class DwWorkshopCodesTest {
             messageOf(encodeWorkshopCode("artisan", null))
         )
         assertEquals(
-            "That is not an identifier this repository issues, so no code can be printed for it. " +
-                "Identifiers are the lower-case ids the app allocates when a record is saved.",
+            "That is not a record identifier, so no code can be printed for it. Save the record " +
+                "first, then print its code.",
             messageOf(encodeWorkshopCode("artisan", "Ram Kumar"))
         )
     }
@@ -275,7 +276,8 @@ class DwWorkshopCodesTest {
         //
         // ⚠ WHICH DECIMAL IT PRINTS DEPENDS ON THE JDK, AND THIS LINE USED TO ASSERT ONE OF THEM.
         // It read `contains("code format 9")`, which is true only while `Double.toString` is NOT the
-        // shortest round-tripping decimal — i.e. before JDK 19 (JDK-4511638). CI pins JDK 17 and
+        // shortest round-tripping decimal — i.e. before JDK 19 (JDK-4511638). CI pinned JDK 17 then
+        // (25 since 2026-10-09) and
         // prints "9.999999999999999e+22", so it passed there; Gradle here resolves JDK 21, prints
         // "1.0E23", and it failed on every developer machine. A test that is green on the build
         // server and red for everyone who runs it is worse than one that is simply red: it trains
@@ -470,13 +472,13 @@ class DwWorkshopCodesTest {
         // The API answers 404 rather than 403 so that a card cannot be used to confirm a record exists.
         // A message that distinguished the two here would undo that from the other side.
         assertEquals(
-            "No prototype in this workshop matches that tag. It may belong to another workshop, or the " +
-                "row may not have reached this device yet — open the workshop that made it, or find the " +
+            "No prototype in this workshop matches that tag. It may belong to another workshop, or " +
+                "it may not be on this phone yet — open the workshop that made it, or find the " +
                 "prototype in the list.",
             unresolvedWorkshopCodeMessage(DwWorkshopRecordType.PROTOTYPE)
         )
         assertEquals(
-            "No artisan you can open matches that code. It may not be in the repository, or it may " +
+            "No artisan you can open matches that code. It may not exist, or it may " +
                 "belong to work you do not have access to — search for the artisan by name instead.",
             unresolvedWorkshopCodeMessage(DwWorkshopRecordType.ARTISAN)
         )
@@ -731,7 +733,7 @@ class DwWorkshopCodesTest {
         // A CAPABILITY, NOT A CLAIM ABOUT THE CARD. "That is a design workshop code, not a record
         // code" is a statement about the code that the browser contradicts; "this version of the app
         // cannot" is true on both surfaces and stops being true here without a rewording argument.
-        assertTrue(message.startsWith("This version of the app cannot open a design workshop from a code"))
+        assertTrue(message.startsWith("This is a design workshop's code. Design workshops are opened from"))
         // And it must not become a "request sent", for the same reason as the sentence above: granting
         // access is an admin-only PUT that a designer cannot make even with a perfect connection.
         assertFalse(message.lowercase().contains("request sent"))

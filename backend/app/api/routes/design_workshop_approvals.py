@@ -71,6 +71,7 @@ from app.services import (
     design_workshop_approvals as approvals,
     design_workshop_oversight as oversight,
     design_workshop_posts as posts,
+    email_outbox,
 )
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
@@ -388,6 +389,12 @@ async def revise_report(
             status_code=status.HTTP_409_CONFLICT, detail=plans.CHANGED_AFTER_OPENED
         ) from None
     updated = await approvals.load_approvable_workshop_or_404(workshop_id)
+    # THE SAME NOTICE AN INSPECTOR'S SEND-BACK QUEUES, after the transaction so a rolled-back decision
+    # e-mails nobody: the report is back on its designers' desk, with the sentence to act on. Never
+    # raises — the decision stands whether or not the notice is queued.
+    await email_outbox.notify_review_note(
+        updated, actor=current_user, note=payload.note, stage_key=payload.stageKey, sent_back=True
+    )
     return await _read_for_decision(updated, current_user)
 
 

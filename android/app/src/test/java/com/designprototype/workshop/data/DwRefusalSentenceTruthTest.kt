@@ -105,12 +105,12 @@ class DwRefusalSentenceTruthTest {
     @Test
     fun `the three holdings each keep their own sentence`() {
         val unrecorded = only("designBrief" to mapOf("intendedPriceLow" to "not a valid money"))
-        assertTrue(unrecorded.sentence, unrecorded.sentence.contains("UNRECORDED here."))
+        assertTrue(unrecorded.sentence, unrecorded.sentence.contains("it is not shown here."))
 
         val holds = unrecorded.copy(held = DwHeld.holding("6500.00"))
-        assertTrue(holds.sentence, holds.sentence.contains("The repository still holds: “6500.00”."))
+        assertTrue(holds.sentence, holds.sentence.contains("The answer saved online is still: “6500.00”."))
 
         val nothing = unrecorded.copy(held = DwHeld.nothing())
-        assertTrue(nothing.sentence, nothing.sentence.contains("holds no answer to this question."))
+        assertTrue(nothing.sentence, nothing.sentence.contains("no earlier answer to this question online."))
     }
 }

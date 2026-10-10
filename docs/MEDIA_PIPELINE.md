@@ -170,7 +170,8 @@ object so the stored file is still whole (`uploadBytesToS3`, `uploadMultipart`).
 
 An OkHttp interceptor in `data/ApiClient.kt` retries **only** requests that are safe to repeat: GETs,
 plus `/media/presign`, `/media/multipart/create`, `/media/multipart/presign-parts`,
-`/media/multipart/abort`. Record-creating calls are deliberately excluded so a 504 can never create a
+`/media/multipart/abort` and — since 2026-10-09 — `/auth/set-password/check`, which reads and writes
+nothing. Record-creating calls are deliberately excluded so a 504 can never create a
 duplicate. Retriable codes: 502/503/504, up to 4 attempts, backoff `min(4 s, 600 ms × attempt)`.
 Generous transport timeouts and `retryOnConnectionFailure(true)` for mobile data.
 

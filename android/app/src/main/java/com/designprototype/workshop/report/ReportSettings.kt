@@ -356,19 +356,19 @@ val STAGE_20_SETTINGS: List<SettingSupport> = listOf(
 )
 
 /**
- * The special sections this device cannot build, and why — one sentence each, said to the designer
- * rather than left as a silent hole in the file.
+ * The special sections this device cannot build, each with the sentence said to the designer at
+ * export — or null, where the section is simply not drawn here and nothing is said about it.
  *
  * A section absent from this map is one [buildWorkshopDocument] emits. Keeping the two together
  * means a section that becomes renderable is deleted from here in the same edit, and one that never
  * was cannot be quietly forgotten.
+ *
+ * THE TWO NULL ENTRIES ARE GAPS, NOT DECISIONS. The transcript annexure and the machine-assisted
+ * text annexure are not built on a handset; customer-facing copy does not narrate that (2026-10-10),
+ * so the gap is recorded in docs/OPEN_FINDINGS.md instead of on the export screen.
  */
-val UNSUPPORTED_SECTIONS: Map<SpecialSection, String> = mapOf(
-    SpecialSection.ANNEXURE_TRANSCRIPTS to
-        "The recordings' transcripts are not appended on this device, although you asked for them. " +
-            "The recordings are on this phone but their transcripts are not: workshop audio is " +
-            "transcribed after it reaches the server. The office's copy of this report will carry " +
-            "them.",
+val UNSUPPORTED_SECTIONS: Map<SpecialSection, String?> = mapOf(
+    SpecialSection.ANNEXURE_TRANSCRIPTS to null,
     // THE ANNEXURE IS DRAWN ON THIS DEVICE NOW — see `renderQuestionnaireAnnexure` — and this entry
     // survives because it stopped being universally true rather than because it stopped being true.
     // `DwQuestionnaireStore` holds the answers this handset has been shown, and the section prints
@@ -386,67 +386,11 @@ val UNSUPPORTED_SECTIONS: Map<SpecialSection, String> = mapOf(
     // missing from this file" would be a false alarm on the majority of exports, which is how a
     // designer learns to stop reading warnings.
     SpecialSection.ANNEXURE_QUESTIONNAIRES to
-        "If a questionnaire is attached to this workshop, the answers recorded against it are not " +
-            "in this file. This device has not yet read them: open the questionnaire on this phone " +
-            "once while you have a connection and they are kept here for every export afterwards, " +
-            "including offline ones. The office's copy of this report will carry them either way.",
-    // UNCONDITIONAL, unlike the two above, and that is the honest shape for this one.
-    //
-    // The other two are guarded because a device CAN close their gap — a transcript arrives from the
-    // server, a questionnaire list is read once with signal — so an unconditional sentence would be
-    // a false alarm on the majority of exports. There is no such path here. An AI layer is a row on
-    // the server carrying which model produced it and who accepted it, nothing under `data/` holds
-    // one, and no screen on this handset offers to fetch them. The gap is a property of the device,
-    // not of what this workshop happens to contain.
-    //
-    // IT IS ALSO A SENTENCE THAT WILL RARELY BE READ, because no template carries this section and
-    // the server splices it only into a report somebody deliberately asked for. That is the reason
-    // it is written now rather than when it is first needed: the state it describes — a section
-    // reaching this renderer that this renderer cannot draw — is one a designer would otherwise
-    // meet as a silent hole in a file handed to an officer, in a courtyard, with nothing on screen
-    // to explain it. Which is precisely the failure this map exists to prevent.
-    SpecialSection.ANNEXURE_AI_LAYERS to
-        "Machine-assisted text is not appended on this device. Where a transcript, a summary or a " +
-            "reading has been produced automatically and a person has accepted it, that record is " +
-            "held on the server together with which model produced it and who accepted it, and " +
-            "this phone keeps no copy. The office's copy of this report can carry it, named as " +
-            "machine-assisted; this file contains only what was typed and recorded here.",
-)
-
-/**
- * The same sections, as the NOUN PHRASE the file's own provenance line uses.
- *
- * Two wordings for one fact, and they are not redundant. [UNSUPPORTED_SECTIONS] is addressed to the
- * designer standing at the export screen, in the second person, about a thing they just did. This
- * one is addressed to whoever opens the document in an office next month and completes the sentence
- * "The office's copy of this report also carries …", so it has to be a thing rather than an
- * explanation. Both are keyed off the same enum, so a section that becomes renderable is deleted
- * from both in one edit and neither can be left asserting a gap that has closed.
- *
- * ANNEXURE_QUESTIONNAIRES IS DELIBERATELY ABSENT, and this is the one place the two maps are meant to
- * disagree — do not "fix" it by adding the noun phrase. [UNSUPPORTED_SECTIONS] is advisory, shown to
- * a designer holding the phone, who knows perfectly well whether they attached a questionnaire; it
- * can afford to say "if". THIS map's string goes INTO the document, addressed to an officer who
- * cannot check it, as the flat assertion "The office's copy of this report also carries …". Every
- * template carries the questionnaire annexure and there is no stage-20 toggle to guard it with, so
- * naming it here would print that sentence on every field copy of every workshop — including the
- * majority with no questionnaire attached at all, whose office copy carries nothing of the kind. A
- * report apologising for the absence of something that does not exist is exactly the defect the
- * transcript guard in [unsupportedSectionsIn] was added to prevent.
- *
- * THAT ARGUMENT SURVIVES THE ANNEXURE LANDING, and the anticipated ending — "the day the handset
- * holds those answers, the section is drawn and it leaves [UNSUPPORTED_SECTIONS] rather than joining
- * this map" — is half right, so it is worth saying which half. The device draws the section now, from
- * `DwQuestionnaireStore`. But the cover line's problem was never the drawing: it was that a cover is
- * written before anything is known, on every export, including the ones where nothing is attached.
- * That is still true of the state this map would have to speak for — a handset that has never read
- * the list — so the entry still must not be added. Where the device DOES know a questionnaire is
- * attached and lacks its answers, the annexure itself now says so, under its own heading, naming the
- * questionnaire; a flat sentence on the cover would be a vaguer duplicate of a precise statement that
- * is already in the file.
- */
-private val UNSUPPORTED_SECTION_NAMES: Map<SpecialSection, String> = mapOf(
-    SpecialSection.ANNEXURE_TRANSCRIPTS to "the transcripts of the recordings",
+        "If a questionnaire is attached to this workshop, its answers are not in this file. Open " +
+            "the questionnaire on this phone once while you have a connection, and its answers are " +
+            "included in every report made here afterwards, even offline.",
+    // Not drawn on a handset, and not narrated — see the KDoc above.
+    SpecialSection.ANNEXURE_AI_LAYERS to null,
 )
 
 /**
@@ -495,8 +439,11 @@ internal fun unsupportedSectionsIn(
 }
 
 /**
- * The cover's provenance line: where and when this file was made, and what the office's copy has
- * that it does not.
+ * The cover's provenance line: where and when this file was made.
+ *
+ * [template] and [settings] are no longer read: the line used to go on to list the sections this
+ * copy lacked, and a document handed to an officer does not narrate gaps (2026-10-10). They stay in
+ * the signature so no caller has to change.
  *
  * WHAT THIS ENDS. The officer handed the phone's PDF read it as THE report. Same cover, same running
  * foot, a self-consistent contents page — and nothing anywhere in it said which of the two copies of
@@ -541,18 +488,10 @@ fun fieldCopyNote(
     serverCopyUnread: Boolean = false,
 ): String {
     val stamp = if (generatedOn.isBlank()) "" else " on $generatedOn"
-    val made = "Generated on a handset in the field$stamp."
+    val made = "Generated in the field$stamp."
     val unread = if (!serverCopyUnread) "" else
-        " The workshop could not be read from the server when this file was made, so it contains " +
-            "only what that handset had already downloaded; anything recorded on another phone or " +
-            "on the web may be missing."
-    val missing = unsupportedSectionsIn(template, settings).mapNotNull { UNSUPPORTED_SECTION_NAMES[it] }
-    if (missing.isEmpty()) return made + unread
-    val listed = when (missing.size) {
-        1 -> missing[0]
-        else -> missing.dropLast(1).joinToString(", ") + " and " + missing.last()
-    }
-    return "$made$unread The office's copy of this report also carries $listed."
+        " This copy was prepared without a connection, so entries made elsewhere may not be included."
+    return made + unread
 }
 
 /**
@@ -583,15 +522,14 @@ fun reportWarnings(
     // The substitution warning `build_report` raises: a record naming a template this build has
     // retired still prints, and the designer is told which one it actually came out as.
     if (requestedTemplateId.isNotEmpty() && requestedTemplateId != template.id) {
-        said += "Template '$requestedTemplateId' is not available in this version of the app; the " +
-            "report was generated with '${template.name}' instead."
+        said += "Template '$requestedTemplateId' is not available, so the report was generated " +
+            "with '${template.name}' instead."
     }
 
     val fonts = resolveFont(null, settings)
     if (fonts != null && format.equals("PDF", ignoreCase = true)) {
-        said += "The PDF is set in this device's own typeface, not ${fonts.second}. A PDF written " +
-            "on a handset must draw Odia, Devanagari and the rupee sign, and the system face is " +
-            "the only one here that can. The Word document does use ${fonts.second}."
+        said += "The PDF uses this phone's own typeface so that Odia, Devanagari and the rupee sign " +
+            "print correctly. The Word document uses ${fonts.second}."
     }
 
     // [unsupportedSectionsIn] carries the "which sections" judgement, including the reason the

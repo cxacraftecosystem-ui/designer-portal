@@ -144,8 +144,8 @@ WHY THERE IS NO `OfficerRoster`
 ``DesignerRoster`` exists because empanelment is a fact about an EMAIL that outlives an account, and
 it exists in that shape for three reasons, none of which transfers to an officer.
 
-1. **The row IS the invitation, because there is no mailer.** ``credential_links.delivery()``
-   hard-returns ``CopyLinkDelivery``; the transport is an admin copying a URL out of ``/users``. An
+1. **The row IS the invitation.** A password link's transport is an admin on ``/users`` — copied
+   out of the screen, or e-mailed by ``credential_links.EmailDelivery`` where mail is on. An
    ACTIVE roster row PROMOTES an account to DESIGNER on first Google sign-in without anybody being
    told anything. **``AccessRoster`` already does exactly this job for every other role** — its
    ``admitRole`` column lets an admin admit an address at ``admitRole=REGIONAL_DIRECTOR`` and

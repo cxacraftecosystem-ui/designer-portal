@@ -53,10 +53,12 @@ import com.designprototype.workshop.data.UserDto
  * `Surface(fillMaxSize())` and everything below this comment stayed exactly as it was.
  *
  * ⚠ AND THE WINDOW IS DELIBERATELY LEFT FITTING THE SYSTEM DECOR. `decorFitsSystemWindows = false`
- * exists on the classpath and `DwQrLiveScanner` uses it, but `WindowInsets` appears NOWHERE else
- * under `src/main` — this app has never paid insets by hand. Going edge-to-edge here would draw the
- * pinned header under the status bar and Skip under the gesture pill on every tall handset, with no
- * established helper anywhere in the tree to fix it.
+ * exists on the classpath and `DwQrLiveScanner` uses it; the activity window behind this dialog has
+ * paid its system-bar insets once, at its root, since 2026-10-09 (`SystemBarsInsetsRoot` in
+ * `Theme.kt`, because targetSdk 37 leaves it no opt-out from edge to edge). A Dialog is a window of
+ * its own and that root does not reach it, so going edge-to-edge HERE would draw the pinned header
+ * under the status bar and Skip under the gesture pill on every tall handset unless this file paid
+ * the insets itself — and fitting the decor already gets that right for nothing.
  *
  * ── WHY THIS IS A DIALOG AND NOT A `Screen` ──────────────────────────────────────────────────────
  *
@@ -306,7 +308,8 @@ private fun walkthroughOpenLabel(destination: NavDestination): String? =
  * That was read out of `compose-ui 1.7.8` and `activity 1.9.3` in the Gradle cache rather than
  * remembered — the two classes are `androidx.compose.ui.window.DialogWrapper` and
  * `androidx.activity.ComponentDialog`, and the line that matters is the
- * `ViewTreeOnBackPressedDispatcherOwner.set` on the decor view.
+ * `ViewTreeOnBackPressedDispatcherOwner.set` on the decor view. Re-read in `compose-ui 1.12.1` and
+ * `activity 1.13.0` on 2026-10-09, when the app moved to them: unchanged on both counts.
  *
  * Two consequences, and between them they are the whole answer. A back press inside the walkthrough
  * cannot reach `MainActivity`'s dispatcher, so it cannot run `goBack()` and cannot finish the

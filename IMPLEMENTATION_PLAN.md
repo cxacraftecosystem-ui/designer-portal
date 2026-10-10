@@ -390,6 +390,6 @@ cd backend   && ruff check app && pytest -q
 cd android   && ./gradlew.bat :app:compileDebugKotlin
 ```
 
-Android tests need JDK 17 — 19+ fails `DwWorkshopCodesTest:280` for a
-`Double.toString` reason, not a code defect. Backend tests need Postgres on
+Android tests run on JDK 17 or newer — `DwWorkshopCodesTest` no longer depends on
+the JDK's `Double.toString`, and CI runs them on JDK 25 since 2026-10-09. Backend tests need Postgres on
 `127.0.0.1:55442`.

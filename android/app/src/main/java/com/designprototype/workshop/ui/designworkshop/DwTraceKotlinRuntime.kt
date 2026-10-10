@@ -115,7 +115,7 @@ import kotlinx.coroutines.withContext
  * 317 MB with CANNY**, in this app's heap — 14.7 + 73.2 + 24, and 14.7 + 278.3 + 24, in MiB.
  * `DwTraceKotlinRuntimeTest` pins both figures, so this paragraph cannot rot quietly.
  *
- * `AndroidManifest.xml:57` declares `android:largeHeap`, which on most handsets is the difference
+ * `AndroidManifest.xml:67` declares `android:largeHeap`, which on most handsets is the difference
  * between `dalvik.vm.heapgrowthlimit` (typically 128–256 MB)
  * and `dalvik.vm.heapsize` (typically 256–512 MB) — but "typically" is not a bound, so nothing here
  * assumes it. [dwTraceKotlinHeapBytes] asks the running VM what it actually has, every time.

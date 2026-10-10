@@ -206,6 +206,13 @@ states no minSdk, Kotlin or AGP requirement at all.
 **So the first cost of Tier 2 is upgrading `org.jetbrains.kotlin.android`, `.plugin.compose` and
 `.plugin.serialization` from 2.0.21 to ≥ 2.3.x, project-wide.** Nobody had priced that.
 
+> **Paid on 2026-10-09, for a reason of its own.** The whole Android toolchain moved that day: Kotlin
+> 2.4.21, AGP 9.4.1 (whose built-in Kotlin replaces `org.jetbrains.kotlin.android`, which is no longer
+> applied anywhere) and Gradle 9.8.1. A 2.4 compiler reads Kotlin metadata up to 2.5.0, so the
+> `mv=[2,3,0]` gate measured above no longer stands in front of `litertlm-android`. Nothing in this
+> document was re-measured: litertlm has not been compiled in, the APK figures below are still the
+> 2.0.21-era probe's, and Tier 2 still has no runtime in the app.
+
 The alternative, priced for comparison: `com.google.mediapipe:tasks-genai:0.10.35` — AAR 42,371,846 B,
 `minSdkVersion 21`, four ABIs, **pure Java with no Kotlin metadata, so it compiles here unchanged** and
 it has `AudioModelOptions`/`VisionModelOptions`. Against it: Google's README calls that LLM route *"in
@@ -334,12 +341,12 @@ closing it is an API decision.
 
 | wanted | state |
 |---|---|
-| peak RSS on a fleet handset | **unmeasured** — no runtime in this APK can load the file, and the artifacts are already local so the measurement costs no bandwidth once the Kotlin upgrade lands |
+| peak RSS on a fleet handset | **unmeasured** — no runtime in this APK can load the file, and the artifacts are already local so the measurement costs no bandwidth; the Kotlin upgrade it waited for landed on 2026-10-09 |
 | whether LiteRT-LM's GPU path starts on Mali-G52 | **unmeasured** — the two `uses-native-library` entries Google require are present on the handset, which is necessary and not sufficient |
 | whether the app survives backgrounding with a model resident | **unmeasured** — nothing has been loaded |
 | which of this app's nineteen languages either Gemma 4 artifact can write | **unmeasured** — nobody has read the tokeniser or scored it |
 | Gemma 3n peak RSS at any cap | **unpublished and unmeasured** — the reason those rows carry no verdict |
-| a release APK delta for the ARM pair | **unmeasured** — `assembleRelease` cannot compile with the dependency; ~+22 MB is derived |
+| a release APK delta for the ARM pair | **unmeasured** — `assembleRelease` could not compile with the dependency until the Kotlin 2.4.21 upgrade of 2026-10-09, and nobody has added it since; ~+22 MB is derived |
 | tokens/sec on a Helio G85 | **unmeasured** — Google's 46.9 / 17.7 are S26 Ultra figures |
 | the E2B card's NPU row (2967 MB) | **unexplained** — it matches no blob currently in the repository |
 
@@ -353,7 +360,7 @@ closing it is an API decision.
 | That the two Gemma 3n digests are the host's word and not ours | `curl -s "https://huggingface.co/api/models/google/gemma-3n-E2B-it-litert-lm?blobs=true"`. They must stay labelled `PUBLISHED BY THE HOST` while the repo is gated; a test asserts the string. |
 | Those two repositories are still gated | `hf download google/gemma-3n-E2B-it-litert-lm --dry-run` — `Access denied` means the row is still correct. **The day it succeeds, the row can become a plan only if a memory figure comes with it.** |
 | The memory figures are Google's | Their model cards' Android tables. Nothing in this repository may re-print them without the S26 Ultra beside them; `DwTier2ModelsTest` asserts the attribution is in the field the card prints. |
-| The runtime does not compile here | `javap -v -cp <unpacked classes.jar> com.google.ai.edge.litertlm.Engine \| grep -A2 "kotlin.Metadata("` → `mv=[2,3,0]`, against `org.jetbrains.kotlin.android` in `android/build.gradle.kts`. Adding the dependency and running `:app:assembleDebug` reproduces the compiler error in full. |
+| ~~The runtime does not compile here~~ **Not true since 2026-10-09** | `javap -v -cp <unpacked classes.jar> com.google.ai.edge.litertlm.Engine \| grep -A2 "kotlin.Metadata("` → `mv=[2,3,0]`, which the Kotlin 2.4.21 compiler `android/build.gradle.kts` declares can read (it reads metadata up to 2.5.0; AGP 9's built-in Kotlin replaced `org.jetbrains.kotlin.android`). Whether litertlm now compiles in is unmeasured: add the dependency and run `:app:assembleDebug`. |
 | `DW_TIER2_RUNTIME_PRESENT` is still `false` | `grep -n DW_TIER2_RUNTIME_PRESENT android/app/src/main/java/com/designprototype/workshop/data/DwDeviceTier.kt`. It is read by `dwTier2InstallMayBeOffered`, and `DwTier2ModelsTest` goes red if that function stops refusing. **Flipping it turns no control on, because there is no control** — see the row below. |
 | **No handset is offered a download, and the reason is an omission rather than a gate** | Measured, not read: `dwRecommendTiers` run over five handsets × three connections against the shipped catalogue gives `tier2 = None(NO_RUNTIME_IN_THIS_BUILD)` everywhere, so `dwTierDownloadMayBeOffered` is false. **But the per-choice gate `dwModelDownloadMayBeOffered` answers `true`** for a Tier 2 row on the fleet handset (TIGHT), a 12 GB phone (COMFORTABLE) and a 2 GB Go-edition phone (TIGHT) on any connection but `NONE` — it is `fit.mayInstall && connection != NONE` and knows nothing about a runtime. It is also the gate `DwModelChoiceList` uses to draw "Install this model". `dwTier2InstallMayBeOffered`, which ANDs the runtime in, **has no caller in `src/main` at all** (`grep -rn dwTier2InstallMayBeOffered android/app/src/main`). So the only thing keeping a 2.6 GB fetch off the fleet is that `DwTier2ModelList` draws no action and takes no `onInstall`. `DwTier2GateTest` pins that: it fails if `DwTier2ModelUi.kt` gains `onInstall`/`Button`/`clickable`, and if any screen hands `tier2Choices` to `DwModelChoiceList`. **Whoever wires an install control must use `dwTier2InstallMayBeOffered` and never `dwModelDownloadMayBeOffered`.** |
 | Nothing on this screen can be installed | `DwTier2ModelsTest.no handset and no connection may be offered a download while there is no runtime`, over every device fixture × every connection. |
@@ -392,7 +399,7 @@ regenerating a shared generated file mid-flight would bake in whatever half-stat
 
 Not added to `android/app/proguard-rules.pro` today, deliberately: a keep rule for classes that are not
 on the classpath protects nothing, cannot be verified (`assembleRelease` does not compile with the
-dependency — §4), and would sit in a shared file another lane is editing tonight. They are recorded here
+dependency — §4, true until the Kotlin upgrade of 2026-10-09), and would sit in a shared file another lane was editing that night. They are recorded here
 so that whoever adds the dependency adds them in the same commit, which is the order that matters —
 R8 strips a JNI entry point silently, and the failure shows up as a native crash in a release build only.
 
@@ -410,6 +417,7 @@ R8 strips a JNI entry point silently, and the failure shows up as a native crash
 ```
 
 **Every line above is derived from the AAR's contents (the `javap` surface and the `.so`'s symbol table)
-and none of it has been exercised against R8**, because the release build cannot be produced yet. Treat
+and none of it has been exercised against R8**, because no release build with the dependency has been produced. Treat
 it as a starting point to verify, not as a measured configuration — the honest state is *unmeasured*, and
-the way to settle it is `:app:assembleRelease` plus a load on a handset once the Kotlin upgrade lands.
+the way to settle it is `:app:assembleRelease` plus a load on a handset — and since the Kotlin upgrade
+landed on 2026-10-09, nothing but that work stands in the way.

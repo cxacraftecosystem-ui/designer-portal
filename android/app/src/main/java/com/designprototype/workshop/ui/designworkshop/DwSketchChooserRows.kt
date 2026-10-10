@@ -566,15 +566,14 @@ internal fun dwChooserKeepSelection(chosen: String, rows: List<DraftRow>): Strin
  * stage key would be a fourth place the two entities are spelled.
  */
 internal fun dwChooserSaveNote(push: StagePush?, what: String): String = when (push) {
-    is StagePush.Sent -> "$what is saved on this phone and has reached the repository."
-    StagePush.AlreadySent -> "$what is saved. The repository already holds it."
+    is StagePush.Sent -> "$what is saved on this phone and online."
+    StagePush.AlreadySent -> "$what is saved. It is already online."
     is StagePush.HeldBack ->
         "$what is saved on this phone. Sending it is waiting on ${push.files} attachment" +
             "${if (push.files == 1) "" else "s"} from this stage that are still only on this " +
             "device — the sync tray carries them, and this goes up with them."
     StagePush.NoRemoteYet ->
-        "$what is saved on this phone. This workshop has not been created on the repository yet, " +
-            "so there is nowhere to send it until it is."
+        "$what is saved on this phone. It uploads once this workshop has been uploaded."
     StagePush.NothingToSend ->
         "$what is saved on this phone. There is no local copy of this stage to send, so it stays " +
             "here until this phone has read that stage once."

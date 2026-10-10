@@ -184,8 +184,8 @@ fun outboxDeviceBanner(counts: OutboxCounts, online: Boolean): OutboxBanner? {
     if (counts.refused > 0) {
         lines.add(
             OutboxBannerLine(
-                text = "${outboxEntryCount(counts.refused)} the server would not accept. A sync will " +
-                    "NOT move ${if (counts.refused == 1) "it" else "them"} — tap to read why and try " +
+                text = "${outboxEntryCount(counts.refused)} could not be saved. Syncing will not " +
+                    "send ${if (counts.refused == 1) "it" else "them"} — tap to read why and try " +
                     "again. Nothing has been deleted.",
                 warn = true,
             )
@@ -442,7 +442,7 @@ fun outboxRetryAllMessage(result: OutboxRetryResult): String {
             "nothing has been deleted — try again when you have a signal."
     }
     val head = when {
-        result.refusedTried == 0 -> "There was nothing refused to try."
+        result.refusedTried == 0 -> "There was nothing to try again."
         result.refusedSent == 0 ->
             "Tried ${outboxEntryCount(result.refusedTried)} again; none went. The reason under each " +
                 "one is what came back this time."

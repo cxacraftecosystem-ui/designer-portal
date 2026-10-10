@@ -236,7 +236,7 @@ internal sealed interface DwSketchPhotographSupply {
  * photograph in the list under a card that has forgotten which one they were looking at.
  *
  * Rotation loses nothing at all here, and not because of this class: `.MainActivity` declares
- * `configChanges="orientation|screenSize|…"` (`AndroidManifest.xml:98-101`), so the Activity is not
+ * `configChanges="orientation|screenSize|…"` (`AndroidManifest.xml:108-111`), so the Activity is not
  * recreated and every `remember` in this subtree survives a turn.
  */
 @Stable

@@ -92,35 +92,33 @@ package com.designprototype.workshop.data
 // The runtime, in one sentence
 // ---------------------------------------------------------------------------------------------
 
-/**
- * **WHY NONE OF THESE CAN BE RUN BY THIS BUILD. ONE SENTENCE, AND IT IS A MEASURED ONE.**
+/*
+ * **WHY NONE OF THESE CAN BE RUN BY THIS BUILD.** (2026-10-10: the sentence that used to say so on
+ * screen is gone — the whole Tier 2 section is now hidden while [DW_TIER2_RUNTIME_PRESENT] is false,
+ * and the gap is recorded in docs/OPEN_FINDINGS.md instead of narrated to a designer.)
  *
  * `com.google.ai.edge.litertlm:litertlm-android:0.16.0` exists on Google's Maven, is Apache-2.0,
  * `minSdkVersion 24`, and carries `liblitertlm_jni.so` for `arm64-v8a` and `x86_64` only. Adding it to
- * this module does not compile: `javap -v` on `com.google.ai.edge.litertlm.Engine` reads
- * `kotlin.Metadata(mv=[2,3,0])`, this repository is on Kotlin **2.0.21**, and the compiler stops with
+ * this module did not compile while it was on Kotlin 2.0.21: `javap -v` on
+ * `com.google.ai.edge.litertlm.Engine` reads `kotlin.Metadata(mv=[2,3,0])`, and the compiler stopped with
  * *"The binary version of its metadata is 2.3.0, expected version is 2.0.0"* followed by an internal
- * compiler error. **Every published version has the same problem, and "every" was checked against
+ * compiler error. **Every published version had the same problem, and "every" was checked against
  * `maven-metadata.xml` rather than assumed** — an earlier note here called 0.8.0 the oldest release,
  * which is wrong: that file lists twenty versions and the oldest is `0.0.0-alpha06`. `javap -v` on
  * `Engine` across the range reads `mv=[2,3,0]` for 0.10.0, 0.11.0, 0.13.1, 0.15.0 and 0.16.0, and
  * `mv=[2,2,0]` for the two oldest, `0.0.0-alpha06` and `0.9.0-alpha01`. So the floor across the whole
- * catalogue is 2.2.0, still above the 2.0.0 this compiler expects, and there is no version to pin
- * back to: the prerequisite is a Kotlin upgrade of the whole project.
+ * catalogue is 2.2.0, still above the 2.0.0 that compiler expected, and there was no version to pin
+ * back to: the prerequisite was a Kotlin upgrade of the whole project.
+ *
+ * **THAT PREREQUISITE WAS MET ON 2026-10-09**, by the toolchain move rather than for Tier 2: the project
+ * compiles with Kotlin 2.4.21 now, and a 2.4 compiler reads metadata up to 2.5.0, above litertlm's
+ * 2.3.0. Nothing was re-measured by compiling the runtime in, so the one sentence below still stands
+ * as written — there is no runtime in this build — and what it would take is now the build work alone.
  *
  * The alternative was priced rather than assumed: `com.google.mediapipe:tasks-genai:0.10.35` is pure
  * Java, carries no Kotlin metadata and WOULD compile here — but Google's own README calls that LLM
  * route "in maintenance mode", it takes `.task` bundles, and Gemma 4 publishes none for mobile.
  */
-const val DW_TIER2_RUNTIME_ABSENCE: String =
-    // THE KOTLIN VERSION IS THE REASON AND IT IS NOT ON THE SCREEN. A designer holding the phone can do
-    // nothing with a metadata version, and this app's own rule is that a refusal names what would
-    // change it in terms the reader can act on — here that is "somebody has to build it". The measured
-    // detail lives in this file's header and in docs/TIER2-LANGUAGE-MODEL-MEASUREMENT.md, which is
-    // where the person who CAN act on it will look.
-    "No model here can run yet: this app has no runtime that can load one, and building that is work " +
-        "nobody has done. The sizes and memory figures below are real, so you can see what this phone " +
-        "could take."
 
 // ---------------------------------------------------------------------------------------------
 // The two artifacts a phone could be given, as files with digests
@@ -419,15 +417,15 @@ val DW_TIER2_UNJUDGED: List<DwTier2UnjudgedModel> = listOf(
         // NOT A SECOND COPY OF THE SENTENCE ABOVE IT. `dwTier2UnjudgedSentence` has already said that
         // the memory cost is unknown; this clause says WHY nobody knows, which is the half that tells a
         // reader whether it is worth waiting for.
-        whyNoVerdict = "Its model card gives speed only, and nobody here has run it — so there is no " +
-            "figure to judge this phone against.",
+        whyNoVerdict = "Its publisher gives no memory figure for it, so this phone cannot be " +
+            "checked against it.",
         needsUpstreamApproval = true,
     ),
     DwTier2UnjudgedModel(
         modelId = "gemma-3n-E4B-it-int4.litertlm",
         quantisation = "int4",
         onDiskBytes = 4_919_541_760L,
-        whyNoVerdict = "Same as the smaller one: no published memory figure, and no local run.",
+        whyNoVerdict = "Its publisher gives no memory figure for it either.",
         needsUpstreamApproval = true,
     ),
 )
@@ -468,21 +466,17 @@ fun dwTier2InstallMayBeOffered(
  * would be printing the opposite of the verdict two lines below it.
  */
 fun dwTier2ListIntro(judged: Int, unjudged: Int): String = buildString {
-    append("Language models, for tidying and translating what is already written. ")
-    // The judged count decides which sentence is true rather than decorating one: with no weighed row
-    // there is nothing for a runtime to be missing FOR, and the absence sentence would be answering a
-    // question nobody could have asked yet.
-    append(
-        if (judged > 0) DW_TIER2_RUNTIME_ABSENCE
-        else "None has been weighed for this phone to be judged against."
-    )
+    append("Language models, for tidying and translating what is already written.")
+    // Drawn only when the app can run one (see SpeechAndAiScreen), so the line says what the list is
+    // and nothing about what is missing.
+    if (judged > 0) append(" Each shows its download size and what this phone makes of it.")
     if (unjudged > 0) {
         append(" ")
         append(
-            if (unjudged == 1) "One more is listed with no verdict, because nobody publishes what it " +
-                "needs to run."
-            else "$unjudged more are listed with no verdict, because nobody publishes what they need " +
-                "to run."
+            if (unjudged == 1) "One more is listed with no verdict, because its publisher gives no " +
+                "memory figure."
+            else "$unjudged more are listed with no verdict, because their publishers give no " +
+                "memory figure."
         )
     }
 }
@@ -522,13 +516,11 @@ fun dwTier2RowSentence(choice: DwModelChoice, measurement: DwDeviceMeasurement):
     append(dwBytesLabel(plan.onDiskBytes))
     append(" to download. It needs ")
     append(dwBytesLabel(plan.peakRssBytes))
-    append(" of memory while it runs. That figure is Google's, off a Galaxy S26 Ultra; nothing has " +
-        "been measured on this phone.")
+    append(" of memory while it runs (Google's published figure, from a Galaxy S26 Ultra).")
     dwTier2GpuClaimBytes(plan.modelId)?.let { gpu ->
-        append(" They publish ")
+        append(" Google also publish ")
         append(dwBytesLabel(gpu))
-        append(" for the graphics backend, but whether that path starts on this phone is unmeasured, " +
-            "so the larger figure is used here.")
+        append(" for the graphics backend; the larger figure is used here.")
     }
     append(" ")
     append(dwTier2FitClause(choice, measurement))
@@ -583,10 +575,10 @@ private fun dwTier2NoteClause(
         "the file is larger than the free storage, so the download could not finish."
 
     DwFitNote.NO_BUILD_FOR_THIS_PROCESSOR ->
-        "there is no build of the runtime for this phone's processor (it is ${choice.plan.abi} only)."
+        "it does not run on this phone's processor (it needs ${choice.plan.abi})."
 
     DwFitNote.LOAD_FAILED_HERE_BEFORE ->
-        "it was tried on this phone and would not load."
+        "it was tried on this phone and would not load, so it will not be tried here again."
 
     DwFitNote.PROCESSOR_UNMEASURED -> "this phone would not say what processor it has."
     DwFitNote.TOTAL_MEMORY_UNMEASURED -> "this phone would not say how much memory it has."
@@ -622,13 +614,12 @@ fun dwTier2UnjudgedSentence(model: DwTier2UnjudgedModel): String = buildString {
     append(" to download. How much memory it needs while it runs is unknown. ")
     append(model.whyNoVerdict)
     if (model.needsUpstreamApproval) {
-        append(" Its publisher also requires a licence to be accepted before anyone can be given the " +
-            "file at all.")
+        append(" Its publisher asks for a licence to be accepted before it can be downloaded.")
     }
 }
 
 /** The short verdict for an unjudged row, where a judged row shows [dwModelFitLabel]. */
-const val DW_TIER2_UNJUDGED_LABEL: String = "Cannot be judged"
+const val DW_TIER2_UNJUDGED_LABEL: String = "No memory figure"
 
 // ---------------------------------------------------------------------------------------------
 // Sideloading, through the same check and not around it

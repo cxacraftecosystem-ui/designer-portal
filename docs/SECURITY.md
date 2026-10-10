@@ -159,7 +159,9 @@ call this API as the signed-in user". Keep `BACKEND_CORS_ORIGINS` set to the exa
   APIs that read it directly.
 
 Developing against a LAN backend from a real phone: add your machine's private IP as an extra
-`<domain>` **temporarily** and do not commit it.
+`<domain>` **temporarily** and do not commit it. Use a debug build and grant "Nearby devices" when it
+asks: on Android 17 the app's traffic to the local network is blocked until `ACCESS_LOCAL_NETWORK` is
+granted, and only `android/app/src/debug/AndroidManifest.xml` declares it (since 2026-10-09).
 
 ---
 
@@ -695,10 +697,26 @@ no role check, because the link is the whole authority.
   route kills every outstanding link; and since 2026-10-09 the same fingerprint binds every session
   token (§3.6), so the new password also ends every session opened with the old one, whenever it was
   opened.
-- **Delivery is a copy and paste.** There is no mailer: the provisioner copies the link out of the
-  screen (`credential_links.CopyLinkDelivery`) and hands it over. The server's log lines carry account
-  and link ids, never the link or an address. The link's origin is the backend's
-  `NEXT_PUBLIC_APP_URL`, which [ENVIRONMENT.md](ENVIRONMENT.md) documents.
+- **Delivery is a copy and paste, or an e-mail the provisioner chooses** (since 2026-10-10). By
+  default the provisioner copies the link out of the screen (`credential_links.CopyLinkDelivery`) and
+  hands it over. When mail is configured (`MAIL_FROM_ADDRESS`, [ENVIRONMENT.md](ENVIRONMENT.md)) Users
+  also offers "E-mail a password link" (`delivery: "EMAIL"`, `credential_links.EmailDelivery`): the
+  link is queued to the account's own address and **the provisioner is handed no copy of it** (the
+  answer's `link` is null). The queued row (`EmailMessage`) holds the link only Fernet-sealed with the
+  `managed_secrets` key, and the seal is set to NULL the moment the message is sent or has failed; a
+  link that expires while still queued is never sent. Asking for e-mail where mail is off is a 422
+  before anything is minted. The server's log lines carry account, link and message ids — never the
+  link, a message body or an address. The link's origin is the backend's `NEXT_PUBLIC_APP_URL`.
+- **What this product e-mails, and nothing else.** (1) A set-password or invitation link, only when a
+  provisioner chooses e-mail for it, to that account's own address. (2) To a design workshop's
+  designers (its designer-access rows, and its creator when the creator is a designer), a notice when
+  an inspecting officer files a correction suggestion on it or sends it back: the workshop's title,
+  the officer's name, the stage, the officer's note and a link to the workshop — never a stage value,
+  a photograph or a record. Each person can switch (2) off in Settings
+  (`UserPreference.emailReviewNotes`, opt-out); (1) is not a notification and has no opt-out. Bodies
+  are rendered in the queue worker at send time and are never stored or logged; `EmailMessage` keeps
+  the kind, the address, the subject, the template parameters above, the status, the attempts, SES's
+  message id and the SES error code — the send log.
 - **The web keeps the token off every request line it sends, and out of the address bar**
   (2026-10-09). `POST /api/auth/set-password/check` takes `{"token": …}` and answers exactly what
   `GET /api/auth/set-password?token=…` answers — the same verdict, the same three fields, nothing
@@ -709,9 +727,9 @@ no role check, because the link is the whole authority.
   address with one that carries neither before it checks anything, so it is not left in the address
   bar, a copied address, a bookmark or the entry Back returns to.
 - **What still carries the token on a request line** ([OPEN_FINDINGS.md](OPEN_FINDINGS.md)). The
-  handset's check is still the GET, so the GET stays for the builds in the field, and its token reaches
-  anything in front of the API that logs request lines: the box's nginx keeps Ubuntu's default access
-  log, and CloudFront would if its logging were switched on. `AccessLogRedaction` in
+  published handset builds, 0.0.6 to 0.0.15, check with the GET, so the GET stays for them, and its
+  token reaches anything in front of the API that logs request lines: the box's nginx keeps Ubuntu's
+  default access log, and CloudFront would if its logging were switched on. `AccessLogRedaction` in
   `backend/app/main.py`, attached to the `uvicorn.access` logger when the module is imported, keeps it
   out of uvicorn's own line, which used to write it into the service's journal — and a deploy whose
   health check fails prints that journal into its Actions log. It writes the value of `token` — and of
@@ -725,6 +743,13 @@ no role check, because the link is the whole authority.
   records the address a link was opened with, `#token=` included, and the page's `replaceState` adds
   the clean address without removing that visit (measured 2026-10-09). Redeeming the link is what
   retires the token.
+  The Android source took its half the same day: it asks `POST /api/auth/set-password/check` with the
+  token in a JSON body, uses the GET only when that POST is answered 404 or 405 (a server without the
+  route), and reads a link's token from its fragment as well as its query — in no published build as
+  of 2026-10-09; the next build published after 0.0.15 is the first to carry it. The production API
+  has answered that POST since `main` deployed the route on 2026-10-09 (measured that day: a token
+  that is not one is answered `200` with `"valid": false` and the reason `malformed`), so that build's
+  checks go out in a body, and its GET is left for a server from before the route.
 
 ### 3.6 Sessions are bound to the password they were opened with (2026-10-09)
 

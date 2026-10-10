@@ -352,8 +352,8 @@ fun StageIndexScreen(
                 }
             }
             serverNote = when {
-                remoteId == null -> "This workshop has not been created on the server yet."
-                remote == null -> "The server could not be reached. These figures are from this device."
+                remoteId == null -> "This workshop has not been uploaded. These figures are from this device."
+                remote == null -> "Could not connect. These figures are from this device."
                 else -> null
             }
 
@@ -399,10 +399,9 @@ fun StageIndexScreen(
             val heldDigest = definition?.takeIf { it.isHeld }?.customSchemaVersion.orEmpty()
             val serverScoreUsable = remote != null && remote.customSchemaVersion == heldDigest
             if (remote != null && !serverScoreUsable && serverNote == null) {
-                serverNote = "These figures are this device's own. The server counts this workshop's " +
-                    "own questions using a version of them this phone has not read yet, so its " +
-                    "figures are not shown here — they would not be counting the same things. " +
-                    "Open this screen again with a connection to pick up the current set."
+                serverNote = "These figures are from this device. This workshop's own questions have " +
+                    "changed since this phone last loaded them. Open this screen again with a " +
+                    "connection to bring them up to date."
             }
             val merged = local.map { stage ->
                 // `custom` counted with the other two: a stage whose only answers are the designer's
@@ -532,9 +531,8 @@ fun StageIndexScreen(
             }
 
             mayAdminister -> Text(
-                "Who can open this workshop is decided on the server, and this one has not been " +
-                    "sent there yet. Send it from the workshop list first — until then nobody else " +
-                    "could open it in any case.",
+                "This workshop has not been uploaded yet. Upload it from the workshop list first — " +
+                    "until then nobody else can open it.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -899,8 +897,8 @@ private fun dwConsentPushRefusal(failure: Throwable): String? {
     val code = http.code()
     if (code !in 400..499 || code == 401 || code == 429) return null
     return http.apiErrorMessage(
-        "The server would not record that answer, and did not say why. Tell whoever runs the server " +
-            "before dictating anything from this workshop."
+        "That answer could not be saved. Ask an administrator before dictating anything from this " +
+            "workshop."
     )
 }
 

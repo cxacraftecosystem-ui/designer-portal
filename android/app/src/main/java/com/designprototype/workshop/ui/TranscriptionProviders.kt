@@ -4,7 +4,7 @@ import android.content.Context
 import com.designprototype.workshop.BuildConfig
 import com.designprototype.workshop.data.TokenStore
 import com.designprototype.workshop.data.apiErrorMessage
-import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -267,19 +267,16 @@ fun describeSttTrouble(error: Throwable, action: String): SttTrouble {
 
     return when {
         status == 404 -> SttTrouble(
-            headline = "This server does not have the provider ranking yet.",
-            advice = "The app is newer than the API it is talking to — the address it asked for simply is not " +
-                "there. Nothing is wrong with your account or your recordings, and no setting has been lost. " +
-                "Whoever deploys the backend needs to release the current version; until they do, the order " +
-                "below is the app's built-in default rather than the live one, and cannot be changed from here.",
+            headline = "The provider order is not available right now.",
+            advice = "Nothing is wrong with your account or your recordings, and no setting has been lost. " +
+                "Try again later.",
             technical = technical,
             retryable = true
         )
         status == 403 -> SttTrouble(
             headline = "Your account is not allowed to see or change this ranking.",
             advice = "Choosing which engine transcribes recordings needs the Admin role or above. Ask a master " +
-                "admin either to raise your role or to make the change for you — this is a permission, not a " +
-                "fault, so retrying will give the same answer.",
+                "admin either to raise your role or to make the change for you.",
             technical = technical,
             retryable = false
         )
@@ -290,10 +287,9 @@ fun describeSttTrouble(error: Throwable, action: String): SttTrouble {
             retryable = false
         )
         status >= 500 -> SttTrouble(
-            headline = "The server ran into a problem of its own.",
-            advice = "This one is on the API side, not on anything you did, and it is not fixable from this " +
-                "screen. Give it a minute and tap Try again. If it keeps happening, send whoever looks after " +
-                "the backend the line below and roughly what time it was — that is enough to find it in the logs.",
+            headline = "Something went wrong.",
+            advice = "Nothing you did caused this. Wait a minute and tap Try again. If it keeps happening, " +
+                "tell your administrator roughly what time it was.",
             technical = technical,
             retryable = true
         )
@@ -301,15 +297,14 @@ fun describeSttTrouble(error: Throwable, action: String): SttTrouble {
         // the field this is the likeliest of all of them, so it is named as such rather than lumped
         // in with "something went wrong".
         status == 0 -> SttTrouble(
-            headline = "The phone could not reach the server.",
-            advice = "No answer came back, which is usually this handset's connection rather than the " +
-                "repository being down. Check you are online — mobile data or Wi-Fi — and tap Try again.",
+            headline = "Could not connect.",
+            advice = "Check you are online — mobile data or Wi-Fi — and tap Try again.",
             technical = technical,
             retryable = true
         )
         else -> SttTrouble(
-            headline = "The server refused to $action the provider order.",
-            advice = sentence ?: "It gave no reason. Tap Try again, and tell an administrator if it persists.",
+            headline = "The provider order could not be ${if (action == "load") "loaded" else if (action == "save") "saved" else "tested"}.",
+            advice = sentence ?: "Tap Try again, and tell an administrator if it keeps happening.",
             technical = technical,
             retryable = true
         )

@@ -518,7 +518,7 @@ adb logcat -d -s DWASRPROBE:I
 
 | | |
 |---|---|
-| engine | `sherpa-onnx-static-link-onnxruntime-1.13.5.aar`, 37,749,854 bytes, SHA-256 `508b79be1aeef3cbb92b8d4325b9b1dad0fa9a4eb1991de0d3d1826b8a09c358` |
+| engine | `sherpa-onnx-static-link-onnxruntime-1.13.5.aar`, 37,749,854 bytes, SHA-256 `508b79be1aeef3cbb92b8d4325b9b1dad0fa9a4eb1991de0d3d1826b8a09c358` — what every measurement in this document ran on. **Since 2026-10-09 the APK carries `-1.13.8.aar`** (38,691,998 bytes, SHA-256 `b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471`): the same binding under `javap`, onnxruntime 1.28.2 underneath, not yet re-measured on the handset |
 | how | **vendored** into `android/app/libs/` and reached through a `flatDir` in `settings.gradle.kts`. `ASR-RUNTIME-MEASUREMENT.md` §1's three routes, first one taken |
 | which variant, and why | static-link, per that document's recommendation 2: +39,811,828 packaged bytes against +53,308,196 |
 | R8 | keep rules for `com.k2fsa.sherpa.onnx.**` added to `proguard-rules.pro` **in the same pass**, before any release build — the trap both documents ordered to be sprung first |
@@ -838,7 +838,8 @@ above; `ur` is in its own block above.
 `ASR-RUNTIME-MEASUREMENT.md` justifies preferring IndicConformer on **two** languages. Run on the
 same eleven — same audio files, same references, same normaliser, language-sliced heads built from
 `ai4bharat/indic-conformer-600m-multilingual` — it is better on **all eleven, on both metrics**. This
-is a desktop measurement (fp32, greedy CTC, `sherpa_onnx` 1.13.5, the version vendored in the APK);
+is a desktop measurement (fp32, greedy CTC, `sherpa_onnx` 1.13.5, the version vendored in the APK until
+2026-10-09 — 1.13.8 since);
 the 600M cannot load on the handset, which the document records elsewhere.
 
 | language | Omnilingual int8 300M, on the handset | IndicConformer 600M fp32, desktop | WER falls by |
@@ -1383,7 +1384,9 @@ an answer to point it at.
    longer "nothing is published" — `com.google.ai.edge.litertlm:litertlm-android:0.16.0` is on
    `google()` and resolves — but that its Kotlin metadata is `mv=[2,3,0]` against this project's 2.0.21
    compiler, so the module does not compile with it. **The first cost of Tier 2 is a project-wide Kotlin
-   upgrade, and nobody had priced it.**
+   upgrade, and nobody had priced it.** *(That upgrade landed on 2026-10-09 with the rest of the Android
+   toolchain — Kotlin 2.4.21, which reads the 2.3.0 metadata — so the compile gate is gone; the runtime
+   half below is unchanged, because nothing has been built or loaded since.)*
 2. **Loaded on a Galaxy M32 at a 2K context cap, what is the peak RSS, and does the app survive
    being backgrounded?** **Not attemptable, not merely unattempted.** `DwModelPlan` cannot be
    constructed without a measured peak RSS, and there is no artifact to load — so no peak RSS, no
