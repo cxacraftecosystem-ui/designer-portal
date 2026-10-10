@@ -228,9 +228,10 @@ Admin and above manage the allow-list (`can_manage_access_roster` → `require_a
 `/api/access/roster`); read is gated with write, because the pending queue is a list of somebody's
 colleagues, applicants and former staff.
 
-**Where an administrator actually does it, on each client, and how they are told.** There is no
-email sender and no push transport anywhere in this codebase, so the notification is a COUNT on a
-surface an admin already opens, with the queue one tap behind it. The number is the same on both
+**Where an administrator actually does it, on each client, and how they are told.** The
+notification is a COUNT on a surface an admin already opens, with the queue one tap behind it (the
+product's e-mail carries password links and workshop review notices, not this queue — see
+[SECURITY.md](SECURITY.md)). The number is the same on both
 clients; the route to it is not, and that is deliberate rather than drift:
 
 | | Web | Android |

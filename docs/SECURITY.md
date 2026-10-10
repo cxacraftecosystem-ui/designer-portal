@@ -697,10 +697,26 @@ no role check, because the link is the whole authority.
   route kills every outstanding link; and since 2026-10-09 the same fingerprint binds every session
   token (§3.6), so the new password also ends every session opened with the old one, whenever it was
   opened.
-- **Delivery is a copy and paste.** There is no mailer: the provisioner copies the link out of the
-  screen (`credential_links.CopyLinkDelivery`) and hands it over. The server's log lines carry account
-  and link ids, never the link or an address. The link's origin is the backend's
-  `NEXT_PUBLIC_APP_URL`, which [ENVIRONMENT.md](ENVIRONMENT.md) documents.
+- **Delivery is a copy and paste, or an e-mail the provisioner chooses** (since 2026-10-10). By
+  default the provisioner copies the link out of the screen (`credential_links.CopyLinkDelivery`) and
+  hands it over. When mail is configured (`MAIL_FROM_ADDRESS`, [ENVIRONMENT.md](ENVIRONMENT.md)) Users
+  also offers "E-mail a password link" (`delivery: "EMAIL"`, `credential_links.EmailDelivery`): the
+  link is queued to the account's own address and **the provisioner is handed no copy of it** (the
+  answer's `link` is null). The queued row (`EmailMessage`) holds the link only Fernet-sealed with the
+  `managed_secrets` key, and the seal is set to NULL the moment the message is sent or has failed; a
+  link that expires while still queued is never sent. Asking for e-mail where mail is off is a 422
+  before anything is minted. The server's log lines carry account, link and message ids — never the
+  link, a message body or an address. The link's origin is the backend's `NEXT_PUBLIC_APP_URL`.
+- **What this product e-mails, and nothing else.** (1) A set-password or invitation link, only when a
+  provisioner chooses e-mail for it, to that account's own address. (2) To a design workshop's
+  designers (its designer-access rows, and its creator when the creator is a designer), a notice when
+  an inspecting officer files a correction suggestion on it or sends it back: the workshop's title,
+  the officer's name, the stage, the officer's note and a link to the workshop — never a stage value,
+  a photograph or a record. Each person can switch (2) off in Settings
+  (`UserPreference.emailReviewNotes`, opt-out); (1) is not a notification and has no opt-out. Bodies
+  are rendered in the queue worker at send time and are never stored or logged; `EmailMessage` keeps
+  the kind, the address, the subject, the template parameters above, the status, the attempts, SES's
+  message id and the SES error code — the send log.
 - **The web keeps the token off every request line it sends, and out of the address bar**
   (2026-10-09). `POST /api/auth/set-password/check` takes `{"token": …}` and answers exactly what
   `GET /api/auth/set-password?token=…` answers — the same verdict, the same three fields, nothing
