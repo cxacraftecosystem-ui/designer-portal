@@ -331,6 +331,24 @@ export function canReview(user: User | null | undefined) {
   return hasRank(user, "FIELD_CONTRIBUTOR") || !!user?.canReview;
 }
 
+/**
+ * May this account REWRITE a record somebody else created — the review queue's Edit. Mirrors
+ * `can_edit_others_record` in backend/app/core/deps.py exactly: Professor and above, AND the
+ * creator ranks strictly below the reader (`can_review_record`; the master admin passes for
+ * everyone). A creator role that is missing or unknown counts as a Researcher's, as on the server.
+ * Reviewing reaches further down than this: an inspector may approve a designer's record and may
+ * not edit it.
+ */
+export function canEditOthersRecord(user: User | null | undefined, creatorRole: string | null | undefined): boolean {
+  if (!hasRank(user, "PROFESSOR")) return false;
+  if (isMasterAdmin(user)) return true;
+  const role = creatorRole || "RESEARCHER";
+  const creatorRank = Object.prototype.hasOwnProperty.call(ROLE_RANK, role)
+    ? ROLE_RANK[role as UserRole]
+    : ROLE_RANK.RESEARCHER;
+  return roleRank(user) > creatorRank;
+}
+
 export function canDownloadDataset(user: User | null | undefined) {
   return hasRank(user, "PROFESSOR") || !!user?.canDownloadDataset;
 }
@@ -502,7 +520,7 @@ const RECORD_CREATOR_GUARD = {
   message:
     "Creating artisans, products, processes and tools needs Researcher access or above. " +
     "Field contributors and crowdsource volunteers answer existing interviews, upload media, and " +
-    "comment on existing records — browse the repository to find an entry to add to."
+    "comment on existing records — browse the records to find an entry to add to."
 } as const;
 
 export const ROUTE_GUARDS: RouteGuard[] = [
@@ -512,7 +530,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_professor",
     title: "Professor access required",
     message:
-      "Managing users starts at Professor: every tier from there changes roles, ministry admins and admins also create accounts and reset passwords, and only admins grant capabilities or delete accounts."
+      "Managing users starts at Professor: every role from there can change roles, Ministry Admins and admins also create accounts and reset passwords, and only admins grant capabilities or delete accounts."
   },
   {
     path: "/admin",
@@ -541,7 +559,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_admin",
     title: "Admin access required",
     message:
-      "Comparing adoption, costs and outcomes ACROSS workshops aggregates fieldwork from clusters and designers beyond your own, so it is available to admins and the master admin. Your own workshops, with the same stage 22 follow-up records, are on Design workshops."
+      "Comparing adoption, costs and outcomes across workshops draws on fieldwork from clusters and designers beyond your own, so it is available to admins and the master admin. Your own workshops, with the same stage 22 follow-up records, are on Design workshops."
   },
   {
     // Nested under /admin, which already refuses everyone below admin — so this rule changes no
@@ -555,7 +573,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_designer_roster_manager",
     title: "Admin access required",
     message:
-      "The designer roster decides who may sign in as a designer at all, and it is a list of named individuals and their institutional standing — so reading it is admin work as much as writing it is. Admins and the master admin add, suspend and restore designers there."
+      "The designer roster decides who may sign in as a designer. Admins and the master admin add, suspend and restore designers there."
   },
   {
     // The PLATFORM allow-list, and the queue of people waiting to be let in. Nested under /admin
@@ -572,7 +590,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_access_manager",
     title: "Admin access required",
     message:
-      "Who may sign in to this application at all — and the queue of people waiting for a decision — is settled by admins and the master admin. The queue is a list of named people who tried to get in, so reading it is restricted for the same reason deciding it is."
+      "Who may sign in, and the queue of people waiting for a decision, are managed by admins and the master admin."
   },
   {
     /*
@@ -611,7 +629,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     ministry: true,
     title: "Ministry access required",
     message:
-      "The ministry dashboard gathers every design & prototype workshop and every other workshop on the platform, with each designer's progress, for the ministry's own posts — Assistant Director, Regional Director and Ministry Administrator — and the master admin. Admins read the same estate on Cross-workshop analytics in the settings hub; designers read the workshops they are on through Design workshops."
+      "The ministry dashboard gathers every design & prototype workshop and every other workshop on the platform, with each designer's progress, for the ministry's own posts — Assistant Director, Regional Director and Ministry Administrator — and the master admin. Admins see the same workshops on Cross-workshop analytics in the settings hub; designers see their own workshops on Design workshops."
   },
   {
     /*
@@ -682,7 +700,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_reviewer",
     title: "Review access required",
     message:
-      "The review queue opens for Field Contributors and above — everyone with someone ranked below them — plus anyone granted review access."
+      "The review queue is available to Field Contributors and above, and to anyone granted review access."
   },
   {
     path: "/data",
@@ -690,7 +708,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_dataset_downloader",
     title: "Dataset access required",
     message:
-      "Browsing and downloading the full dataset is available to professors and above, or to anyone granted dataset-download access. Browse records to search the repository instead."
+      "Browsing and downloading the full dataset is available to professors and above, or to anyone granted dataset-download access. Use Browse records to search the records instead."
   },
   {
     // Hiding the nav entry was never enough: the link disappeared and the URL stayed open, so
@@ -853,7 +871,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "assert_inspection_surface (INSPECTION_HOLDER_ROLES, services/design_workshop_inspectors.py)",
     title: "Inspector / Reviewer access required",
     message:
-      "Workshops to inspect lists the design & prototype workshops this account has been appointed to inspect, so it opens for whoever may be appointed: the Inspector / Reviewer tier, a Ministry Admin, an admin and the master admin. Designers read design & prototype workshops on Design workshops instead; who inspects a workshop is chosen on Workshop oversight."
+      "Workshops to inspect lists the design & prototype workshops this account has been appointed to inspect, so it opens for whoever may be appointed: the Inspector / Reviewer role, a Ministry Admin, an admin and the master admin. Designers read design & prototype workshops on Design workshops instead; who inspects a workshop is chosen on Workshop oversight."
   },
   {
     /*
@@ -973,7 +991,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "can_run_design_workshops (_require_designer)",
     title: "Designer access required",
     message:
-      "A custom questionnaire is a research instrument a designer builds for their own workshop, so building one and recording answers against it belongs to designers, the Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin. The repository's shared artisan questionnaire is on Take interview, and it is open to everyone."
+      "A custom questionnaire is a research instrument a designer builds for their own workshop, so building one and recording answers against it belongs to designers, the Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin. The shared artisan questionnaire is on Take interview, and it is open to everyone."
   },
   {
     // Gated with the workshops rather than left open, and the ENDPOINT was tightened to match in

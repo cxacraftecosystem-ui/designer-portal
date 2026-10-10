@@ -17,7 +17,7 @@ import { RowActions, rowAction } from "@/components/RowActions";
 import { StatusBadge } from "@/components/StatusBadge";
 import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
-import { isAdmin, roleLabel } from "@/lib/permissions";
+import { canEditOthersRecord, hasRank, isAdmin, roleLabel } from "@/lib/permissions";
 
 /**
  * One row of the review queue. The backend only returns records whose creator ranks strictly
@@ -209,7 +209,7 @@ export default function ReviewPage() {
     const ok = await confirm({
       title: `Approve ${rows.length} record${rows.length === 1 ? "" : "s"}?`,
       body: "Each one is approved exactly as it stands, with no note.",
-      note: "Approving is not reversible from this screen. Anything that needs a change should be sent for revision individually.",
+      note: "Approvals can't be undone here. Send anything that needs a change for revision one at a time.",
       confirmLabel: `Approve ${rows.length}`
     });
     if (!ok) return;
@@ -261,6 +261,20 @@ export default function ReviewPage() {
     return Boolean(item.needsAdminApproval || item.outOfWindow) && !viewerIsAdmin;
   }
 
+  /**
+   * Whether the row offers Edit at all. `review.edit_reviewed_record` refuses an edit of somebody
+   * else's record unless `can_edit_others_record` holds (Professor and above, over a creator ranked
+   * below), and every row here is somebody else's — so a reader who fails it is never shown the
+   * control or the editor, rather than meeting the server's refusal after pressing it.
+   */
+  function offersEdit(item: PendingItem) {
+    return (
+      !editLocked(item) &&
+      reviewEditableFields(item.recordType).length > 0 &&
+      canEditOthersRecord(user, item.createdBy?.role)
+    );
+  }
+
   async function submitDecision(item: PendingItem, action: DecisionAction) {
     const notes = note.trim();
     // "Send for revision" is meaningless without comments — the button stays disabled, but guard anyway.
@@ -305,7 +319,11 @@ export default function ReviewPage() {
     <>
       <PageHeader
         title="Review"
-        description="Approve, fix in place with Edit, send for revision, or reject pending submissions from contributors you may review."
+        description={
+          hasRank(user, "PROFESSOR")
+            ? "Approve, fix in place with Edit, send for revision, or reject pending submissions from contributors you may review."
+            : "Approve, send for revision, or reject pending submissions from contributors you may review."
+        }
         icon={<ClipboardCheck className="h-5 w-5" aria-hidden />}
       />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
@@ -336,7 +354,7 @@ export default function ReviewPage() {
           <div className="p-4">
             <EmptyState
               title="No pending submissions"
-              body="Pending records from contributors below your rank will appear here for review."
+              body="Records submitted by people whose role is below yours will appear here for review."
             />
           </div>
         ) : (
@@ -454,7 +472,7 @@ export default function ReviewPage() {
                             </button>
                             {/* Fix a small mistake in place rather than costing a round trip through
                                 the contributor — the same fourth action the Android review card has. */}
-                            {editLocked(item) || reviewEditableFields(item.recordType).length === 0 ? null : (
+                            {!offersEdit(item) ? null : (
                               <button
                                 className={rowAction("edit", activeAction === "edit" ? "bg-field-100" : undefined)}
                                 onClick={() => toggleAction(item, "edit")}
@@ -481,6 +499,7 @@ export default function ReviewPage() {
                         </td>
                       </tr>
                       {activeAction === "edit" ? (
+                        !offersEdit(item) ? null : (
                         <tr className="bg-surface-50">
                           {/* Eight, not seven: the bulk-select checkbox added a column ahead of
                               Record, and the expanded row stopped reaching the end of the table. */}
@@ -504,6 +523,7 @@ export default function ReviewPage() {
                             />
                           </td>
                         </tr>
+                        )
                       ) : activeAction ? (
                         <tr className="bg-surface-50">
                           <td className="px-4 py-3" colSpan={8}>

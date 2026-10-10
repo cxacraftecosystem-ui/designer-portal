@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { expect, test } from "@playwright/test";
 
 import {
@@ -7,6 +10,7 @@ import {
   canCreateDesignWorkshops,
   canCreateRecords,
   canDownloadDataset,
+  canEditOthersRecord,
   canExportDesignWorkshopData,
   canInspectDesignWorkshops,
   canManageCrafts,
@@ -193,4 +197,34 @@ test("account provisioning is a set: the ministry admin and both admin tiers, an
   expect(provisionableRoles(user("ADMIN"))).toContain("ADMIN");
   expect(provisionableRoles(user("ADMIN"))).not.toContain("MASTER_ADMIN");
   expect(provisionableRoles(user("MASTER_ADMIN"))).toContain("MASTER_ADMIN");
+});
+
+test("the review queue's Edit is the server's can_edit_others_record: Professor and above, over a creator below", () => {
+  /*
+    `review.edit_reviewed_record` refuses an edit of somebody else's record unless
+    `can_edit_others_record` holds — `has_rank(user, "PROFESSOR") and can_review_record(...)`. The
+    queue used to draw Edit for every reviewer, so an inspector pressed it and met a 403. Reviewing
+    reaches further down than editing: an inspector reviews a designer's record and may not edit it.
+  */
+  expect(canEditOthersRecord(user("INSPECTOR"), "DESIGNER")).toBe(false);
+  expect(canEditOthersRecord(user("RESEARCHER"), "FIELD_CONTRIBUTOR")).toBe(false);
+  expect(canEditOthersRecord(user("DESIGNER"), "RESEARCHER")).toBe(false);
+  expect(canEditOthersRecord(user("PROFESSOR"), "INSPECTOR")).toBe(true);
+  expect(canEditOthersRecord(user("PROFESSOR"), "PROFESSOR"), "a peer is not below").toBe(false);
+  for (const role of DIRECTORATE) {
+    expect(canEditOthersRecord(user(role), "PROFESSOR"), role).toBe(true);
+  }
+  expect(canEditOthersRecord(user("ASSISTANT_DIRECTOR"), "REGIONAL_DIRECTOR")).toBe(false);
+  expect(canEditOthersRecord(user("ADMIN"), "ADMIN")).toBe(false);
+  expect(canEditOthersRecord(user("MASTER_ADMIN"), "MASTER_ADMIN")).toBe(true);
+  // No creator role on file reads as a Researcher's, as `can_review_record` defaults it.
+  expect(canEditOthersRecord(user("PROFESSOR"), null)).toBe(true);
+  expect(canEditOthersRecord(user("PROFESSOR"), "NOT_A_ROLE")).toBe(true);
+  expect(canEditOthersRecord(null, "DESIGNER")).toBe(false);
+
+  // And the queue asks it before it draws Edit or opens the editor.
+  const page = readFileSync(join(__dirname, "..", "app", "(protected)", "review", "page.tsx"), "utf8");
+  expect(page).toContain("canEditOthersRecord(user, item.createdBy?.role)");
+  expect(page).toContain("{!offersEdit(item) ? null : (");
+  expect(page).not.toContain("editLocked(item) || reviewEditableFields(item.recordType).length === 0 ? null");
 });
