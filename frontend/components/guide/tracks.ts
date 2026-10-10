@@ -332,34 +332,18 @@ export const INSPECTOR_TRACK: GuideTrack = {
   steps: INSPECTOR_STEPS,
   recapTitle: "An inspection, in one line",
   /*
-   * ⚠ ONE CLAUSE OF THIS WAS WRONG ABOUT ANDROID AND IS CORRECTED HERE, 2026-09-15.
-   *
-   * It read "the handset can read the suggestions already on a workshop and has no box to file one".
-   * The first half is false. `DwInspectionDetailDto` does declare `inspectionFeedback` — the payload
-   * carries the rows, which is what makes the sentence plausible — and
-   * `grep -rn "inspectionFeedback" android/app/src/main --include=*.kt` finds that declaration, its
-   * twin in `StageSchema.kt`, and NO READER OF EITHER anywhere under `ui/`. Neither
-   * `InspectionDetailScreen.kt` nor `InspectionListScreen.kt` contains the word suggestion, feedback
-   * or correction at all. So an inspector told this would go looking on the phone for a panel that
-   * has never been drawn.
-   *
-   * That is the exact failure this module's own header set out to remove when it moved a claim about
-   * Android out of `GuideOutro` — "Repeating that sentence over the two new decks would send an
-   * officer hunting a handset for screens that were never built" — applied to a sentence that was
-   * written in the same wave. A field on the wire is not a screen, and only a screen is a thing a
-   * reader can open.
-   *
-   * The handset's own inspector deck says the same thing from its side, on its closing card, and
-   * `walkthroughInspectorOmissions` in `WalkthroughSteps.kt` is the register that keeps the two
-   * honest: `backend/tests/test_walkthrough_fields_parity.py` and `WalkthroughDecksTest.kt` both
-   * read it, so the day a feedback box lands on the handset the register has to lose a line and this
-   * paragraph has to be re-read.
+   * WHAT IS TRUE OF THE ANDROID APP, AND ONLY THAT. Since the handset gained the feedback box
+   * (`InspectionFeedbackPanel` on `InspectionDetailScreen`) all four screens of this deck exist there
+   * with the same words, and the handset keeps a copy of a workshop it has read and the notes written
+   * without signal, sending them once the report has been checked again. This used to say Correction
+   * suggestions was web-only, which was true until that landed. `walkthroughInspectorOmissions` in
+   * `WalkthroughSteps.kt` — now empty — is the register `backend/tests/test_walkthrough_fields_parity.py`
+   * and `WalkthroughDecksTest.kt` read, so a card dropped from either side is a red test.
    */
   recapLead:
-    "Assigned, read, answered. The first two screens exist on the Android app as well and carry the " +
-    "same words; Correction suggestions is web-only — the handset can neither file a suggestion nor " +
-    "read the ones already on a workshop — so both the note and the send-back are done from a " +
-    "browser.",
+    "Assigned, read, answered. All four screens exist on the Android app as well and carry the same " +
+    "words — including Correction suggestions, which on a phone also works without signal: the note " +
+    "is kept on the phone and sent once the report has been checked again.",
   checklistTitle: "Before you send a report back",
   checklistLead:
     "A suggestion cannot be edited or withdrawn once it is filed, and a send-back moves a report " +

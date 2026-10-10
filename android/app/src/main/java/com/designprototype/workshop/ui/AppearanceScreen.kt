@@ -653,7 +653,7 @@ fun AppearanceScreen(
         SettingsRow(
             icon = Icons.Filled.Explore,
             title = "Walkthrough",
-            summary = "The order the work happens in, step by step — the same journey as on the web",
+            summary = "The order the work happens in, step by step",
             onClick = onOpenWalkthrough,
         )
     }

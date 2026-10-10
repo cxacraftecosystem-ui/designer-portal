@@ -2644,8 +2644,7 @@ object StageSchemaStore {
             context.assets.open(ASSET_FILE).bufferedReader().use { it.readText() }
         }.getOrElse {
             throw IOException(
-                "The bundled field registry ($ASSET_FILE) is missing from this build. Regenerate it " +
-                    "from the backend before shipping — see the note in StageSchema.kt.",
+                "The form layout could not be loaded. Update or reinstall the app.",
                 it
             )
         }

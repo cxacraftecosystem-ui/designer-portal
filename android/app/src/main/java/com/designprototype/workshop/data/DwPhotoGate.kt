@@ -489,8 +489,8 @@ object DwPhotoGate {
     fun galleryFloorSentence(floor: Int, label: String): String =
         "All $floor are required. The stage still saves with fewer — nothing you attach is ever at " +
             "risk — but until $label holds $floor the stage is scored incomplete, and the generated " +
-            "report says so. Attached is saved on this device: the count reaches the server when " +
-            "this stage syncs."
+            "report says so. Attached is saved on this device, and uploads when this stage " +
+            "syncs."
 
     // ── The write path: a finding raised at capture becomes a stage-21 row ───────────────────────
 

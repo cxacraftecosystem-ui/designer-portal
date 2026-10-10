@@ -320,11 +320,10 @@ fun dwConsentMerge(
  */
 const val DW_CONSENT_QUESTION: String =
     "May recordings and dictation from this workshop leave the phone to be written down by a " +
-        "transcription service outside it? The recording goes to this project's server and on to the " +
-        "service that turns it into words. A passage dictated into a field is not kept afterwards — " +
-        "the words come back and the server stores no audio; a recording attached to this workshop as " +
-        "audio is kept with the workshop, because it is there to be listened to again. Ask the " +
-        "artisan whose voice it is, and record their answer here."
+        "transcription service? The recording is sent online to a service that turns it into words. " +
+        "A passage dictated into a field is not kept afterwards — only the words come back; a " +
+        "recording attached to this workshop as audio is kept with the workshop, so it can be " +
+        "listened to again. Ask the artisan whose voice it is, and record their answer here."
 
 /** The heading on the row, so it can be found by somebody who was told "it is on the workshop screen". */
 const val DW_CONSENT_ROW_TITLE: String = "Sending recordings out to be written down"
@@ -383,9 +382,9 @@ fun dwConsentStateSentence(consent: DwTier3Consent, recorded: DraftConsent?): St
  * on the device, and that is what the sentence points at.
  */
 private const val DW_CONSENT_PHONE_RECOGNISER_CAVEAT: String =
-    " One thing this answer does not cover: the phone's own dictation is Android's, and on most " +
-        "handsets that means Google's speech service over the network. Only a downloaded offline " +
-        "language pack keeps a voice on the phone entirely."
+    " This answer does not cover the phone's own dictation, which on most phones uses Google's " +
+        "speech service over the network. Only a downloaded offline language pack keeps a voice " +
+        "entirely on the phone."
 
 /**
  * THE WORKSHOP'S OWN RECORDINGS, WHICH THIS ANSWER NOW GOVERNS AND ONCE DID NOT.
@@ -425,11 +424,10 @@ private const val DW_CONSENT_PHONE_RECOGNISER_CAVEAT: String =
  * carry that distinction or it is the first false sentence again with the polarity flipped.
  */
 private const val DW_CONSENT_MEDIA_GATED_TOO: String =
-    " This answer covers the workshop's own recordings as well, which it did not before: a recording " +
-        "attached to this workshop as audio is still uploaded and kept with it — it is there to be " +
-        "listened to again — but it is not sent out to be written down while this answer stands, and a " +
-        "refusal recorded here stops the transcriptions already queued for it rather than only the " +
-        "next ones."
+    " This answer covers the workshop's own recordings as well: a recording attached to this " +
+        "workshop as audio is still uploaded and kept with it, so it can be listened to again, but it " +
+        "is not sent out to be written down while this answer stands. A no recorded here also stops " +
+        "transcriptions that are already waiting."
 
 /** " — recorded by Meera Joshi on 12 Aug 2026", or as much of it as is actually known. */
 private fun dwConsentAttribution(recorded: DraftConsent?): String {
@@ -458,8 +456,8 @@ private fun dwConsentSyncNote(recorded: DraftConsent?): String =
     if (recorded == null || recorded.synced) {
         ""
     } else {
-        " This answer has not reached the server yet, so dictation sent out may still be refused there " +
-            "until this workshop next syncs with a connection."
+        " This answer uploads the next time this workshop syncs with a connection. Until then, " +
+            "dictation from this workshop may not be sent for transcription."
     }
 
 /**
@@ -532,7 +530,7 @@ fun dwConsentRecordedNote(
         DwTier3Consent.NOT_RECORDED -> "Nothing was recorded."
     }
     return when {
-        synced && storedOnDevice -> "$what The server has it."
+        synced && storedOnDevice -> "$what It is saved online."
         /*
           THE SERVER ANSWERED AND SAID NO, WHICH IS NOT THE SAME AS NOT REACHING IT.
 
@@ -548,21 +546,20 @@ fun dwConsentRecordedNote(
           the recording having been lost.
         */
         storedOnDevice && serverRefusal != null ->
-            "$what It is saved on this phone and dictation here honours it. The server would not " +
-                "record it, though, so dictation sent out from this workshop will go on being refused " +
-                "up there until this is put right: $serverRefusal"
+            "$what It is saved on this phone, and dictation here follows it. It could not be saved " +
+                "online, though, so dictation from this workshop cannot be sent for transcription " +
+                "until this is put right: $serverRefusal"
         serverRefusal != null ->
-            "This phone could not save that answer and the server refused it, so nothing was " +
-                "recorded: $serverRefusal"
+            "That answer could not be saved on this phone or online, so nothing was recorded: " +
+                "$serverRefusal"
         // The server has it and this phone does not, so the answer is safe but this handset may ask
         // again after a restart. Said rather than hidden: it is the one state where a designer might
         // reasonably be surprised to see the question a second time.
-        synced -> "$what The server has it, but this phone could not keep its own copy — it may ask you " +
-            "again after a restart."
-        storedOnDevice -> "$what It is saved on this phone and goes to the server the next time this " +
-            "workshop is opened here with a connection."
-        else -> "This phone could not save that answer and the server has not been told either, so " +
-            "nothing was recorded. Try again, and if it keeps failing tell whoever runs the server " +
-            "before dictating anything from this workshop."
+        synced -> "$what It is saved online, but this phone could not keep its own copy — it may ask " +
+            "you again after a restart."
+        storedOnDevice -> "$what It is saved on this phone and uploads the next time this workshop " +
+            "is opened here with a connection."
+        else -> "That answer could not be saved, so nothing was recorded. Try again, and if it keeps " +
+            "failing, tell an administrator before dictating anything from this workshop."
     }
 }

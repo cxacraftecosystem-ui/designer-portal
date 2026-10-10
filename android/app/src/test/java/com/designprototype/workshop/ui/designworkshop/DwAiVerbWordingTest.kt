@@ -161,12 +161,12 @@ class DwAiVerbWordingTest {
     }
 
     @Test
-    fun `the no-paragraph sentence is not the browser's and names the caret`() {
+    fun `the no-paragraph sentence is not the browser's and names the cursor`() {
         // The one place the handset's wording diverges from the browser's, and the reason is in
         // `DW_NO_PARAGRAPH_TO_WORK_ON`'s own KDoc: "select the words first" is an instruction this
         // editor cannot honour. If somebody replaces this sentence with the shared constant, the
         // advice becomes impossible to follow rather than merely differently worded.
-        assertTrue(DW_NO_PARAGRAPH_TO_WORK_ON.contains("caret"))
+        assertTrue(DW_NO_PARAGRAPH_TO_WORK_ON.contains("cursor"))
         assertTrue(DW_NO_PARAGRAPH_TO_WORK_ON.contains("paragraph"))
         // And it is a DIFFERENT sentence from the shared one rather than a copy of it. The panel
         // substitutes it for `DW_VERBS_NOTHING_SELECTED` at the press, so if the two ever became
@@ -264,9 +264,11 @@ class DwAiVerbWordingTest {
         val uncapped = dwAiVerbAllowanceNote(
             DwAiVerbCapView(told = true, spent = false, limit = null, remaining = null)
         )
-        assertTrue(untold != null && untold.contains("not known until one goes through"))
-        assertTrue(uncapped != null && uncapped.contains("no daily ceiling"))
-        // The point of the whole change: two facts, two sentences. Equal strings here would mean the
+        // Untold says nothing at all: there is no number to show, and a run that meets a spent
+        // allowance is refused in the allowance's own words.
+        assertNull(untold)
+        assertTrue(uncapped != null && uncapped.contains("no daily limit"))
+        // The point of the whole change: two facts, two answers. Equal answers here would mean the
         // branch had collapsed back onto the numbers.
         assertNotEquals(untold, uncapped)
         // And the uncapped one must not tell a designer their allowance is unknown, which is the
@@ -307,12 +309,13 @@ class DwAiVerbWordingTest {
     }
 
     @Test
-    fun `a refusal with no body names the status and says nothing was written`() {
+    fun `a refusal with no body says nothing was written and what to do`() {
         val said = dwAiVerbProblem(DwAiVerbRefused(status = 409, detail = null))
-        // The one place a code reaches a designer, and `DwAiVerbRefused`'s own KDoc says why: a 409
-        // rewritten by a proxy carries no sentence, and "the server said no" would leave somebody
-        // unable to tell a lost body from a real refusal of their work.
-        assertTrue(said.contains("409"))
+        // `DwAiVerbRefused`'s own KDoc says why there is no sentence to print: a 409 rewritten by a
+        // proxy carries none. The status code is not shown — it tells a designer nothing they can act
+        // on — so the line says what was not written and what to do next.
+        assertTrue(!said.contains("409"))
+        assertTrue(said.contains("Try again"))
         assertTrue(said.contains("Nothing was written"))
     }
 
@@ -338,12 +341,14 @@ class DwAiVerbWordingTest {
     // ── The vocabulary a reader meets ────────────────────────────────────────────────────────────
 
     @Test
-    fun `a layer kind this build has never heard of carries the server's own word`() {
-        // A deployment can be a release behind — `_verb_layer_kind` allows for exactly this — and a
-        // blank heading over a passage somebody is about to accept is the one thing that must not
-        // happen. The tier, the model and the acceptance are all still readable without the kind.
+    fun `a layer kind this app does not know still gets a plain heading`() {
+        // A deployment can be a release ahead of this app — `_verb_layer_kind` allows for exactly
+        // this — and a blank heading over a passage somebody is about to accept is the one thing that
+        // must not happen; neither is the raw stored token, which is a code and not a heading. Where
+        // it ran, the model and the acceptance are all still readable without the kind.
         val label = dwLayerKindLabel("SOME_NEWER_KIND")
-        assertTrue(label.contains("SOME_NEWER_KIND"))
+        assertEquals("AI result", label)
+        assertTrue(!label.contains("SOME_NEWER_KIND"))
         assertEquals("A layer with no kind recorded", dwLayerKindLabel(null))
         // The noun phrase degrades to a word that fits inside a sentence, rather than to the whole
         // sentence the label degrades to.
@@ -368,9 +373,10 @@ class DwAiVerbWordingTest {
             val label = dwTierLabel(tier)
             assertTrue("$tier must not be drawn as a numeral: $label", label.none { it.isDigit() })
         }
-        assertEquals("Tier not recorded", dwTierLabel(null))
-        assertTrue(dwTierLabel("TIER_9").contains("TIER_9"))
-        assertTrue(dwTierSentence("TIER_9").contains("does not know"))
+        assertEquals("Where it ran was not recorded", dwTierLabel(null))
+        // A tier this app does not know is never printed as its raw token.
+        assertTrue(!dwTierLabel("TIER_9").contains("TIER_9"))
+        assertTrue(dwTierSentence("TIER_9").contains("Update the app"))
     }
 
     @Test

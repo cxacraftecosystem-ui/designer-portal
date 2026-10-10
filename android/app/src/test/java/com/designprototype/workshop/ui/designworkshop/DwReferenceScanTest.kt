@@ -519,7 +519,7 @@ class DwReferenceScanTest {
             val lowered = message.lowercase()
             assertFalse(
                 "an unanswered lookup was written as a claim about the repository: $message",
-                lowered.contains("not in the repository") || lowered.contains("cannot open"),
+                lowered.contains("may not have been recorded") || lowered.contains("cannot open"),
             )
         }
     }
@@ -560,7 +560,7 @@ class DwReferenceScanTest {
         val lowered = moved.lowercase()
         assertFalse(
             "a moved row was written as a claim about the repository: $moved",
-            lowered.contains("not in the repository") || lowered.contains("cannot open"),
+            lowered.contains("may not have been recorded") || lowered.contains("cannot open"),
         )
     }
 

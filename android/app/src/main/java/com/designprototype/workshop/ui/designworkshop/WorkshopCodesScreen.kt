@@ -234,7 +234,7 @@ fun WorkshopCodesScreen(
             // missing tag means "nobody entered that prototype" or "this device has not seen it".
             val note = when {
                 remoteId == null ->
-                    "This workshop has not been created on the server yet, so these are the prototypes and " +
+                    "This workshop has not been uploaded yet, so these are the prototypes and " +
                         "artisans saved on this device. Printing works exactly the same."
                 remote == null ->
                     "There is no connection, so these are the prototypes and artisans saved on this device. " +
@@ -468,11 +468,9 @@ fun WorkshopCodesScreen(
             // NOT the same as "there is nothing to print", and confusing the two would send a designer
             // looking for rows they never entered instead of reporting a build that is out of date.
             DwWorkshopNotice(
-                "This version of the app cannot find " +
-                    (if (kind == DwWorkshopRecordType.PROTOTYPE) "the prototype list" else "the artisan roster") +
-                    " in the field registry it was served, so it cannot print " +
-                    (if (kind == DwWorkshopRecordType.PROTOTYPE) "prototype tags" else "artisan cards") +
-                    ". Nothing is missing from your workshop — update the app."
+                (if (kind == DwWorkshopRecordType.PROTOTYPE) "Prototype tags" else "Artisan cards") +
+                    " cannot be printed because the form layout on this phone is out of date. " +
+                    "Nothing is missing from your workshop — update the app."
             )
             return@Column
         }
@@ -924,15 +922,15 @@ private suspend fun lookUpArtisan(repository: WorkshopRepository, id: String): D
                 label = artisan.name,
                 // Said out loud, because it changes what the designer does next: this person is
                 // documented but is not in this workshop, so enrolling them is the missing step.
-                detail = (artisan.place.ifBlank { "In the repository" }) + " · not on this workshop's roster"
+                detail = (artisan.place.ifBlank { "Recorded artisan" }) + " · not on this workshop's roster"
             )
         )
     } catch (e: HttpException) {
         DwLookupOutcome.Refused(unresolvedWorkshopCodeMessage(DwWorkshopRecordType.ARTISAN))
     } catch (e: Exception) {
         DwLookupOutcome.Refused(
-            "That card is not on this workshop's roster on this device, and there is no connection to check " +
-                "the repository. Try again when there is signal — the card itself is fine."
+            "That card is not on this workshop's roster on this device, and there is no connection to " +
+                "look it up. Try again when there is signal — the card itself is fine."
         )
     }
 
@@ -1282,9 +1280,8 @@ private fun DwJoinCardsPanel(workshopId: String) {
     // wrong sentence for a workshop that simply has not synced yet.
     if (isLocalOnlyWorkshop(workshopId)) {
         DwWorkshopNotice(
-            "This workshop has not been sent to the server yet, so a join card cannot be printed for " +
-                "it. A card is made by the server and checked against the real workshop — it is a key " +
-                "rather than something this device can invent. Sync this workshop first."
+            "This workshop has not been uploaded yet, so a join card cannot be printed for it. Sync " +
+                "this workshop first, then print the card."
         )
         return
     }
@@ -1412,8 +1409,7 @@ private fun DwJoinCardsPanel(workshopId: String) {
                     // somebody certain they had cancelled everything.
                     DwWorkshopNotice(
                         "There are more cards than this list can show, so some are not here. Ask an " +
-                            "administrator to review them on the web if you need to cancel one you " +
-                            "cannot see."
+                            "administrator if you need to cancel one you cannot see."
                     )
                 }
                 cards.forEach { card ->
@@ -1501,7 +1497,7 @@ private fun DwFreshJoinCard(card: DwJoinCardDto) {
                 lineHeight = 16.sp,
             )
             Text(
-                "This is the only time this card will be shown. The server keeps no copy of it — only " +
+                "This is the only time this card will be shown. No copy of it is kept — only " +
                     "the last four characters, so a card in somebody's hand can be matched against " +
                     "the list. Print it, photograph it for the person it is for, or write it down " +
                     "now; if you lose it, cancel it below and print another.",

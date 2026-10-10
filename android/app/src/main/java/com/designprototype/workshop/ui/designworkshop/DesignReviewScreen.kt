@@ -217,13 +217,11 @@ fun DesignReviewScreen(
                 // and keeps working, which the sentence beside it says.
                 workshops = emptyList()
                 listFailure = if (repository.isConnectionFailure(error)) {
-                    "The repository could not be reached, so this shortcut is empty — a list that " +
-                        "could not be loaded, not a list with nothing in it. Reading a round needs " +
-                        "the same connection, so the box below will not reach one either until the " +
-                        "signal is back."
+                    "Could not connect, so your workshops could not be listed. Opening a round " +
+                        "also needs a connection — try again when you have signal."
                 } else {
                     error.apiErrorMessage(
-                        "The repository could not list the design workshops you can open."
+                        "The design workshops you can open could not be listed. Try again."
                     )
                 }
             }
@@ -317,12 +315,10 @@ fun DesignReviewScreen(
             },
         )
         Text(
-            "This is a shortcut, not a list of what is open to the pool. It holds the design " +
-                "workshops this account can already open — the ones you created, the ones an admin " +
-                "granted you, and every workshop on the platform if you are an admin. The pool " +
-                "round is wider than that by design: any workshop can declare a piece finished and " +
-                "open it to designers outside it, and nothing lists those workshops. A workshop " +
-                "missing from this list is not a workshop you cannot read.",
+            "This list holds the design workshops you can already open — the ones you created, " +
+                "the ones an admin added you to, and every workshop if you are an admin. A workshop " +
+                "can also open its finished pieces to designers outside it; reach one of those from " +
+                "the link or id its designers sent you, in the box below.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -353,12 +349,8 @@ fun DesignReviewScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            "The round is read one workshop at a time, because the ranking it shows is that " +
-                "workshop's own row order and there is no such thing as a place across two " +
-                "workshops. What does not exist yet is a list of every workshop that has opened a " +
-                "piece to the pool — so browsing the whole archive is still a different question " +
-                "with no answer, and a piece made outside your own workshops reaches you as a link " +
-                "its designers sent you.",
+            "A round opens one workshop at a time, because each workshop ranks its own pieces. " +
+                "For a workshop outside your own, paste the link or id its designers sent you.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -514,9 +506,8 @@ private fun DesignReviewAccessRefusal(roleLabel: String) {
             )
         }
         Text(
-            "Rating another workshop's finished pieces is part of the design work itself, so it " +
-                "belongs to designers, admins and the master admin. The rounds are read through a " +
-                "route that refuses everybody else before it looks at the workshop at all.",
+            "Rating another workshop's finished pieces is part of the design work itself, so " +
+                "Design review is open to designers, admins and the master admin.",
             color = MaterialTheme.field.muted,
             fontSize = 13.sp,
             lineHeight = 18.sp,
@@ -675,10 +666,10 @@ private fun DesignReviewRound(
                 // in doubt here. Only the sending is, so only the sending is what this sentence is
                 // about.
                 orderNote = if (repository.isConnectionFailure(error)) {
-                    "Saved on this phone. There is no connection, so it sends itself when one returns."
+                    "Saved on this phone. It will upload when you have a connection."
                 } else {
-                    "Saved on this phone, but sending it did not complete. It goes up with the next " +
-                        "sync — the sync tray follows it."
+                    "Saved on this phone, but the upload did not finish. It will be sent again with " +
+                        "the next sync."
                 }
             }
     }
@@ -746,8 +737,8 @@ private fun DesignReviewRound(
         val spec = stageSpec
         if (spec == null) {
             orderProblem =
-                "This arrangement has not been saved: this phone has no field registry for the " +
-                    "stage these pieces live in. Open the workshop once with a connection."
+                "This arrangement has not been saved because this phone does not have the form " +
+                    "layout for these pieces. Open the workshop once with a connection, then try again."
             return
         }
         when (val plan = dwPlanArrangement(held, next, nextStamp, stageSeen)) {
@@ -798,9 +789,8 @@ private fun DesignReviewRound(
                             // renames), so a cancellation mid-write cannot leave a half-written stage.
                             orderNote = null
                             orderProblem =
-                                "This arrangement could not be saved on this phone: " +
-                                    it.apiErrorMessage("the local copy of this stage has gone.") +
-                                    " Reload this screen and try again."
+                                "This arrangement could not be saved on this phone. Reload this " +
+                                    "screen and try again."
                         }
                 }
             }
@@ -888,7 +878,7 @@ private fun DesignReviewRound(
                 when {
                     stamp != null -> {
                         Text(
-                            "This order was settled deliberately — fixed by ${stamp?.by} on " +
+                            "This order was set by ${stamp?.by} on " +
                                 "${dwRatingDay(stamp?.at)}. A new rating changes the scores on the " +
                                 "cards and does not move them.",
                             color = MaterialTheme.field.body,
@@ -931,9 +921,7 @@ private fun DesignReviewRound(
                     */
                     else -> Text(
                         "These are in score order — highest first, and pieces nobody has rated yet " +
-                            "at the end. Whether this workshop's own designers have settled an " +
-                            "order of their own is not on this response, so this screen does not " +
-                            "claim either way.",
+                            "at the end.",
                         color = MaterialTheme.field.body,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
@@ -1042,7 +1030,7 @@ private fun DesignReviewRound(
                         )
                         Text(
                             dwRowSubtitle(row).ifBlank {
-                                "On this phone — its score and its reviews are on the repository."
+                                "On this phone. Its score and reviews appear when you have a connection."
                             },
                             color = MaterialTheme.field.muted,
                             fontSize = 11.sp,
@@ -1078,7 +1066,7 @@ private fun DesignReviewRound(
                     } else {
                         "$open of the ${held.size} ${entity.label.lowercase()} this phone holds " +
                             "carry a \"Peer review closed on\" date. If they are not listed above, " +
-                            "the repository has not been sent them yet."
+                            "they are still waiting to upload."
                     },
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
@@ -1104,13 +1092,13 @@ private fun DesignReviewRound(
                 disabledReason = when {
                     canArrange -> null
                     !seesWholeCollection ->
-                        "The order here is the score order, and it is not yours to rearrange: the " +
-                            "placed order is the makers' own stage row order, which only that " +
-                            "workshop's designers and an admin can change. Your rating is what you " +
-                            "contribute to the ranking on this screen."
+                        "This list is in score order. Only this workshop's designers and an admin " +
+                            "can change the makers' own order; your rating is what you add to the " +
+                            "ranking here."
                     stageSpec == null ->
-                        "This arrangement cannot be changed from here: this phone has no field " +
-                            "registry for the stage these pieces live in."
+                        "This arrangement cannot be changed from here because this phone does not " +
+                            "have the form layout for these pieces. Open the workshop once with a " +
+                            "connection."
                     /*
                       THE ONE THAT IS ORDINARY RATHER THAN EXCEPTIONAL ON A HANDSET — see the
                       three-questions block above. The cards on screen came from the repository; the
@@ -1120,11 +1108,9 @@ private fun DesignReviewRound(
                       offers, and the sentence has to say so or the list reads as somebody else's.
                     */
                     else ->
-                        "The pieces are here but the rows they are arranged in are not: this phone " +
-                            "has not read the stage these ${entity.label.lowercase()} live in, so " +
-                            "there is nothing on it to rearrange. Open the record once with a " +
-                            "connection — the button on any card below does it — and the arrows and " +
-                            "the drag handle come back."
+                        "To rearrange these ${entity.label.lowercase()}, open one of them once with " +
+                            "a connection — use “Open the record” on any card below. The arrows and " +
+                            "the drag handle then appear."
                 },
             ) { id, _, _, _ ->
                 val item = byId[id]
@@ -1389,11 +1375,10 @@ private fun DwReviewCard(
           for their own paragraph.
         */
         Text(
-            "Scores, assessments and suggestions stay in this workshop's review ledger — they are " +
-                "read here and in the ranking, and the printed report does not carry them. What the " +
-                "report takes from this screen is the ORDER the pieces end up in, and a line saying " +
-                "who settled it. Anything that has to appear in the document belongs on the piece's " +
-                "own stage form.",
+            "Scores, assessments and suggestions stay with this workshop's reviews and are read " +
+                "here and in the ranking; they are not printed in the report. The report shows the " +
+                "order the pieces end up in and who set it. Anything that must appear in the report " +
+                "belongs on the piece's own stage form.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -1779,9 +1764,8 @@ private fun DwReviewTextBox(
                 Text(
                     "$dropped character${if (dropped == 1) "" else "s"} " +
                         "${if (dropped == 1) "was" else "were"} not kept. This box holds at most " +
-                        "$MAX_REVIEW_TEXT and the repository refuses a longer answer outright, so " +
-                        "what went past that is not in the box and will not be sent. Shorten what " +
-                        "is here, or put the rest on the piece's own stage form.",
+                        "$MAX_REVIEW_TEXT characters, so the extra text was left out and will not " +
+                        "be sent. Shorten what is here, or put the rest on the piece's own stage form.",
                     color = MaterialTheme.colorScheme.error,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,

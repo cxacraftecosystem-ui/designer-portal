@@ -323,7 +323,7 @@ class UsageConsentCopyTest {
         )
         // A fortnight apart, which on this fleet is ordinary. A log that showed one of the two would
         // date a signature to the day it was filed.
-        assertTrue(offline.contains("this server heard it on"))
+        assertTrue(offline.contains("received on"))
 
         val live = usageDecisionLine(
             UsageConsentDecisionDto(
@@ -335,7 +335,7 @@ class UsageConsentCopyTest {
         )
         // `recordedAt` is null by design when the answer was given straight against the server, and
         // a copy of `createdAt` in its place would read as "a device reported this" — which is false.
-        assertFalse(live.contains("this server heard it on"))
+        assertFalse(live.contains("received on"))
         assertTrue(live.contains("Declined"))
         assertTrue(live.contains("in settings"))
     }
@@ -376,7 +376,7 @@ class UsageConsentCopyTest {
         assertNotEquals(empty, failed)
 
         // The clause that does the work, kept from `offlineListLine`.
-        assertTrue(offline.orEmpty().contains("not a claim that there are none"))
+        assertTrue(offline.orEmpty().contains("nothing to show until it connects"))
         // The loading line is the shared one, verbatim.
         assertEquals(loadingListLine("requests"), loading)
     }

@@ -435,7 +435,7 @@ fun encodeWorkshopCode(recordType: String, id: String?): DwEncodeResult {
     val type = DwWorkshopRecordType.ofWire(recordType)
         ?: return DwEncodeResult.Refused(
             DwEncodeRefusal.UNKNOWN_RECORD_TYPE,
-            "No code can be printed for a “$recordType” — codes exist for ${knownRecordTypesSentence()}."
+            "No code can be printed for this kind of record — codes exist for ${knownRecordTypesSentence()}."
         )
 
     val trimmed = jsTrim(id ?: "")
@@ -497,8 +497,8 @@ fun encodeWorkshopCode(recordType: String, id: String?): DwEncodeResult {
     if (!ID_PATTERN.matches(trimmed)) {
         return DwEncodeResult.Refused(
             DwEncodeRefusal.ID_NOT_AN_IDENTIFIER,
-            "That is not an identifier this repository issues, so no code can be printed for it. " +
-                "Identifiers are the lower-case ids the app allocates when a record is saved."
+            "That is not a record identifier, so no code can be printed for it. Save the record " +
+                "first, then print its code."
         )
     }
 
@@ -658,7 +658,8 @@ fun decodeWorkshopCode(input: String?): DwDecodeResult {
     val recordType = DwWorkshopRecordType.ofLetter(parts[1])
         ?: return DwDecodeResult.Refused(
             DwDecodeRefusal.UNKNOWN_RECORD_TYPE,
-            "This is a workshop code, but it points at a kind of record this version of the app does not open."
+            "This is a workshop code for a kind of record that needs a newer version of the app. " +
+                "Update the app, then scan it again."
         )
 
     val id = parts[2].lowercase()
@@ -881,9 +882,8 @@ fun decodeWorkshopJoinCard(input: String?): DwJoinCardDecode {
     if (version != WORKSHOP_JOIN_CODE_VERSION.toDouble()) {
         return DwJoinCardDecode.Refused(
             DwJoinCardRefusal.NEWER_VERSION,
-            "That join card was printed against a code format this version of the app does not " +
-                "read. Update the app, or ask an administrator to add you from the workshop's " +
-                "viewers screen."
+            "That join card needs a newer version of the app. Update the app, or ask an " +
+                "administrator to add you from the workshop's viewers screen."
         )
     }
 
@@ -1023,8 +1023,8 @@ fun unresolvedWorkshopCodeMessage(recordType: DwWorkshopRecordType): String {
     if (recordType == DwWorkshopRecordType.PROTOTYPE) {
         // A prototype is a row inside one design workshop rather than a repository record, so the two
         // places it can be — another workshop, or a device this one has not synced with — are named.
-        return "No prototype in this workshop matches that tag. It may belong to another workshop, or the " +
-            "row may not have reached this device yet — open the workshop that made it, or find the " +
+        return "No prototype in this workshop matches that tag. It may belong to another workshop, or " +
+            "it may not be on this phone yet — open the workshop that made it, or find the " +
             "prototype in the list."
     }
     if (recordType == DwWorkshopRecordType.DESIGN_WORKSHOP) {
@@ -1070,7 +1070,7 @@ fun unresolvedWorkshopCodeMessage(recordType: DwWorkshopRecordType): String {
     // Turkish it maps `I` to a dotless `ı`, so an "Interview" would be described to a designer with a
     // character the web never writes. Every label here is ASCII, so the root-locale mapping is exact.
     val noun = recordType.label.lowercase()
-    return "No $noun you can open matches that code. It may not be in the repository, or it may " +
+    return "No $noun you can open matches that code. It may not exist, or it may " +
         "belong to work you do not have access to — search for the $noun by name instead."
 }
 
@@ -1124,10 +1124,9 @@ fun unresolvedWorkshopCodeMessage(recordType: DwWorkshopRecordType): String {
  * must not send a designer to an admin about a workshop that is not there.
  */
 fun designWorkshopCodeNotOpenableMessage(): String =
-    "This version of the app cannot open a design workshop from a code — a design workshop is " +
-        "opened from the design workshop list. If a colleague has just shared this one with you and " +
-        "it is not in your list yet, only an admin can add you to it, so send them the code and ask " +
-        "to be put on it."
+    "This is a design workshop's code. Design workshops are opened from the Design workshops list. " +
+        "If a colleague has just shared this one with you and it is not in your list yet, only an " +
+        "admin can add you to it, so send them the code and ask to be put on it."
 
 /**
  * What to say the moment a design-workshop card has been read and the ask is going out.
@@ -1176,9 +1175,8 @@ fun designWorkshopJoinAskingMessage(): String =
 fun designWorkshopCardPurposeMessage(): String =
     "This is the workshop's own tag, not a join card. Scanning it asks an administrator to put " +
         "somebody on the workshop — it does not let them in by itself, and it is not a password: " +
-        "the code is a reference with a check digit, so anybody who has it can only ask, exactly " +
-        "as they could by typing the code. To put somebody on straight away, print a join card " +
-        "below instead."
+        "anybody who has the code can only ask. To put somebody on straight away, print a join " +
+        "card below instead."
 
 /**
  * What a JOIN CARD is for, printed and on screen beside its symbol.

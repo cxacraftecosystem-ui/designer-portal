@@ -592,17 +592,16 @@ private fun dwSuppressedServerRungSentence(conditions: DwDictationConditions): S
         // CONSENT BEFORE THE CAP, always, for the reason [dwDictationNothingLeftSentence] gives at
         // length: tomorrow's allowance cannot open a rung an unanswered consent question has closed.
         conditions.tier3Consent == DwTier3Consent.NOT_RECORDED ->
-            "Nobody has recorded yet whether recordings from this workshop may be sent to the " +
-                "transcription service, so a dictation here goes to the phone's speech recogniser " +
-                "instead — which has none of the craft vocabulary, and writes “double” where the " +
-                "artisan said “dabu”. Record the artisan's answer on this workshop's own screen to " +
-                "change that."
+            "Nobody has recorded whether this workshop's recordings may be sent for transcription, " +
+                "so dictation here uses the phone's own speech recogniser, which does not know craft " +
+                "words — it may write “double” where the artisan said “dabu”. Record the artisan's " +
+                "answer on the workshop's own screen to change that."
 
         conditions.tier3Consent == DwTier3Consent.REFUSED ->
-            "This workshop's recordings may not be sent to the transcription service — that is the " +
-                "answer on record — so a dictation here goes to the phone's speech recogniser " +
-                "instead, which has none of the craft vocabulary. If the artisan has since agreed, " +
-                "change that answer on the workshop's own screen; nothing on this field can."
+            "This workshop's recordings may not be sent for transcription — that is the answer on " +
+                "record — so dictation here uses the phone's own speech recogniser, which does not " +
+                "know craft words. If the artisan has since agreed, change the answer on the " +
+                "workshop's own screen."
 
         /*
           THE WORKSHOP IS NOT ON THE SERVER, SO THERE IS NO GATED ROUTE TO POST TO.
@@ -618,31 +617,27 @@ private fun dwSuppressedServerRungSentence(conditions: DwDictationConditions): S
           this sentence is about a workshop whose answer IS yes and which has nowhere yet to send it.
         */
         !conditions.workshopOnServer ->
-            "This workshop has not been sent to the server yet, so there is nothing up there to check " +
-                "the artisan's recorded answer against and a dictation here goes to the phone's speech " +
-                "recogniser instead — which has none of the craft vocabulary, and writes “double” " +
-                "where the artisan said “dabu”. Send the workshop up from the workshops list, with the " +
-                "“Send to server” button on its card, and this comes back."
+            "This workshop is only on this phone, so dictation here uses the phone's own speech " +
+                "recogniser, which does not know craft words — it may write “double” where the " +
+                "artisan said “dabu”. Upload the workshop from its card in Design workshops to " +
+                "change that."
 
         // An allowance of none is a setting, not a spent day — see the same arm in
         // [dwDictationNothingLeftSentence] for why "all 0 of today's" may never be printed.
         conditions.dailyCapSpent && conditions.dailyCapLimit == 0 ->
-            "This server is not sending any dictation to the transcription service at the moment — " +
-                "the daily allowance is set to none — so a dictation here goes to the phone's speech " +
-                "recogniser instead, which has none of the craft vocabulary. Whoever runs the server " +
-                "can raise the allowance; nothing on this phone can."
+            "Transcription of dictation is switched off: the daily allowance is set to none. " +
+                "Dictation here uses the phone's own speech recogniser, which does not know craft " +
+                "words. An administrator can raise the allowance."
 
         conditions.dailyCapSpent && conditions.dailyCapLimit != null ->
-            "You have used all ${conditions.dailyCapLimit} of today's dictations that go to the " +
-                "transcription service, so a dictation here goes to the phone's speech recogniser " +
-                "instead, which has none of the craft vocabulary. The allowance starts again after " +
-                "midnight India time, which is the server's day and not this phone's."
+            "You have used all ${conditions.dailyCapLimit} of today's transcribed dictations, so " +
+                "dictation here uses the phone's own speech recogniser, which does not know craft " +
+                "words. The allowance starts again after midnight India time."
 
         conditions.dailyCapSpent ->
-            "You have used up today's allowance of dictations that go to the transcription service, " +
-                "so a dictation here goes to the phone's speech recogniser instead, which has none " +
-                "of the craft vocabulary. The allowance starts again after midnight India time, " +
-                "which is the server's day and not this phone's."
+            "You have used today's allowance of transcribed dictations, so dictation here uses the " +
+                "phone's own speech recogniser, which does not know craft words. The allowance starts " +
+                "again after midnight India time."
 
         else -> null
     }
@@ -693,10 +688,8 @@ fun dwDictationNothingLeftSentence(conditions: DwDictationConditions): String {
           docs/DEVICE-TIER-MEASUREMENT.md exists to collect.
         */
         !conditions.online && conditions.appModelRefusedLanguage ->
-            "This app's own speech model is on this phone and would not take $label just now, and " +
-                "there is no connection to send the words anywhere else. Type the answer in. This " +
-                "is worth reporting: the model was measured as serving $label, so it refusing it on " +
-                "this handset is a fault in this app rather than anything you did."
+            "The speech model on this phone could not take $label just now, and there is no " +
+                "connection to dictate another way. Type the answer in."
 
         /*
           NO SIGNAL, THE PHONE HAS AN OFFLINE ENGINE, AND A PACK FOR THIS LANGUAGE CAN ACTUALLY BE
@@ -776,12 +769,9 @@ fun dwDictationNothingLeftSentence(conditions: DwDictationConditions): String {
         */
         !conditions.serverRouteUnavailable &&
             conditions.tier3Consent == DwTier3Consent.NOT_RECORDED ->
-            "There is nothing left on this phone that can write $label down: its own recogniser " +
-                "cannot take this language, and nobody has recorded yet whether recordings from " +
-                "this workshop may be sent to the transcription service. Type the answer in. Then " +
-                "open this workshop's own screen and record the artisan's answer to that question — " +
-                "until somebody does, this stays unavailable, and no amount of tapping here will " +
-                "change it."
+            "This phone's recogniser cannot take $label, and nobody has recorded whether this " +
+                "workshop's recordings may be sent for transcription. Type the answer in, then record " +
+                "the artisan's answer on the workshop's own screen to dictate in $label."
 
         // ANSWERED, AND THE ANSWER IS NO. The next move is A PERSON DECIDING and never a retry —
         // which is why this says nothing about trying again. It also does not say "ask the artisan",
@@ -789,11 +779,9 @@ fun dwDictationNothingLeftSentence(conditions: DwDictationConditions): String {
         // record is how a designer learns to stop reading these sentences.
         !conditions.serverRouteUnavailable &&
             conditions.tier3Consent == DwTier3Consent.REFUSED ->
-            "There is nothing left on this phone that can write $label down: its own recogniser " +
-                "cannot take this language, and this workshop's recordings may not be sent to the " +
-                "transcription service — that is the answer on record. Type the answer in. If the " +
-                "artisan has since agreed, change that answer on the workshop's own screen; nothing " +
-                "on this field can."
+            "This phone's recogniser cannot take $label, and this workshop's recordings may not be " +
+                "sent for transcription — that is the answer on record. Type the answer in. If the " +
+                "artisan has since agreed, change the answer on the workshop's own screen."
 
         /*
           THE WORKSHOP HAS NO SERVER RECORD, SO THE GATED ROUTE HAS NO id TO REFUSE OR ALLOW.
@@ -810,11 +798,10 @@ fun dwDictationNothingLeftSentence(conditions: DwDictationConditions): String {
           exist where the answer can be read.
         */
         !conditions.serverRouteUnavailable && !conditions.workshopOnServer ->
-            "There is nothing left on this phone that can write $label down: its own recogniser " +
-                "cannot take this language, and this workshop has not been sent to the server, so the " +
-                "transcription service cannot be asked for it either. Type the answer in. Send the " +
-                "workshop up from the workshops list — the “Send to server” button on its card — and " +
-                "dictation here works wherever there is signal."
+            "This phone's recogniser cannot take $label, and this workshop is only on this phone, so " +
+                "its recordings cannot be sent for transcription. Type the answer in, then upload the " +
+                "workshop from its card in Design workshops, and dictation here works wherever there " +
+                "is signal."
 
         /*
           AN ALLOWANCE OF NONE IS A SETTING AND NOT A SPENT DAY, and it needs its own sentence for a
@@ -827,31 +814,27 @@ fun dwDictationNothingLeftSentence(conditions: DwDictationConditions): String {
         */
         !conditions.serverRouteUnavailable &&
             conditions.dailyCapSpent && conditions.dailyCapLimit == 0 ->
-            "This server is not sending any dictation to the transcription service at the moment — " +
-                "the daily allowance is set to none — and this phone's own recogniser cannot take " +
-                "$label. Type the answer in, and ask whoever runs the server to raise the allowance; " +
-                "nothing on this phone can."
+            "This phone's recogniser cannot take $label, and transcription of dictation is switched " +
+                "off: the daily allowance is set to none. Type the answer in, and ask an administrator " +
+                "to raise the allowance."
 
         // THE ALLOWANCE, NAMED AS A NUMBER BECAUSE THE PHONE HAS ONE. Plan §6 asks for the cap to be
         // "named in words when it is hit", and a refusal that will not say how many is one nobody can
         // plan a day around.
         !conditions.serverRouteUnavailable &&
             conditions.dailyCapSpent && conditions.dailyCapLimit != null ->
-            "You have used all ${conditions.dailyCapLimit} of today's dictations that go to the " +
-                "transcription service, and this phone's own recogniser cannot take $label — so " +
-                "there is nothing left here that can write it down until tomorrow. Type the answer " +
-                "in; the allowance starts again after midnight India time, which is the server's " +
-                "day and not this phone's."
+            "You have used all ${conditions.dailyCapLimit} of today's transcribed dictations, and " +
+                "this phone's recogniser cannot take $label. Type the answer in; the allowance starts " +
+                "again after midnight India time."
 
         // THE SAME REFUSAL FROM A PHONE THAT WAS NEVER TOLD THE CEILING. It does not invent one: the
         // rule is [dwDownloadCostSentence]'s, where a pack's size is deliberately not named because
         // any figure printed there would be made up. A number this phone has not been told is worth
         // less than the sentence without it.
         !conditions.serverRouteUnavailable && conditions.dailyCapSpent ->
-            "You have used up today's allowance of dictations that go to the transcription service, " +
-                "and this phone's own recogniser cannot take $label — so there is nothing left here " +
-                "that can write it down until tomorrow. Type the answer in; the allowance starts " +
-                "again after midnight India time, which is the server's day and not this phone's."
+            "You have used today's allowance of transcribed dictations, and this phone's recogniser " +
+                "cannot take $label. Type the answer in; the allowance starts again after midnight " +
+                "India time."
 
         /*
           ONLINE, AND OUR OWN MODEL REFUSED THE LANGUAGE TOO.
@@ -868,24 +851,20 @@ fun dwDictationNothingLeftSentence(conditions: DwDictationConditions): String {
           leaving that out of the sentence would lose the only new information in it.
         */
         conditions.appModelRefusedLanguage ->
-            "This app's own speech model would not take $label on this phone, and there is nothing " +
-                "else left that can write it down — the server has no transcription service " +
-                "configured either. Type the answer in. Tell whoever runs the server about the " +
-                "transcription service, and report the model as well: it was measured as serving " +
-                "$label, and refusing it here is a fault in this app."
+            "The speech model on this phone could not take $label, and transcription is not set up. " +
+                "Type the answer in, and ask an administrator to set up transcription."
 
         // Online, and the server has said it has no transcription provider. NEVER SILENCE — a 503
         // swallowed here reads to the designer as "the phone heard nothing", which sends them
         // speaking louder at a control that was never going to answer.
         conditions.packState == DwPackState.UNSUPPORTED ->
-            "This phone's speech recogniser does not offer $label at all, and the server has no " +
-                "transcription service configured to do it instead. Pick another language, or type " +
-                "the answer in — and tell whoever runs the server that dictation is not configured."
+            "This phone's speech recogniser does not offer $label, and transcription is not set up. " +
+                "Pick another language, or type the answer in — and ask an administrator to set up " +
+                "transcription."
 
         else ->
-            "There is nothing left on this phone that can write $label down: its own recogniser " +
-                "cannot take this language and the server has no transcription service configured. " +
-                "Type the answer in, and tell whoever runs the server that dictation is not configured."
+            "This phone's recogniser cannot take $label, and transcription is not set up. Type the " +
+                "answer in, and ask an administrator to set up transcription."
     }
 }
 
@@ -991,8 +970,8 @@ const val DW_DICTATION_NOTHING_RECORDED: String =
  * designer looking for signal in a quiet room, or for a quiet room in a place with no signal.
  */
 const val DW_DICTATION_NO_WORDS: String =
-    "The recording went to the server and came back with no words in it. Speak closer to the phone, " +
-        "away from the loom if you can, and try again — or type the answer in."
+    "No words were heard in that recording. Speak closer to the phone, away from the loom if you " +
+        "can, and try again — or type the answer in."
 
 /**
  * The 503 from the dictation route: this deployment has no transcription provider configured.
@@ -1006,8 +985,8 @@ const val DW_DICTATION_NO_WORDS: String =
  * in server settings, and no amount of anything on this phone will change the answer.
  */
 const val DW_DICTATION_NOT_CONFIGURED: String =
-    "The server has no transcription service configured, so it cannot write this recording down. " +
-        "Type the answer in, and ask whoever runs the server to configure dictation."
+    "Transcription is not set up, so this recording cannot be written down. Type the answer in, " +
+        "and ask an administrator to set up transcription."
 
 /**
  * The same 503, where a rung still remains behind it — and why that rung is not simply started.
@@ -1026,9 +1005,9 @@ const val DW_DICTATION_NOT_CONFIGURED: String =
  * it whenever another rung existed was silence with extra steps.
  */
 const val DW_DICTATION_NOT_CONFIGURED_SAY_AGAIN: String =
-    "The server has no transcription service configured, so it could not write that recording down. " +
-        "Nothing was saved. Tap the microphone and say it again — the next attempt goes to this " +
-        "phone's own recogniser, and the words will appear as you speak."
+    "Transcription is not set up, so that recording could not be written down. Nothing was saved. " +
+        "Tap the microphone and say it again — the next attempt goes to this phone's own " +
+        "recogniser, and the words will appear as you speak."
 
 /**
  * THE DAILY ALLOWANCE RAN OUT WHILE THE DESIGNER WAS SPEAKING, and a rung still remains behind it.
@@ -1060,10 +1039,9 @@ const val DW_DICTATION_NOT_CONFIGURED_SAY_AGAIN: String =
  * whenever the phone has been told it; here the added instruction is worth more than the figure.
  */
 const val DW_DICTATION_CAP_SPENT_SAY_AGAIN: String =
-    "Today's allowance of dictations that go to the transcription service is used up, so that " +
-        "recording could not be written down. Nothing was saved. Tap the microphone and say it " +
-        "again — the next attempt goes to this phone's own recogniser, and the words will appear as " +
-        "you speak."
+    "Today's allowance of transcribed dictations is used up, so that recording could not be " +
+        "written down. Nothing was saved. Tap the microphone and say it again — the next attempt " +
+        "goes to this phone's own recogniser, and the words will appear as you speak."
 
 /**
  * THE SERVER'S CONSENT GATE REFUSED THE CLIP (409) AND SENT NO SENTENCE WITH IT.
@@ -1103,10 +1081,9 @@ const val DW_DICTATION_CAP_SPENT_SAY_AGAIN: String =
  * which would blunt the one every ordinary refusal reads. See [DwDictationConsentRefused].
  */
 const val DW_DICTATION_CONSENT_REFUSED: String =
-    "The server would not send that recording to the transcription service: this workshop's answer to " +
-        "whether its recordings may go there is not a yes up there. Nothing was saved. Type the answer " +
-        "in, and open this workshop's own screen — the answer this phone holds is carried up from " +
-        "there, and whatever the server holds is shown there."
+    "That recording could not be sent for transcription: this workshop has no yes on record for " +
+        "sending its recordings. Nothing was saved. Type the answer in, and check the artisan's " +
+        "answer on the workshop's own screen."
 
 /**
  * The provider chain answered RATE_LIMITED — 429, or a provider's own 503 "overloaded".
@@ -1123,8 +1100,8 @@ const val DW_DICTATION_BUSY: String =
 
 /** The upload itself did not land. Names the connection, because that is what changed. */
 const val DW_DICTATION_UPLOAD_FAILED: String =
-    "The recording could not be sent to the server — the connection dropped. Nothing was saved. Try " +
-        "again where there is signal, or type the answer in."
+    "The recording could not be sent — the connection dropped. Nothing was saved. Try again where " +
+        "there is signal, or type the answer in."
 
 /**
  * The round trip worked, the provider chain ran, and it could not produce text.
@@ -1137,9 +1114,8 @@ const val DW_DICTATION_UPLOAD_FAILED: String =
  * phone screen in a courtyard where no log can be read.
  */
 const val DW_DICTATION_TRANSCRIPTION_FAILED: String =
-    "The server took the recording and could not write it down. Dictate it again, or type the answer " +
-        "in — nothing is queued, so it will not arrive later. If it keeps happening, tell whoever " +
-        "runs the server: the reason is in their log and not on this phone."
+    "That recording could not be written down. Dictate it again, or type the answer in — nothing is " +
+        "queued, so it will not arrive later. If it keeps happening, tell an administrator."
 
 /**
  * A 503 that was NOT the route's answer about dictation.
@@ -1154,8 +1130,8 @@ const val DW_DICTATION_TRANSCRIPTION_FAILED: String =
  * for, and — crucially — no run-scoped writing-off of rung 2 for a server that is merely busy.
  */
 const val DW_DICTATION_SERVER_UNREACHABLE: String =
-    "The server could not be reached to write this recording down. Nothing was saved. Try again in a " +
-        "moment, or type the answer in."
+    "Could not connect to write this recording down. Nothing was saved. Try again in a moment, or " +
+        "type the answer in."
 
 /**
  * WHICH SENTENCE A 200 THAT CARRIED NO TEXT DESERVES.

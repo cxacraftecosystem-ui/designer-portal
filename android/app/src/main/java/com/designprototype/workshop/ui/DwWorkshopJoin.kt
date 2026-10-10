@@ -251,9 +251,8 @@ fun dwInductionNote(
         }
         append("The device's own clock said the scan was at ")
         append(pending.scannedAtDeviceUtc)
-        append(" (UTC) — that is what the handset claims, not something this app can verify; a ")
-        append("phone's date can be changed by anyone holding it. Which scan reached the server ")
-        append("first is the only ordering that counts.")
+        append(" (UTC) — that is what the handset claims, and a phone's date can be changed by ")
+        append("anyone holding it. Whichever scan was uploaded first counts.")
     }
 }
 

@@ -1111,7 +1111,7 @@ private fun ReferenceProvenance(
             if (age != null) append(", last refreshed $age")
             append(".")
             if (bridge.workshopId == null) {
-                append(" This workshop has not been sent to the server, so the list cannot refresh yet.")
+                append(" This workshop has not been uploaded, so the list cannot refresh.")
             }
         },
         color = MaterialTheme.field.muted,
@@ -1119,8 +1119,8 @@ private fun ReferenceProvenance(
     )
     if (truncated) {
         Text(
-            "The server sent only part of this list. Search narrows what you can see here, not what " +
-                "was sent — if the record you want is missing, refresh with a connection before " +
+            "Only part of this list has been loaded. Search narrows what you can see here, not what " +
+                "was loaded — if the record you want is missing, refresh with a connection before " +
                 "concluding it does not exist.",
             color = MaterialTheme.colorScheme.error,
             fontSize = 11.sp
@@ -1311,7 +1311,7 @@ internal fun dwReferenceOutOfScopeMessage(option: DwReferenceOption): String =
 internal fun dwUnresolvedScanMessage(field: FieldDto, cascadeLabel: String): String {
     val noun = dwPickerNoun(field)
     val reasons = listOfNotNull(
-        "it may not be in the repository",
+        "it may not have been recorded",
         "it may belong to work this account cannot open",
         cascadeLabel.takeIf { it.isNotBlank() }?.let { "it may not belong to the ${it.lowercase()} chosen on this row" },
     )
@@ -1330,7 +1330,7 @@ internal fun dwUnresolvedScanMessage(field: FieldDto, cascadeLabel: String): Str
  * whether something was quietly linked anyway.
  */
 internal const val DW_SCAN_OFFLINE_MESSAGE =
-    "There is no connection, so the repository could not be asked which record that code names. The " +
+    "There is no connection, so that code could not be looked up. The " +
         "code itself checked out, so the card is fine and nothing on this row has been changed — read " +
         "it again when there is signal, or search for the record by name in the list."
 
@@ -1355,9 +1355,9 @@ internal const val DW_SCAN_LOOKUP_FAILED_MESSAGE =
  * connection" would send a designer looking for a tower for a condition a tower cannot fix.
  */
 internal const val DW_SCAN_UNSENT_WORKSHOP_MESSAGE =
-    "That code checked out, but this workshop has not been sent to the server yet, so a code can only " +
-        "be matched against the records already on this device — and this is not one of them. Nothing " +
-        "on this row has been changed. Send the workshop when there is signal, then read it again."
+    "That code checked out, but this workshop has not been uploaded, so a code can only be matched " +
+        "against the records already on this device — and this is not one of them. Nothing on this " +
+        "row has been changed. Upload the workshop when there is signal, then read it again."
 
 /**
  * THE PARENT MOVED AND THE CHILD IT NARROWED IS NO LONGER OFFERABLE, so it is dropped and said.

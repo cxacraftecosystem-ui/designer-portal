@@ -258,8 +258,8 @@ class DwTier2ModelsTest {
                 sentence.contains("Google's") && sentence.contains("S26 Ultra")
             )
             assertTrue(
-                "and must say nothing was measured on the phone the designer is holding",
-                sentence.contains("nothing has been measured on this phone")
+                "and must say it is the publisher's figure, not a reading of this phone",
+                sentence.contains("published figure")
             )
             /*
              * THE TWO SENTENCES THIS ROW EXISTS TO AVOID. `dwModelChoiceSentence` would have appended
@@ -283,10 +283,12 @@ class DwTier2ModelsTest {
     @Test
     fun `the list says once why nothing can be installed, and does not repeat it per row`() {
         val intro = dwTier2ListIntro(DW_TIER2_PLANS.size, DW_TIER2_UNJUDGED.size)
-        assertTrue(intro.contains(DW_TIER2_RUNTIME_ABSENCE))
-        assertTrue(
-            "the absence is about this app rather than about the phone",
-            DW_TIER2_RUNTIME_ABSENCE.contains("this app has no runtime")
+        // The list is drawn only when a runtime exists (SpeechAndAiScreen), so its opening line says
+        // what the list is and never narrates a missing runtime.
+        assertTrue(intro.contains("Language models"))
+        assertFalse(
+            "the intro never narrates what this app lacks",
+            intro.contains("no runtime")
         )
         assertTrue("and the unjudged rows are accounted for in it", intro.contains("no verdict"))
         dwModelChoices(DW_TIER2_PLANS, fleetHandset, tier = DwAiTier.TIER_2).forEach { choice ->
@@ -323,7 +325,7 @@ class DwTier2ModelsTest {
                 model.onDiskBytes > 3_000_000_000L
             )
         }
-        assertEquals("Cannot be judged", DW_TIER2_UNJUDGED_LABEL)
+        assertEquals("No memory figure", DW_TIER2_UNJUDGED_LABEL)
     }
 
     // -----------------------------------------------------------------------------------------

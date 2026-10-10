@@ -377,8 +377,7 @@ private fun dwTraceKotlinExportFormat(format: DwTraceExportFormat): ExportFormat
  * route is a button that does nothing.
  */
 private fun dwTraceKotlinUnwritableSentence(format: DwTraceExportFormat): String =
-    "This app cannot write ${format.label} files. The SVG and the picture still save, and the portal " +
-        "can write every format from this same photograph on a laptop when you next have a connection."
+    "The ${format.label} file could not be saved. The SVG and the picture still save."
 
 /**
  * The sentence for an export that ran out of memory.
