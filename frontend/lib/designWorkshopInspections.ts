@@ -59,15 +59,13 @@
  *
  * ── 4. WHAT THE READ DELIBERATELY DOES NOT CARRY ──────────────────────────────────────────────
  *
- * `transcripts` is absent, and it is an absence with a decision behind it rather than an oversight:
- * an inspector holds no `DataAccessGrant`, no upload of their own and no viewer row, so the media
- * predicate would cost a query to produce an empty list — and would put this route on the media
- * path at all, where the next person widening that predicate would widen this surface without
- * noticing. **Whether an inspector should see the photographs is an owner's decision that has not
- * been made**, so today the answer is no, stated once. A screen over this payload must therefore
- * say that media are not part of an inspection read rather than draw an empty gallery or a broken
- * frame — the two look identical and only one of them is true. `dictationConsentByName` is absent
- * for the plainer reason that this read does not resolve it.
+ * `transcripts` is absent: the co-designer media predicate is never asked on this route, so widening
+ * it can never widen this surface by accident. **The workshop's files are a second read instead**
+ * (owner's ruling, sweep item F5, 2026-10-10): `GET /design-workshop-inspections/{id}/media`, behind
+ * the same loader, signed and read-only — `lib/workshopReaderMedia.ts` fetches it and
+ * `components/designworkshop/ReaderWorkshopMedia.tsx` draws it. The workshop's own questions DO
+ * travel on this read, as `customSections`. `dictationConsentByName` is absent for the plainer
+ * reason that this read does not resolve it.
  *
  * Provenance names ARE resolved, because "who wrote this field" is most of what an inspection is
  * for. That is the one thing this payload has that the paged list does not.
@@ -108,6 +106,7 @@ import {
   type DwSummary,
   type DwValue
 } from "@/lib/designWorkshops";
+import type { DwCustomDefinition } from "@/lib/customSections";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, isInspectorTier } from "@/lib/permissions";
 import { richSummary } from "@/lib/richText";
@@ -286,6 +285,11 @@ export type DwInspectionDetail = DwSummary & {
   /** See `DwDetail.customSchemaVersion` — a second string, never folded into the one above. */
   customSchemaVersion?: string;
   /**
+   * The workshop's own questions, in the shape `GET /design-workshops/{id}/custom-sections` serves.
+   * Optional because an older API sends none; the answers are then drawn without their wording.
+   */
+  customSections?: DwCustomDefinition;
+  /**
    * The server's own word for "this is a read". See {@link inspectionIsReadOnly}, which is the only
    * thing that should ever read this key directly.
    */
@@ -296,7 +300,46 @@ export type DwInspectableListParams = {
   page?: number;
   pageSize?: number;
   search?: string | null;
+  /** A `DesignWorkshopStatus` token. Empty or absent means any status. */
+  statusFilter?: string | null;
+  /** The submission round — 0 for a report never handed in. Absent means any round. */
+  round?: number | null;
+  /** A state or union territory, exactly as the address list spells it. */
+  state?: string | null;
+  /** A `WORKSHOP_KIND` token. */
+  workshopKind?: string | null;
+  /** The first and last day (YYYY-MM-DD, inclusive) the workshop may have STARTED on. */
+  dateFrom?: string | null;
+  dateTo?: string | null;
 };
+
+/** The filters a reader has set, as the query the list read takes. Blank values are left out. */
+export function inspectableListQuery(params: DwInspectableListParams): string {
+  const text = (value: string | null | undefined) => (value && value.trim() ? value.trim() : undefined);
+  return buildQuery({
+    page: params.page,
+    pageSize: params.pageSize,
+    search: text(params.search),
+    statusFilter: text(params.statusFilter),
+    round: typeof params.round === "number" && Number.isInteger(params.round) && params.round >= 0 ? params.round : undefined,
+    state: text(params.state),
+    workshopKind: text(params.workshopKind),
+    dateFrom: text(params.dateFrom),
+    dateTo: text(params.dateTo)
+  });
+}
+
+/** How many filters other than the search box are set — for the "Clear filters" control. */
+export function inspectableFilterCount(params: DwInspectableListParams): number {
+  return [
+    params.statusFilter,
+    typeof params.round === "number" ? String(params.round) : "",
+    params.state,
+    params.workshopKind,
+    params.dateFrom,
+    params.dateTo
+  ].filter((value) => typeof value === "string" && value.trim() !== "").length;
+}
 
 /**
  * The design & prototype workshops this inspector has been assigned, newest first.
@@ -311,18 +354,14 @@ export type DwInspectableListParams = {
  * exists (they can open it by id) and simultaneously that it does not (it is absent from every list
  * they can reach), and nothing in either client navigates to a workshop by typed id.
  *
- * There is no `statusFilter`, no `mineOnly` and no `deletedOnly` here, and none of them is missing:
- * a soft-deleted workshop is a 404 for everyone but an admin, "mine" is the only scope there is, and
- * the status filter is a designer's triage of their own queue.
+ * THE FILTERS NARROW THE INSPECTOR'S OWN ROWS AND NEVER WIDEN THEM (sweep item F13):
+ * status, submission round, state, type of workshop and the days it started on are AND-composed with
+ * the inspection scope on the server, so no value of any of them can list a workshop the account was
+ * not appointed to. There is no `mineOnly` and no `deletedOnly`: "mine" is the only scope there is,
+ * and a soft-deleted workshop is a 404 for everyone but an admin.
  */
 export function listInspectableDesignWorkshops(params: DwInspectableListParams) {
-  return apiFetch<PageResult<DwSummary>>(
-    `/design-workshop-inspections${buildQuery({
-      page: params.page,
-      pageSize: params.pageSize,
-      search: params.search ?? undefined
-    })}`
-  );
+  return apiFetch<PageResult<DwSummary>>(`/design-workshop-inspections${inspectableListQuery(params)}`);
 }
 
 /** One workshop under inspection, read-only, every stage and its completeness. */
@@ -501,11 +540,34 @@ export function inspectionRefusalMeansNoPosts(error: unknown, user: User | null 
  * and one sentence for one state is what lets a reader trust it. It names who appoints and where, so
  * an empty page is a next move rather than a dead end.
  */
+/** The status filter's choices — every status a workshop can hold, "any" first. */
+export const INSPECTION_STATUS_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "", label: "Any status" },
+  { value: "DRAFT", label: "Draft" },
+  { value: "IN_PROGRESS", label: "In progress" },
+  { value: "COMPLETE", label: "Complete" },
+  { value: "PRE_SUBMISSION", label: "Pre-submission" },
+  { value: "NEEDS_REVISION", label: "Needs revision" },
+  { value: "SUBMITTED", label: "Submitted" },
+  { value: "APPROVED", label: "Approved" },
+  { value: "ARCHIVED", label: "Archived" }
+];
+
+/**
+ * The submission-round filter's choices. Round 0 is a report nobody has handed in yet; a report
+ * goes through a handful of rounds, so nine are offered.
+ */
+export const INSPECTION_ROUND_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "", label: "Any round" },
+  { value: "0", label: "Not handed in yet" },
+  ...Array.from({ length: 9 }, (_, index) => ({ value: String(index + 1), label: `Round ${index + 1}` }))
+];
+
 export function inspectionEmptyState(searched: boolean): { title: string; body: string } {
   return searched
     ? {
-        title: "No workshop you inspect matches that search",
-        body: "This searches only the workshops you have been appointed to inspect, which is the whole of what you can read here. Clear the search to see them all."
+        title: "No workshop you inspect matches that search and those filters",
+        body: "This searches only the workshops you have been appointed to inspect, which is the whole of what you can read here. Clear the search and the filters to see them all."
       }
     : {
         title: "You do not hold any inspection posts",
@@ -566,8 +628,8 @@ export function eligibleInspectorNotice({
  *
  * THREE ANSWERS AND NOT ONE STRING, because the third is a different FACT and collapsing it into a
  * sentence would put a lie in the same slot as a value. `media` is not "this field is empty" and it
- * is not "here is the photograph": it is "this field holds N files and this read does not carry
- * them", which the screen must say in its own words beside the field's label.
+ * is not "here is the photograph": it is "this field holds N files", which the screen resolves
+ * against the workshop's own files (its surface's media read) and draws beside the field's label.
  */
 export type InspectionFieldReading =
   | { kind: "text"; text: string }
@@ -601,10 +663,10 @@ function optionLabel(registry: DwRegistry, field: DwField, token: string): strin
  *     one of those reaches a route an inspector is refused, and the brief for this surface is that
  *     it must never draw a control the API answers 404 to. A disabled upload button is still an
  *     upload button on a screen whose entire premise is that nothing here can be written.
- *  2. **It cannot resolve the media anyway.** `GET /media/{id}` is entitled per file and an
- *     inspector holds no upload, no grant and no viewer row, so every image tile would render its
- *     "could not be read" state — which is indistinguishable from a photograph that failed to load,
- *     and is not what happened. See `kind: "media"`, which says the true thing instead.
+ *  2. **It resolves media through the wrong door.** `GET /media/{id}` is entitled per file and an
+ *     inspector holds no upload, no grant and no viewer row there, so every image tile would render
+ *     its "could not be read" state. A reader's files come from its own surface's media read instead
+ *     — see `kind: "media"` and `components/designworkshop/ReaderWorkshopMedia.tsx`.
  *  3. **It needs `onChange`, `onPatch` and a workshop it may write to.** Faking those is how a
  *     read-only surface acquires a write path by accident.
  *

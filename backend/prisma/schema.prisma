@@ -69,6 +69,10 @@ enum UserRole {
 enum AuthProvider {
   LOCAL
   GOOGLE
+  /// Microsoft and Yahoo sign-in (app/services/oidc_sign_in.py). Recorded by the first provider
+  /// that signed in to an account with no password; see `auth._sign_in_verified_mailbox`.
+  MICROSOFT
+  YAHOO
 }
 
 enum RecordStatus {
@@ -493,6 +497,11 @@ model User {
   annualPlanEntriesPromoted  AnnualPlanEntry[]           @relation("AnnualPlanEntryPromotedBy")
   annualPlanEntriesCreated   AnnualPlanEntry[]           @relation("AnnualPlanEntryCreatedBy")
   annualPlanEntriesUpdated   AnnualPlanEntry[]           @relation("AnnualPlanEntryUpdatedBy")
+  /// The states whose annual-plan rows this REGIONAL_DIRECTOR may read and correct, and the
+  /// assignments this account made as a Ministry Admin. Cascade on the first (a scope is not
+  /// authorship) and SetNull on the second. See RegionalDirectorState.
+  regionalDirectorStates        RegionalDirectorState[] @relation("RegionalDirectorStateUser")
+  regionalDirectorStatesAssigned RegionalDirectorState[] @relation("RegionalDirectorStateAssignedBy")
 
   @@index([role])
 }
@@ -6547,6 +6556,33 @@ model WorkshopTypeOption {
   /// for the same reason — every read of this table filters `isActive` and sorts by `sortOrder`, so
   /// a bare index on either column alone would leave Postgres doing the other half by hand.
   @@index([isActive, sortOrder])
+}
+
+/// WHICH STATES A REGIONAL DIRECTOR ANSWERS FOR, AND THEREFORE WHICH ANNUAL-PLAN ROWS THEY MAY
+/// CORRECT (2026-10-10).
+///
+/// The annual plan is the Ministry Admin's (`annual_plan.can_manage_annual_plan`, a rank floor at
+/// 48). A Regional Director (45) is below it, and the reason it never let them correct their own
+/// state's rows was that nothing recorded which state was theirs: a promotion would have handed
+/// them the whole national directory. This table is the SCOPE that rank could not express. One row
+/// per (director, state); `state` is stored as `services/address.normalize_state` spells it, which
+/// is the spelling `AnnualPlanEntry.state` is stored under, so the narrowing is an equality test.
+///
+/// Written only by a Ministry Admin and above (`PUT /api/annual-plan/regional-directors/{id}`), and
+/// only for an account that IS a Regional Director. A director with no row here reads and corrects
+/// nothing — the scope is granted, never inferred.
+model RegionalDirectorState {
+  userId       String
+  state        String
+  assignedById String?
+  createdAt    DateTime @default(now())
+
+  user       User  @relation("RegionalDirectorStateUser", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy User? @relation("RegionalDirectorStateAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@id([userId, state])
+  @@index([state])
+  @@index([assignedById])
 }
 
 // ======================================================================================

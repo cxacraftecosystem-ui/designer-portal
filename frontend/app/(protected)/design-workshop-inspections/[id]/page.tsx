@@ -49,17 +49,15 @@
  * `richSummary`, `referenceDisplayHint`, `formFields`, `rowTitle`) plus the
  * provenance component, so nothing about what a value MEANS is decided twice.
  *
- * ── THE TWO THINGS THIS READ CANNOT SHOW, BOTH SAID ON SCREEN ─────────────────────────────────
+ * ── THE WORKSHOP'S FILES AND ITS OWN QUESTIONS ARE SHOWN, READ-ONLY (sweep item F5, 2026-10-10) ──
  *
- * 1. **Photographs, recordings and attachments.** The payload carries no `transcripts` key and the
- *    media rows are gated per file; an inspector holds no upload, no `DataAccessGrant` and no viewer
- *    row. Whether an inspector SHOULD see them is an owner's decision that has not been made, so the
- *    honest rendering is a counted sentence — "3 photographs are recorded here; an inspection read
- *    does not carry them" — and never an empty gallery.
- * 2. **The workshop's own designer-defined questions.** Their ANSWERS are in the payload's `custom`
- *    bucket; the questions they answer are read through `GET /design-workshops/{id}/custom-sections`,
- *    which is behind `load_workshop_or_404` and therefore a 404 here. Printing the raw keys and
- *    calling them labels would be worse than counting them and saying why.
+ * 1. **Photographs, recordings and attachments** come from this surface's own second read,
+ *    `GET /design-workshop-inspections/{id}/media`, behind the same loader as the workshop. Every link
+ *    on it is a short-lived signature; `ReaderWorkshopMedia` draws them and offers no control that
+ *    writes. A media field's ids are resolved against that list, and an id filed with another record
+ *    is said in words rather than drawn as an empty frame.
+ * 2. **The workshop's own questions** travel on the workshop read as `customSections`, so each stage's
+ *    `custom` answers are printed beside their wording and their author.
  *
  * ── THE REGISTRY IS THE LIST OF STAGES, NOT THE PAYLOAD ───────────────────────────────────────
  *
@@ -75,10 +73,18 @@ import { FileSearch, Loader2, Lock } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
+import {
+  ReaderCustomAnswers,
+  ReaderFilesPanel,
+  ReaderMediaProvider,
+  ReaderMediaValue,
+  useReaderMedia
+} from "@/components/designworkshop/ReaderWorkshopMedia";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ApiError } from "@/lib/api";
+import type { DwCustomDefinition } from "@/lib/customSections";
 import {
   getWorkshopUnderInspection,
   inspectionFieldReading,
@@ -162,12 +168,8 @@ function ReadField({
     <div className="grid gap-0.5 py-2">
       <span className="field-label">{field.label}</span>
       {reading.kind === "media" ? (
-        // COUNTED AND EXPLAINED, never an empty frame. "No photograph" and "a photograph this read
-        // does not carry" are different facts and the reader has no other way to tell them apart.
-        <span className="text-sm text-ink-500">
-          {reading.count} file{reading.count === 1 ? "" : "s"} recorded here. An inspection read does not carry
-          photographs, recordings or attachments.
-        </span>
+        // THE FILES THEMSELVES, read-only and resolved against this workshop's own files.
+        <ReaderMediaValue value={row[field.key]} />
       ) : (
         <span className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{reading.text}</span>
       )}
@@ -228,11 +230,14 @@ function ReadStage({
   registry,
   stage,
   data,
-  score
+  score,
+  definition
 }: {
   registry: DwRegistry;
   stage: DwStage;
   data: DwStageData | undefined;
+  /** The workshop's own questions, off the same read — see `customSections`. */
+  definition: DwCustomDefinition | null | undefined;
   /**
    * THIS STAGE'S SCORE, PASSED IN FROM THE WORKSHOP-LEVEL MAP AND NOT READ OFF `data`.
    *
@@ -247,13 +252,7 @@ function ReadStage({
   const singleton: DwEntryData = data?.singleton ?? {};
   const provenance = data?.provenance;
 
-  /**
-   * The answers to this workshop's own questions, counted and no more.
-   *
-   * The keys are the designer's field ids and the labels live behind a route this account is
-   * refused, so printing the keys would put `q_7f3c: "yes"` in front of an inspector and call it an
-   * answer. Counting the FILLED ones is the honest maximum.
-   */
+  /** Whether this stage holds any answer to the workshop's own questions — printed below with them. */
   const customAnswers = Object.entries(data?.custom ?? {}).filter(([, value]) => isFilled(value)).length;
 
   const collections = stage.entities.filter((entity) => entity.cardinality === "COLLECTION");
@@ -341,12 +340,12 @@ function ReadStage({
           })}
 
           {customAnswers > 0 ? (
-            <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-              {customAnswers} answer{customAnswers === 1 ? "" : "s"} to question{customAnswers === 1 ? "" : "s"} this
-              workshop&apos;s designer added to this stage {customAnswers === 1 ? "is" : "are"} recorded. The questions
-              themselves are read through a route an inspection does not reach, so the answers are not shown without
-              them.
-            </p>
+            <ReaderCustomAnswers
+              definition={definition}
+              stageKey={stage.key}
+              stamps={provenance?.custom}
+              values={data?.custom}
+            />
           ) : null}
         </div>
       )}
@@ -597,6 +596,8 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
+  /* The workshop's files, asked for once the workshop itself has been read. */
+  const media = useReaderMedia("inspection", id, detail !== null);
 
   useEffect(() => {
     if (loading || !canInspectDesignWorkshops(user)) return;
@@ -724,7 +725,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
         <p className="mb-4 rounded-md border border-purple-300 bg-purple-50 px-3 py-2 text-xs leading-5 text-ink-700">
           <span className="font-semibold text-purple-700">Read-only.</span> This is an inspection: every stage below is
           shown as the designers recorded it, with who wrote each field, and nothing here can be edited, submitted or
-          deleted. Photographs, recordings and attachments are not carried on an inspection read.
+          deleted — the photographs, recordings and attachments included.
         </p>
       ) : null}
 
@@ -783,22 +784,27 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
             workshopId={id}
           />
 
+          <ReaderFilesPanel failure={media.failure} list={media.list} onRetry={media.retry} state={media.state} />
+
           {registry === null ? (
             registryError ? null : (
               <section className="panel p-4 text-sm text-ink-700">Loading the field list…</section>
             )
           ) : (
-            <div className="grid gap-4">
-              {stages.map((stage) => (
-                <ReadStage
-                  data={detail.stages?.[stage.key]}
-                  key={stage.key}
-                  registry={registry}
-                  score={detail.completeness?.[stage.key]}
-                  stage={stage}
-                />
-              ))}
-            </div>
+            <ReaderMediaProvider list={media.list} state={media.state}>
+              <div className="grid gap-4">
+                {stages.map((stage) => (
+                  <ReadStage
+                    data={detail.stages?.[stage.key]}
+                    definition={detail.customSections}
+                    key={stage.key}
+                    registry={registry}
+                    score={detail.completeness?.[stage.key]}
+                    stage={stage}
+                  />
+                ))}
+              </div>
+            </ReaderMediaProvider>
           )}
         </>
       ) : null}

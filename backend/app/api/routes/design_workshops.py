@@ -3367,6 +3367,69 @@ async def list_ai_layers(
     }
 
 
+@router.get("/{workshop_id}/ai-layers/decisions")
+async def list_ai_layer_decisions(
+    workshop_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """WHO ACCEPTED, WITHDREW OR DECLINED WHICH LAYER, AND WHEN — the workshop's whole history.
+
+    Newest first. Every ``DwAiLayerDecision`` row of this workshop's layers, plus one entry per
+    declined layer read off the layer's own ``deletedAt``/``deletedById`` (a decline is the soft
+    delete, not a decision row — see ``ai_layers.DECLINED``). Each entry names its layer's kind and
+    the account that acted, by name where the account still exists.
+
+    THE SAME GATE AS THE LIST: anybody who can read the workshop. The history is provenance —
+    who put their name to model output, who took it off, who said no — which is what the list
+    already shows per row; it carries no layer TEXT, so the per-recording media gate the text
+    answers to has nothing to withhold here. Declared ABOVE ``/{layer_id}`` because a path parameter
+    would otherwise swallow ``decisions``.
+    """
+    await load_workshop_or_404(workshop_id, current_user)
+    layers = await ai_layers.workshop_layers(workshop_id, include_deleted=True)
+    decisions = await ai_layers.decisions_for_layers([row.id for row in layers])
+    items = await ai_layers.with_actor_names(ai_layers.history_entries(layers, decisions))
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/{workshop_id}/ai-layers/{layer_id}")
+async def read_ai_layer(
+    workshop_id: str, layer_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """ONE layer, with its full text, and its whole decision history.
+
+    The read a person needs before they put their name to one layer, without carrying the text of
+    every other layer in the workshop (``includeText`` on the list is all-or-nothing). A declined
+    layer is readable too — its history is the record that somebody said no.
+
+    THE TEXT ANSWERS TO THE SAME PER-RECORDING GATE AS THE LIST: the chain is walked over the whole
+    workshop (``chain_roots``, never a narrowed read — see ``list_ai_layers``), and a layer standing
+    on a recording this account may not read comes back ``textWithheld`` with no text, preview,
+    payload or count. 404 for an id that is not one of THIS workshop's layers, whichever workshop it
+    belongs to.
+    """
+    await load_workshop_or_404(workshop_id, current_user)
+    everything = await ai_layers.workshop_layers(workshop_id, include_deleted=True)
+    row = next((layer for layer in everything if layer.id == layer_id), None)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="That layer is not one of this workshop's. Reload the workshop's layers.",
+        )
+    root = ai_layers.chain_roots(everything).get(row.id)
+    wanted = (
+        {root.media_id}
+        if root is not None and root.kind is ai_layers.RootKind.MEDIA and root.media_id
+        else set()
+    )
+    withheld = _root_withheld(root, await _readable_media_ids(wanted, current_user))
+    decisions = await ai_layers.decisions_for_layers([row.id])
+    history = await ai_layers.with_actor_names(ai_layers.history_entries([row], decisions))
+    return {
+        "layer": ai_layers.layer_payload(row, include_text=True, text_withheld=withheld),
+        "decisions": history,
+    }
+
+
 def _root_withheld(root: Any, readable: set[str]) -> bool:
     """Whether this caller must not see a layer's content, given what its chain stands on.
 

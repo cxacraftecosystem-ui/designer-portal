@@ -163,7 +163,10 @@ permission error:
    `401 Invalid email or password` for a wrong credential. **The `MASTER_ADMIN` exemption is what
    makes gating everybody safe**: it lives in the gate, not in the table, so there is always one
    account that can reach the roster and let people back in. Google sign-in is gated too; an address
-   that is not admitted becomes a pending request instead of an account.
+   that is not admitted becomes a pending request instead of an account. So are Microsoft and Yahoo
+   sign-in (2026-10-10), by the same function and with the same answers, once the provider has
+   verified the address ([SECURITY.md](SECURITY.md) §3.3A); a new account they create starts at the
+   tier the allow-list row names, exactly as a Google one does.
 2. **The designer empanelment** (`backend/app/services/designers.py` → `roster_allows`) still gates
    `DESIGNER` accounts only, and still answers in its own words. `User.role = DESIGNER` is not by
    itself what admits a designer. Admins are deliberately not empanelment-gated — an admin
@@ -414,7 +417,17 @@ any spelling of it, as the lead or as a co-designer, is a **422** (`SANCTION_MAS
 or not the account exists; a spreadsheet import reports such a row as refused and never offers it for
 confirmation; and an older order cannot re-issue a first-password link for an account on it. Until
 then an order recorded before the master's own row existed created the account there and handed the
-recording officer its first link. **And the master's
+recording officer its first link. **Any designer an order names may have their first link re-issued
+from the register (since 2026-10-10)** — `POST /api/sanction-orders/{id}/credential-link?designerUserId=`,
+the lead when the id is left out — and every refusal is asked of that person: the order must have
+created their account (their own `SanctionOrderDesigner.accountCreated`), they must rank below the
+officer re-issuing, and the master's mailbox and Google sign-in are refused; somebody the order does
+not name is a 404. The gate is the register's (`require_sanction_recorder`, Assistant Director and
+above), the officer is recorded as the issuer and re-checked at redemption (`issuer_still_manages`),
+and a promotion withdraws the link as it withdraws any other. **A spreadsheet import issues the same
+first links** — the INVITE `create_from_sanction` mints per account it creates — and hands them back
+per order (`credentialLinksIssued`). Pinned by `backend/tests/test_sanction_reissue_codesigner.py`.
+**And the master's
 Google sign-in promotes only an account that is already a master admin or has no password**: any other
 account at the configured address is answered 409, unchanged, until the operator runs
 `scripts/seed_admin.py` ([SECURITY.md](SECURITY.md) §3.3, [DOCKER.md](DOCKER.md)).
@@ -565,6 +578,9 @@ this table is that "grep `deps.py`" is no longer a complete way to check a row.
 | **Be appointed** to a post on one workshop, by somebody else (§4.8) | the holder sets, then `design_workshop_posts`' rules | ⬜ | ⬜ | ⬜ | designer | inspector | ⬜ | designer, AD | designer, RD | **any¹⁶** | **any¹⁶** | **any¹⁶** |
 | **Read a workshop I monitor** (§4.6) | `assert_oversight_surface` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** |
 | **Read a workshop I inspect** (§4.5) | `assert_inspection_surface` | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ⬜ | ⬜ | ⬜ | **✅¹¹** | **✅¹¹** | **✅¹¹** |
+| **See and hear a workshop's files, read-only** — `GET /design-workshop-inspections/{id}/media` (§4.5) | `require_inspector` + the row (`load_inspectable_workshop_or_404`) | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ⬜ | ⬜ | ⬜ | **✅¹¹** | **✅¹¹** | **✅¹¹** |
+| **See and hear a monitored workshop's files, read-only** — `GET /design-workshop-oversight/assigned/{id}/media` (§4.6) | `require_officer` + the row (`load_overseen_workshop_or_404`) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** |
+| **List the workshops open to the pool** — `GET /design-ratings/workshops` | `can_run_design_workshops` (404 otherwise) | ⬜ | ⬜ | ⬜ | ✅ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **File a correction suggestion / send a report back** (§4.5) | `require_inspector` + the row | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹¹** | ⬜ | ⬜ | ⬜ | **✅¹¹** | **✅¹¹** | **✅¹¹** |
 | **Upload a workshop's artisan list**, or unlink an artisan from it | `assert_may_assign_oversight`, then `refuse_a_holders_write` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **⬜⁹** | **⬜⁹** | **✅¹⁶** | ✅¹⁶ | ✅¹⁶ |
 | Assign **tasks** to other users | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
@@ -1191,7 +1207,7 @@ own table, and is granted by a different person:
 | 2 | `DataAccessGrant` | one **account's** records at large | the record **owner**, not an admin | §4.2 |
 | 3 | `DesignWorkshopViewer` | one **design workshop**, read + stage-writes | an admin, or a Ministry Admin through the oversight screen's designer doors (§2's ¹⁴) — never the creator, never the grantee themselves, and never to the workshop's inspector or directors (§4.8) | §4.4 |
 | 4 | `DesignWorkshopAccessRequest` | nothing on its own — it is the **asking** half of 3, a separate table with its own `DwAccessRequestStatus` and `DwAccessRequestSource` enums (`backend/prisma/schema.prisma`) | the requester raises it, an admin decides it | **not written up here** — §4.4.3 only says why the lifecycle is not on the grant table itself |
-| 5 | `DesignWorkshopInspector` | one **design workshop**, **read-only**, for the `INSPECTOR` tier or an administrator appointed to inspect it — the stage data and nothing attached to it | a Ministry Admin, an admin or the master admin — never the appointee themselves and never to anybody who authored the workshop | **§4.5** |
+| 5 | `DesignWorkshopInspector` | one **design workshop**, **read-only**, for the `INSPECTOR` tier or an administrator appointed to inspect it — the stage data, its own questions, and its files to see and hear (never to change) | a Ministry Admin, an admin or the master admin — never the appointee themselves and never to anybody who authored the workshop | **§4.5** |
 | 6 | `DesignWorkshopOversight` | one **design workshop**, **read-only**, for its Assistant Director and its Regional Director — the two director tiers, or an administrator appointed to the post | the same three tiers, on the same terms | **§4.6** |
 
 §4.3 is not one of them: it is the audit trail that records what they permitted. Row 4 is the one
@@ -1314,7 +1330,7 @@ fortnight's fieldwork with them, with no handover short of an admin editing the 
 | Appearing in this account's workshop **list**, via `visible_to_clause` | Any of the six columns in §1.1, or any rank |
 | Reading a questionnaire attached to that workshop — see §4.4.4 | An **unattached** questionnaire, which stays its owner's alone |
 | **Recording the artisan's Tier-3 dictation consent** — `POST …/{id}/dictation-consent`, gated `_require_designer` + `load_workshop_or_404(for_edit=True)` | — |
-| **Registering, accepting, unaccepting and deleting AI layers** — the five `…/{id}/ai-layers` routes, same pair of gates | Reading the **text** of a layer standing on a recording that is **not this workshop's** — one tagged to another workshop, or to none at all. Still gated per media file by `owned_or_granted_where(user, owner_field="uploadedById")`. Corrected 2026-08-27; the note below says what this cell used to claim |
+| **Registering, accepting, unaccepting and deleting AI layers** — the five `…/{id}/ai-layers` routes, same pair of gates. Reading ONE layer (`GET …/ai-layers/{layer_id}`, its text withheld exactly as the list withholds it) and the workshop's decision history (`GET …/ai-layers/decisions`, who accepted, withdrew or declined which layer and when) are reads on the workshop's own gate, since 2026-10-10 | Reading the **text** of a layer standing on a recording that is **not this workshop's** — one tagged to another workshop, or to none at all. Still gated per media file by `owned_or_granted_where(user, owner_field="uploadedById")`. Corrected 2026-08-27; the note below says what this cell used to claim |
 | **Rewriting the workshop's custom-section definition** — `PUT …/{id}/custom-sections`, same pair of gates | — |
 | **This workshop's own media** — the bytes, the `url` and the transcript of every `MediaFile` whose `linkedRecordType` is `designWorkshop` and whose `linkedRecordId` is **this** workshop, on every surface that resolves a viewer — see the note below for the two media-queue routes that resolve none, and so serve the row and not the bytes to anybody at all | That **uploader's** other files. Taking one account's data at large is a `DataAccessGrant` from that account, which a workshop grant is not and never becomes |
 
@@ -1694,7 +1710,8 @@ right-hand column is narrower than a reader expects, and the narrowness is the d
 | **Recording dictation consent** | ✅ | ⬜ |
 | **AI layers** — register, accept, unaccept, delete; all five verbs | ✅ | ⬜ |
 | **Rewriting the custom-section definition** | ✅ | ⬜ |
-| **This workshop's media** — recordings, photographs, transcripts | ✅ | ⬜ — see below |
+| **This workshop's media** — recordings, photographs, transcripts | ✅ | ✅ **read-only, its own read** — `GET …/{id}/media`, signed links; see below |
+| **Reading the workshop's own custom questions** | ✅ | ✅ on the read, as `customSections` |
 | **Questionnaire responses** | ✅ (§4.4.4) | ⬜ — `_visible_questionnaire_where` writes `viewers: {some: {userId}}` by hand |
 | Deleting the workshop, or re-granting it to anyone | ⬜ | ⬜ |
 
@@ -1707,10 +1724,17 @@ takes away for as long as it is held (§4.8).
 `records._design_workshop_media_branches` is keyed on `DesignWorkshopViewer` and `createdById`
 through the viewer module's `visible_to_clause` (§4.4.1 records why that arm exists). An inspector
 holds neither, and `owned_or_granted_where` gives them nothing either — its free pass starts at
-`has_rank(user, "PROFESSOR")`, rank 40, above this tier. **Whether an inspector should see a
-workshop's photographs is an owner's decision that has not been made**, and it is unmade on purpose
-rather than by accident: it is a product question, and the structure was built so that answering it
-has to be a deliberate edit.
+`has_rank(user, "PROFESSOR")`, rank 40, above this tier. **None of that changed when the owner ruled,
+on 2026-10-10 (sweep item F5), that an inspector sees the workshop's photographs, recordings and
+attachments** — the ruling was answered with a deliberate edit of its own rather than by widening a
+predicate. `GET /api/design-workshop-inspections/{id}/media` loads the workshop through
+`load_inspectable_workshop_or_404` and then `services/design_workshop_reader_media.py` encodes the
+files tagged to THAT workshop through `records.public_encode` with the uploader half empty and the
+workshop half naming that one workshop, and `signed_only=True`: every URL that survives is a
+short-lived signature even while `MEDIA_PRESIGNED_READS` is off, `objectKey` and `publicUrl` never
+travel, and a file that cannot be signed travels with no URL at all. `GET /media`, `/search`,
+`/export` and `/data` still give an inspector no URL, and every media write door still refuses a post
+holder (§4.8). Pinned per role, both ways, by `backend/tests/test_reader_media_and_pool_directory.py`.
 
 **THE ASSIGNERS ONLY, and the reason is stronger than §4.4.2's.** That section's argument is handover —
 an owner who picks their own readers freezes access the day they leave. Here the argument is the point
@@ -1893,7 +1917,8 @@ row which slots it fits.
 
 **What a row confers, and it is the whole list.** The account may READ the workshop through
 `GET /api/design-workshop-oversight/assigned/{id}` — every stage, every entity, the completeness
-scores, and the per-field provenance names — and it appears in their own list at
+scores, the per-field provenance names and the workshop's own questions — sees and hears its files
+through `GET /api/design-workshop-oversight/assigned/{id}/media`, and it appears in their own list at
 `GET /api/design-workshop-oversight/assigned`. That is all. For a holder whose role could otherwise
 write the workshop — an administrator — the row also TAKES AWAY writing its content and its designer
 team while it is held (§4.8).
@@ -1901,12 +1926,12 @@ There is no approval route for either post, and none is planned: the posts are v
 
 **What it deliberately does not confer.** No stage write. No report generation. No dictation consent.
 No AI-layer verb. No delete and no restore. No re-granting — an officer cannot put another officer on
-anything. **No media**: `transcripts` is absent from the read, and the photographs, recordings and
-attachments are counted on screen and not carried, because the media predicates are keyed on
-`DesignWorkshopViewer` and `createdById` and an officer holds neither. Whether an officer SHOULD see
-them is an owner's decision that has not been made; today the answer is no, stated in one place,
-rather than yes by inheritance from a predicate written for co-designers — the identical
-non-decision §4.5 records one scope over.
+anything. **No media predicate**: `transcripts` is absent from the read, because the media
+predicates are keyed on `DesignWorkshopViewer` and `createdById` and an officer holds neither. **The
+files themselves are a read of their own since 2026-10-10** (owner's ruling, sweep item F5):
+`GET /api/design-workshop-oversight/assigned/{id}/media`, through `load_overseen_workshop_or_404` and
+the same signed, read-only encoder §4.5 describes — the workshop's own files only, short-lived links
+only, nothing that writes. The workshop's own custom questions travel on the read as `customSections`.
 
 None of that is enforced by a check anybody could forget. It is enforced by the table not being
 consulted from any of those paths, and by `load_overseen_workshop_or_404` having **no `for_edit`
@@ -2478,7 +2503,7 @@ are one-liners spread with `RECORD_CREATOR_GUARD` and that pattern does not see 
 | `/admin/designers` | `canManageDesignerRoster` | `require_designer_roster_manager` |
 | `/admin/access` | `canManageAccessRoster` — **admin and above**, deliberately not master-admin-only: the master-admin exemption in the sign-in gate is the break-glass, and a queue only one account can clear would make that exemption a single point of failure | `require_access_manager` |
 | `/ministry-dashboard` | `canSeeMinistryDashboard` — a **set**, {ASSISTANT_DIRECTOR, REGIONAL_DIRECTOR, MINISTRY_ADMIN, MASTER_ADMIN}, and no rank floor expresses it: the tightest floor that admits Assistant Director (42) also admits **Admin (50)**, which is deliberately out, and a floor at Ministry Admin (48) loses the two tiers who actually supervise the workshops this page is about. The set has a **hole at 50 with Master Admin (60) above it**, and every threshold instinct closes that hole — which is why this row's refusal is **not monotonic in rank** either — an Admin (50) is refused a page an Assistant Director (42) may open, the same shape as the `/officers` row further down, and §2's ladder gives the wrong answer for it every time. An **ADMIN is refused**, and not for want of capability: an admin reads more of this installation than any ministry post does. It is that they already have this screen under another name — `/admin/analytics` is the admin's whole-estate view and it is reached from a settings hub the three ministry posts cannot open at all, so admitting an admin here would be a second whole-estate door for the one tier that already has one. **It is deliberately NOT `canSeeMinistryDesk`**, although that literal has the identical four members today: the desk is a dashboard CARD'S AUDIENCE, and its own docstring promises in as many words that widening it "widens no capability at all" and that it is mirrored nowhere on the server. Both promises stop being true the moment a card audience is used as a `ROUTE_GUARDS.can` — a later editor widening the card, an edit its comment says is free, would silently open the page that holds the whole national programme. Two literals, two jobs, and the duplication is the point rather than something to tidy. The row also carries `ministry: true`, making this the **fifth ministry surface**; the orange accent follows from that one flag, with no CSS and no second list of paths to keep in step. Read is the only gate there is — nothing on this page writes — and WHAT THE PAGE SHOWS is a second question the server answers separately: `scope_clause` hands Ministry Admin and Master Admin the whole estate and narrows Assistant Director and Regional Director through the same `oversight_by_clause` that already scopes `/officers/monitored`, and the page prints the server's own `scopeLabel` sentence rather than rendering "every workshop on the platform" over an officer's four | `require_ministry_dashboard_reader` (declared in `app/api/routes/ministry_dashboard.py` over `deps.can_see_ministry_dashboard` and `deps.MINISTRY_DASHBOARD_ROLES` — the same split as the `/annual-plan` row below, where the predicate is in `deps.py` and the dependency that raises is not). It is the gate on all six reads under the prefix — `GET /api/ministry-dashboard/design-workshops`, `GET /api/ministry-dashboard/workshops`, `GET /api/ministry-dashboard/summary`, `GET /api/ministry-dashboard/entitlements` and the two CSV exports beside them — so a seventh route added to that file is gated by having been put there. `MINISTRY_DASHBOARD_REFUSAL` is the 403 detail and is shared byte-for-byte with this row's own `message`, held so by `backend/tests/test_ministry_dashboard_gate.py` the way `test_sanction_order_gate.py` holds its own |
-| `/annual-plan` | `canManageAnnualPlan` — a **rank floor at Ministry Admin (48)**, deliberately not `isAdmin`, which is set membership `{ADMIN, MASTER_ADMIN}` and would refuse the very tier the page exists for. That is also why the route is TOP-LEVEL and not nested under `/admin`: a rule WIDER than `/admin` sitting beneath it is refused twice over, once by the longest-match guard and once by the hub page's own `isAdmin` check. Regional Director (45) and Assistant Director (42) are below the floor because the annual plan is a national instrument and this table carries no per-region column an edit could be narrowed to — regional editing is a scope table, not a rank change. Read is gated with write: the plan is a list of named places and dates the ministry has not announced yet | `require_annual_plan_manager` (declared in `app/api/routes/annual_plan.py` over `annual_plan.can_manage_annual_plan`, not in `deps.py` — see §"How this document is kept true") |
+| `/annual-plan` | `canManageAnnualPlan` — a **rank floor at Ministry Admin (48)**, deliberately not `isAdmin`, which is set membership `{ADMIN, MASTER_ADMIN}` and would refuse the very tier the page exists for. That is also why the route is TOP-LEVEL and not nested under `/admin`: a rule WIDER than `/admin` sitting beneath it is refused twice over, once by the longest-match guard and once by the hub page's own `isAdmin` check. Assistant Director (42) is refused. **A Regional Director (45) is admitted through `canReadAnnualPlan` since 2026-10-10, narrowed to a scope**: the states a Ministry Admin and above assigned them in `RegionalDirectorState` (`GET`/`PUT /api/annual-plan/regional-directors`, manager-only, and only for a Regional Director). They reach the year list, the list, one row and the remarks correction (`PATCH /annual-plan/{id}`), each narrowed to those states — a row in another state is the same 404 "Record not found" as no row — and with no state assigned they read an empty plan. Upload, export, the pro-forma, promote, withdraw, reinstate and the assignment stay the manager's, and the page hides them from a Regional Director. Read is gated with write for everybody else: the plan is a list of named places and dates the ministry has not announced yet | `require_annual_plan_reader` (`annual_plan.can_read_annual_plan`) on `GET /annual-plan`, `GET /annual-plan/years`, `GET` and `PATCH /annual-plan/{id}`, each narrowed by `annual_plan.plan_scope`; `require_annual_plan_manager` (`annual_plan.can_manage_annual_plan`) on the other eight arms — both declared in `app/api/routes/annual_plan.py`, not in `deps.py` — see §"How this document is kept true" |
 | `/design-workshops/:id/provenance` | `isAdmin` — the per-field authorship on each stage stays open to every designer on the workshop; this is the CANONICAL COMPARISON, which crosses into the shared record tables and reports one account's data beside another's | `require_admin` (`GET /design-workshops/{id}/provenance`) |
 | `/settings/api-keys` | `isAdmin` (key **values** are master-admin inside the page) | `require_admin` / `require_master_admin` |
 | `/settings/tasks` | `canAssignTasks` | `require_admin` |
@@ -2648,7 +2673,7 @@ mechanical standing behind it.
 | The **media** half of a grant (§4.4.1's `MediaFile` row, added 2026-08-27) | `_design_workshop_media_ids` in `backend/app/services/records.py`, which is deliberately the ONE spelling of "the design workshops this account may open": the download filter (`_design_workshop_media_branches`) and the `url` gate (`media_url_scope`) both read it, and the defect that produced this row was those two answering differently. `backend/tests/test_media_entitlement.py` asserts both directions — a grantee is shown this workshop's recordings, a designer with no grant is refused the very same file. The day those two gates stop sharing that helper, this row and §4.4.1 are the first things to distrust |
 | The questionnaire visibility that follows (§4.4.4) | `_works_on_this_questionnaires_workshop` and `_visible_questionnaire_where` in `backend/app/api/routes/questionnaire_forms.py`. The three boundaries are each pinned by a test; the `/options` asymmetry is not, and is the row of §4.4.4 most likely to change |
 | The offline speech-model download row | `_require_entitlement` in `backend/app/api/routes/asr_models.py`, and `backend/tests/test_asr_model_download.py`, which parametrises every role on the ladder and asserts PROFESSOR is **refused** (`INSPECTOR` is refused by the same set, and for the same reason) on the manifest, the bytes and the HEAD. A separate test in that file reads the route's own import lines and asserts the dictation cap and consent gate are absent, which is the half of the rule a role matrix cannot express |
-| The annual-plan gate (§5's `/annual-plan` row) | `backend/tests/test_annual_plan_gate.py`, added 2026-09-13. It parametrises **every tier below 48 out of `ROLE_RANK` itself**, so a tier added later is covered without anybody remembering; asserts that `can_manage_annual_plan` admits a MINISTRY_ADMIN whom `deps.is_admin` refuses — the exact confusion a "simplification" to `require_admin` would introduce; and holds the refusal sentence to one short line naming the tier. `backend/tests/test_annual_plan_routes.py` asserts the other half: that **all ten** arms of `/api/annual-plan` carry the dependency, the GETs included. **The predicate does not live in `deps.py`.** `can_manage_annual_plan` and `ANNUAL_PLAN_REFUSAL` are in `app/services/annual_plan.py` and the dependency is declared in `app/api/routes/annual_plan.py`, for the same reason `sanction_orders.can_record_sanction_orders` is where it is: `deps.py` was owned by another change in flight when this landed. Moving both into `deps.py` is a welcome follow-up, and `test_annual_plan_gate.py`'s last test is the marker that the position is known and deliberate — it asserts `deps` does NOT carry the name, so the move has to delete it. |
+| The annual-plan gate (§5's `/annual-plan` row) | `backend/tests/test_annual_plan_gate.py`, added 2026-09-13. It parametrises **every tier below 48 out of `ROLE_RANK` itself**, so a tier added later is covered without anybody remembering; asserts that `can_manage_annual_plan` admits a MINISTRY_ADMIN whom `deps.is_admin` refuses — the exact confusion a "simplification" to `require_admin` would introduce; and holds the refusal sentence to one short line naming the tier. `backend/tests/test_annual_plan_routes.py` asserts the other half: that **all twelve** arms of `/api/annual-plan` carry a gate, the GETs included — the four reader arms `require_annual_plan_reader` and each asking `plan_scope`, the other eight `require_annual_plan_manager` — and `backend/tests/test_annual_plan_regional_scope.py` asks every arm per role (a Regional Director of the row's state and of another, one with no state, an Assistant Director, a Designer, a Ministry Admin, an Admin). **The predicate does not live in `deps.py`.** `can_manage_annual_plan` and `ANNUAL_PLAN_REFUSAL` are in `app/services/annual_plan.py` and the dependency is declared in `app/api/routes/annual_plan.py`, for the same reason `sanction_orders.can_record_sanction_orders` is where it is: `deps.py` was owned by another change in flight when this landed. Moving both into `deps.py` is a welcome follow-up, and `test_annual_plan_gate.py`'s last test is the marker that the position is known and deliberate — it asserts `deps` does NOT carry the name, so the move has to delete it. |
 | The route-guard table (§5) | `docs/tools/check-docs.mjs` **fails** when the `path` values in `ROUTE_GUARDS` (`frontend/lib/permissions.ts`) and the routes in §5's table disagree, in either direction. This used to read "diff it against the table" — a human instruction, and the table sat at 7 of 14 rules until an audit counted them. The gate NAMES in the middle column are still a human read; only the completeness of the route list is mechanical. |
 
 **Review triggers** — this document needs a human read whenever any of these change:

@@ -97,7 +97,7 @@ const APP_SHELL = read("components", "AppShell.tsx");
 /** `/login`'s password submit, from its declaration to the next function on the page. */
 const SUBMIT = (() => {
   const from = LOGIN.indexOf("async function submit(");
-  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("function comingSoon(", from));
+  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("async function startOidc(", from));
 })();
 /** The Google Identity Services callback, from its opening line to the GIS button render. */
 const GIS_CALLBACK = (() => {
@@ -194,10 +194,10 @@ test("the Android handset carries the same floor and the same first clause", () 
  * ──────────────────────────────────────────────────────────────────────────── */
 
 test("both sign-in paths check the account they were handed, not the effect", () => {
-  // Regression 1. Two call sites — the password submit and the Google callback — and the effect is
-  // the belt rather than the brace.
+  // Regression 1. Three call sites — the password submit, the Google callback and the Microsoft/Yahoo
+  // completion — and the effect is the belt rather than the brace.
   const guards = LOGIN.match(/if \(mustChangePassword\(account\)\) return;/g) ?? [];
-  expect(guards.length, "the password path and the Google path").toBe(2);
+  expect(guards.length, "the password path, the Google path and the Microsoft/Yahoo path").toBe(3);
 });
 
 test("the redirect effect refuses to navigate while either gate stands", () => {
@@ -282,7 +282,7 @@ test("the gate is handed the password of the last SUCCESSFUL sign-in, never the 
   expect(LOGIN).toMatch(/const \[doorPassword, setDoorPassword\] = useState\(""\);/);
 });
 
-test("the door password is written at four moments and no others", () => {
+test("the door password is written at five moments and no others", () => {
   // Set as an attempt goes out — BEFORE the request, so the render that draws the gate already holds
   // it — and taken back when that attempt is refused.
   expect(SUBMIT, "the submit was located").toContain("await login(email, password)");
@@ -300,8 +300,12 @@ test("the door password is written at four moments and no others", () => {
   const onDone = /onDone=\{\(\) => \{[\s\S]*?\}\}/.exec(LOGIN)?.[0] ?? "";
   expect(escape).toContain('setDoorPassword("")');
   expect(onDone).toContain('setDoorPassword("")');
-  // Nothing else writes it: four empties and one set.
-  expect((LOGIN.match(/setDoorPassword\(/g) ?? []).length).toBe(5);
+  // At the top of the Microsoft/Yahoo completion too, for the Google callback's reason.
+  const oidc = LOGIN.slice(LOGIN.indexOf("const callback = oidcCallback.current;"));
+  expect(oidc.indexOf('setDoorPassword("")'), "emptied before the sign-in").toBeGreaterThan(-1);
+  expect(oidc.indexOf('setDoorPassword("")')).toBeLessThan(oidc.indexOf("loginWithOidc("));
+  // Nothing else writes it: five empties and one set.
+  expect((LOGIN.match(/setDoorPassword\(/g) ?? []).length).toBe(6);
 });
 
 test("the box is asked for when the host has none, and again after any refusal", () => {

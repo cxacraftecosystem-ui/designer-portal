@@ -488,6 +488,50 @@ lasts as long as the account's password does not change** (§3.6): it carries th
 whatever password the account held when it signed in, so a password set by any door afterwards ends
 it, and a name or avatar correction does not.
 
+### 3.3A Microsoft and Yahoo sign-in (2026-10-10)
+
+Both are OpenID Connect, driven as an **authorization code with PKCE (S256) and a nonce**, and
+**redeemed by the backend** with the client secret (`backend/app/services/oidc_sign_in.py`). Yahoo's
+token endpoint accepts only a client secret and answers no cross-origin request, so no phone and no
+browser could redeem a Yahoo code without holding a secret it must not hold; Microsoft is driven the
+same way so there is one path. Each provider is live only when its client ID and secret are both set
+(`MICROSOFT_CLIENT_ID`/`_SECRET`, `YAHOO_CLIENT_ID`/`_SECRET`); the clients draw a button only when
+their own build carries the client ID — never a disabled one.
+
+- **One redirect URI**, the web app's `/login/callback` (a route handler). A web `state` goes back to
+  `/login` with the answer in the URL **fragment**, so the code reaches no server log and no
+  `Referer`; the page removes it from the address bar before using it. A `state` starting `app.` is
+  handed to the Android app on `com.designprototype.workshop.signin://oidc/callback`, where AppAuth
+  refuses any `state` it did not send. A code intercepted on that hop is useless without the PKCE
+  verifier, which never leaves the app (or the browser tab) that started the flow.
+- **The ID token is verified even though it arrived on the TLS back channel**: signature against the
+  provider's JWKS (RS256 or ES256 only — `none` and HMAC are refused before a key is looked up), issuer
+  (Yahoo's fixed one; Microsoft's per-tenant one, bound to the token's `tid` and to `MICROSOFT_TENANT`),
+  audience (with several, `azp` must be ours), `exp`/`nbf`/`iat` with a minute of leeway, and the
+  **nonce**: the provider is sent `base64url(sha256(raw))` and the backend is sent the raw value, so a
+  token is accepted only from whoever started the flow that minted it. Keys are cached for an hour and
+  refetched for an unknown `kid` at most once a minute.
+- **The address must be verified by the provider.** Yahoo: `email_verified` true. Microsoft: a
+  personal account (tenant `9188040d-…`) carries an address Microsoft verified; a work or school
+  account's `email` is whatever its tenant says, so it counts only with the optional claim
+  `xms_edov` true — the owner must add `email` and `xms_edov` to the registration's ID token
+  (Token configuration). This is what closes the "nOAuth" takeover, where a tenant administrator sets
+  somebody else's address on an account they control. An unverified address is a 401 before admission
+  is consulted, so nothing is written.
+- **Admission and linking are Google's** (§3.3, through the one function both paths end in,
+  `auth._sign_in_verified_mailbox`): the allow-list decides before any write, the same tiers, the
+  same master-admin rules, a password account stays a password account. **One difference: no Gmail
+  spelling is folded to find an account.** That fold rests on Google running Gmail and publishing its
+  spelling rule; Microsoft and Yahoo promise nothing about other spellings of the address they
+  verified, so their sign-in finds an account at the literal address or creates one. (The allow-list
+  itself still reads a Gmail mailbox's spellings, as it does for a password sign-in.) A new account is
+  recorded with `authProvider` `MICROSOFT` or `YAHOO`; a second provider on an existing account
+  changes neither the provider nor the avatar.
+- **Logged**: the provider and a reason tag (`nonce-mismatch`, `wrong-audience`,
+  `redemption-refused` with the provider's fixed error code, …). Never a code, verifier, nonce,
+  token, secret or response body. The person reads one sentence per provider — "did not complete",
+  "was cancelled", or "has not confirmed the email address".
+
 ### 3.4 Provisioned passwords, and the forced change
 
 **WHO TYPES A PASSWORD FOR WHOM.** Password accounts are created by the account provisioners —
