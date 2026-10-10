@@ -1963,6 +1963,22 @@ interface WorkshopRepositoryApi {
     @GET("design-workshop-inspections/{id}")
     suspend fun workshopUnderInspection(@Path("id") id: String): DwInspectionDetailDto
 
+    // THE INSPECTOR'S TWO WRITES — a NOTE, never the designer's content. `require_inspector` on the
+    // server, the same door as the read above; the round is copied off the workshop there and is
+    // never sent. Two routes and not one with a flag, because only the second moves the report.
+    // `recordedAt` is the device's own moment, which is what lets a note written offline say when.
+    @POST("design-workshop-inspections/{id}/feedback")
+    suspend fun recordInspectionFeedback(
+        @Path("id") id: String,
+        @Body body: DwInspectionFeedbackBody
+    ): DwInspectionFeedbackAnswerDto
+
+    @POST("design-workshop-inspections/{id}/send-back")
+    suspend fun sendInspectionBack(
+        @Path("id") id: String,
+        @Body body: DwInspectionFeedbackBody
+    ): DwInspectionFeedbackAnswerDto
+
     // --- The DESIGNER tier: the roster that gates sign-in, and the profile a report prints ---
     //
     // Two groups of routes under one prefix, and they are gated differently on the server: the roster

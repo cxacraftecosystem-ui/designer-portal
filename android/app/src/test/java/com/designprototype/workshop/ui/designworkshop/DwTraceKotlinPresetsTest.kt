@@ -488,7 +488,7 @@ class DwTraceKotlinPresetsTest {
         assertTrue("expected a refusal", failure is IllegalArgumentException)
         val message = failure?.message.orEmpty()
         assertTrue(message, message.startsWith("There is no subject called \"carving\"."))
-        listOf("Wood carving", "Stone carving", "Metalwork").forEach {
+        listOf("Wood carving", "Stone carving").forEach {
             assertTrue("the refusal must name “$it”", message.contains(it))
         }
         assertEquals(dwTraceKotlinNoSuchSubjectSentence("carving"), message)
@@ -557,7 +557,7 @@ class DwTraceKotlinPresetsTest {
         assertEquals("pottery", Subjects.byId("  pottery  ")?.id)
         assertEquals(
             "There is no subject called \"carving\".",
-            dwTraceKotlinNoSuchSubjectSentence("  carving  ").substringBefore(" The portal's"),
+            dwTraceKotlinNoSuchSubjectSentence("  carving  ").substringBefore(" Choose"),
         )
     }
 }

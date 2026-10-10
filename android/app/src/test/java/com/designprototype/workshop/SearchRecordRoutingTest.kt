@@ -123,9 +123,9 @@ class SearchRecordRoutingTest {
     @Test
     fun `an unknown record type is refused by name rather than opened as something else`() {
         // A bucket the server grew after this APK shipped. The old mapper answered ARTISAN for it;
-        // the sentence must name the type back so a researcher can report WHICH row did nothing.
+        // the sentence must say what fixes it, in words a researcher can act on.
         val line = unroutableRecordLine("gizmo")
-        assertTrue("the refusal must name the type it refused: $line", "gizmo" in line)
+        assertTrue("the refusal must say what fixes it: $line", "Update the app" in line)
         assertTrue("and must offer the way that does work: $line", "web portal" in line)
     }
 

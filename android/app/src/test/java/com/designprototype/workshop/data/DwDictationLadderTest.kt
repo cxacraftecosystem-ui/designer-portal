@@ -361,8 +361,8 @@ class DwDictationLadderTest {
         assertTrue(withNothing.rungs.isEmpty())
         val sentence = assertSentence(withNothing.exhausted)
         assertTrue(
-            "A 503 must reach the designer as 'not configured': $sentence",
-            sentence.contains("not configured")
+            "A 503 must reach the designer as 'not set up': $sentence",
+            sentence.contains("not set up")
         )
     }
 
@@ -493,8 +493,8 @@ class DwDictationLadderTest {
         )
         assertNull("Google's engine still answers, so nothing is exhausted", plan.exhausted)
         val note = assertSentence(plan.suppressed)
-        assertTrue("It says the workshop has not gone up: $note", note.contains("not been sent to the server"))
-        assertTrue("And names the button that sends it: $note", note.contains("Send to server"))
+        assertTrue("It says the workshop has not gone up: $note", note.contains("only on this phone"))
+        assertTrue("And names the button that sends it: $note", note.contains("Upload the workshop from its card"))
         assertFalse("Nothing here is fixed by trying again: $note", note.contains("try again"))
 
         // With nothing left to hand over to, the same fact gets the exhausted sentence — and the
@@ -504,7 +504,7 @@ class DwDictationLadderTest {
         )
         assertTrue("Nothing may be left to try: $alone", alone.rungs.isEmpty())
         val sentence = assertSentence(alone.exhausted)
-        assertTrue("It names the send: $sentence", sentence.contains("Send to server"))
+        assertTrue("It names the send: $sentence", sentence.contains("upload the workshop from its card"))
         assertTrue("And the keyboard: $sentence", sentence.contains("Type the answer in"))
     }
 
@@ -528,13 +528,13 @@ class DwDictationLadderTest {
         )
         val note = assertSentence(dwDictationLadder(both).suppressed)
         assertTrue("The artisan's answer comes first: $note", note.contains("Nobody has recorded"))
-        assertFalse("One sentence, one next move: $note", note.contains("Send to server"))
+        assertFalse("One sentence, one next move: $note", note.lowercase().contains("upload the workshop"))
 
         val sentence = assertSentence(
             dwDictationLadder(both.copy(networkRecogniser = false)).exhausted
         )
         assertTrue("And the same order with nothing left: $sentence", sentence.contains("nobody has recorded"))
-        assertFalse("Still one next move: $sentence", sentence.contains("Send to server"))
+        assertFalse("Still one next move: $sentence", sentence.lowercase().contains("upload the workshop"))
     }
 
     // ---------------------------------------------------------------------------------------
@@ -581,7 +581,7 @@ class DwDictationLadderTest {
         // that means three hours or eleven — and it is the SERVER's day, not this phone's.
         listOf(known, unknown).forEach {
             assertTrue("The refusal must name when it lifts: $it", it.contains("midnight India time"))
-            assertTrue("And whose day that is: $it", it.contains("server's day"))
+            assertTrue("And that it starts again on its own: $it", it.contains("starts again after midnight"))
             assertTrue("And the move that works now: $it", it.contains("Type the answer in"))
         }
 
@@ -657,12 +657,12 @@ class DwDictationLadderTest {
             // administrator's to change — see the test above.
             if (conditions.dailyCapLimit == 0 && conditions.dailyCapSpent) return@forEach
             assertFalse(
-                "The server is fine; do not say it is not configured: $sentence",
-                sentence.contains("not configured")
+                "Transcription is fine; do not say it is not set up: $sentence",
+                sentence.contains("not set up")
             )
             assertFalse(
                 "Nobody should be sent to an administrator over a consent or an allowance: $sentence",
-                sentence.contains("whoever runs the server")
+                sentence.contains("administrator")
             )
             assertTrue("The keyboard is always the move that works: $sentence", sentence.contains("Type the answer in"))
         }
@@ -685,8 +685,8 @@ class DwDictationLadderTest {
                 ).exhausted
             )
             assertTrue(
-                "A 503 must still reach the designer as 'not configured': $sentence",
-                sentence.contains("not configured")
+                "A 503 must still reach the designer as 'not set up': $sentence",
+                sentence.contains("not set up")
             )
         }
     }
@@ -1057,9 +1057,9 @@ class DwDictationLadderTest {
             DW_DICTATION_CONSENT_REFUSED.contains("Nothing was saved")
         )
         assertTrue(
-            "The 503 must be shown as 'not configured'",
-            DW_DICTATION_NOT_CONFIGURED.contains("not configured") ||
-                DW_DICTATION_NOT_CONFIGURED.contains("no transcription service configured")
+            "The 503 must be shown as 'not set up'",
+            DW_DICTATION_NOT_CONFIGURED.contains("not set up") ||
+                DW_DICTATION_NOT_CONFIGURED.contains("Transcription is not set up")
         )
         assertTrue(
             "A throttled dictation must not promise the queue's automatic retry it will never get",
@@ -1081,8 +1081,8 @@ class DwDictationLadderTest {
     fun `both 503 sentences name the configuration, and the one with a rung left asks for a repeat`() {
         listOf(DW_DICTATION_NOT_CONFIGURED, DW_DICTATION_NOT_CONFIGURED_SAY_AGAIN).forEach { sentence ->
             assertTrue(
-                "A 503 must reach the designer as 'not configured': $sentence",
-                sentence.contains("no transcription service configured")
+                "A 503 must reach the designer as 'not set up': $sentence",
+                sentence.contains("Transcription is not set up")
             )
         }
         assertTrue(
@@ -1499,9 +1499,9 @@ class DwDictationLadderTest {
                 )
             ).exhausted
         )
-        assertTrue(sentence.contains("This app's own speech model"))
-        assertTrue("it is worth reporting, because the catalogue and the handset disagree",
-            sentence.contains("worth reporting"))
+        assertTrue(sentence.contains("The speech model on this phone"))
+        assertTrue("it names the move that works, without narrating a fault",
+            sentence.contains("Type the answer in"))
         assertFalse(
             "a model on this phone needs no connection, so the connection is not what stopped it",
             sentence.contains("Dictation in Odia on this phone needs a connection")
@@ -1526,7 +1526,7 @@ class DwDictationLadderTest {
                 )
             ).exhausted
         )
-        assertTrue(sentence.contains("nobody has recorded yet"))
+        assertTrue(sentence.contains("nobody has recorded whether"))
     }
 
     /** Non-blank, a real sentence, and ending in a full stop. Returns it so callers can go on. */

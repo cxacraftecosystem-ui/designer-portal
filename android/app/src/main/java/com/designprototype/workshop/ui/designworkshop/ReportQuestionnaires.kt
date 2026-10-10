@@ -141,7 +141,7 @@ internal fun renderQuestionnaireAnnexure(
         if (dropped > 0) {
             builder.para(
                 "[$dropped further sitting(s) were recorded against this questionnaire and are " +
-                    "not printed here. The full set is held in the repository.]",
+                    "not printed here. The full set is in the online workshop record.]",
                 style = ParaStyle.NOTE,
             )
         }
@@ -163,24 +163,20 @@ internal fun renderQuestionnaireAnnexure(
 private fun deviceNotes(cache: DwQuestionnaireCache): List<String> {
     val notes = ArrayList<String>()
     if (cache.printedItems.isNotEmpty() && cache.fetchedAt.isNotBlank()) {
-        notes += "These answers are the copy this handset last read from the record on " +
-            "${cache.fetchedAt.take(10)}. Any sitting recorded after that date is in the office's " +
-            "copy of this report and not in this one."
+        notes += "These answers are those recorded up to ${cache.fetchedAt.take(10)}. Any sitting " +
+            "recorded after that date is in the online workshop record."
     }
     val unread = cache.unreadItems
     if (unread.isNotEmpty()) {
         val names = unread.joinToString("; ") {
             it.title.ifBlank { "questionnaire ${it.questionnaireId}" }
         }
-        notes += "${unread.size} questionnaire(s) attached to this workshop are not printed below, " +
-            "because this device holds no copy of the answers recorded against them: $names. This " +
-            "is a gap in THIS file and not in the fieldwork — the office's copy of this report " +
-            "carries them."
+        notes += "${unread.size} questionnaire(s) attached to this workshop are not printed below: " +
+            "$names. Their answers are in the online workshop record."
     }
     if (!cache.complete) {
-        notes += "This handset has not read the full list of questionnaires attached to this " +
-            "workshop, so there may be others beyond the one(s) named here. The office's copy is " +
-            "built from the list itself."
+        notes += "Other questionnaires may also be attached to this workshop; the online workshop " +
+            "record lists them all."
     }
     return notes
 }
@@ -331,8 +327,8 @@ internal fun sittingBlocks(sitting: DwQuestionnaireSitting): List<Block> {
     if (truncated) {
         blocks += ParagraphBlock(
             runs = runsOf(
-                "[Answers truncated after $MAX_ROWS_PER_SITTING questions. The full set is held " +
-                    "against the questionnaire in the repository.]"
+                "[Answers truncated after $MAX_ROWS_PER_SITTING questions. The full set is in the " +
+                    "online workshop record.]"
             ),
             style = ParaStyle.NOTE,
         )

@@ -251,7 +251,7 @@ object ApiClient {
                         runCatching { Thread.sleep(backoffMillis(attempt)) }
                     }
                 }
-                throw lastError ?: IOException("Request failed after $maxAttempts attempts")
+                throw lastError ?: IOException(CONNECTION_FAILED_SENTENCE)
             }
             // A CREDENTIAL WRITE IS SENT ONCE — by OkHttp as well as by the loop above. An
             // application interceptor, so OkHttp's own retry layer, which runs after every one of

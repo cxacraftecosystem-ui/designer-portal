@@ -607,9 +607,8 @@ data class OfflineQueueResult(
  */
 fun offlineSavedMessage(result: OfflineQueueResult, isCorrection: Boolean): String {
     val head = if (isCorrection) {
-        "Correction saved on this device — sent when you have a signal. Until then the office " +
-            "still sees the earlier version, and when it goes it replaces the whole record: your " +
-            "version wins over any edit made in between."
+        "Correction saved on this device. It will be sent when you have a signal; until then " +
+            "the office still sees the earlier version."
     } else {
         "Saved on this device. It will be sent when you have a signal."
     }
@@ -705,12 +704,12 @@ fun outboxConflictSentence(said: String, files: Int, isCorrection: Boolean): Str
     // reasoning that belongs there rather than on a tray row somebody reads standing up.
     val standing = "Retrying alone gets the same answer."
     return if (isCorrection) {
-        "Not applied — it clashes with a record the register already holds.$server Nothing was " +
+        "Not applied — it clashes with a record that already exists.$server Nothing was " +
             "deleted: the correction$carrying $isAre still here, and the office still reads the " +
             "earlier version. $standing Open the clashing record, make the change there, then " +
             "discard this entry."
     } else {
-        "Not saved — the register already holds a clashing record.$server Nothing was deleted: " +
+        "Not saved — a matching record already exists.$server Nothing was deleted: " +
             "this entry$carrying $isAre still here. $standing Open the clashing record, copy " +
             "anything missing, then discard this entry."
     }
@@ -900,22 +899,21 @@ fun outboxDanglingSentence(
 ): String {
     val subject = if (isCorrection) "This correction" else "This record"
     val head = if (nouns.size == 1) {
-        "$subject points at ${anyOneOf(nouns)} that is not on the server."
+        "$subject points at ${anyOneOf(nouns)} that could not be found."
     } else {
         // NOT A GUESS DRESSED AS A FACT. The server's 404 names no field and the payload carries
         // several ids, so the sentence carries several — the same refusal `DwResumedCreate.Ambiguous`
         // makes about picking a workshop by plausibility.
-        "$subject points at something that is not on the server. It is ${anyOneOf(nouns)} — the " +
-            "server's answer does not say which."
+        "$subject points at something that could not be found. It is ${anyOneOf(nouns)}."
     }
     val carrying = if (files > 0) " and the ${stagedFiles(files)} saved with it" else ""
     val isAre = if (files > 0) "are" else "is"
-    val server = endStopped(said).let { if (it.isEmpty()) "" else " The server said: $it" }
+    val server = endStopped(said).let { if (it.isEmpty()) "" else " $it" }
     // The design document's own clause is kept whole because it is ALREADY the terse recipe — state,
     // act, reassure, in one line. What went (2026-09-03) is everything after it that argued its case:
     // "because what is missing is missing on the server" is why a retry cannot work, and that belongs
     // in the KDoc above rather than on a row read standing up beside a delete button.
-    return "$head Nothing is lost — open it, choose one that is, and it will send.$server This " +
+    return "$head Nothing is lost — open it, choose another, and it will send.$server This " +
         "entry$carrying $isAre still here; nothing was deleted. Retrying unchanged gets the same " +
         "answer."
 }
@@ -1074,15 +1072,15 @@ fun outboxDiscardConfirmation(
         // one row they are the whole of what is actually lost — and the remedy for them is on a
         // different screen, so it has to be said before the delete rather than after it.
         val orphaned = if (files > 0) {
-            " The ${stagedFiles(files)} are the part the server never got — attach them to the " +
-                "record there instead, if you still can."
+            " The ${stagedFiles(files)} were not uploaded — attach them to the record again " +
+                "instead, if you still can."
         } else {
             ""
         }
-        return "$opening. The record is already on the server and stays there — entering it again " +
+        return "$opening. The record is already saved online and stays there — entering it again " +
             "would leave two of it.$orphaned"
     }
-    val head = "$opening, and nothing about it has reached the server."
+    val head = "$opening, and none of it has been uploaded."
     if (isDangling) {
         return "$head Only one thing about it is wrong — the workshop or record it points at is not " +
             "there — and Re-pick it fixes that without losing anything. Deleting is for a record you " +
@@ -1142,15 +1140,15 @@ object OfflineOutbox {
         val file = queueFile(context)
         if (!file.exists()) return emptyList()
         val text = runCatching { file.readText() }.getOrElse { error ->
-            quarantine(file, "could not be read (${error.javaClass.simpleName})")
+            quarantine(file, "could not be read")
             return emptyList()
         }
         if (text.isBlank()) {
-            quarantine(file, "was empty, which means a save was interrupted part-way through")
+            quarantine(file, "was not saved completely")
             return emptyList()
         }
         return runCatching { json.decodeFromString<List<PendingEntry>>(text) }.getOrElse { error ->
-            quarantine(file, "could not be understood (${error.javaClass.simpleName})")
+            quarantine(file, "could not be read")
             emptyList()
         }
     }
@@ -1161,11 +1159,11 @@ object OfflineOutbox {
         val moved = runCatching { file.renameTo(kept) }.getOrDefault(false)
         alert.set(
             if (moved) {
-                "The list of records saved on this device $reason. Nothing has been deleted — it has been " +
-                    "kept as ${kept.name} in the app's storage. Please report this before uninstalling the app."
+                "The list of records saved on this device $reason. Nothing has been deleted — a copy is " +
+                    "kept on this phone. Ask your administrator for help before uninstalling the app."
             } else {
-                "The list of records saved on this device $reason, and could not be set aside. Please report " +
-                    "this before uninstalling the app."
+                "The list of records saved on this device $reason, and could not be set aside. Ask your " +
+                    "administrator for help before uninstalling the app."
             }
         )
     }

@@ -196,7 +196,7 @@ fun passwordGateAsksForCurrentAfter(status: Int?): Boolean = status == 400
  * `GET /me` has confirmed the account still owes a password; never on the strength of a missing
  * answer alone. See [passwordGateAfterFailure].
  */
-const val PASSWORD_CHANGE_NOT_SENT = "Your new password did not reach the server, so nothing has " +
+const val PASSWORD_CHANGE_NOT_SENT = "Your new password could not be sent, so nothing has " +
     "changed. Try again."
 const val PASSWORD_CHANGE_NOT_SENT_OFFLINE = "This phone has no connection, so nothing has changed. " +
     "Try again where there is a signal."

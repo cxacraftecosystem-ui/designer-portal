@@ -631,8 +631,8 @@ class DwModelChoiceTest {
         assertFalse(known.contains("or-IN"))
 
         val unmeasured = dwModelLanguagesSentence(NOT_A_REAL_SMALL_MODEL.copy(languages = null), labels)
-        assertTrue(unmeasured.contains("unmeasured"))
-        assertTrue("an unchecked model is not evidence", unmeasured.contains("not counted"))
+        assertTrue(unmeasured.contains("not used for any"))
+        assertTrue("an unchecked model is not evidence", unmeasured.contains("not listed"))
 
         val none = dwModelLanguagesSentence(NOT_A_REAL_SMALL_MODEL.copy(languages = emptyList()), labels)
         assertTrue(none.contains("serves none of this app's dictation languages"))

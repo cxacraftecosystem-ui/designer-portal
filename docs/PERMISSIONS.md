@@ -592,7 +592,11 @@ and `POST /api/design-workshop-inspections/{id}/send-back`, which files one and 
 `NEEDS_REVISION` — and both are refused with a sentence unless the report is in `PRE_SUBMISSION` or
 `NEEDS_REVISION`, because a suggestion belongs to a submission cycle and a report nobody has handed
 in has none. Neither can touch a stage: see §4.5. True as of «2026-09-13»; check
-`grep -n "router.post" backend/app/api/routes/design_workshop_inspections.py`.
+`grep -n "router.post" backend/app/api/routes/design_workshop_inspections.py`. **Both clients file
+and send back since 2026-10-10**: the handset opens the surface to the INSPECTOR tier alone (the
+three administering tiers stay web-only, `DECISION-ministry-surfaces-web-only.md`), calls the same
+two routes, and queues a note written without signal under the conflict rules in §4.5 — no
+permission was widened for it.
 
 ¹ A Professor **or any directorate tier** may change a populated field on a record created by
 someone **ranked strictly below** them, via `can_edit_others_record`. On a peer's or a superior's
@@ -1840,12 +1844,22 @@ ask for a restore, and an inspector has nothing pending and no restore button.
 > titles on the one screen where picking the wrong row misassigns an examination. It is the same
 > divergence, for the same reason, that `WorkshopViewersScreen` records for the viewer roster.
 >
-> **NEITHER CLIENT CACHES AN INSPECTION** — a deliberate decision on the handset, where everything
-> else in the design-workshop block degrades to the device. The scope is a row an admin can withdraw,
-> the provenance names are resolved server-side at read time, and there is no write route to queue
-> anything into: `saveOrQueue` does not queue a 4xx, so a queued inspector write would be accepted by
-> the app, refused for ever by the server, and reported to the inspector as saved. The repository
-> methods throw and the screens say "this needs a connection" before anything is attempted.
+> **THE HANDSET NOW WRITES THE NOTE AND WORKS WITHOUT SIGNAL; THE WEB DOES NEITHER OFFLINE**
+> (2026-10-10). This paragraph read *"NEITHER CLIENT CACHES AN INSPECTION … there is no write route
+> to queue anything into … the screens say 'this needs a connection'"*. The write routes have existed
+> since 2026-09-13, and the handset now calls both — `recordInspectionFeedback` and
+> `sendInspectionBack` in `data/WorkshopRepositoryApi.kt`, the same bodies the web sends plus the
+> device's own `recordedAt`, behind the same `require_inspector` door and the same row, so **no
+> permission moved**. `InspectionDetailScreen` draws the register and the box
+> (`InspectionFeedbackPanel`). The last read of each assigned workshop and the last list are kept on
+> the phone per account (`data/DesignWorkshopInspectionFeedback.kt`, `DwInspectionStore`) and are
+> deleted the moment a read answers 404, so a withdrawn row still withdraws access. A note is kept on
+> the phone first and, before it is sent, the workshop is read again: a report no longer under review,
+> or handed in again since the note was written, HOLDS the note with the reason on screen and sends
+> nothing; the server's own refusal holds it the same way; nothing queued is deleted except by its
+> author. `Review` on the handset (`Screen.ReviewQueue`) lists the inspector's assigned workshops
+> waiting for a decision above the record queue. Pinned by `InspectionNotesSyncTest` and
+> `DesignWorkshopInspectionFeedbackTest` under `android/app/src/test/…/data/`.
 >
 > Re-check both halves with `grep -rl "design-workshop-inspections" frontend/ android/`.
 >

@@ -49,7 +49,7 @@ class DwDeviceSyncBannerTest {
             "the headline fell through to the pending default:\n${banner.headline}",
             banner.headline == "Waiting to upload",
         )
-        assertEquals("2 answers refused", banner.headline)
+        assertEquals("2 answers not accepted", banner.headline)
         assertFalse(
             "a refusal is not a signal problem and must not wear the cloud-off icon",
             banner.waiting,
@@ -60,11 +60,11 @@ class DwDeviceSyncBannerTest {
         )
         assertTrue(
             "it has to say the refusal will not fix itself:\n${banner.detail}",
-            banner.detail.contains("Those answers will NOT upload by themselves"),
+            banner.detail.contains("they will not upload by themselves"),
         )
         assertTrue(
             "and where the rest of the work is:\n${banner.detail}",
-            banner.detail.contains("Everything else is on the server"),
+            banner.detail.contains("Everything else is saved online"),
         )
     }
 
@@ -74,9 +74,9 @@ class DwDeviceSyncBannerTest {
             workshops = 1, stages = 0, files = 0, bytesText = "0 B",
             failures = 0, refusedAnswers = 1,
         )!!
-        assertEquals("1 answer refused", banner.headline)
+        assertEquals("1 answer not accepted", banner.headline)
         assertTrue(banner.detail, banner.detail.contains("Across 1 workshop on this device."))
-        assertTrue(banner.detail, banner.detail.contains("That answer will NOT upload by itself"))
+        assertTrue(banner.detail, banner.detail.contains("it will not upload by itself"))
         assertTrue(banner.detail, banner.detail.contains("correct it."))
         assertFalse(banner.waiting)
     }
@@ -103,7 +103,7 @@ class DwDeviceSyncBannerTest {
             workshops = 2, stages = 1, files = 0, bytesText = "0 B",
             failures = 0, refusedAnswers = 3,
         )!!
-        assertEquals("1 stage · 3 answers refused", banner.headline)
+        assertEquals("1 stage · 3 answers not accepted", banner.headline)
         assertTrue("something IS waiting, so the cloud icon is honest here", banner.waiting)
         assertTrue(
             banner.detail,
@@ -111,7 +111,7 @@ class DwDeviceSyncBannerTest {
         )
         assertTrue(
             banner.detail,
-            banner.detail.contains("The 3 refused answers will not"),
+            banner.detail.contains("The 3 answers that were not accepted will not"),
         )
     }
 
@@ -126,7 +126,7 @@ class DwDeviceSyncBannerTest {
             workshops = 1, stages = 0, files = 0, bytesText = "0 B",
             failures = 2, refusedAnswers = 1,
         )!!
-        assertEquals("2 refused outright · 1 answer refused", banner.headline)
+        assertEquals("2 not saved · 1 answer not accepted", banner.headline)
     }
 
     /**

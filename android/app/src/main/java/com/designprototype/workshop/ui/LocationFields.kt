@@ -1309,17 +1309,15 @@ fun LocationFieldsSection(
          * for a signal they do not need.
          */
         reference.statesAndUnionTerritories.isNotEmpty() || reference.states.isNotEmpty() ->
-            "The district list on this phone has nothing for ${place.state}. That is not a claim " +
-                "that it has no districts — the reference this phone last received does not carry " +
-                "them. Connect once and it is kept on the device for good, after which this " +
-                "dropdown works with no signal." +
+            "The district list for ${place.state} has not been downloaded to this phone. Connect " +
+                "once and it is kept on the phone, after which this list works with no signal." +
                 // GATED ON "THIS IS A CREATE", NOT ON [districtRequired] — which is false right
                 // here, because it ends in `listIsAnswerable` and this branch is the one where the
                 // list is empty. Written the other way the sentence could never appear on the one
                 // form it is about.
                 if (required && !isEdit) {
-                    " Until then a NEW record cannot be started, because the API asks every new " +
-                        "record for a district; an existing one can still be corrected and saved."
+                    " Until then a new record cannot be started, because every new record needs a " +
+                        "district; an existing one can still be corrected and saved."
                 } else {
                     ""
                 }
@@ -1761,8 +1759,8 @@ fun LocationFieldsSection(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    "The location moved, and the map has nothing to say about the new point — which " +
-                        "is the ordinary answer in rural India rather than a fault. The state, " +
+                    "The location moved, and the map has no place name for the new point, which is " +
+                        "common in rural areas. The state, " +
                         "district and pincode below still describe the PREVIOUS point. Check them, " +
                         "or clear the ones that were copied in.",
                     color = MaterialTheme.field.onWarningContainer,
@@ -1904,8 +1902,8 @@ fun LocationFieldsSection(
                 supportingText = {
                     val shown = pincodeProblem?.takeIf { showPincodeProblem }
                     Text(
-                        shown ?: "Six digits, if you know it. Most rural points have no postcode " +
-                            "the geocoder can find, which is why the district above is the one " +
+                        shown ?: "Six digits, if you know it. Most rural places have no postcode " +
+                            "the map can find, which is why the district above is the one " +
                             "that is required.",
                         color = if (shown != null) MaterialTheme.colorScheme.error else MaterialTheme.field.muted,
                         fontSize = 12.sp
@@ -1966,8 +1964,8 @@ fun LocationFieldsSection(
             GroupNotice(
                 warn = true,
                 text = "Add a captured location below — a GPS fix, a map pin or typed coordinates. " +
-                    "The state, district, village and pincode are stored on the same row as the " +
-                    "coordinates, and without one they are not saved."
+                    "The state, district, village and pincode are saved together with the " +
+                    "coordinates, so without a location they are not saved."
             )
         }
 

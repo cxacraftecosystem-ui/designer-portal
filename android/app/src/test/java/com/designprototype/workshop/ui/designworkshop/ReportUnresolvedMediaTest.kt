@@ -167,11 +167,11 @@ class ReportUnresolvedMediaTest {
         assertEquals("the clean path must report an empty list, not nothing", emptyList<String>(), reported)
         assertTrue(
             "no note may appear over a document that is whole:\n${document.warnings}",
-            document.warnings.none { it.contains("not stored on the handset") },
+            document.warnings.none { it.contains("held in the online workshop record") },
         )
         assertTrue(
             "and none in the file either:\n${printedText(document)}",
-            !printedText(document).contains("not stored on the handset"),
+            !printedText(document).contains("held in the online workshop record"),
         )
     }
 
@@ -181,16 +181,16 @@ class ReportUnresolvedMediaTest {
     fun `the count reaches the export screen through the document's warnings`() {
         val document = build("DETAILED_TECHNICAL", downloadedDraft())
 
-        val note = document.warnings.singleOrNull { it.contains("not stored on the handset") }
+        val note = document.warnings.singleOrNull { it.contains("referenced by this workshop") }
         assertTrue("no warning carried the count:\n${document.warnings}", note != null)
         assertTrue(
             "the sentence must count the distinct files: $note",
             note!!.contains("3 photographs referenced by this workshop"),
         )
         assertTrue(
-            "and must say where the bytes are, or a designer goes hunting for a fault on the " +
+            "and must say where the photographs are, or a designer goes hunting for a fault on the " +
                 "handset that is not there: $note",
-            note.contains("office's copy of this report carries them"),
+            note.contains("held in the online workshop record"),
         )
     }
 
@@ -265,7 +265,7 @@ class ReportUnresolvedMediaTest {
         )
         assertTrue(
             "and nothing may be said about missing files:\n${document.warnings}",
-            document.warnings.none { it.contains("not stored on the handset") },
+            document.warnings.none { it.contains("held in the online workshop record") },
         )
     }
 }

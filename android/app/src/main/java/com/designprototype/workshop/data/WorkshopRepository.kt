@@ -291,9 +291,12 @@ fun WorkshopDetailDto.occurrenceDate(): String = startDate ?: date ?: createdAt 
 private val errorBodyJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
 /**
- * The message the API meant the user to read; failing that, the exception's own text, and only then
- * [fallback]. Never swallows a gateway/transport failure ("HTTP 504 Gateway Time-out", "Unable to
- * resolve host") behind a generic sentence — that text is the one clue that the save never landed.
+ * The message the API meant the user to read; failing that, [fallback]. A request that never got an
+ * answer (no signal, DNS, a dropped socket, a timeout) reads as [CONNECTION_FAILED_SENTENCE] rather
+ * than the platform's text, which names hosts and sockets; an answer with no readable `detail` (a
+ * gateway's HTML page, an empty 500) reads as [fallback] rather than Retrofit's "HTTP 504 Gateway
+ * Time-out". Any other exception's own message is kept, because the app's own throws carry sentences
+ * written for the reader.
  *
  * Retrofit collapses every non-2xx response into an `HttpException` whose `message` is just
  * "HTTP 409 Conflict" — nothing a researcher can act on when what they need to know is WHICH artisan
@@ -364,23 +367,48 @@ data class ApiRefusal(
     val namedFields: List<String> = emptyList(),
 )
 
+/**
+ * What a reader is told when a request never got an answer: no signal, DNS, a dropped socket, a
+ * timeout. The platform's own text for these ("Unable to resolve host …", "failed to connect to …")
+ * names hosts and sockets and tells the reader nothing they can act on.
+ */
+internal const val CONNECTION_FAILED_SENTENCE = "Could not connect. Check your connection and try again."
+
+/**
+ * Did this request fail on the way, with nobody answering it? The platform's own network exception
+ * types, plus OkHttp's plain `IOException` that wraps a stream cut off mid-answer. A plain
+ * `IOException` the app throws itself carries a sentence for the reader and is not matched.
+ */
+private fun Throwable.isTransportFailure(): Boolean =
+    this is java.net.UnknownHostException ||
+        this is java.net.SocketException ||
+        this is java.net.UnknownServiceException ||
+        this is java.io.InterruptedIOException ||
+        this is javax.net.ssl.SSLException ||
+        (this is IOException && (cause is java.io.EOFException || cause is java.net.SocketException))
+
 /** See [ApiRefusal]. Call once per failure — it consumes the buffered error body. */
 fun Throwable.apiRefusal(fallback: String): ApiRefusal {
+    if (isTransportFailure()) return ApiRefusal(CONNECTION_FAILED_SENTENCE, schemaSkew = false)
+    // A payload that would not parse: the parser's message quotes the payload, so the caller's
+    // sentence is what the reader gets.
+    if (this is SerializationException) return ApiRefusal(fallback, schemaSkew = false)
     val plain = message?.takeIf { it.isNotBlank() } ?: fallback
-    // Not an HTTP failure at all (no connection, timeout, serialization): the platform message is all
-    // there is, and it is more informative than anything this function could invent.
+    // Not an HTTP failure at all: the app's own exceptions carry a sentence written for the reader.
     val http = this as? HttpException ?: return ApiRefusal(plain, schemaSkew = false)
+    // An answer with nothing readable in it — an empty body, a gateway's HTML page, JSON with no
+    // `detail` — reads as the caller's sentence, never as Retrofit's "HTTP 502 Bad Gateway".
     val raw = runCatching { http.response()?.errorBody()?.string() }.getOrNull()
-    if (raw.isNullOrBlank()) return ApiRefusal(plain, schemaSkew = false)
+    if (raw.isNullOrBlank()) return ApiRefusal(fallback, schemaSkew = false)
     val detail = (runCatching { errorBodyJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject)
         ?.get("detail")
-        ?: return ApiRefusal(plain, schemaSkew = false)
+        ?: return ApiRefusal(fallback, schemaSkew = false)
     // Only a 422 qualifies: a 500 carrying the same words is a server fault, not a dialect mismatch,
     // and no update to either side is going to change it.
     val skew = http.code() == 422 && (detail as? JsonArray)?.any { entry ->
         ((entry as? JsonObject)?.get("type") as? JsonPrimitive)?.contentOrNull == "extra_forbidden"
     } == true
-    return ApiRefusal(detailMessage(detail) ?: plain, schemaSkew = skew, namedFields = detail.locFields())
+    return ApiRefusal(detailMessage(detail) ?: fallback, schemaSkew = skew, namedFields = detail.locFields())
 }
 
 /**
@@ -657,7 +685,7 @@ fun Throwable.signInErrorMessage(): String {
     val fallback = when ((this as? HttpException)?.code()) {
         401 -> "That email and password were not accepted. Check them and try again."
         403 -> "This account is not allowed to sign in. Contact your administrator."
-        null -> "Could not reach the server. Check your connection and try again."
+        null -> CONNECTION_FAILED_SENTENCE
         else -> "Sign-in failed. Please try again."
     }
     return apiErrorMessage(fallback)
@@ -1995,29 +2023,20 @@ class WorkshopRepository(
 
     // ── THE FIFTH SCOPE: inspections ────────────────────────────────────────────────────────────
     //
-    // ALL FIVE THROW, AND NOTHING BELOW IS CACHED, QUEUED OR FALLEN BACK TO THE DEVICE. That is a
-    // decision rather than an omission, and it is the opposite of what the 22-stage block above does
-    // — so it is worth the paragraph.
+    // THE THREE ADMINISTRATION CALLS THROW AND ARE NEVER KEPT; THE INSPECTOR'S OWN SURFACE IS KEPT.
     //
-    // The stage block degrades to the device because a workshop is a DATED OBSERVATION captured over
-    // a fortnight in a courtyard, and yesterday's copy of it is still true. An inspection is not that
-    // kind of fact, in three separate ways:
+    // Who inspects what is an admin's live decision and is only ever read straight off the wire.
+    // The inspector's read is different: an officer works in the same courtyards a designer does,
+    // so the last read of each assigned workshop (and the last list) is kept on this phone for the
+    // account that read it, and correction suggestions written without signal are queued and sent
+    // later. Three rules keep that honest, and `DesignWorkshopInspectionFeedback.kt` argues each:
     //
-    //  1. THE SCOPE IS A ROW SOMEBODY ELSE OWNS AND CAN TAKE AWAY. An admin who ends an inspection
-    //     this morning has ended it. A cached read would keep a fortnight of somebody else's
-    //     fieldwork legible on a handset whose access was withdrawn — and no later sync repairs it,
-    //     because the bytes are already on the phone.
-    //  2. AN INSPECTION IS A JUDGEMENT ABOUT WHAT THE RECORD SAYS NOW. The provenance names are
-    //     resolved server-side at read time, so a stale copy would have an inspector reviewing a
-    //     state of the workshop that no longer exists, with nothing on screen saying the two had
-    //     diverged.
-    //  3. THERE IS NOTHING TO QUEUE, AND A QUEUE HERE WOULD LOSE WORK. Every route is a GET; the
-    //     server has no write route on this prefix at all, and `saveOrQueue` does not queue a 4xx —
-    //     so a queued inspector write would be accepted by this app, refused for ever by the server,
-    //     and reported to the inspector as saved. No write path may be added here.
-    //
-    // The screens say "this needs a connection" in words BEFORE anything is attempted, rather than
-    // after it fails, exactly as the three viewer-administration calls above do.
+    //  1. THE SCOPE CAN BE TAKEN AWAY. A read that answers "not open to you" deletes the kept copy
+    //     at once, and a copy is never shown to any account but the one that read it.
+    //  2. A KEPT COPY SAYS SO. Every screen over one names the moment it was saved.
+    //  3. A QUEUED NOTE IS CHECKED AGAINST THE REPORT AS IT STANDS WHEN IT LEAVES. A report that has
+    //     moved on holds the note back with the reason in words; a refusal holds it too. Nothing
+    //     queued is ever deleted except by the inspector who wrote it.
 
     /**
      * The accounts that may be assigned an inspection at all, straight off the wire.
@@ -2104,6 +2123,291 @@ class WorkshopRepository(
      */
     suspend fun workshopUnderInspection(workshopId: String): DwInspectionDetailDto =
         api.workshopUnderInspection(workshopId)
+
+    /**
+     * One workshop under inspection, from the wire when there is signal and from the copy kept on
+     * this phone when there is none.
+     *
+     * A LIVE READ IS KEPT for this account. A "not open to you" (404) DELETES the kept copy before it
+     * is rethrown — the assignment has ended, and a copy must not outlive it. Only a request that got
+     * no answer at all falls back; anything the server answered is rethrown for the screen to say.
+     */
+    suspend fun readWorkshopUnderInspection(context: Context, workshopId: String): DwInspectionRead {
+        val owner = cachedUser()?.id.orEmpty()
+        val store = DwInspectionStore.of(context)
+        return try {
+            val detail = api.workshopUnderInspection(workshopId)
+            if (owner.isNotBlank()) {
+                withContext(Dispatchers.IO) { store.saveDetail(DwSavedInspection(owner, dwInspectionNow(), detail)) }
+            }
+            DwInspectionRead.Live(detail)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: HttpException) {
+            if (e.code() == 404) withContext(Dispatchers.IO) { store.forgetWorkshop(workshopId) }
+            throw e
+        } catch (e: IOException) {
+            val saved = withContext(Dispatchers.IO) { store.detail(workshopId, owner) } ?: throw e
+            DwInspectionRead.Saved(saved.detail, saved.savedAt)
+        }
+    }
+
+    /**
+     * The assigned list, with the same fall-back: page one of the unsearched list is kept, and read
+     * back when nothing answers. A null second value means the answer is live.
+     */
+    suspend fun readInspectableWorkshops(
+        context: Context,
+        page: Int,
+        pageSize: Int,
+        search: String?
+    ): Pair<DesignWorkshopPageDto, String?> {
+        val owner = cachedUser()?.id.orEmpty()
+        val store = DwInspectionStore.of(context)
+        return try {
+            val answer = inspectableDesignWorkshops(page = page, pageSize = pageSize, search = search)
+            if (owner.isNotBlank() && page == 1 && search.isNullOrBlank()) {
+                withContext(Dispatchers.IO) {
+                    store.saveList(DwSavedInspectionList(owner, dwInspectionNow(), answer.items, answer.total))
+                }
+            }
+            answer to null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            if (page != 1 || !search.isNullOrBlank()) throw e
+            val saved = withContext(Dispatchers.IO) { store.list(owner) } ?: throw e
+            DesignWorkshopPageDto(
+                items = saved.items,
+                total = saved.total,
+                page = 1,
+                pageSize = saved.items.size,
+                pages = 1
+            ) to saved.savedAt
+        }
+    }
+
+    /**
+     * Every workshop assigned to this inspector, for the review queue — up to
+     * [DW_INSPECTION_QUEUE_MAX_PAGES] pages of the server's largest page — whether more were left
+     * unread, and (third) when the kept list was saved if there was no signal to read a live one.
+     */
+    suspend fun inspectionReviewQueue(context: Context): Triple<List<DesignWorkshopDto>, Boolean, String?> {
+        val owner = cachedUser()?.id.orEmpty()
+        val store = DwInspectionStore.of(context)
+        val rows = ArrayList<DesignWorkshopDto>()
+        var more = false
+        try {
+            var page = 1
+            while (true) {
+                val answer = inspectableDesignWorkshops(page = page, pageSize = DW_INSPECTION_QUEUE_PAGE_SIZE)
+                rows += answer.items
+                if (page >= answer.pages || answer.items.isEmpty()) break
+                if (page >= DW_INSPECTION_QUEUE_MAX_PAGES) {
+                    more = true
+                    break
+                }
+                page++
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            val saved = withContext(Dispatchers.IO) { store.list(owner) } ?: throw e
+            return Triple(saved.items, saved.total > saved.items.size, saved.savedAt)
+        }
+        if (owner.isNotBlank()) {
+            withContext(Dispatchers.IO) {
+                store.saveList(DwSavedInspectionList(owner, dwInspectionNow(), rows, rows.size))
+            }
+        }
+        return Triple(rows, more, null)
+    }
+
+    /** File one correction suggestion now. The answer is the register as the server holds it. */
+    suspend fun recordInspectionFeedback(
+        workshopId: String,
+        body: DwInspectionFeedbackBody
+    ): DwInspectionFeedbackAnswerDto = api.recordInspectionFeedback(workshopId, body)
+
+    /** Send the report back to its designers with this note (status Needs revision). */
+    suspend fun sendInspectionBack(
+        workshopId: String,
+        body: DwInspectionFeedbackBody
+    ): DwInspectionFeedbackAnswerDto = api.sendInspectionBack(workshopId, body)
+
+    /** Every note this account has written on this phone and not yet seen onto the record. */
+    suspend fun queuedInspectionNotes(context: Context, workshopId: String? = null): List<DwQueuedInspectionNote> {
+        val owner = cachedUser()?.id?.takeIf { it.isNotBlank() } ?: return emptyList()
+        return withContext(Dispatchers.IO) { DwInspectionStore.of(context).notesFor(owner, workshopId) }
+    }
+
+    /**
+     * Write a suggestion or a send-back to the phone FIRST, then try to send it.
+     *
+     * Kept before it is sent, never after, so a phone that dies mid-request still has the note; a
+     * request that landed with its answer lost is recognised on the next pass rather than filed twice
+     * (see [dwInspectionNoteAlreadyFiled]). [read] is the report as the inspector was reading it —
+     * its round and status are what the note is checked against before it leaves.
+     */
+    suspend fun fileInspectionNote(
+        context: Context,
+        read: DwInspectionDetailDto,
+        kind: DwInspectionNoteKind,
+        note: String,
+        stageKey: String?
+    ): DwInspectionSyncReport {
+        val owner = cachedUser()?.id?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("This phone is not signed in.")
+        val queued = DwQueuedInspectionNote(
+            id = java.util.UUID.randomUUID().toString(),
+            workshopId = read.id,
+            workshopTitle = read.title,
+            kind = kind,
+            note = note.trim(),
+            stageKey = stageKey?.takeIf { it.isNotBlank() },
+            recordedAt = dwInspectionNow(),
+            ownerUserId = owner,
+            draftedRound = read.submissionRound,
+            draftedStatus = read.status,
+        )
+        withContext(Dispatchers.IO) { DwInspectionStore.of(context).add(queued) }
+        return syncInspectionNotes(context, onlyWorkshopId = read.id)
+    }
+
+    /**
+     * Let a held note go again, against the round the report is in NOW — the inspector's deliberate
+     * act after reading the report again. [read] is that read.
+     */
+    suspend fun refileInspectionNote(
+        context: Context,
+        noteId: String,
+        read: DwInspectionDetailDto
+    ): DwInspectionSyncReport {
+        val store = DwInspectionStore.of(context)
+        withContext(Dispatchers.IO) {
+            store.notes().firstOrNull { it.id == noteId }?.let { held ->
+                store.update(
+                    held.copy(
+                        held = null,
+                        heldAt = null,
+                        draftedRound = read.submissionRound,
+                        draftedStatus = read.status
+                    )
+                )
+            }
+        }
+        return syncInspectionNotes(context, onlyWorkshopId = read.id)
+    }
+
+    /** Remove a note from this phone — only ever at its author's request. */
+    suspend fun discardInspectionNote(context: Context, noteId: String) {
+        withContext(Dispatchers.IO) { DwInspectionStore.of(context).remove(noteId) }
+    }
+
+    private val inspectionMutex = Mutex()
+
+    /**
+     * Send what is waiting, workshop by workshop, under the conflict rules.
+     *
+     * For each workshop the report is READ FIRST: that read refreshes the kept copy, finds a note
+     * that already landed (an answer lost on the way back), and is what [dwInspectionNoteCheck]
+     * compares each note against. No answer at all stops the pass and leaves everything queued.
+     */
+    suspend fun syncInspectionNotes(context: Context, onlyWorkshopId: String? = null): DwInspectionSyncReport {
+        val user = cachedUser()
+        val owner = user?.id?.takeIf { it.isNotBlank() } ?: return DwInspectionSyncReport()
+        val store = DwInspectionStore.of(context)
+        if (mustChangePasswordBlocks(user)) {
+            val waiting = withContext(Dispatchers.IO) { store.notesFor(owner, onlyWorkshopId).count { it.waiting } }
+            return DwInspectionSyncReport(waiting = waiting)
+        }
+        return inspectionMutex.withLock {
+            var sent = 0
+            var held = 0
+            var waiting = 0
+            val refreshed = LinkedHashMap<String, DwInspectionDetailDto>()
+            val queued = withContext(Dispatchers.IO) { store.notesFor(owner, onlyWorkshopId) }
+                .filter { it.waiting }
+                .sortedBy { it.recordedAt }
+            var offline = false
+            for ((workshopId, notes) in queued.groupBy { it.workshopId }) {
+                if (offline) {
+                    waiting += notes.size
+                    continue
+                }
+                var current = try {
+                    api.workshopUnderInspection(workshopId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: HttpException) {
+                    val said = e.apiErrorMessage("").takeIf { it.isNotBlank() && !it.startsWith("HTTP ") }
+                    val outcome = dwInspectionSendOutcome(e.code(), said, notes.first().kind)
+                    if (outcome is DwInspectionSendOutcome.Refused) {
+                        withContext(Dispatchers.IO) {
+                            if (e.code() == 404) store.forgetWorkshop(workshopId)
+                            notes.forEach { store.update(it.copy(held = outcome.sentence, heldAt = dwInspectionNow())) }
+                        }
+                        held += notes.size
+                    } else {
+                        waiting += notes.size
+                    }
+                    continue
+                } catch (e: IOException) {
+                    offline = true
+                    waiting += notes.size
+                    continue
+                }
+                for (note in notes) {
+                    if (offline) {
+                        waiting++
+                        continue
+                    }
+                    if (dwInspectionNoteAlreadyFiled(note, current.inspectionFeedback)) {
+                        withContext(Dispatchers.IO) { store.remove(note.id) }
+                        sent++
+                        continue
+                    }
+                    val check = dwInspectionNoteCheck(note, current.status, current.submissionRound)
+                    if (check is DwInspectionNoteCheck.Hold) {
+                        withContext(Dispatchers.IO) {
+                            store.update(note.copy(held = check.sentence, heldAt = dwInspectionNow()))
+                        }
+                        held++
+                        continue
+                    }
+                    try {
+                        val answer = if (note.kind == DwInspectionNoteKind.SEND_BACK) {
+                            api.sendInspectionBack(workshopId, note.body())
+                        } else {
+                            api.recordInspectionFeedback(workshopId, note.body())
+                        }
+                        withContext(Dispatchers.IO) { store.remove(note.id) }
+                        current = current.withFeedbackAnswer(answer)
+                        sent++
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: HttpException) {
+                        val said = e.apiErrorMessage("").takeIf { it.isNotBlank() && !it.startsWith("HTTP ") }
+                        val outcome = dwInspectionSendOutcome(e.code(), said, note.kind)
+                        if (outcome is DwInspectionSendOutcome.Refused) {
+                            withContext(Dispatchers.IO) {
+                                store.update(note.copy(held = outcome.sentence, heldAt = dwInspectionNow()))
+                            }
+                            held++
+                        } else {
+                            waiting++
+                        }
+                    } catch (e: IOException) {
+                        offline = true
+                        waiting++
+                    }
+                }
+                withContext(Dispatchers.IO) { store.saveDetail(DwSavedInspection(owner, dwInspectionNow(), current)) }
+                refreshed[workshopId] = current
+            }
+            DwInspectionSyncReport(sent = sent, held = held, waiting = waiting, refreshed = refreshed)
+        }
+    }
 
     /**
      * The admin authorship & divergence report for one workshop — every stage entry, every stamp, and
@@ -3392,10 +3696,11 @@ class WorkshopRepository(
             // throw away the only part of the answer that helps.
             throw IllegalStateException(
                 errorBodyDetail(response.errorBody()?.string())
-                    ?: "That workbook could not be downloaded (HTTP ${response.code()})."
+                    ?: "That workbook could not be downloaded. Try again."
             )
         }
-        val body = response.body() ?: throw IllegalStateException("The download response was empty.")
+        val body = response.body()
+            ?: throw IllegalStateException("That workbook could not be downloaded. Try again.")
         val name = filenameFromContentDisposition(response.headers()["Content-Disposition"])
             ?: defaultArtefactFilename(artefact, fallbackStem)
         // Spooled to the cache first and copied second, exactly as `downloadReport` does: the
@@ -4504,8 +4809,11 @@ class WorkshopRepository(
         val out = File(dir, "design-workshop-v$versionCode.apk")
         val request = Request.Builder().url(url).get().build()
         storageClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IllegalStateException("Update download failed: HTTP ${response.code}")
-            val body = response.body ?: throw IllegalStateException("Update download returned no body")
+            if (!response.isSuccessful) {
+                throw IllegalStateException("The update could not be downloaded. Try again.")
+            }
+            val body = response.body
+                ?: throw IllegalStateException("The update could not be downloaded. Try again.")
             body.byteStream().use { input -> FileOutputStream(out).use { output -> input.copyTo(output, 64 * 1024) } }
         }
         // MEASURED OFF THE FILE AFTER THE COPY, not off the stream's own idea of what it handed over
@@ -5266,8 +5574,8 @@ class WorkshopRepository(
      */
     suspend fun downloadReport(context: Context, path: String = ""): String = withContext(Dispatchers.IO) {
         val response = api.dataReport(format = "xlsx", path = path)
-        if (!response.isSuccessful) throw IllegalStateException("Report request failed (HTTP ${response.code()})")
-        val body = response.body() ?: throw IllegalStateException("The report response was empty")
+        if (!response.isSuccessful) throw IllegalStateException("The report could not be downloaded. Try again.")
+        val body = response.body() ?: throw IllegalStateException("The report could not be downloaded. Try again.")
         val stamp = DateTimeFormatter.ofPattern("ddMMyyyyHHmmss").withZone(ZoneId.systemDefault()).format(Instant.now())
         val name = "DesignWorkshop_report_$stamp.xlsx"
         val tmp = File(context.cacheDir, name)
@@ -5387,8 +5695,8 @@ class WorkshopRepository(
         format: String? = null
     ): String = withContext(Dispatchers.IO) {
         val response = api.downloadDataMedia(mediaId, format?.blankToNull())
-        if (!response.isSuccessful) throw IllegalStateException("Download failed (HTTP ${response.code()})")
-        val body = response.body() ?: throw IllegalStateException("The download response was empty")
+        if (!response.isSuccessful) throw IllegalStateException("The file could not be downloaded. Try again.")
+        val body = response.body() ?: throw IllegalStateException("The file could not be downloaded. Try again.")
         val name = filename.blankToNull()?.replace(Regex("[^A-Za-z0-9._-]+"), "_") ?: mediaId
         val tmp = File(context.cacheDir, name)
         body.byteStream().use { input -> FileOutputStream(tmp).use { out -> input.copyTo(out) } }
@@ -5418,7 +5726,7 @@ class WorkshopRepository(
             }
             val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IllegalStateException("Could not create the download entry")
+                ?: throw IllegalStateException("The file could not be saved to Downloads.")
             resolver.openOutputStream(uri).use { out -> source.inputStream().use { it.copyTo(out!!) } }
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
@@ -6051,7 +6359,7 @@ class WorkshopRepository(
                         // bytes already counted.
                         digest.update(bytes, bytes.size)
                         val url = partUrls[partNumber.toString()]
-                            ?: throw IllegalStateException("Missing presigned URL for part $partNumber")
+                            ?: throw IllegalStateException("The upload could not be started. Try again.")
                         val base = sentTotal
                         val etag = putPart(
                             url = url,
@@ -6149,7 +6457,7 @@ class WorkshopRepository(
                 executeCancellable(storageClient.newCall(Request.Builder().url(target).put(body).build())).use { response ->
                     if (response.isSuccessful) {
                         return response.header("ETag")
-                            ?: throw IllegalStateException("S3 returned no ETag for the uploaded part")
+                            ?: throw IllegalStateException("The upload could not be confirmed. Try again.")
                     }
                     if (response.code == 403 && !refreshed) expired = true
                     // [StorageRefusedError] rather than a bare IllegalStateException, for the reason
@@ -6158,23 +6466,23 @@ class WorkshopRepository(
                     // status no triage function can read.
                     else if (response.code < 500) throw StorageRefusedError(
                         response.code,
-                        "Part upload failed: HTTP ${response.code}"
+                        "The upload was not accepted."
                     )
-                    lastError = StorageRefusedError(response.code, "Part upload failed: HTTP ${response.code}")
+                    lastError = StorageRefusedError(response.code, "The upload was not accepted.")
                 }
             } catch (e: IOException) {
                 lastError = e
             }
             if (expired) {
                 refreshed = true
-                target = repesign() ?: throw (lastError ?: IllegalStateException("Part upload failed: HTTP 403"))
+                target = repesign() ?: throw (lastError ?: IllegalStateException("The upload was not accepted."))
                 continue
             }
             failures++
             if (failures >= maxAttempts) break
             delay(800L * failures)
         }
-        throw lastError ?: IllegalStateException("Part upload failed")
+        throw lastError ?: IllegalStateException("The upload did not finish. Try again.")
     }
 
     /** Attach an already-uploaded staged object to a saved record, applying the final filename. */
@@ -6788,6 +7096,10 @@ class WorkshopRepository(
         // swipe-away) or belongs to yesterday. Detached and swallowing every failure, because a
         // number that is only an optimisation must never delay or fail the queued records beside it.
         AppScope.io.launch { runCatching { refreshDictationAllowance(context) } }
+        // AN INSPECTOR'S QUEUED CORRECTION SUGGESTIONS, on the same "the network just came back"
+        // hook. Detached: each is checked against the report before it leaves, which costs a read
+        // per workshop, and that must never delay the records queued beside them.
+        AppScope.io.launch { runCatching { syncInspectionNotes(context) } }
         val synced = syncMutex.withLock {
             val queue = OfflineOutbox.all(context)
             // Read first, then reported, and reported before the connection is even checked: a queue
@@ -7028,7 +7340,7 @@ class WorkshopRepository(
                 // `apiRefusal`, not `apiErrorMessage`: both facts have to come out of ONE read of the
                 // error body, because reading it consumes Retrofit's buffer. `isTransient` above is
                 // safe to ask first — it reads only the status code.
-                val refusal = e.apiRefusal("The server rejected this record.")
+                val refusal = e.apiRefusal("This record could not be saved.")
                 if (clash) {
                     return ReplayOutcome.Rejected(
                         outboxConflictSentence(
@@ -7099,7 +7411,7 @@ class WorkshopRepository(
                 }
                 return ReplayOutcome.Rejected(
                     if (refusal.schemaSkew) {
-                        skewSentence("What this copy of the app sent for this record", refusal.message)
+                        skewSentence("This record", refusal.message)
                     } else {
                         refusal.message
                     },
@@ -7165,8 +7477,8 @@ class WorkshopRepository(
             // here — and re-attempting it every app run would re-POST a record that is ALREADY on the
             // server. This one really does wait for a person.
             return ReplayOutcome.Rejected(
-                "It was saved, but ${refused.size} file(s) were refused: ${refused.distinct().joinToString(" ")} " +
-                    "Re-attach them on the record."
+                "It was saved, but ${refused.size} file(s) could not be uploaded: ${refused.distinct().joinToString(" ")} " +
+                    "Attach them to the record again."
             )
         }
         return ReplayOutcome.Synced
@@ -7244,7 +7556,7 @@ class WorkshopRepository(
                 } catch (e: Throwable) {
                     if (isTransient(e)) throw e
                     landed.add(
-                        FileOutcome.Refused(index, "\"${pm.originalFilename}\": ${e.apiErrorMessage("refused by the server.")}")
+                        FileOutcome.Refused(index, "\"${pm.originalFilename}\": ${e.apiErrorMessage("it could not be uploaded.")}")
                     )
                 }
             }
@@ -7905,19 +8217,19 @@ class WorkshopRepository(
                         expired = true
                         lastError = StorageRefusedError(
                             response.code,
-                            "Object storage upload failed: HTTP ${response.code}"
+                            "The upload was not accepted."
                         )
                     } else if (response.code < 500) {
                         // Client errors (4xx) won't fix themselves — fail immediately, carrying the
                         // status as a NUMBER so the queue can tell this from a lost connection.
                         throw StorageRefusedError(
                             response.code,
-                            "Object storage upload failed: HTTP ${response.code}"
+                            "The upload was not accepted."
                         )
                     } else {
                         lastError = StorageRefusedError(
                             response.code,
-                            "Object storage upload failed: HTTP ${response.code}"
+                            "The upload did not finish. Try again."
                         )
                     }
                 }
@@ -7931,7 +8243,7 @@ class WorkshopRepository(
                 // the honest reading: a failure raised while trying to EXPLAIN a failure is a worse
                 // account of what happened than the original.
                 val fresh = repesign?.invoke()
-                    ?: throw (lastError ?: StorageRefusedError(403, "Object storage upload failed: HTTP 403"))
+                    ?: throw (lastError ?: StorageRefusedError(403, "The upload was not accepted."))
                 target = fresh.uploadUrl
                 targetHeaders = fresh.headers
                 // Re-sending from byte zero against the new signature, so the row must not be left
@@ -7947,7 +8259,7 @@ class WorkshopRepository(
             onProgress?.invoke(0L, contentLength)
             delay(800L * failures)
         }
-        throw lastError ?: IllegalStateException("Object storage upload failed")
+        throw lastError ?: IllegalStateException("The upload did not finish. Try again.")
     }
 
     /** A re-openable upload source: exact byte size, a fresh stream per attempt, and cleanup. */

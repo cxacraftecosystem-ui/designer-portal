@@ -158,7 +158,7 @@ export const INSPECTOR_STEPS: GuideStep[] = [
       "NEITHER CAN BE EDITED OR WITHDRAWN. An officer who changes their mind files another one, and both stay on the record. The screen says so under the buttons.",
       "THE BOX IS CLOSED UNTIL THE REPORT IS HANDED IN. If a workshop has not been submitted for inspection yet there is nothing to comment on, and the panel says so rather than accepting a note that would belong to no round. Its designers hand it in from the workshop's own screen.",
       "NOTHING YOU DO HERE CHANGES THE WORKSHOP'S CONTENT — not a stage value, not a photograph, not the completeness figure, not a record. What a send-back changes is the report's STATUS, and the designers are the ones who act on it next: they hand it back in by correcting the stages, and it returns to Pre-submission for a fresh pass.",
-      "THERE IS NO OFFLINE QUEUE ON AN INSPECTION. If the repository cannot be reached, nothing is filed and what you typed is still in the box — unlike a designer's stage save, which banks itself and syncs later. Try again when you have signal."
+      "IN A BROWSER THERE IS NO OFFLINE QUEUE ON AN INSPECTION. If the connection drops, nothing is filed and what you typed is still in the box — try again when you have signal. The Android app is different: it keeps the note on the phone and sends it once the report has been checked again, and a note the report has moved on from is held there with the reason rather than sent."
     ]
   },
   {

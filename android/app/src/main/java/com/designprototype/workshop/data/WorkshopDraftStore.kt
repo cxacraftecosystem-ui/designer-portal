@@ -771,26 +771,26 @@ object WorkshopDraftStore {
         if (!file.exists()) return null
 
         val text = runCatching { file.readText() }.getOrElse { error ->
-            quarantine(file, workshopId, "could not be read (${error.javaClass.simpleName})")
+            quarantine(file, workshopId, "could not be read")
             return null
         }
         // A zero-length draft.json is damage, not an empty document: [writeLocked] never produces
         // one — the smallest thing it can write is a full JSON object — so a blank file is the
         // fingerprint of a process killed between creating the temp file and filling it.
         if (text.isBlank()) {
-            quarantine(file, workshopId, "was empty, which means a save was interrupted part-way through")
+            quarantine(file, workshopId, "was not saved completely")
             return null
         }
 
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrElse { error ->
-            quarantine(file, workshopId, "could not be understood (${error.javaClass.simpleName})")
+            quarantine(file, workshopId, "could not be read")
             return null
         }
         val onDiskVersion = runCatching { root["schemaVersion"]?.jsonPrimitive?.int }.getOrNull() ?: 0
         val migrated = migrate(root, onDiskVersion)
 
         return runCatching { json.decodeFromJsonElement(WorkshopDraft.serializer(), migrated) }.getOrElse { error ->
-            quarantine(file, workshopId, "is in a shape this version cannot read (${error.javaClass.simpleName})")
+            quarantine(file, workshopId, "could not be opened by this version of the app")
             null
         }
     }
@@ -875,12 +875,12 @@ object WorkshopDraftStore {
         val moved = runCatching { file.renameTo(kept) }.getOrDefault(false)
         alert.set(
             if (moved) {
-                "The saved draft for workshop $workshopId $reason. Nothing has been deleted — the file has " +
-                    "been kept as ${kept.name} and every photo and recording is still in this workshop's " +
-                    "media folder. Please report this before uninstalling the app."
+                "A workshop's saved draft $reason. Nothing has been deleted — a copy is kept on this " +
+                    "phone, with every photo and recording. Ask your administrator for help before " +
+                    "uninstalling the app."
             } else {
-                "The saved draft for workshop $workshopId $reason, and could not be set aside. Do not " +
-                    "uninstall the app; please report this first."
+                "A workshop's saved draft $reason, and could not be set aside. Do not uninstall the " +
+                    "app; ask your administrator for help first."
             }
         )
     }
@@ -946,15 +946,13 @@ object WorkshopDraftStore {
         val moved = runCatching { file.renameTo(kept) }.getOrDefault(false)
         alert.set(
             if (moved) {
-                "The saved draft for workshop $workshopId was written by a newer version of this app " +
-                    "(draft format $onDiskVersion; this version understands $WORKSHOP_DRAFT_SCHEMA_VERSION). " +
-                    "Nothing has been deleted — the newer file has been kept as ${kept.name} and every photo " +
-                    "and recording is still in this workshop's media folder. Install the newer version again " +
-                    "to get everything it recorded back."
+                "A workshop's saved draft was made by a newer version of this app. Nothing has been " +
+                    "deleted — it is kept on this phone with every photo and recording. Install the newer " +
+                    "version again to get everything it recorded back."
             } else {
-                "The saved draft for workshop $workshopId was written by a newer version of this app and " +
-                    "could not be set aside, so this save has been refused — nothing has been " +
-                    "overwritten. Install the newer version again to keep working on this workshop."
+                "A workshop's saved draft was made by a newer version of this app and could not be set " +
+                    "aside, so this save was stopped — nothing has been overwritten. Install the newer " +
+                    "version again to keep working on this workshop."
             }
         )
         return moved
@@ -1032,11 +1030,9 @@ object WorkshopDraftStore {
             )
             if (!moved) {
                 throw IOException(
-                    "This workshop's draft was written by a newer version of this app (draft format " +
-                        "${onDisk.schemaVersion}; this version understands $WORKSHOP_DRAFT_SCHEMA_VERSION) " +
-                        "and could not be set aside, so this save has been refused rather than overwrite " +
-                        "it. Nothing has been lost. Install the newer version again to keep working on " +
-                        "this workshop."
+                    "This workshop's draft was made by a newer version of this app and could not be " +
+                        "set aside, so this save was stopped. Nothing has been lost. Install the newer " +
+                        "version again to keep working on this workshop."
                 )
             }
         }
@@ -1294,7 +1290,7 @@ object WorkshopDraftStore {
                 // Never fall back to a recursive delete. A failed move must leave the data exactly
                 // where it was; the alternative is that the one path guaranteeing recovery is also
                 // the path that destroys the data when it goes wrong.
-                throw IOException("Could not move workshop $workshopId to the trash; nothing has been deleted")
+                throw IOException("This workshop could not be removed from this phone. Nothing has been deleted.")
             }
             target
         }
