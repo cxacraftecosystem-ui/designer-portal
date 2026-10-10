@@ -1,8 +1,10 @@
 # Open findings
 
-**Status: 15 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
-heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
+**Status: 49 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
+heading on 2026-10-10; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
+
+**The web's copy rewrite of 2026-10-10 moved 34 gaps off the screens and into this register.** The web app, its landing pages and the backend's user-facing messages used to tell people what the product could not do — "no screen and no endpoint", "coming soon", "this build", "the server refused". That copy was rewritten (branch `copy/dp-web`) so that a screen says what happened and what to do, and every missing feature or known defect it used to narrate is recorded below instead, under *Open*, each opened 2026-10-10. Approval, sign-off and hand-on copy was left to the approvals branch and is not among them. Counted by heading: 15 + 34 = 49 open, and 95 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -640,6 +642,142 @@ new build goes out in a body. The entry stays open until that build has replaced
 the same, and neither form closes the browser's history.
 
 ---
+
+### [MEDIUM] Nobody can sign in with a Microsoft or Yahoo account (frontend, android, backend) — opened 2026-10-10
+
+F3. As of 2026-10-10 the product has no Microsoft or Yahoo sign-in: there is no OAuth endpoint for either provider in `backend/app/api/routes/auth.py` and no allow-list check for them, so only a password or Google can sign anybody in. `frontend/app/login/page.tsx` used to draw "Continue with Microsoft" and "Continue with Yahoo" buttons with a "Coming soon" badge (`ComingSoonBadge`) and a toast from `comingSoon()` ("… sign-in is coming soon" / "… for now."); those controls and sentences were removed in the 2026-10-10 copy rewrite. The Android sign-in screen in `android/app/src/main/java/com/designprototype/workshop/MainActivity.kt` still draws them as of 2026-10-10 (the Android stream owns it). Closing it would take an OAuth flow for each provider in `backend/app/api/routes/auth.py`, checked against the same platform allow-list as Google sign-in, and then the buttons on both clients.
+
+### [MEDIUM] An offline correction can overwrite a colleague's later edit of the same record without warning (frontend, android, backend) — opened 2026-10-10
+
+F23. As of 2026-10-10 a correction made with no signal is saved whole when it uploads — on the web through `saveOrQueue` in `frontend/lib/offline.ts`, on Android through the outbox in `android/app/src/main/java/com/designprototype/workshop/data/Offline.kt` — so if a colleague changed the same record in the meantime, their change is overwritten; nothing checks for a conflict or merges the two, and nobody is told. The public landing FAQ (`frontend/components/hero/HeroFAQ.tsx`, the `FAQS` entry "Does it work offline?") used to say so ("an offline edit replays the whole record, so a colleague's later change to the same row is overwritten rather than merged"); that sentence was removed in the 2026-10-10 copy rewrite (the Android walkthrough and the `Offline.kt` toast still say it as of 2026-10-10). Closing it would take a version or updated-at check on the record update routes, with the queued edit carrying the version it started from, and a conflict answer both clients show so the person can resolve it.
+
+### [LOW] Usage figures cannot tell web requests from Android requests (frontend, android, backend) — opened 2026-10-10
+
+F26 (1 of 3). As of 2026-10-10 neither the web client nor the Android app sends the `x-client-app` header (`CLIENT_APP_HEADER` in `backend/app/services/usage.py`), so every recorded request is filed under the fallback label and the admin "Web and Android" chart on `frontend/app/(protected)/settings/usage/page.tsx` cannot split traffic by app. The recording notice (`collects()` in `backend/app/services/usage.py`) and the clients note in `usage_clients` in `backend/app/api/routes/usage.py` used to say "neither the web nor the Android layer sends the header yet"; both sentences were removed in the 2026-10-10 copy rewrite. Closing it would take `frontend/lib/api.ts` and the Android HTTP client each sending the header on every request (and the API allowing it in CORS).
+
+### [MEDIUM] There is no lasting record of who looked at one person's usage history (backend, frontend) — opened 2026-10-10
+
+F26 (2 of 3). As of 2026-10-10 each master-admin read of one account's activity (`GET /usage/accounts/{user_id}/trail` in `backend/app/api/routes/usage.py`) leaves only a server log line naming the reader, the subject and the period; there is no audit table, so the record of who read whose history is lost with the logs. The notice's "who can read it" entry (`readable_by()` in `backend/app/services/usage.py`) and the "One person's activity" panel (`AccountTrailPanel` in `frontend/app/(protected)/settings/usage/page.tsx`) used to say "there is no durable audit table"; those sentences were removed in the 2026-10-10 copy rewrite. Closing it would take an audit table written on every such read and a way for the master admin (and the subject) to see it; note `/usage/*` is deliberately not recorded in `UsageEvent`, so it needs its own table.
+
+### [MEDIUM] Usage records have no retention period (backend) — opened 2026-10-10
+
+F26 (3 of 3). As of 2026-10-10 nothing deletes usage records on a schedule: an account's attributed entries go only when the person withdraws or the account is deleted, and entries recorded without a name (including everything recorded before consent was first asked on 2026-08-30) are kept indefinitely; whether the pre-consent entries should be deleted is also undecided (`docs/DECISION-usage-consent-at-sign-in.md`, `docs/METHODOLOGY-usage-instrumentation.md`). `retention_note()` in `backend/app/services/usage.py` used to say "There is no retention policy … a decision nobody has made yet", and the admin method's `consentStateWritten` in `collection_method` (`backend/app/api/routes/usage.py`) called the pre-consent entries "an open decision"; both were removed in the 2026-10-10 copy rewrite and the notice now says "Kept until you withdraw or your account is deleted." Closing it would take an owner decision on a retention period and a scheduled job that deletes older `UsageEvent` entries (then bump `NOTICE_VERSION`, since retention is a change of meaning).
+
+### [MEDIUM] Designers cannot create or scan a workshop join card in the web app (frontend) — opened 2026-10-10
+
+F15. As of 2026-10-10 a join card (one person creates the design workshop, colleagues scan a card to join the same one) can only be made and scanned in the Android app; the web has no join-card screen. The designer walkthrough said so on the Cards & tags card (`frontend/components/guide/steps.ts`, the `design-workshop-codes` step's `watch`, "there is no join card on the web"), and that bullet was removed in the 2026-10-10 copy rewrite. Closing it means a web join-card panel on `frontend/app/(protected)/design-workshops/[id]/codes/page.tsx` that issues a card and accepts a scanned one, then teaching it again on that card.
+
+### [MEDIUM] Reports generated in the Android app leave out transcripts and machine-assisted text (android) — opened 2026-10-10
+
+F18. As of 2026-10-10 a report generated on the handset cannot include recording transcripts or machine-assisted text, and the delivered file says so; only the web-generated report carries them. The designer walkthrough's Report card (`frontend/components/guide/steps.ts`, the `design-workshop-report` step's `watch`) named the two missing annexures, and that sentence was removed in the 2026-10-10 copy rewrite; the card now only says the phone report uses the same template and settings. Closing it means the handset fetching transcripts and AI layers while online and rendering them in its report writers, after which the warnings printed inside the file can go.
+
+### [MEDIUM] Nobody can be sent an email by the portal — sign-in links must be passed on by hand (backend) — opened 2026-10-10
+
+F2. As of 2026-10-10 the designer-portal has no mail sender: a sanction order's one-time sign-in link (and every password link) is shown on screen once and the officer copies it to the designer themselves. The directorate walkthrough said so in `frontend/components/guide/directorateSteps.ts` (`DIRECTORATE_STEPS`, the `ministry-sanction-order` card: "NOTHING IS EMAILED, BY ANYBODY, EVER. This product has no mail sender…") and in `frontend/components/guide/tracks.ts` (`DIRECTORATE_TRACK.checklist`: "Nothing is emailed by this product…"); both sentences were removed in the 2026-10-10 copy rewrite and the cards now only describe copying the link. Closing it needs a mail adapter in the backend, a sender identity, and a decision on whether one-time credentials may travel by email at all.
+
+### [MEDIUM] Inspectors cannot file or read correction suggestions on the Android app (android) — opened 2026-10-10
+
+F6. As of 2026-10-10 the handset's inspection screens (`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionDetailScreen.kt`) neither file a correction suggestion, nor send a report back, nor show the suggestions already filed, although the inspection detail it reads carries them. The web walkthrough said so in `frontend/components/guide/tracks.ts` (`INSPECTOR_TRACK.recapLead`: "Correction suggestions is web-only — the handset can neither file a suggestion nor read the ones already on a workshop…"); the sentence was removed in the 2026-10-10 copy rewrite. Closing it needs client methods for the feedback and send-back calls, a panel on the inspection detail screen, and the inspector deck's Android card (removing `inspection-feedback` from `walkthroughInspectorOmissions` in `android/app/src/main/java/com/designprototype/workshop/ui/WalkthroughSteps.kt`).
+
+### [LOW] A co-designer's first sign-in link cannot be re-issued, and an imported sanction order shows no links (backend) — opened 2026-10-10
+
+F10. As of 2026-10-10 "Re-issue sign-in link" on the sanction register re-issues only for the lead designer of an order; a co-designer who loses their first link has to be given a temporary password by a Ministry Admin or an Admin on Manage users. Orders imported from a sheet issue no links at all, so each one has to be re-issued by hand from its entry. The walkthrough said both in `frontend/components/guide/directorateSteps.ts` (`DIRECTORATE_STEPS`, `ministry-sanction-order`: "There is no route in this product that can re-issue a CO-DESIGNER'S first link…" and "AN IMPORT ISSUES NO SIGN-IN LINKS AT ALL…"); both were removed in the 2026-10-10 copy rewrite and the card now gives only the remedies. Closing it needs the re-issue action to take a designer, not only the order's lead, and a way to collect an import's links safely (for example a one-time downloadable list).
+
+### [LOW] Regional Directors cannot correct their own state's annual-plan entries (backend) — opened 2026-10-10
+
+F11. As of 2026-10-10 the annual plan is open only to a Ministry Admin, an Admin or the Master Admin (`canManageAnnualPlan` in `frontend/lib/permissions.ts`); a Regional Director cannot correct the entries for their own region because a plan entry carries no region to scope an edit to. The walkthrough explained this in `frontend/components/guide/directorateSteps.ts` (`DIRECTORATE_STEPS`, `ministry-annual-plan`: "…The reason is written into the server (`can_manage_annual_plan`)… If regional editing is ever wanted it is a scope table, not a promotion."); the explanation was removed in the 2026-10-10 copy rewrite and the card now only says who can open the screen. Closing it needs a per-region scope for plan entries and a regional read/write permission on the annual-plan routes and page.
+
+### [LOW] The inspection list cannot be filtered by designer, district or date (frontend) — opened 2026-10-10
+
+F13. As of 2026-10-10 "Workshops to inspect" (`frontend/app/(protected)/design-workshop-inspections/page.tsx`) offers only a text search over title, craft, cluster and workshop code. The inspector walkthrough listed the absence as a field in `frontend/components/guide/inspectorSteps.ts` (`INSPECTOR_STEPS`, `inspection-list`: "Nothing else — there is no filter by designer, district or date on this list"); the entry was removed in the 2026-10-10 copy rewrite. Closing it needs designer, district and date filters on the inspection list (and its Android twin). Note: the same field string is mirrored in `WALKTHROUGH_INSPECTOR_FIELDS` in `android/app/src/main/java/com/designprototype/workshop/ui/WalkthroughJourney.kt`, which must drop it too.
+
+### [MEDIUM] Designers are not told when an inspector files a correction suggestion (backend) — opened 2026-10-10
+
+F14. As of 2026-10-10 a correction suggestion filed without sending the report back leaves the report where it is and nobody is notified, so it may sit unread until a designer opens the workshop. The walkthrough said so in `frontend/components/guide/inspectorSteps.ts` (`INSPECTOR_STEPS`, `inspection-feedback`: "A suggestion filed on its own may sit unread until somebody opens the workshop."); the sentence was removed in the 2026-10-10 copy rewrite. Closing it needs an in-app notification (or email, which depends on F2) to the workshop's designers when a suggestion is filed.
+
+### [MEDIUM] Inspectors and directorate monitors cannot see a workshop's photographs, recordings, attachments or its custom-question answers (frontend, backend) — opened 2026-10-10
+
+F5. As of 2026-10-10 the inspection read (`read_workshop_under_inspection` in `backend/app/api/routes/design_workshop_inspections.py`) and the oversight read (`read_overseen_workshop`) carry media fields only as ids that an inspector or Assistant/Regional Director cannot resolve, and the questions behind a workshop's custom answers are served only through `GET /design-workshops/{id}/custom-sections`, which those readers cannot reach. `frontend/app/(protected)/design-workshop-inspections/[id]/page.tsx` and `frontend/app/(protected)/officers/monitored/[id]/page.tsx` (`ReadField`, `ReadStage`, and the read-only banner) used to say that an inspection/oversight read "does not carry photographs, recordings or attachments" and that the questions "are read through a route an inspection does not reach"; those sentences were removed in the 2026-10-10 copy rewrite, leaving only the counts ("{n} files recorded here", "{n} answers recorded to questions…"). Closing it needs an owner decision on whether post holders may see media, then a per-file media entitlement for post holders and the custom-section definitions folded into both reads.
+
+### [MEDIUM] Inspection notes cannot be saved offline to send later (frontend, android) — opened 2026-10-10
+
+F12. As of 2026-10-10 filing a correction suggestion or sending a report back from `frontend/app/(protected)/design-workshop-inspections/[id]/page.tsx` (`FeedbackPanel`) is online-only: there is no outbox for `recordInspectionFeedback` / `sendWorkshopBackForRevision`, so with no signal nothing is filed. The page's failure message used to narrate "There is no offline queue on an inspection"; it was removed in the 2026-10-10 copy rewrite and now reads "Couldn't send your note. Check your connection and try again — your text is still in the box." Closing it would mean queueing the note in the outbox (the server already accepts a `recordedAt` moment on these routes) and draining it on reconnect, on web and Android.
+
+### [MEDIUM] The web report cannot be previewed or generated offline (frontend) — opened 2026-10-10
+
+F17. As of 2026-10-10 the report preview, the .docx and the .pdf on the web are all built by the backend (`GET /design-workshops/{id}/report/preview` and `POST /design-workshops/{id}/report`), so a designer with no connection, or with a workshop that has never been uploaded, cannot preview or generate the report in the browser; only the Android app writes the document on the handset. The report page (`frontend/app/(protected)/design-workshops/[id]/report/page.tsx`, the offline and local-only notices and the preview/download error handlers), `frontend/components/designworkshop/report/StageDocumentPreview.tsx` and `frontend/components/designworkshop/report/ReportSettingsPanel.tsx` used to explain that "this browser deliberately has no renderer of its own"; those sentences were removed in the 2026-10-10 copy rewrite and the screens now only say "Connect to the internet to generate the report." Closing it would take an in-browser renderer of the same `ReportDocument` that is held to the backend writers by the report parity tests (`backend/tests/test_report_parity.py`), or an offline-capable export path.
+
+### [LOW] Report history cannot show which field changed between two generated files (frontend, backend) — opened 2026-10-10
+
+New (not in the sweep). As of 2026-10-10 a generated report records only its checksum, size, page count and template, so the comparison on `frontend/app/(protected)/design-workshops/[id]/report/history/page.tsx` (the `Limits` panel) can say a stage was "rewritten" but not which answer changed or from what. The panel used to say that "storing a snapshot of the workshop alongside each export is what would turn … into 'the unit cost went from ₹420 to ₹455'"; that sentence was removed in the 2026-10-10 copy rewrite. Closing it would take storing a stage-data snapshot with each export (the `report-history` payload served by `backend/app/api/routes/design_workshops.py`) and a field-level diff on the history screen.
+
+### [LOW] Earlier decisions on an AI layer cannot be viewed (frontend) — opened 2026-10-10
+
+F9. As of 2026-10-10 the AI layers screen only shows the accept/withdraw decisions returned by actions taken during the current visit; there is no way to read a layer's full decision history on its own. `frontend/components/designworkshop/AiLayersPanel.tsx` (`LayerRow`) used to say so on screen ("Earlier decisions are kept by the server but cannot be read from this screen — there is no endpoint for the history on its own."); that sentence was removed in the 2026-10-10 copy rewrite. Closing it needs a read route for a layer's `DwAiLayerDecision` history in `backend/app/api/routes/design_workshops.py` and a fetch in `frontend/lib/aiLayers.ts` that `LayerRow` calls.
+
+### [LOW] One AI layer's full text cannot be loaded on its own (frontend) — opened 2026-10-10
+
+F9. As of 2026-10-10 "Show the full text" on the AI layers screen fetches the text of every layer of the workshop in one request, because the layer list only offers text for all layers at once (`includeText` in `listDesignWorkshopAiLayers`, `frontend/lib/aiLayers.ts`). `frontend/components/designworkshop/AiLayersPanel.tsx` (`AiLayersPanel`) used to explain this under the toggle; the explanation was removed in the 2026-10-10 copy rewrite and the toggle still works. Closing it needs a single-layer text read in `backend/app/api/routes/design_workshops.py` and a per-row "Show text" control in `LayerRow`.
+
+### [MEDIUM] Custom questions cannot be a photo, file, recording, formatted text, coordinates or a record reference (frontend) — opened 2026-10-10
+
+F19. As of 2026-10-10 a workshop's own custom questions are limited to the plain answer types in `V1_CUSTOM_TYPES` (`frontend/lib/customSections.ts`; the server's own check is `validate_definition` in `backend/app/services/custom_sections.py`); the editor only offers those. The validation message in `customDefinitionProblems` used to add that the other types "are deliberately not available" and why; that sentence was removed in the 2026-10-10 copy rewrite (web and backend now say only which types to choose). Closing it means making custom-question answers carry media and references through stage sync and the report, on web and Android, before widening `V1_CUSTOM_TYPES`.
+
+### [LOW] Subtitles always run on the organisation's transcription key, never the designer's own AI key (backend) — opened 2026-10-10
+
+F20. As of 2026-10-10 the subtitle verb (`subtitle_ai_layer` in `backend/app/api/routes/design_workshops.py`) transcribes with the deployment's key even when the designer has supplied their own, unlike the other four AI verbs. The web used to say so in a note exported from `frontend/lib/aiVerbs.ts` and shown in `frontend/components/designworkshop/AiVerbReviewDialog.tsx` and `frontend/components/designworkshop/MediaAiVerbs.tsx`; the note and both uses were removed in the 2026-10-10 copy rewrite. Closing it needs `ai.transcribe_timed_bytes` to accept a user id and resolve keys through `user_ai_keys.resolve` like the other verbs.
+
+### [MEDIUM] Designers cannot browse the workshops that have opened pieces to the design-review pool (frontend, backend, android) — opened 2026-10-10
+
+F8. As of 2026-10-10 there is no list of the design workshops holding at least one sketch or prototype opened to the wider pool, so a designer can reach another workshop's pool round only from a link or id its designers sent them; the dropdown on `/design-review` lists only the workshops the reader can already open. `frontend/app/(protected)/design-review/page.tsx` (`DesignReview`, the `design-review-why` and `design-review-scope` paragraphs) used to say so on screen ("What does not exist yet is a list of every workshop that has opened a piece to the pool…", "nothing lists those workshops"); those sentences were removed in the 2026-10-10 copy rewrite and the page now only tells the reader to pick a workshop or paste a link or id. Closing it needs a pool-scoped listing route on the design-ratings router (title, date and per-entity open counts only, as the page's own header comment sketches) and a chooser on `/design-review` and on Android's `DesignReviewScreen.kt`.
+
+### [LOW] 3D model files have no viewer, and the report shows only "1 document attached" for them (frontend, backend, android) — opened 2026-10-10
+
+F16. As of 2026-10-10 a prototype's 3D model file is stored and downloadable but neither client can display it, and the generated report prints the model field as a count ("1 document attached") rather than any picture of the model. `frontend/components/sketches/upload/PrototypeModelField.tsx` (the turntable card's description and the model card's description) used to explain that "no viewer built into this application can change that, because the limit is in the document generator"; that admission was removed in the 2026-10-10 copy rewrite and the card now says only that the report lists the model as an attached file and that a turn of photographs is how the prototype appears on the printed page. Closing it would take an in-browser/on-device model viewer and, for the report, a rendered still of the model placed by the report builder.
+
+### [LOW] Questionnaires cannot be deleted, only deactivated (frontend) — opened 2026-10-10
+
+F24. As of 2026-10-10 a designer's own questionnaire can only be taken out of use (deactivated) and brought back; there is no delete. The My questionnaires list (`frontend/app/(protected)/questionnaires/page.tsx`, beside the "Show deactivated" toggle) used to say "Deactivation is what this app has instead of deleting. The answers are still there."; that sentence was replaced with "Deactivating keeps every answer." in the 2026-10-10 copy rewrite. Android's `android/app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireListScreen.kt` still carries the old sentence as of 2026-10-10. Closing it would take a delete route for a questionnaire with no recorded sittings (or an explicit retention decision that deactivation is the only removal), plus the control on web and Android.
+
+### [LOW] Questionnaire answers cannot be saved offline on the web (frontend) — opened 2026-10-10
+
+New (R2). As of 2026-10-10 the web reads a cached copy of a questionnaire offline but refuses to save answers until a connection returns. `frontend/lib/questionnaireFormCache.ts` (`cachedQuestionnaireNotice`) used to say so in capitals with a paragraph about why only the server knows whether a question may still be answered; the sentence was cut in the 2026-10-10 copy rewrite to "Connect to the internet to save answers." Closing it would take an outbox path for answers that pins them to the questionnaire version they were given against, plus a server rule for answers whose question has since been retired.
+
+### [LOW] "Never signed in" can be wrong for accounts last used before August 2026 (frontend) — opened 2026-10-10
+
+New (R2). As of 2026-10-10 sign-ins have only been recorded since August 2026, so an account whose last sign-in predates that shows the status "Never signed in" on Manage users. `frontend/app/(protected)/users/page.tsx` used to explain this with a dated history sentence under the status legend; the 2026-10-10 copy rewrite replaced it with "“Never signed in” means no sign-in has been recorded for the account." Closing it would take backfilling `firstLoginAt`/last-sign-in from session or usage history, or a distinct status for "no record before tracking began" (`ACCOUNT_STATUS_LABEL` in `frontend/app/(protected)/users/accountAdmin.ts`).
+
+### [LOW] Older Android handsets mis-word the "choose a new password" screen (android) — opened 2026-10-10
+
+New (R2). As of 2026-10-10 phones on app version 0.0.15 or older say "An administrator set your password" when an administrator only required a password change. `RequirePasswordChangeDialog` in `frontend/app/(protected)/users/AccountDialogs.tsx` used to warn about this by naming the app version; the warning was removed in the 2026-10-10 copy rewrite. Closing it means making sure every field handset is on a release newer than 0.0.15 (for example a minimum-version prompt), after which nothing remains to warn about.
+
+### [LOW] Months of experience on a designer profile are not printed on reports (backend) — opened 2026-10-10
+
+New (R2). As of 2026-10-10 a designer profile stores years and months of experience, but the report prints the years only, because the stage registry has no field to receive `experienceMonths`. `DESIGNER_PROFILE_HELP.experienceYears` in `frontend/components/designers/profileCopy.ts` used to say the months "are not printed on a report yet"; the 2026-10-10 copy rewrite states only that reports print the years. Closing it would take a registry field for the months and a line for it in the report renderers.
+
+### [LOW] Some states have no district list for record locations (backend) — opened 2026-10-10
+
+New (R2). As of 2026-10-10 the address reference data can carry a state with no districts, in which case a record's district cannot be chosen. The location card in `frontend/components/forms/LocationFields.tsx` used to tell the user to "save without one and report the gap"; the 2026-10-10 copy rewrite now says only that the record can be saved without a district. Closing it means completing the district lists in the reference data the address picker reads.
+
+### [LOW] Deleting an unfiled record cannot be undone (frontend) — opened 2026-10-10
+
+New (R2). As of 2026-10-10 discarding a record from "Records not filed under a workshop" deletes it permanently: there is no trash for those record types. `discard` in `frontend/components/settings/UnfiledRecordCard.tsx` used to say "there is no trash on this record type and nothing to restore it from"; the 2026-10-10 copy rewrite keeps only "This cannot be undone." Closing it would take a soft-delete with a restore screen for artisans, products, tools, processes, crafts, interviews and media, as design workshops already have.
+
+### [MEDIUM] A generated PDF can print empty boxes for Odia, other Indic scripts or the rupee sign (backend) — opened 2026-10-10
+
+D6. As of 2026-10-10 the PDF renderer can only draw the characters the fonts installed on the backend host can draw; when a script or symbol has no installed face, the PDF prints empty boxes and the export carries a warning (`_font_warnings` in `backend/app/services/design_workshops.py`). The warning used to say "The server has no font that can draw them"; that sentence was removed in the 2026-10-10 copy rewrite and the warning now states only what the PDF shows and that the Word document is correct. Closing it means shipping Noto faces for every script the registry can hold (at least Odia, Devanagari, Bengali, Telugu, Tamil) in the backend image and asserting it in `backend/tests/test_report_pdf.py`.
+
+### [LOW] The report's locator map is left empty when the boundary files are absent from the backend host (backend) — opened 2026-10-10
+
+D6. As of 2026-10-10 `_dropped_warnings` in `backend/app/services/design_workshops.py` reports a `map:` drop when `backend/app/services/report_map.py` cannot find its boundary geometry, and the section that places the workshop and its artisans prints empty. The warning used to end "the boundary geometry is missing on the server"; that clause was removed in the 2026-10-10 copy rewrite. Closing it means making the boundary assets part of every deployment and failing start-up (or a health check) when they are missing.
+
+### [LOW] Photo-heavy reports leave photographs out to stay within one report's memory budget (backend) — opened 2026-10-10
+
+D6. As of 2026-10-10 the report export in `backend/app/services/design_workshops.py` (the `over_budget` warning beside `_font_warnings`) omits photographs once a single report reaches its in-memory picture budget, and says how many were left out. The warning used to say embedding them "would have taken this server past the memory it has available for one report"; that wording was removed in the 2026-10-10 copy rewrite. Closing it means streaming images into the .docx/.pdf writers instead of holding them in memory, or a larger host.
+
+### [LOW] A correction suggestion cannot be filed on a workshop whose submission count reads zero (backend) — opened 2026-10-10
+
+D7. As of 2026-10-10 `feedback_plan` in `backend/app/schemas/design_workshop_review_loop.py` refuses a suggestion when the workshop's `submissionRound` is 0, which can only happen if a caller skipped copying it from the workshop. The refusal used to name the CHECK constraint `DwInspectionFeedback_round_check` and say a database refusal reaches the officer as a 500; in the 2026-10-10 copy rewrite it became "This suggestion couldn't be filed because the workshop's submission couldn't be read. Reload the workshop and try again." Closing it means proving no route can reach `feedback_plan` with a zero round (or deriving the round inside it) so the officer never sees this.
 
 ## Closed on 2026-10-09
 
