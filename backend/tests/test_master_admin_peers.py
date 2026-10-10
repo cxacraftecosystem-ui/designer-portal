@@ -133,7 +133,7 @@ async def test_a_master_admin_cannot_demote_a_master_admin_peer(client, world):
     detail = refused.json()["detail"]
     assert "can't change or remove each other" in detail, detail
     # The message has to say what the reader can actually do instead, not merely that they cannot.
-    assert "database access" in detail, detail
+    assert "ask the team that runs the platform" in detail, detail
 
     # THE ROW IS UNCHANGED. A 403 raised after the write would be a worse defect than the one being
     # fixed, and the status code alone cannot tell the two apart.

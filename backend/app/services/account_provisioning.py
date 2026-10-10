@@ -293,7 +293,8 @@ def assert_role(role: str | None, current_user: Any) -> None:
 #: Refusing a master admin an action on ANOTHER master admin. Named so the routes and the tests
 #: assert the same sentence, and phrased to say what the reader can actually do about it.
 _MASTER_PEER_DETAIL = (
-    "Master admin accounts can't change or remove each other."
+    "Master admin accounts can't change or remove each other. To change this account, ask the "
+    "team that runs the platform."
 )
 
 
