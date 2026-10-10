@@ -230,7 +230,7 @@ def test_the_3d_model_is_named_in_the_document_and_never_placed_as_a_picture():
     """``prototype.modelFile`` — the field ``PrototypeModelField`` spends its screen explaining."""
     spec = _field(PROTOTYPE, "modelFile")
     assert spec.type is FieldType.FILE
-    assert format_value(spec, ["med_glb", "med_stl"]) == "2 documents attached"
+    assert format_value(spec, ["med_glb", "med_stl"]) == "2 3D models attached"
 
     document, _warnings, resolver = _report({
         _stage_of(PROTOTYPE): {PROTOTYPE: [{
@@ -240,7 +240,7 @@ def test_the_3d_model_is_named_in_the_document_and_never_placed_as_a_picture():
     })
     printed = _text(document)
     assert spec.label in printed
-    assert "1 document attached" in printed
+    assert "1 3D model attached" in printed
     assert "med_glb" not in resolver.asked
 
 
