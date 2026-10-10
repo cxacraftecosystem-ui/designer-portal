@@ -559,7 +559,7 @@ def test_an_unknown_stage_key_is_refused_and_an_unknown_field_key_is_not():
     """
     with pytest.raises(loop.InspectionRuleViolation) as raised:
         loop.feedback_plan(**_plan_kwargs(stage_key="notAStage"))
-    assert "registry" in str(raised.value) or "stage list" in str(raised.value)
+    assert "isn't a stage of this report" in str(raised.value)
     plan = loop.feedback_plan(**_plan_kwargs(field_key="notAField"))
     assert plan.data["fieldKey"] == "notAField"
     assert plan.data["stageKey"] is None, "no stage named means the report as a whole"
@@ -570,7 +570,7 @@ def test_a_clock_in_the_future_is_refused_rather_than_corrected():
     at = datetime(2026, 9, 13, 10, 0, tzinfo=UTC)
     with pytest.raises(loop.InspectionRuleViolation) as raised:
         loop.feedback_plan(**_plan_kwargs(at=at, recorded_at=at + timedelta(hours=2)))
-    assert "corrected time" in str(raised.value)
+    assert "clock set ahead" in str(raised.value)
     inside = at + loop.MAX_DEVICE_CLOCK_SKEW - timedelta(minutes=1)
     assert loop.feedback_plan(**_plan_kwargs(at=at, recorded_at=inside)).data["recordedAt"] == inside
 

@@ -663,7 +663,7 @@ async def test_a_viewer_row_is_invisible_on_the_inspection_surface(world, client
         f"/api/design-workshop-inspections/{workshop_id}", headers=_headers(world, "colleague")
     )
     assert refused.status_code == 403, refused.text
-    assert "Inspector / Reviewer" in refused.json()["detail"]
+    assert "for inspectors" in refused.json()["detail"]
 
 
 @pytest.mark.parametrize("slug", ["colleague", "professor"])
@@ -672,7 +672,7 @@ async def test_the_inspection_surface_refuses_a_role_that_can_hold_no_inspection
     and above" spelling of the rule admits them, and the SET does not."""
     response = client.get("/api/design-workshop-inspections", headers=_headers(world, slug))
     assert response.status_code == 403, response.text
-    assert "Inspector / Reviewer" in response.json()["detail"]
+    assert "for inspectors" in response.json()["detail"]
 
 
 async def test_an_admin_with_no_inspection_sees_an_empty_list_and_not_everything(world, client):

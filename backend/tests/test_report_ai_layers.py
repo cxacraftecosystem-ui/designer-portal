@@ -360,7 +360,7 @@ def test_an_unresolved_acceptor_is_printed_as_an_account_and_never_as_a_bare_id(
     """
     line = provenance_line(_layer(accepted_by="", accepted_by_id="cmld8x0a10000gzsy4t9v2b1q"))
     assert "cmld8x0a10000gzsy4t9v2b1q" in line
-    assert "the account" in line
+    assert "(account cmld8x0a10000gzsy4t9v2b1q)" in line
     # The bare form is what this test exists to forbid.
     assert "Accepted by cmld8x0a10000gzsy4t9v2b1q" not in line
 

@@ -145,8 +145,8 @@ def test_a_designer_is_refused_the_officers_own_surface_and_an_admin_is_not():
     with pytest.raises(HTTPException) as exc:
         oversight.assert_oversight_surface(user("DESIGNER"))
     assert exc.value.status_code == 403
-    assert "/api/design-workshops" in exc.value.detail
-    assert "Ministry Admins, admins and the master admin" in exc.value.detail
+    assert "This page is for Assistant Directors and Regional Directors" in exc.value.detail
+    assert "ask an administrator" in exc.value.detail
     for role in ("ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", *sorted(SERVING_ADMINS)):
         oversight.assert_oversight_surface(user(role))
 

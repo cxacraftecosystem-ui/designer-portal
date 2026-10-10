@@ -493,7 +493,7 @@ def test_pressing_test_on_an_unreadable_override_does_not_thaw_the_engine(monkey
 
     assert verification["elevenlabs"]["keyState"] == app_settings.STT_KEY_FAILING
     assert verification["elevenlabs"]["rankable"] is False
-    assert "Re-enter the key" in verification["elevenlabs"]["frozenReason"]
+    assert "Enter it again" in verification["elevenlabs"]["frozenReason"]
 
 
 def test_a_readable_override_is_still_the_database_with_its_own_hint(stack) -> None:

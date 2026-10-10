@@ -574,7 +574,7 @@ async def test_every_new_aggregate_states_its_caps_and_is_refused_to_a_designer(
 
     refused = await _get(application, path, params={**_range(), "template": TEMPLATE})
     assert refused.status_code == 403
-    assert "/api/usage/me" in refused.json()["detail"]
+    assert "Yours is in Settings" in refused.json()["detail"]
 
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
     allowed = await _get(application, path, params={**_range(), "template": TEMPLATE})
@@ -732,7 +732,7 @@ async def test_the_account_trail_refuses_every_rank_below_master_admin(
     assert response.status_code == 403, response.text
     detail = response.json()["detail"]
     assert "master admin" in detail
-    assert "/api/usage/me/trail" in detail, "the refusal names where the subject can read it"
+    assert "yours is in Settings" in detail, "the refusal names where the subject can read it"
     assert store.events.find_many_calls == [], "refused before any query"
 
 

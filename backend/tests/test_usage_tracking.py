@@ -832,7 +832,7 @@ async def test_the_aggregates_refuse_a_designer_and_say_where_their_own_data_is(
 
     assert routes.status_code == 403
     assert collection.status_code == 403
-    assert "/api/usage/me" in routes.json()["detail"]
+    assert "Yours is in Settings" in routes.json()["detail"]
 
 
 async def test_a_designer_may_always_read_their_own_usage(

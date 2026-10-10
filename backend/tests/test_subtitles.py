@@ -73,7 +73,7 @@ def test_a_stored_cue_that_is_not_an_object_is_refused_with_the_next_move():
     on, must fail here rather than reach a renderer and produce a file no player opens."""
     with pytest.raises(SubtitleError) as refused:
         cue_of(["0", "2", "hello"])
-    assert "register" in str(refused.value).lower()
+    assert "make the subtitles again" in str(refused.value).lower()
 
 
 # --------------------------------------------------------------------------------------

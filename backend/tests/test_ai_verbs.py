@@ -641,7 +641,7 @@ def test_asking_for_labels_a_layer_does_not_carry_is_refused_with_the_next_move(
     they are different facts: never diarized, or diarized and only one voice heard."""
     with pytest.raises(VerbError) as refused:
         render_subtitles(_subtitle_row(), fmt="srt", speakers=True)
-    assert "without the speaker labels" in str(refused.value)
+    assert "no speaker labels" in str(refused.value)
     assert "only one voice" in str(refused.value)
 
 
@@ -998,7 +998,7 @@ def test_a_recording_over_a_providers_ceiling_is_never_uploaded_to_be_refused(mo
     monkeypatch.setattr(ai.requests, "post", never)
     answer = ai._transcribe_timed_sync(b"x" * 64, "clip.webm", "audio/webm", None, ["deepgram"])
     assert answer["status"] == "FAILED"
-    assert "larger than the provider limit" in answer["message"]
+    assert "too large" in answer["message"]
     assert answer["fragments"] == []
 
 

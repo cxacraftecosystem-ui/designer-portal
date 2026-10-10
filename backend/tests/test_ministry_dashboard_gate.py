@@ -1304,7 +1304,7 @@ def test_a_directory_that_could_not_be_read_is_not_reported_as_an_empty_one() ->
         assert "if not offered:" in code, (
             f"{function.__name__} cannot tell a refused directory from a failed one"
         )
-        assert "could not be read for this request" in code, (
+        assert "couldn't be read just now" in code, (
             f"{function.__name__} has no sentence for the directory read that failed"
         )
 
@@ -1366,7 +1366,7 @@ def test_the_feedback_columns_are_none_when_the_aggregate_could_not_be_read() ->
         "the inspector rows report an unread aggregate as zero"
     )
     assert "feedbackRead" in _keys_written_to(route.list_inspectors, "payload")
-    assert "not because nothing was filed" in code
+    assert "Suggestions may still have been filed" in code
 
 
 def test_the_feedback_nobody_on_this_list_filed_is_counted_rather_than_dropped() -> None:

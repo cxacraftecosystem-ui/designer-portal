@@ -340,7 +340,7 @@ def test_a_non_admin_cannot_reach_the_dataset_api(api) -> None:
     response = api.get("/api/datasets", token=api.token("prof"))
 
     assert response.status_code == 403
-    assert "Admin access required" in response.json()["detail"]
+    assert "Only admins" in response.json()["detail"]
 
 
 def test_admin_rank_comes_from_the_row_not_the_token_claim(api) -> None:
@@ -380,7 +380,7 @@ def test_a_suspended_admin_cannot_use_a_token_it_already_minted(api) -> None:
 
     response = api.get("/api/datasets", token=token)
     assert response.status_code == 403, response.text
-    assert "platform access" in response.json()["detail"].lower()
+    assert "access has been withdrawn" in response.json()["detail"].lower()
     # A PURE READ. The full sign-in gate WRITES — it bumps an attempt count and can 503 when the
     # approval queue is full — and a cron job polling this API every minute must not be able to
     # inflate an administrator's queue, nor start failing because strangers filled it.
@@ -520,7 +520,7 @@ def test_a_non_admin_is_refused_at_issue_time_not_at_first_use(api) -> None:
     )
 
     assert response.status_code == 403
-    assert "Admin access required" in response.json()["detail"]
+    assert "Only admins" in response.json()["detail"]
     assert api.access.accessroster.attempts == {}, (
         "a non-admin must not reach the arm of the gate that writes to the approval queue"
     )

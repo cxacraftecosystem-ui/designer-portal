@@ -951,7 +951,7 @@ def test_a_cap_of_zero_gets_its_own_sentence_and_never_blames_the_designer():
     assert_sentence(refusal)
     assert "all 0" not in refusal
     assert "used up" not in refusal
-    assert "administers the server" in refusal
+    assert "daily allowance is set to none" in refusal
 
 
 def test_the_refusal_names_the_limit_and_when_the_allowance_returns():
@@ -1672,7 +1672,7 @@ def test_the_retired_url_refuses_every_caller_identically(api, role):
     outcome = api(role, "POST", "/design-workshops/dictate", None, files=CLIP)
     assert outcome.reached is False
     assert outcome.status_code == 410
-    assert "{workshop_id}/dictate" in outcome.detail
+    assert "Update the app to use dictation" in outcome.detail
 
 
 def test_the_capability_probe_is_answered_by_its_own_route_and_never_by_the_wildcard(api):
@@ -1822,7 +1822,7 @@ def test_the_retired_url_is_still_retired_on_the_whole_api(mounted):
     outcome = mounted("DESIGNER", "POST", "/design-workshops/dictate", files=CLIP)
     assert outcome.reached is False
     assert outcome.status_code == 410
-    assert "{workshop_id}/dictate" in outcome.detail
+    assert "Update the app to use dictation" in outcome.detail
 
 
 # --------------------------------------------------------------------------------------

@@ -694,9 +694,9 @@ MINISTRY_DASHBOARD_ROLES = frozenset(
 MINISTRY_DASHBOARD_REFUSAL = (
     "The ministry dashboard gathers every design & prototype workshop and every other workshop on "
     "the platform, with each designer's progress, for the ministry's own posts — Assistant "
-    "Director, Regional Director and Ministry Administrator — and the master admin. Admins read the "
-    "same estate on Cross-workshop analytics in the settings hub; designers read the workshops they "
-    "are on through Design workshops."
+    "Director, Regional Director and Ministry Administrator — and the master admin. Admins see the "
+    "same workshops on Cross-workshop analytics in the settings hub; designers see their own "
+    "workshops on Design workshops."
 )
 
 

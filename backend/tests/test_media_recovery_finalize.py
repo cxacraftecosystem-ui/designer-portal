@@ -176,7 +176,8 @@ def test_burying_a_transcription_job_finalises_its_clip(monkeypatch):
     assert len(db.mediafile.update_many_calls) == 1
     call = db.mediafile.update_many_calls[0]
     assert call["data"]["transcriptStatus"] == media_queue.FAILED
-    assert "queue-service" in call["data"]["transcriptError"]
+    assert "queue-service" not in call["data"]["transcriptError"], "the worker host is logged, never shown"
+    assert "Processing was interrupted" in call["data"]["transcriptError"]
 
 
 def test_the_clip_write_keeps_the_transcript_preserving_predicate(monkeypatch):

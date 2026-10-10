@@ -131,7 +131,7 @@ async def test_a_master_admin_cannot_demote_a_master_admin_peer(client, world):
     refused = client.patch(f"/api/users/{deputy['id']}", json={"role": "ADMIN"})
     assert refused.status_code == 403, refused.text
     detail = refused.json()["detail"]
-    assert "peers" in detail, detail
+    assert "can't change or remove each other" in detail, detail
     # The message has to say what the reader can actually do instead, not merely that they cannot.
     assert "database access" in detail, detail
 
@@ -155,7 +155,7 @@ async def test_a_master_admin_cannot_delete_a_master_admin_peer(client, world):
 
     refused = client.delete(f"/api/users/{deputy['id']}")
     assert refused.status_code == 403, refused.text
-    assert "peers" in refused.json()["detail"]
+    assert "can't change or remove each other" in refused.json()["detail"]
 
     listed = client.get("/api/users", params={"search": deputy["email"]})
     assert [row["id"] for row in listed.json()["items"]] == [deputy["id"]]

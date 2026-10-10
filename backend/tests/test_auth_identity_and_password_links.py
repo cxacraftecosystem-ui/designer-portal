@@ -912,7 +912,8 @@ async def test_the_masters_google_sign_in_promotes_no_account_somebody_else_hold
         await auth_routes.login_with_google("stand-in-for-a-real-token")
     assert refused.value.status_code == 409
     assert refused.value.detail == auth_routes.MASTER_ADDRESS_HOLDS_A_PASSWORD_ACCOUNT_DETAIL
-    assert "scripts/seed_admin.py" in refused.value.detail
+    assert "scripts/seed_admin.py" not in refused.value.detail
+    assert "administrator" in refused.value.detail
     assert writes == [], "the refused account was written to anyway"
     logged = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert logged and "scripts/seed_admin.py" in logged[-1].getMessage()

@@ -867,7 +867,7 @@ def test_the_queue_will_not_be_asked_to_write_a_dimension_nobody_saw(api):
     )
     assert outcome.reached is False, "the row was created before the request was checked"
     assert outcome.status_code == 422
-    assert "MEASUREMENT" in outcome.detail
+    assert "can't be requested with the upload" in outcome.detail
     assert_sentence(outcome.detail)
     assert "analyze-measurement" in outcome.detail, "the refusal must name the supported route"
 

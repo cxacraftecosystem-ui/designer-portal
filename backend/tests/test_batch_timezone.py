@@ -259,7 +259,7 @@ async def test_an_unusable_timezone_is_refused_and_nothing_is_written(hub) -> No
 
     assert refused.status_code == 422, refused.text
     detail = refused.json()["detail"]
-    assert "batchTimezone" in detail and "'IST'" in detail, "the answer must name the bad value"
+    assert "'IST'" in detail and "time zone" in detail, "the answer must name the bad value"
     after = client.get("/api/settings", headers=_auth(hub))
     assert after.json()["batchTimezone"] == stored
 

@@ -656,7 +656,8 @@ async def test_re_empanelling_an_existing_email_is_a_409_naming_the_row(world, c
         headers=_headers(world, "admin"),
     )
     assert clash.status_code == 409, clash.text
-    assert first.json()["id"] in clash.json()["detail"], "the answer must say WHICH row"
+    assert "already on the roster" in clash.json()["detail"], "the answer must say WHICH entry"
+    assert "@" in clash.json()["detail"], "named by its address"
 
 
 async def test_suspending_a_row_ends_access_and_restoring_gives_it_back(world, client):

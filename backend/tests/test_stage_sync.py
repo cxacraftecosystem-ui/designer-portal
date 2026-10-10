@@ -664,7 +664,7 @@ async def test_an_entry_id_belonging_to_another_collection_is_refused_not_obeyed
          "data": {"_clientKey": "t1", "name": "Warping drum"}},
     ]})
     assert crossed.status_code == 200, crossed.text
-    assert any("belongs to rawMaterial" in k for k in crossed.json()["droppedKeys"]), \
+    assert any("an entry from a different list" in k for k in crossed.json()["droppedKeys"]), \
         "the refusal has to be visible in the one channel both clients already render"
 
     after = client.get(path).json()["collections"]
@@ -1378,7 +1378,7 @@ def test_two_entries_for_one_singleton_in_one_payload_make_one_row(client, works
     assert rows[0].data["targetCategories"] == ["TABLE_LINEN"], (
         "the earlier entry's keys must survive where the later one is silent"
     )
-    assert any("designBrief" in key for key in response.json()["droppedKeys"]), (
+    assert any("were combined" in key for key in response.json()["droppedKeys"]), (
         "a client sending two entries for one singleton is a bug, and the response is where it "
         "becomes findable"
     )
