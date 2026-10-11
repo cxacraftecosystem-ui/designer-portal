@@ -5,7 +5,7 @@ under every spelling Google delivers to it — dots, ``+tags`` and ``googlemail.
 because ``normalise_email`` was only ``.strip().lower()``, so ``sandy.craft3@gmail.com`` was a
 different key from ``sandycraft3@gmail.com``: one person, two rows, and a row on the admin screen
 that looked correct and could never match. New rows are written under the canonical form, so the
-tables cannot grow another pair. ``IMPLEMENTATION_PLAN.md`` §1 Fix 2 step 4 is this script.
+tables cannot grow another pair. ``docs/archive/IMPLEMENTATION_PLAN.md`` §1 Fix 2 step 4 is this script.
 
 WHAT THAT DID NOT DO IS TIDY THE PAIRS ALREADY THERE, AND TWO OF THOSE SHAPES ARE LIVE DEFECTS.
 

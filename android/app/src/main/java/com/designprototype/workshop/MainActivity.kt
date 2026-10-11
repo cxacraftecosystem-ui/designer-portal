@@ -2563,7 +2563,7 @@ private fun LoginScreen(
 // ===========================================================================
 // C1 — the four record registers, cached the way the design-workshop stage's
 // REF fields already cache theirs: through DwReferenceStore, ALL-scoped, no
-// expiry, cache-first-then-refresh. See DROPDOWN_DESIGN.md §3.3.
+// expiry, cache-first-then-refresh. See docs/archive/DROPDOWN_DESIGN.md §3.3.
 //
 // ── WHAT THIS BLOCK USED TO SAY ABOUT THE WORKSHOP PICKERS, AND WHY IT NO LONGER SAYS IT ─────
 //

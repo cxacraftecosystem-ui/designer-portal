@@ -49,7 +49,7 @@ const CACHE_SOURCE = readFileSync(join(__dirname, "..", "lib", "referenceCache.t
  * cached branch, the offline branch and the dangling branch are all unreachable, so a sentence
  * chosen inside a component is a sentence only somebody standing in a village ever sees — which is
  * the same argument `components/ui/selectFilter.ts` and `components/data/cappedList.ts` make for
- * their own split, and the reason `DROPDOWN_DESIGN.md` §3.5 writes the strings as functions.
+ * their own split, and the reason `docs/archive/DROPDOWN_DESIGN.md` §3.5 writes the strings as functions.
  *
  * There is no React renderer in devDependencies, so these call the real exports directly.
  */

@@ -39,7 +39,7 @@ import java.time.LocalDate
  *
  * ── R6 IS NOT REPEALED, IT IS NARROWED, AND THE NARROWING IS THE WHOLE SAFETY ARGUMENT ────────
  *
- * `DROPDOWN_DESIGN.md` R6 ruled caching FORBIDDEN for both workshop pickers — *"a stale ACCESS list
+ * `docs/archive/DROPDOWN_DESIGN.md` R6 ruled caching FORBIDDEN for both workshop pickers — *"a stale ACCESS list
  * is wrong in the permissive direction: a cached 'which workshops may I submit to' reads a revoked
  * grant as a grant"* — and [WorkshopRepository.workshopsIMaySubmitTo] said the same in its own KDoc,
  * which is rewritten in this change rather than left contradicting its code. That reasoning was and

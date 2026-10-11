@@ -1161,6 +1161,6 @@ repository. The three job names to add there, exactly as written:
 - `Docs check`
 
 Until somebody does that, Checks is a real gate on a pull request (a human reads the tick before
-merging) and advisory on `main`. [docs/CI.md](docs/CI.md) §1 and §5 say this at the point a reader
+merging) and advisory on `main`. [docs/CI.md](../CI.md) §1 and §5 say this at the point a reader
 decides what to trust; the workflow's own header explains at length what it stops and needs the same
 sentence about what it does not.

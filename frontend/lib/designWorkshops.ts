@@ -1589,7 +1589,7 @@ export function peekStageRegistry(): DwRegistry | null {
  *
  * ── WHY THERE IS A FLOOR AT ALL ─────────────────────────────────────────────────────────────────
  *
- * "Type of workshop" is a stage-1 field the registry declares `required`, and `DROPDOWN_DESIGN.md`'s
+ * "Type of workshop" is a stage-1 field the registry declares `required`, and `docs/archive/DROPDOWN_DESIGN.md`'s
  * rule R2 is that a field may only be mandatory where it is ANSWERABLE. A vocabulary this client
  * fetches is answerable only once it has fetched it — and `fetchStageRegistry`'s IndexedDB copy is
  * seeded by a page that has already been online, so a browser that has never reached this API has

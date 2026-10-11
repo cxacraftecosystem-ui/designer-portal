@@ -41,7 +41,7 @@
 /.claude/
 /.agents/
 *.docx
-/SESSION_HANDOVER.md
+/docs/archive/SESSION_HANDOVER.md
 /README.md
 
 # Generated locally, never an input to a build.

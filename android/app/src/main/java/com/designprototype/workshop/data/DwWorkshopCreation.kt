@@ -588,7 +588,7 @@ fun adoptedIntoWorkshop(draft: WorkshopDraft, remoteId: String, now: String): Wo
  * The other two arms describe a SHORT list under a live button. Offline is no longer that: the move
  * is disabled there, because the rows are this phone's memory and a remembered grant is stale in the
  * permissive direction — the argument is on `AdoptIntoWorkshopDialog` and generalised as
- * `DROPDOWN_DESIGN.md` R6. A disabled control whose reason is nowhere is the control people tap
+ * `docs/archive/DROPDOWN_DESIGN.md` R6. A disabled control whose reason is nowhere is the control people tap
  * repeatedly, and the alternative — a second amber paragraph beside this one — is two sentences
  * about one state. So the clause lives HERE, in the sentence that already owns this state, and the
  * test that keeps the three caveats distinct sees it.

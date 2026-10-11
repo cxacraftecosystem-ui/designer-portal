@@ -342,7 +342,7 @@ export type CraftAndArtisanOptions = {
    * The mount load's `.catch` set `referenceState` and nothing else, so a failed read left both
    * forms drawing a craft dropdown holding only "Unlinked / type below" with not a word about it.
    * That is the same shape as the sentence one field down that this hook's header already
-   * describes: absence rendering as non-existence. These are `DROPDOWN_DESIGN.md` section 3.5's
+   * describes: absence rendering as non-existence. These are `docs/archive/DROPDOWN_DESIGN.md` section 3.5's
    * strings through `workshopListNotice`, with `noun: "crafts"` -- the app has one set of words for
    * "the read is outstanding / the read failed / the device is offline / there genuinely are none"
    * and this is not the place to invent a second.

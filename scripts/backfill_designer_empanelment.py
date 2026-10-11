@@ -19,7 +19,7 @@ empanel it the next time that person signed in — role DESIGNER, an ACTIVE allo
 ``DesignerRoster`` row of any kind. So this creates exactly the rows the product would have created
 anyway, sooner, and it never makes a decision an administrator has not already made.
 
-That is a deliberate tightening of the wording in ``IMPLEMENTATION_PLAN.md`` §1 Fix 1 step 4, which
+That is a deliberate tightening of the wording in ``docs/archive/IMPLEMENTATION_PLAN.md`` §1 Fix 1 step 4, which
 says "every ``User`` with ``role == DESIGNER``" without qualifying it by the allow-list, AND THE
 REASON IS THAT THE UNQUALIFIED VERSION WOULD BE AN ADMISSION DECISION IN DISGUISE.
 ``auth.assert_access_admits`` accepts an ACTIVE ``DesignerRoster`` row as an admission for anybody

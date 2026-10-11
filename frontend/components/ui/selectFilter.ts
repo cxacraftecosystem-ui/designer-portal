@@ -377,7 +377,7 @@ export const SUMMARY_NAMES = 6;
  * Which is every caller that existed before `serverQuery`: `names.length === selected` there, so the
  * first two arms produce the sentence this control has always produced, character for character. The
  * same repair reaches one older case by the same door — a stored value the fetched page does not
- * contain (the off-page row `DROPDOWN_DESIGN.md` §2.9 leaves the CALLER to recover) was until now
+ * contain (the off-page row `docs/archive/DROPDOWN_DESIGN.md` §2.9 leaves the CALLER to recover) was until now
  * quietly subtracted from the total the trigger announced, so a picker missing a row also miscounted
  * the ones it had.
  */

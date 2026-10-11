@@ -281,7 +281,7 @@ STAGE_1 = StageSpec(
                 # closed ENUM and only for a closed ENUM: the option list is compiled into the
                 # registry and reaches a handset through `StageSchemaStore`'s bundled APK asset, so
                 # unlike a record-backed picker it can never be empty offline. That is rule R2 of
-                # `DROPDOWN_DESIGN.md` — a field may only be mandatory where it is answerable — and
+                # `docs/archive/DROPDOWN_DESIGN.md` — a field may only be mandatory where it is answerable — and
                 # a class-(a) vocabulary is the one class the rule is unconditionally true for.
                 #
                 # ── WHAT A DESIGNER SEES BESIDE IT, AND WHY THAT MATTERED ────────────────────────

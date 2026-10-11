@@ -623,7 +623,7 @@ export function ProcessForm({
    *
    * `artisanListState` was built for `carryScope` and nothing else, so the picker itself said
    * nothing at all: a failed read and an empty repository drew the identical control. Re-read as a
-   * {@link WorkshopListState} it feeds the shared sentences of `DROPDOWN_DESIGN.md` §3.5 through
+   * {@link WorkshopListState} it feeds the shared sentences of `docs/archive/DROPDOWN_DESIGN.md` §3.5 through
    * {@link workshopListNotice}, with `noun: "artisans"` because those sentences are written with a
    * `{noun}` hole in them for callers that are not workshops.
    *
@@ -669,7 +669,7 @@ export function ProcessForm({
    * `artisanError`/`productError` and `blocked = true` on a blank id unconditionally, returning
    * before `saveOrQueue`. With no signal the picker was empty, the validator refused, and the
    * process record and every step capture died with the tab. Android closed the identical defect at
-   * `MainActivity.kt:10129-10130`; `DROPDOWN_DESIGN.md:806-807` names it R2b — *never let a
+   * `MainActivity.kt:10129-10130`; `docs/archive/DROPDOWN_DESIGN.md:806-807` names it R2b — *never let a
    * CLIENT-SIDE validator block a save on an empty closed list* — and R2a, its other half: *never
    * LABEL a field required while its list is empty*, which is why the two `Field`s below take these
    * same booleans rather than a literal `required`.

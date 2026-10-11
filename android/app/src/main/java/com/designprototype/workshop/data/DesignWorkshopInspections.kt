@@ -497,7 +497,7 @@ enum class DwInspectionAttempt { READ, SAVE }
  * What went wrong, in words an administrator — or an inspector — can act on.
  *
  * **A REFUSAL IS NOT A DISCONNECTION, AND A DISCONNECTION IS NOT A REFUSAL.** This app has shipped
- * that confusion twice (the report download and the workshop create, both in SESSION_HANDOVER.md),
+ * that confusion twice (the report download and the workshop create, both in docs/archive/SESSION_HANDOVER.md),
  * and it costs the same thing each time. So the arms below are split by STATUS first and the
  * server's own `detail` is passed through wherever there is one, because that text is the only thing
  * that knows WHICH account was refused and why.

@@ -9,7 +9,7 @@ import java.time.LocalDate
  * ONE VOCABULARY FOR EVERY WORKSHOP PICKER ON THIS HANDSET — the labels, the order, the "none" row
  * and the sentences an empty one is allowed to say.
  *
- * SIX OF THOSE SENTENCES ARE `DROPDOWN_DESIGN.md` §3.5'S AND TWO ARE THIS MODULE'S OWN, added when a
+ * SIX OF THOSE SENTENCES ARE `docs/archive/DROPDOWN_DESIGN.md` §3.5'S AND TWO ARE THIS MODULE'S OWN, added when a
  * control reached a state §3.5 had no word for: [narrowedEmptyLine] for a list the READER narrowed,
  * and [atWorkshopEmptyLine] for a roster narrowed to the workshop a record is being filed under.
  * Each says at its own declaration which of the six it is NOT, and why the nearest one would be a
@@ -30,7 +30,7 @@ import java.time.LocalDate
  * picker and "Chanderi weaving · 2026-07-12" in the next is two workshops as far as the designer
  * reading them is concerned.
  *
- * The far more expensive half is the SENTENCES. `DROPDOWN_DESIGN.md` §3.5 fixes six of them and
+ * The far more expensive half is the SENTENCES. `docs/archive/DROPDOWN_DESIGN.md` §3.5 fixes six of them and
  * says, in as many words, that both clients use them byte for byte. They are here as functions
  * rather than as strings at eleven call sites because five of the six are unreachable on any
  * database an author can look at — a list that failed while online and a list this device has never
@@ -1082,7 +1082,7 @@ internal fun fieldWorkshopOptions(
  *
  * ── NO COMPILED-IN FLOOR ON THIS CLIENT, AND THE CLAIM WAS CHECKED RATHER THAN ASSUMED ─────
  *
- * `DROPDOWN_DESIGN.md` §3.1 files a served enum as a class-(a) vocabulary on Android — *"always
+ * `docs/archive/DROPDOWN_DESIGN.md` §3.1 files a served enum as a class-(a) vocabulary on Android — *"always
  * answerable, may be required, says nothing, no work"* — and gives the reason: `StageSchemaStore`
  * resolves memory, then `filesDir`, then the BUNDLED APK ASSET, and a build shipped without that
  * asset throws rather than degrading to an empty registry. The web needs `WORKSHOP_KIND_FLOOR`

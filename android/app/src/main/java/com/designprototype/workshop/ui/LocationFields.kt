@@ -269,7 +269,7 @@ private const val REFERENCE_CACHE_FILE = "address-reference.json"
 /**
  * WHEN THE CACHED LISTS LAST CAME OFF A SERVER — kept in a file of its own, beside the payload.
  *
- * WHY IT HAD TO EXIST AT ALL (DROPDOWN_DESIGN.md 3.2, item B3). Every other cache in this app
+ * WHY IT HAD TO EXIST AT ALL (docs/archive/DROPDOWN_DESIGN.md 3.2, item B3). Every other cache in this app
  * records and SHOWS a `fetchedAt`; this one recorded only the payload and its `version`, so the
  * address card had no way to print the one sentence that lets a researcher judge an offline list:
  * "36 states on this device, last refreshed 14 Aug 2026". `DwReferenceStore` states the argument
@@ -418,7 +418,7 @@ internal object AddressReferenceCache {
 
 /**
  * The address reference AS THIS DEVICE ACTUALLY HAS IT - the lists, plus the four facts a picker
- * needs in order to say which of DROPDOWN_DESIGN.md 3.5's states it is in.
+ * needs in order to say which of docs/archive/DROPDOWN_DESIGN.md 3.5's states it is in.
  *
  * A silently empty dropdown reads as "there are none", which this repository names as its single
  * most repeated bug class, and the state list is where that was first paid for: offline the list was
@@ -469,7 +469,7 @@ data class AddressReferenceState(
  *
  *  - [AddressReferenceState.loading] is true only while a request is genuinely in flight. It is what
  *    stops "Loading the state list..." being printed for ever on a phone that has never been online,
- *    which is DROPDOWN_DESIGN.md 3.2's B2: on a fresh install that is a PERMANENT state rather than
+ *    which is docs/archive/DROPDOWN_DESIGN.md 3.2's B2: on a fresh install that is a PERMANENT state rather than
  *    a transient one, and telling somebody to wait for something that will never arrive is worse
  *    than saying nothing at all.
  *  - [AddressReferenceState.servedThisSession] separates "these are today's lists" from "these came
@@ -546,7 +546,7 @@ private fun requiredLabel(label: String, required: Boolean): String =
     if (required) "$label *" else label
 
 /**
- * The DROPDOWN_DESIGN.md 3.5 sentence for one of the two address lists, or null when the control has
+ * The docs/archive/DROPDOWN_DESIGN.md 3.5 sentence for one of the two address lists, or null when the control has
  * nothing to report.
  *
  * INTERNAL, because a THIRD picker prints it. The designer profile keeps its own flat `state` box
@@ -1814,7 +1814,7 @@ fun LocationFieldsSection(
             enabled = listIsAnswerable(stateRows),
             /*
              * "Loading the state list…" IS FALSE FOR EVER ON A PHONE THAT HAS NEVER BEEN ONLINE,
-             * and that is DROPDOWN_DESIGN.md 3.2's B2. It was shown whenever both served lists were
+             * and that is docs/archive/DROPDOWN_DESIGN.md 3.2's B2. It was shown whenever both served lists were
              * empty, which on a fresh install is a permanent state rather than a transient one:
              * nothing is loading, nothing will load, and the sentence reads as something to wait
              * through. The honest sentence for each of the three empty states is in [stateNotice];

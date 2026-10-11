@@ -4979,7 +4979,7 @@ class WorkshopRepository(
      *
      * What stood here until 2026-09-16 was a flat refusal: *"There is deliberately no cached, bundled
      * or last-known fallback behind it… a picker is the one control that must not offer what it
-     * cannot honour. A failure leaves the dropdown EMPTY."* That is `DROPDOWN_DESIGN.md` R6, it was
+     * cannot honour. A failure leaves the dropdown EMPTY."* That is `docs/archive/DROPDOWN_DESIGN.md` R6, it was
      * quoted across both clients, and half of it still holds: THIS function is still one live read
      * with nothing behind it, and a failure here still answers with nothing rather than with a guess.
      *

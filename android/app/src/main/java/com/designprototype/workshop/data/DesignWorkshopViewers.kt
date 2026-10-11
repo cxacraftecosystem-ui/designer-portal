@@ -519,7 +519,7 @@ enum class DwViewerAttempt { READ, SAVE }
  * What went wrong, in words an administrator standing in a courtyard can act on.
  *
  * **A REFUSAL IS NOT A DISCONNECTION, AND A DISCONNECTION IS NOT A REFUSAL.** This app has shipped
- * that confusion twice — the report download and the workshop create, both in SESSION_HANDOVER.md —
+ * that confusion twice — the report download and the workshop create, both in docs/archive/SESSION_HANDOVER.md —
  * and it costs the same thing each time: somebody goes looking for signal because a permission
  * failure reached them wearing a network message, or retypes work because a dropped connection
  * reached them wearing a rejection. So the arms below are split by STATUS first and the server's own

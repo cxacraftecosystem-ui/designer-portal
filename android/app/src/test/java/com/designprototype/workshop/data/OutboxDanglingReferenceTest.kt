@@ -45,7 +45,7 @@ import java.io.IOException
  *     the installation behind a Try again that fetches the identical 404 and a Throw away that
  *     destroys the only copy of the record and its photographs. Nothing named which field.
  *
- * R7 (`DROPDOWN_DESIGN.md` §0, §3.7) is the rule these tests exist to keep: *"An empty picker and a
+ * R7 (`docs/archive/DROPDOWN_DESIGN.md` §0, §3.7) is the rule these tests exist to keep: *"An empty picker and a
  * dangling foreign key are opposite failures with opposite remedies… They must never be collapsed
  * into one message."* The first is fixed BEFORE the save; the second AFTER the drain, on the record
  * already on the device, by re-picking.

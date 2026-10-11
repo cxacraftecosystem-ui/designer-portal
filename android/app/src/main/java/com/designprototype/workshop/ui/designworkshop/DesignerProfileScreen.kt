@@ -1505,7 +1505,7 @@ fun DesignerProfileScreen(
                     // designer to answer it again, differently.
                     val stateRows = stateSelectOptions(form.state, reference)
                     /*
-                     * THE SENTENCE THIS BOX HAS NEVER HAD (DROPDOWN_DESIGN.md A3).
+                     * THE SENTENCE THIS BOX HAS NEVER HAD (docs/archive/DROPDOWN_DESIGN.md A3).
                      *
                      * With no reference on the device this control drew an empty menu over the word
                      * "Select", and a picker that opens on nothing reads as "there are none" — which
@@ -1528,7 +1528,7 @@ fun DesignerProfileScreen(
                         enabled = canEdit && listIsAnswerable(stateRows),
                         emptyMessage = stateNotice,
                         // Pinned open rather than left to the option count, so the control does not
-                        // change shape with what the network did. See DROPDOWN_DESIGN.md 3.6.
+                        // change shape with what the network did. See docs/archive/DROPDOWN_DESIGN.md 3.6.
                         searchable = true,
                         onSelect = { picked ->
                             // Changing the state invalidates a district chosen under the old one.

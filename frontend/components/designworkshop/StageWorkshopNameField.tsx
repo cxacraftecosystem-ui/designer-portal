@@ -45,7 +45,7 @@
  *
  * ── IS "WORKSHOPS WHOSE NAMES I MAY SEE" AN ACCESS LIST? (R6) — NO, AND THE RULING MATTERS ──────
  *
- * `DROPDOWN_DESIGN.md` R6 forbids caching an ACCESS list because *"a stale access list is wrong in
+ * `docs/archive/DROPDOWN_DESIGN.md` R6 forbids caching an ACCESS list because *"a stale access list is wrong in
  * the PERMISSIVE direction"* — a revoked grant still reads as a grant, and a picker must not offer
  * what it cannot honour. That rule governs pickers whose VALUE IS A GRANT-BEARING REFERENCE: an id
  * a record is filed under, a destination for a one-way move, a roster row. It does not govern this

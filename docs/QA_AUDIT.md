@@ -70,7 +70,7 @@ amber nodes when it removed them from *untested* without giving them anywhere to
 > mermaid node **"Every API route end-to-end / no route test hits a database"** sat in the *untested*
 > subgraph and has moved into *tested* above, where it names four of the modules rather than the area,
 per the rule at the foot of this note. **The pass total is withdrawn rather than updated,
-> because nobody has re-measured it on a comparable footing** — the number in `SESSION_HANDOVER.md`
+> because nobody has re-measured it on a comparable footing** — the number in `docs/archive/SESSION_HANDOVER.md`
 > (1726 passed, 2 skipped, 2m55s) was measured against the compose stack, which is a different run
 > from the one this line described.
 >

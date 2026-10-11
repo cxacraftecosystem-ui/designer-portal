@@ -256,7 +256,7 @@ fun RequestAccessFields(
             placeholder = "Select researchers",
             // The repository-level sentence from `WorkshopOptions.kt`, in place of a hand-rolled
             // claim that asserted the same "there are none" fact regardless of whether `directory`
-            // arrived from a read that actually succeeded — the bug class DROPDOWN_DESIGN.md's own
+            // arrived from a read that actually succeeded — the bug class docs/archive/DROPDOWN_DESIGN.md's own
             // survey of this file names by quoting this exact string.
             emptyMessage = unscopedEmptyLine("researchers"),
             enabled = !busy,

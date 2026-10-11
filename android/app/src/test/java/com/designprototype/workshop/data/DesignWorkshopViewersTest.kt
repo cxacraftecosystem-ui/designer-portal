@@ -31,7 +31,7 @@ import org.junit.Test
  * ── AND THE MESSAGES, BECAUSE THIS APP HAS SHIPPED THE OTHER FAILURE TWICE ───────────────────────
  *
  * A permission refusal reaching a person as a network message, or the reverse, is in
- * SESSION_HANDOVER.md twice. `dwViewerFailureMessage` is where that decision is made for this
+ * docs/archive/SESSION_HANDOVER.md twice. `dwViewerFailureMessage` is where that decision is made for this
  * feature, and the sentences are asserted rather than read — including the one claim that must never
  * be printed when it cannot be known: that a save which never got an answer changed nothing.
  */

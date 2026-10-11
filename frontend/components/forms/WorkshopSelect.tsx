@@ -122,7 +122,7 @@ import {
  * of those six facts used to be spelled differently in this file and in the design-workshop picker.
  * That mattered when the two boxes sat one above the other on four record forms; it matters MORE now
  * that `WorkshopPicker` swaps between them inside one control, where a difference in wording would
- * read as the control changing its mind. See `DROPDOWN_DESIGN.md` §2.
+ * read as the control changing its mind. See `docs/archive/DROPDOWN_DESIGN.md` §2.
  */
 
 /** How far down the list the auto-default walks looking for a workshop the user may submit to. */

@@ -121,7 +121,7 @@ test("A FAILED FETCH DOES NOT UNLOCK THE MOVE — the list may be read offline a
     removed from the merge, offered one branch later for the write that cannot be undone. A grant
     revoked in March was still choosable in September, and `localDraftNeedsAWorkshop` guards adoption
     on `remoteId === null`, so nothing in either client could point the draft anywhere else
-    afterwards. `DROPDOWN_DESIGN.md` R6 cites this dialog as its authority for "never cache an ACCESS
+    afterwards. `docs/archive/DROPDOWN_DESIGN.md` R6 cites this dialog as its authority for "never cache an ACCESS
     list" while this branch was the exception to it.
 
     WITHDRAWING IT COSTS THE DESIGNER NOTHING, which is what makes this the right way round rather

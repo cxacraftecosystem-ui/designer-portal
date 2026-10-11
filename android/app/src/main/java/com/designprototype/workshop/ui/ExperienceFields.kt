@@ -75,7 +75,7 @@ import androidx.compose.ui.unit.sp
  * ── WHY THE COUNT DECIDES THE SURFACE HERE ─────────────────────────────────
  *
  * Neither picker passes `searchable`. Both are constant vocabularies compiled into this file, which
- * is exactly what [SEARCH_THRESHOLD] was measured for, and DROPDOWN_DESIGN.md 3.6 leaves that case
+ * is exactly what [SEARCH_THRESHOLD] was measured for, and docs/archive/DROPDOWN_DESIGN.md 3.6 leaves that case
  * alone: only a list BACKED BY RECORDS has an answer that moves under the reader. Neither list can
  * ever be empty, so neither carries one of 3.5's sentences and neither ever stands down.
  * ---------------------------------------------------------------------------

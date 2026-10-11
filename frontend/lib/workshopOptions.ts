@@ -4,7 +4,7 @@
  * ── WHY A MODULE, WHEN "map rows to {value,label}" IS THREE LINES ───────────────────────────────
  *
  * Because it is three lines written eleven times, and the eleven do not agree. Counted on
- * 2026-08-29 and tabulated in `DROPDOWN_DESIGN.md` §1.2, the app currently ships SIX label shapes
+ * 2026-08-29 and tabulated in `docs/archive/DROPDOWN_DESIGN.md` §1.2, the app currently ships SIX label shapes
  * for one question — `title` alone (seven controls), `title · date` (seven), `title · date` plus a
  * `workshopCode` hint (one), `title` plus a `craft · cluster · date` hint (three), `title · place`
  * (two), `title · date · place — standing` (one) — FIVE sort orders, NINE different strings for the
@@ -43,7 +43,7 @@
  * IT DOES NOT BUILD THE "NONE" ROW. See {@link NO_DESIGN_WORKSHOP} for which layer owns it and why
  * two layers owning it is the specific bug this file exists to stop.
  *
- * Specification: `DROPDOWN_DESIGN.md` §2.2 (this module), §2.3 (the label), §2.4 (the grouping),
+ * Specification: `docs/archive/DROPDOWN_DESIGN.md` §2.2 (this module), §2.3 (the label), §2.4 (the grouping),
  * §2.5 (the sort), §2.6 (archived / closed / deleted), §2.7 (the "none" row), §2.8 (truncation),
  * §2.9 (off-page recovery), §3.5 (the state sentences).
  */
@@ -877,7 +877,7 @@ export type WorkshopListVoice = {
    * genuinely are none — and the same four questions are asked of the artisan register, the craft
    * register, the questionnaire sections and the assignee roster on eight other controls in this
    * app, every one of which answered all four with a single confident claim of non-existence.
-   * §3.5 of `DROPDOWN_DESIGN.md` writes the strings with a `{noun}` hole in them for exactly this
+   * §3.5 of `docs/archive/DROPDOWN_DESIGN.md` writes the strings with a `{noun}` hole in them for exactly this
    * reason and calls the noun *"the caller's plural"*.
    *
    * So the choice was between exporting the noun and letting eight call sites write their own

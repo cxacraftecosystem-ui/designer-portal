@@ -34,7 +34,7 @@ import type { User, UserRole } from "@/lib/types";
  * twice and that the repair is to move `TIER_COUNT_WORD` into a motion-free module rather than to
  * write a better warning. What is
  * left is outside this client: `docs/PERMISSIONS.md`
- * and `SESSION_HANDOVER.md` say "six-tier" only to narrate that correction, `docs/RESEARCH_NOTES.md`
+ * and `docs/archive/SESSION_HANDOVER.md` say "six-tier" only to narrate that correction, `docs/RESEARCH_NOTES.md`
  * keeps a provenance-labelled six-row snapshot on purpose and says so, and the live miscount is
  * now ZERO. The last one standing was `MainActivity.kt` in the Android client, which said
  * "six-tier ladder" twice — once in RENDERED SCREEN COPY on the users-and-access card
@@ -65,8 +65,8 @@ import type { User, UserRole } from "@/lib/types";
  * "exactly `SEARCH_THRESHOLD`"), `components/hero/AccessLadder.tsx`'s "a NINTH tier" ordinal,
  * `docs/README.md`'s index row, `docs/RESEARCH_NOTES.md`'s correcting sentence (the snapshot itself
  * was correctly labelled; it was the sentence saying "the ladder is now eight" that had rotted), the
- * frontend skill file, and dated notes on `DROPDOWN_DESIGN.md` and `IMPLEMENTATION_PLAN.md`.
- * `RECON_FINDINGS.md` was deliberately left alone: it pins itself to commit `7c60e81` in its own
+ * frontend skill file, and dated notes on `docs/archive/DROPDOWN_DESIGN.md` and `docs/archive/IMPLEMENTATION_PLAN.md`.
+ * `docs/archive/RECON_FINDINGS.md` was deliberately left alone: it pins itself to commit `7c60e81` in its own
  * first sentence, so its counts are a record and re-counting them would destroy it — the same rule
  * `docs/tools/check-docs.mjs` applies to `AUDIT-2026-08-15.md`. Three backend test files
  * (`test_access_roster.py`, `test_design_workshop_data_access.py`, `test_role_ladder_parity.py`)

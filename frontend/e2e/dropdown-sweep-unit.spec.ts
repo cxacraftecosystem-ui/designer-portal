@@ -554,7 +554,7 @@ test("the chooser's honest paragraphs are reachable to assistive technology", ()
  * W1 — the three capabilities wave 2 is about to code against, and the rule
  *      that every one of them is absent by default
  *
- * DROPDOWN_DESIGN.md §5 "W1 — the select primitive". This primitive has about
+ * docs/archive/DROPDOWN_DESIGN.md §5 "W1 — the select primitive". This primitive has about
  * forty live call sites, so the assertions below are as much about what did NOT
  * change as about what did: each new prop's absent case has to be the behaviour
  * the file had before it existed, or twenty callers break at once.
@@ -1642,7 +1642,7 @@ test("the media upload's workshop rows come from the shared builder, not a seven
 /* ────────────────────────────────────────────────────────────────────────────
  * 12. W4 — the `DesignWorkshop` callers, made to agree
  *
- * DROPDOWN_DESIGN.md §1.1A lists eleven controls over `GET /design-workshops`
+ * docs/archive/DROPDOWN_DESIGN.md §1.1A lists eleven controls over `GET /design-workshops`
  * and §1.2 tabulates the four columns they disagree in. These are the six that
  * are W4's to move, asserted where the disagreement actually lived: in the call
  * sites. The builders themselves are already covered by section 11's pure calls,
@@ -2228,7 +2228,7 @@ test("the process form's two pickers stand down when their list is empty, and st
     never reached the outbox, and the process record and every step capture died with the tab. It is
     `LocationFields.tsx:176-179` again — the same shape and the same loss — which is why that file's
     two required flags have ended in `&& options.length > 0` ever since. Android closed the identical
-    defect at `MainActivity.kt:10129-10130`, and `DROPDOWN_DESIGN.md` names it R2b.
+    defect at `MainActivity.kt:10129-10130`, and `docs/archive/DROPDOWN_DESIGN.md` names it R2b.
   */
   expect(source, "R2: a field may only be mandatory where it is answerable").toContain(
     "const artisanRequired = artisanOptions.length > 0;"

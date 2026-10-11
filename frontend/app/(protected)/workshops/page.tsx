@@ -150,7 +150,7 @@ function WorkshopsPageBody() {
    * the pickers "degrade to empty lists". They did, and an empty list then drew "No artisans
    * recorded yet" and "No crafts available yet" -- claims about the repository made out of a
    * request that never arrived. That is the silent-emptiness class named in rule 10 of the frontend
-   * contract and in `DROPDOWN_DESIGN.md` section 3.5, and `WorkshopListState` is the three-way
+   * contract and in `docs/archive/DROPDOWN_DESIGN.md` section 3.5, and `WorkshopListState` is the three-way
    * answer the rest of this app already holds, so this page reuses it rather than inventing a
    * fourth local spelling of the same three states.
    *

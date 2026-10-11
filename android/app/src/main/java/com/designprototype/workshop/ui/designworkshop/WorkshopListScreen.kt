@@ -2490,7 +2490,7 @@ private fun CreateWorkshopDialog(
  * That paragraph used to end "With no connection there is nothing to confirm against, the remembered
  * rows are offered instead, and [dwAdoptCandidateNotice] says exactly that." Offered as a LIST, yes.
  * Offered as a DESTINATION, no — which is what the sentence above spends its whole length forbidding,
- * and the offline branch was quietly the exception to it. `DROPDOWN_DESIGN.md` R6 calls caching an
+ * and the offline branch was quietly the exception to it. `docs/archive/DROPDOWN_DESIGN.md` R6 calls caching an
  * ACCESS list FORBIDDEN rather than unattractive and cites this control's web twin as its authority;
  * both clients then let a failed fetch unlock the write anyway.
  *
@@ -2637,7 +2637,7 @@ private fun AdoptIntoWorkshopDialog(
  * connection — the server refused the account — and the work is not queued for anything, because
  * every future attempt will be refused too. A researcher told that goes on to capture 22 stages and
  * a fortnight of photographs believing they are on their way to the office. This is the same shape
- * as the report-download bug in SESSION_HANDOVER.md: a permission failure reaching a person as a
+ * as the report-download bug in docs/archive/SESSION_HANDOVER.md: a permission failure reaching a person as a
  * network message.
  *
  * `isTransient` is the ONE test for "this will succeed later", the same predicate

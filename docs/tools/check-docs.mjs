@@ -2249,7 +2249,7 @@ const VERCEL_ID_SHAPE = /\b(?:prj|team)_(?=[A-Za-z0-9]{16,})(?=[A-Za-z0-9]*[A-Z]
  *  the code and starts excusing it. */
 const SIBLING_ALLOWLIST = new Map([
   // A handover note naming the other product's SSH key file.
-  ["SESSION_HANDOVER.md fieldrepo-deploy", 1],
+  ["docs/archive/SESSION_HANDOVER.md fieldrepo-deploy", 1],
   // The handset's own source. A .kt cannot fail this run's owner's build, but it is a live client.
   ["android/app/src/main/java/com/designprototype/workshop/MainActivity.kt field-repository.vercel.app", 1],
   ["android/app/src/main/res/xml/network_security_config.xml 15.207.145.174", 1],
@@ -2661,8 +2661,8 @@ const ISO_DATE = /\b20\d\d-\d\d-\d\d\b/;
 
 /** The instances that were already here when this check landed. Shrink it; do not grow it. */
 const ROT_BASELINE = new Set([
-  "when-x-lands SESSION_HANDOVER.md 6ea56210", // when the ports land — SESSION_HANDOVER.md:482
-  "not-before SESSION_HANDOVER.md 1c61ff15", // , not before — SESSION_HANDOVER.md:1108
+  "when-x-lands docs/archive/SESSION_HANDOVER.md 6ea56210", // when the ports land — docs/archive/SESSION_HANDOVER.md:482
+  "not-before docs/archive/SESSION_HANDOVER.md 1c61ff15", // , not before — docs/archive/SESSION_HANDOVER.md:1108
   "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/MainActivity.kt 239c6854", // the three call sites — android/app/src/main/java/com/designprototype/workshop/MainActivity.kt:4207
   "when-x-lands android/app/src/main/java/com/designprototype/workshop/MainActivity.kt 6cba3dce", // when it lands — android/app/src/main/java/com/designprototype/workshop/MainActivity.kt:14231
   "when-x-lands android/app/src/main/java/com/designprototype/workshop/data/DwAiVerbs.kt e4600780", // When the route lands — android/app/src/main/java/com/designprototype/workshop/data/DwAiVerbs.kt:526

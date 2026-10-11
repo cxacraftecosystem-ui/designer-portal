@@ -62,7 +62,7 @@
  * not one stage can leave for the chosen workshop until there is a connection — the same moment the
  * live list becomes available. So the wait costs nothing, while acting on the cached list risks
  * everything: it is stale in the PERMISSIVE direction, and this write is one-way and unrepeatable.
- * `DROPDOWN_DESIGN.md` R6 is the general form and cites the paragraph above it; the fallback branch
+ * `docs/archive/DROPDOWN_DESIGN.md` R6 is the general form and cites the paragraph above it; the fallback branch
  * was quietly the exception to the rule it was being quoted for. See {@link verified}.
  *
  * ── WHAT HAPPENS WHERE BOTH SIDES ANSWERED THE SAME BOX ─────────────────────────────────────────
@@ -158,7 +158,7 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
    * forbidding. The header removed the cached rows from the MERGE and then handed them back as
    * DESTINATIONS one branch later, so a grant revoked in March was still choosable in September —
    * and adoption is one-way and unrepeatable, so a fortnight would be filed against an id this
-   * account cannot open with nothing in either client able to undo it. `DROPDOWN_DESIGN.md`'s R6
+   * account cannot open with nothing in either client able to undo it. `docs/archive/DROPDOWN_DESIGN.md`'s R6
    * names this dialog as its own authority and calls caching an ACCESS list FORBIDDEN rather than
    * unattractive; the code disagreed with the document that cited it.
    *

@@ -395,7 +395,7 @@ class DwDesignerTeamTest {
      * Offline is the one state where "Move it" is switched off. The candidates are then this phone's
      * remembered rows; a remembered grant is stale in the PERMISSIVE direction; and adoption is
      * one-way — so a grant revoked in March would file a fortnight against a workshop this account
-     * cannot open, with nothing in either client able to undo it (`DROPDOWN_DESIGN.md` R6, argued at
+     * cannot open, with nothing in either client able to undo it (`docs/archive/DROPDOWN_DESIGN.md` R6, argued at
      * `AdoptIntoWorkshopDialog` and at `AdoptLocalDraftDialog.tsx`). A disabled control whose reason
      * is nowhere is the control people tap repeatedly, so the reason rides on this sentence rather
      * than on a second amber paragraph beside it.

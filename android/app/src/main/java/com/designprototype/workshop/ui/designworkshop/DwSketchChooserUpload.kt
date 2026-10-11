@@ -863,7 +863,7 @@ private fun DwChooserUploadHalf(
           "Straighten a photographed sketch" and "Measure a dimension from a
           photograph" are all built, all tested, and were mounted at exactly ONE place in the app —
           `FieldRenderer`, inside the stage form, one tap deeper than this screen — while the web
-          puts every one of them on this tab. `RECON_FINDINGS.md` section 9 records the grep:
+          puts every one of them on this tab. `docs/archive/RECON_FINDINGS.md` section 9 records the grep:
           `TracePanel|RectifyPanel|MeasurePanel|dwOffers` across the four chooser files returned
           nothing at all. This repository's own rule about a finished surface that is reachable from
           nothing is the argument, and `FieldRenderer.kt` states it about this very feature.
