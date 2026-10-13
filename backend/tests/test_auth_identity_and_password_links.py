@@ -922,6 +922,66 @@ async def test_the_masters_google_sign_in_promotes_no_account_somebody_else_hold
     assert "somebody.elses" not in logged[-1].getMessage(), "a password hash reached the log"
 
 
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        # An administrator's spelling on the allow-list is the record, and survives a sign-in.
+        ("Nighat Sofi", "Nighat Sofi"),
+        # No spelling typed: Google's display name, as it always was.
+        (None, "tahgin Sofi"),
+        ("   ", "tahgin Sofi"),
+    ],
+)
+async def test_a_google_sign_in_keeps_the_name_an_administrator_typed(monkeypatch, typed, expected):
+    """A password-less account is renamed on every Google sign-in. It used to be renamed to the
+    Google profile's display name, which undid a correction an officer had made to match a ministry
+    sheet; the allow-list's ``fullName`` now wins, on the existing account and on a new one."""
+    from types import SimpleNamespace
+
+    from app.api.routes import auth as auth_routes
+
+    address = "tahgin1615@gmail.com"
+    monkeypatch.setattr(
+        auth_routes,
+        "verify_google_token",
+        lambda _token: {"email": address, "email_verified": True, "name": "tahgin Sofi"},
+    )
+
+    async def _admits(email, *, is_master):
+        return _roster_row(email, "ACTIVE", admitRole="DESIGNER", fullName=typed)
+
+    async def _rostered(_email):
+        return True
+
+    monkeypatch.setattr(auth_routes, "assert_access_admits", _admits)
+    monkeypatch.setattr(auth_routes, "roster_allows", _rostered)
+    monkeypatch.setattr(auth_routes, "invalidate_cached_user", lambda _user_id: None)
+
+    async def _no_other_spelling(_email):
+        return None
+
+    monkeypatch.setattr(auth_routes, "_local_account_on_the_mailbox", _no_other_spelling)
+
+    account = SimpleNamespace(
+        id="acct", email=address, role="DESIGNER", passwordHash=None, authProvider="GOOGLE"
+    )
+    for existing in (account, None):
+
+        class _Users:
+            async def find_unique(self, where, found=existing):
+                return found
+
+            async def update(self, where, data):
+                return SimpleNamespace(**{**vars(account), **data})
+
+            async def create(self, data):
+                return SimpleNamespace(id="new", **data)
+
+        monkeypatch.setattr(auth_routes, "db", SimpleNamespace(user=_Users()))
+        user, _access = await auth_routes.login_with_google("stand-in-for-a-real-token")
+        assert user.name == expected
+
+
 def _roster_row(email: str, status: str, **columns):
     from types import SimpleNamespace
 

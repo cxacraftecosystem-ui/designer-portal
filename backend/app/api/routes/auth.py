@@ -654,6 +654,14 @@ async def _sign_in_verified_mailbox(
     # documented default for a new joiner and is what `role_for_email` already returned.
     if role != "MASTER_ADMIN":
         role = access_roster.role_of(access) or role
+        # THE NAME AN ADMINISTRATOR TYPED ON THE ALLOW-LIST BEATS THE ONE GOOGLE SENDS. A Google
+        # display name is whatever the person set on their Google profile ("vandana Rathore",
+        # "tahgin Sofi"), and a password-less account is renamed to it on every sign-in below — so
+        # a correction an officer made to match a ministry sheet was undone by the designer's next
+        # sign-in. The allow-list row is the institution's record; Google's name is the fallback.
+        typed = str(getattr(access, "fullName", None) or "").strip()
+        if typed:
+            name = typed
 
     # AN ACTIVE ROSTER ROW IS AN INSTRUCTION TO PROVISION A DESIGNER, and this is where it is
     # carried out. An admin empanels somebody who has never opened the app; there is no account
