@@ -968,8 +968,8 @@ async def test_a_google_sign_in_keeps_the_name_an_administrator_typed(monkeypatc
     for existing in (account, None):
 
         class _Users:
-            async def find_unique(self, where):
-                return existing
+            async def find_unique(self, where, found=existing):
+                return found
 
             async def update(self, where, data):
                 return SimpleNamespace(**{**vars(account), **data})
