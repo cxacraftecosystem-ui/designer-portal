@@ -234,8 +234,8 @@
         "queueVia": "queueOfflineEntry",
         "createVia": "onSubmit",
         "createCall": "onSubmit(",
-        "mountSupplies": "val created = repository.createQuestionnaireInterview(body)",
-        "mountRefuses": "onSubmit = { error(\"An open edit must PATCH the interview, never create a second one.\") }"
+        "mountSupplies": "val created = repository.createQuestionnaireInterview(body, key)",
+        "mountRefuses": "onSubmit = { _, _ -> error(\"An open edit must PATCH the interview, never create a second one.\") }"
       },
       "note": [
         "THE ONE RECORD WITH NO INTEGRATED DOOR, and that is a fact about the stage registry rather",

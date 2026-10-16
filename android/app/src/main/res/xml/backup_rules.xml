@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What Android's auto-backup (API 23-30) may copy off this phone, and what it must not (2026-10-16).
+
+  KEPT, because it is somebody's work and a new phone restored from backup must not lose it:
+  the offline outbox and its staged media (files/outbox), the design-workshop drafts and their
+  photographs (files/workshops), unsaved form drafts and the files they point at (files/form-drafts,
+  files/field-captures), and the designer-profile media (files/designer-profile). Everything not
+  excluded below is included by default, so those need no line of their own.
+
+  EXCLUDED, because restoring it would restore a SESSION or somebody's identity rather than work:
+  * field_repository_auth.xml: the sign-in token AND the cached account profile (TokenStore). Any
+    two-step-verification or trusted-device state belongs in that same store and is excluded with it.
+  * files/read-cache: copies of server lists, kept per account; worthless on another phone and a
+    privacy cost if it travels.
+  * files/staged-objects.json: the journal of objects uploaded under the old session.
+
+  The same rules for API 31+ are in data_extraction_rules.xml; keep the two in step.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="field_repository_auth.xml" />
+    <exclude domain="file" path="read-cache/" />
+    <exclude domain="file" path="staged-objects.json" />
+</full-backup-content>

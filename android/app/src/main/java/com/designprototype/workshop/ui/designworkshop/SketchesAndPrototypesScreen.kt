@@ -208,6 +208,9 @@ fun SketchesAndPrototypesScreen(
      * idiom between them rather than two.
      */
     var listFailure by remember { mutableStateOf<String?>(null) }
+    /** Set when the list is this phone's saved copy — see [com.designprototype.workshop.data.ReadCache]. */
+    var listCachedNote by remember { mutableStateOf<String?>(null) }
+    val chooserContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     /** Bumped by "Try again", which is the only thing that re-runs the load. */
     var attempt by remember { mutableIntStateOf(0) }
     /** The workshop everything below the picker is scoped to. Blank until the list lands. */
@@ -232,8 +235,20 @@ fun SketchesAndPrototypesScreen(
         */
         workshops = null
         listFailure = null
+        listCachedNote = null
         truncated = 0
-        runCatching { repository.designWorkshops(page = 1, pageSize = PAGE_SIZE) }
+        // The last list this phone read, when nothing reaches the server (2026-10-16).
+        runCatching {
+            com.designprototype.workshop.data.ReadCache.read(
+                chooserContext,
+                "sketch-chooser",
+                com.designprototype.workshop.data.DesignWorkshopPageDto.serializer(),
+            ) { repository.designWorkshops(page = 1, pageSize = PAGE_SIZE) }
+                .also { read ->
+                    if (read.fromCache) listCachedNote = com.designprototype.workshop.data.readCacheNotice(read.cachedAt)
+                }
+                .value
+        }
             .onSuccess { page ->
                 workshops = page.items
                 // RULE 10: EVERY CAP SAYS SO. A designer with forty workshops must not read a list of
@@ -408,6 +423,7 @@ fun SketchesAndPrototypesScreen(
                 Text("Try again")
             }
         }
+        listCachedNote?.let { com.designprototype.workshop.ui.CachedCopyNote(it) }
 
         /*
           THE SELECTOR, WHICH IS THE WHOLE DIFFERENCE BETWEEN THIS SCREEN AND THE LIST IT REPLACED.

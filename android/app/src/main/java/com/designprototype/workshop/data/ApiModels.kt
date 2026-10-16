@@ -257,7 +257,9 @@ data class CraftDto(
     val createdById: String? = null,
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
-    val extraMetadata: JsonObject? = null
+    val extraMetadata: JsonObject? = null,
+    /** The record's version, the base an offline correction is composed against (2026-10-16). */
+    val updatedAt: String? = null,
 )
 
 @Serializable
@@ -1797,7 +1799,9 @@ data class ArtisanDetailDto(
     val createdById: String? = null,
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
-    val extraMetadata: JsonObject? = null
+    val extraMetadata: JsonObject? = null,
+    /** The record's version, the base an offline correction is composed against (2026-10-16). */
+    val updatedAt: String? = null,
 )
 
 /**
@@ -1857,7 +1861,9 @@ data class ProductDetailDto(
     val createdById: String? = null,
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
-    val extraMetadata: JsonObject? = null
+    val extraMetadata: JsonObject? = null,
+    /** The record's version, the base an offline correction is composed against (2026-10-16). */
+    val updatedAt: String? = null,
 )
 
 /**
@@ -1973,7 +1979,9 @@ data class ToolDetailDto(
     val createdById: String? = null,
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
-    val extraMetadata: JsonObject? = null
+    val extraMetadata: JsonObject? = null,
+    /** The record's version, the base an offline correction is composed against (2026-10-16). */
+    val updatedAt: String? = null,
 )
 
 @Serializable
@@ -2007,7 +2015,9 @@ data class WorkshopDetailDto(
     val createdById: String? = null,
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
-    val extraMetadata: JsonObject? = null
+    val extraMetadata: JsonObject? = null,
+    /** The record's version, the base an offline correction is composed against (2026-10-16). */
+    val updatedAt: String? = null,
 )
 
 @Serializable
@@ -2166,7 +2176,9 @@ data class ProcessDetailDto(
     val createdById: String? = null,
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
-    val extraMetadata: JsonObject? = null
+    val extraMetadata: JsonObject? = null,
+    /** The record's version, the base an offline correction is composed against (2026-10-16). */
+    val updatedAt: String? = null,
 )
 
 @Serializable

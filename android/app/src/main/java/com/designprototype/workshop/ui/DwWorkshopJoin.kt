@@ -443,7 +443,7 @@ object DwInductionQueue {
                 val merged = dwMergeInduction(read(context), row)
                 write(context, merged)
                 merged.first { it.queueKey == row.queueKey }
-            }
+            }.also { com.designprototype.workshop.data.BackgroundSync.requestSoon(context) }
         }
 
     /** Forget one row — called only when the server has given a terminal answer about it. */
@@ -706,14 +706,16 @@ sealed interface DwJoinOutcome {
  *
  * The claim is true now, and the SECOND clause is what makes it true rather than the first: the flush
  * runs from a process-wide network callback registered by [DwInductionFlusher] AND on every launch,
- * so the two cases are "signal returns while the app is alive" and "the app is opened again". What is
- * still NOT promised — deliberately, because promising it would need `WorkManager` and a new
- * dependency — is a send while the app is not running at all. The sentence says so.
+ * so the two cases are "signal returns while the app is alive" and "the app is opened again".
+ *
+ * SINCE 2026-10-16 THE THIRD CASE IS COVERED TOO: a scan with the app closed. Recording the row asks
+ * `BackgroundSync` (a persisted, network-constrained platform job, no new dependency) to run, and that
+ * job drains this queue, so the sentence promises a send whether or not the app is still open.
  */
 fun dwJoinQueuedMessage(): String =
     "There is no connection, so the card has been kept on this device along with the time you " +
-        "scanned it. It is sent by itself as soon as this device has signal, and if the app is " +
-        "closed before that happens it is sent the next time the app is opened with signal. " +
+        "scanned it. It is sent by itself as soon as this device has signal, even if the app " +
+        "has been closed by then. " +
         "Nothing is sent yet, so nobody can see it yet. You do not need to scan again."
 
 /**

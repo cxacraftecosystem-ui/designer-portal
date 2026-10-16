@@ -586,8 +586,24 @@ private fun DesignReviewRound(
         stageSeen = stage?.stageSeen == true
         stamp = dwFixedOrderStamp(held)
 
-        runCatching { repository.designRatingRound(round.wire, workshopId, entity.wire) }
+        // The last ranking this phone read is shown when nothing reaches the server (2026-10-16,
+        // see [ReadCache]); a refusal is still a refusal.
+        var rankingCachedAt: String? = null
+        var rankingFromCache = false
+        runCatching {
+            com.designprototype.workshop.data.ReadCache.read(
+                context.applicationContext,
+                "rating-round:${round.wire}:$workshopId:${entity.wire}",
+                com.designprototype.workshop.data.RoundRankingDto.serializer(),
+            ) { repository.designRatingRound(round.wire, workshopId, entity.wire) }
+                .also { rankingFromCache = it.fromCache; rankingCachedAt = it.cachedAt }
+                .value
+        }
             .onSuccess { ranking ->
+                if (rankingFromCache) {
+                    offline = true
+                    problem = com.designprototype.workshop.data.readCacheNotice(rankingCachedAt)
+                }
                 items = ranking.items
                 /*
                   A REFRESH MUST NOT UNDO A MOVE THE DESIGNER HAS JUST MADE. `dwReconcileOrder` keeps
@@ -1600,8 +1616,20 @@ private fun DwReviewCard(
                 if (ledger != null || ledgerLoading) return@LaunchedEffect
                 ledgerLoading = true
                 ledgerProblem = null
-                runCatching { repository.designRatingLedger(item.subjectId, round.wire) }
-                    .onSuccess { ledger = it }
+                runCatching {
+                    // The last history this phone read, when nothing reaches the server (2026-10-16).
+                    com.designprototype.workshop.data.ReadCache.read(
+                        context.applicationContext,
+                        "rating-ledger:${item.subjectId}:${round.wire}",
+                        com.designprototype.workshop.data.SubjectLedgerDto.serializer(),
+                    ) { repository.designRatingLedger(item.subjectId, round.wire) }
+                }
+                    .onSuccess { read ->
+                        ledger = read.value
+                        if (read.fromCache) {
+                            ledgerProblem = com.designprototype.workshop.data.readCacheNotice(read.cachedAt)
+                        }
+                    }
                     .onFailure { error ->
                         /*
                           ══════════════════════════════════════════════════════════════════════════

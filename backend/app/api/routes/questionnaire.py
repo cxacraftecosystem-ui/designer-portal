@@ -60,6 +60,7 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
+    assert_expected_updated_at,
     attach_location,
     clean_data,
     contains,
@@ -72,6 +73,7 @@ from app.services.records import (
     public_encode,
     require_record,
     resubmit_status,
+    take_expected_updated_at,
     viewable_where,
 )
 from app.services.workshop_access import (
@@ -1688,6 +1690,9 @@ async def update_interview(
         # ``status``, ``recordedAt`` and ``recordedTimezone`` are NOT NULL and stay out.
         clearable=("interviewDate", "place", "language", "notes"),
     )
+    # The precondition is a question, not a column: popped before anything reads ``data``, asked
+    # inside the transaction below. See ``records.take_expected_updated_at``.
+    expected_updated_at = take_expected_updated_at(data)
     # Moving a record into (or between) workshops is a workshop submission too, so the create-time
     # guard can't be bypassed by PATCHing the workshop in afterwards.
     check = None
@@ -1741,6 +1746,8 @@ async def update_interview(
     # that would hit the timeout first. Raise ``db.tx(timeout=...)`` here before splitting the
     # transaction — a split is what put the ledger and the row in different commits to begin with.
     async with db.tx() as tx:
+        # Before any write in the block, so a refusal rolls nothing back. A None passes.
+        assert_expected_updated_at(interview, expected_updated_at)
         privileged = await guard_record_edit(
             interview, current_user, data, "questionnaire", client=tx
         )

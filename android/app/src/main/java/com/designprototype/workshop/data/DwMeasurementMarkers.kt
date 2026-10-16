@@ -212,4 +212,34 @@ class DwMeasurementMarkers {
         if (live.isEmpty()) return null
         return buildJsonObject { live.forEach { (column, entry) -> put(column, entry.marker) } }
     }
+
+    /**
+     * Every accepted reading as one JSON string, for the form's on-disk draft. A restored form that
+     * got its digits back WITHOUT their marker would save a model's estimate stamped as a person's
+     * measurement, so the marker travels with the draft. Empty when nothing was accepted.
+     */
+    fun toDraft(): String {
+        if (accepted.isEmpty()) return ""
+        return buildJsonObject {
+            accepted.forEach { (column, entry) ->
+                put(column, buildJsonObject {
+                    put("text", JsonPrimitive(entry.acceptedText))
+                    put("marker", entry.marker)
+                })
+            }
+        }.toString()
+    }
+
+    /** The inverse of [toDraft]; anything unreadable is skipped, which only ever drops a marker. */
+    fun restoreDraft(text: String) {
+        if (text.isBlank()) return
+        val root = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(text) as? JsonObject }
+            .getOrNull() ?: return
+        root.forEach { (column, value) ->
+            val entry = value as? JsonObject ?: return@forEach
+            val accepted = (entry["text"] as? JsonPrimitive)?.content ?: return@forEach
+            val marker = entry["marker"] as? JsonObject ?: return@forEach
+            accept(column, accepted, marker)
+        }
+    }
 }
