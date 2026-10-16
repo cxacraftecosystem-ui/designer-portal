@@ -149,7 +149,10 @@ export function StagePreviewLayout({ open, preview, children }: { open: boolean;
       <div
         className={
           open
-            ? "lg:sticky lg:top-24 lg:order-2 lg:max-h-[calc(100dvh-7.5rem)] lg:overflow-y-auto lg:overscroll-contain"
+            ? // A BOUNDED pane that does not itself scroll: the preview inside it pins its controls
+              // and scrolls only the paper (`ReportSheets`' `scrollPages`), so nothing a designer
+              // needs to reach — the page count, the zoom, "Show every page" — ever scrolls away.
+              "lg:sticky lg:top-24 lg:order-2 lg:flex lg:h-[calc(100dvh-7.5rem)] lg:flex-col"
             : undefined
         }
       >
@@ -256,6 +259,8 @@ export function StageDocumentPreview({
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const isOpen = open ?? ownOpen;
+  /** Mounted inside `StagePreviewLayout`'s pane — controlled, and open. */
+  const pane = open !== undefined && isOpen;
   const setOpen = onOpenChange ?? setOwnOpen;
 
   const [base, setBase] = useState<Base | null>(null);
@@ -459,10 +464,12 @@ export function StageDocumentPreview({
         if (attempts++ < 60) frame = requestAnimationFrame(place);
         return;
       }
-      let pane: HTMLElement | null = section.parentElement;
-      while (pane && !(pane.scrollHeight > pane.clientHeight + 1 && getComputedStyle(pane).overflowY !== "visible")) {
+      // The nearest box between the heading and the page that scrolls by itself: the paper's own
+      // scroller in the pane (`scrollPages`). Never the document.
+      let pane: HTMLElement | null = target.parentElement;
+      while (pane && !(pane.scrollHeight > pane.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(pane).overflowY))) {
         pane = pane.parentElement;
-        if (pane === document.body) pane = null;
+        if (pane === document.body || pane === document.documentElement) pane = null;
       }
       placedFor.current = placeKey;
       if (!pane) return;
@@ -473,7 +480,11 @@ export function StageDocumentPreview({
   }, [isOpen, placeKey, shown]);
 
   return (
-    <section ref={sectionRef} className="panel mb-5" data-stage-preview>
+    <section
+      ref={sectionRef}
+      className={pane ? "panel mb-5 lg:mb-0 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col" : "panel mb-5"}
+      data-stage-preview
+    >
       <button
         type="button"
         className="flex w-full items-center gap-2 px-4 py-3 text-left"
@@ -493,7 +504,7 @@ export function StageDocumentPreview({
       </button>
 
       {isOpen ? (
-        <div className="border-t border-line-200 p-3 sm:p-4">
+        <div className={pane ? "border-t border-line-200 p-3 sm:p-4 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col" : "border-t border-line-200 p-3 sm:p-4"}>
           {localOnly === null ? (
             <p className="text-sm leading-6 text-ink-700">Getting the document ready…</p>
           ) : (
@@ -581,6 +592,7 @@ export function StageDocumentPreview({
                     paletteChosen={Boolean(shown.accent)}
                     focusRange={showAll ? null : range}
                     compact
+                    scrollPages={pane}
                   />
                 </>
               ) : null}

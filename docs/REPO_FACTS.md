@@ -125,7 +125,7 @@ no key is skipped wherever it sits.
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
 | Backend unit (`backend/tests/`) | 247 | 5096 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 222 | 2782 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Web end-to-end (`frontend/e2e/`) | 223 | 2787 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 249 | 3313 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 9 | 25 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
@@ -154,7 +154,7 @@ and this one asserted an absence it had never looked for.
 |---|---|---|---|---|
 | `backend/app` | 214 | 161,480 | 214 | 161,480 |
 | `frontend/app` | 99 | 57,068 | 99 | 57,068 |
-| `frontend/components` | 311 | 132,649 | 311 | 132,649 |
+| `frontend/components` | 311 | 132,751 | 311 | 132,751 |
 | `frontend/lib` | 151 | 75,881 | 151 | 75,881 |
 | `android/app/src/main/java` | 278 | 234,099 | 278 | 234,099 |
 

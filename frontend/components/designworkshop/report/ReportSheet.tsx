@@ -531,6 +531,21 @@ function documentStyles(
 
 .rp-print-only { display: none; }
 
+/* A neighbouring stage's content on a focused page: drawn where it falls, faded towards the focused
+   stage so it reads as context, with a quiet label that takes no space in the flow. Chrome, not
+   paper — the label is in the app's own type. */
+.rp-context { position: relative; }
+.rp-context-body { opacity: 0.32; }
+.rp-context-before .rp-context-body { -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 70%); mask-image: linear-gradient(to bottom, transparent 0%, #000 70%); }
+.rp-context-after .rp-context-body { -webkit-mask-image: linear-gradient(to top, transparent 0%, #000 70%); mask-image: linear-gradient(to top, transparent 0%, #000 70%); }
+.rp-context-label {
+  position: absolute; left: 50%; z-index: 1; transform: translateX(-50%); white-space: nowrap;
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif; font-size: 0.6875rem; letter-spacing: 0.06em;
+  color: rgb(var(--ink-500)); background: rgb(var(--card)); border: 1px solid rgb(var(--line-200)); border-radius: 999px; padding: 0.1rem 0.6rem;
+}
+.rp-context-before .rp-context-label { bottom: 0; }
+.rp-context-after .rp-context-label { top: 0; }
+
 @media print {
   /* ONE SHEET, ONE PHYSICAL PAGE. The sheets are already exactly one page of content each, so the
      browser is given the same paper and asked only to put a break after each one. Before the flow
@@ -1080,6 +1095,12 @@ export type ReportSheetsProps = {
    * which says them in full.
    */
   compact?: boolean;
+  /**
+   * From `lg` up, scroll the PAGES inside their own box and keep the page count and the zoom pinned
+   * above them — for the preview pane beside the stage form, whose controls used to scroll away
+   * under the paper. The caller gives this component a bounded height to fill.
+   */
+  scrollPages?: boolean;
 };
 
 /**
@@ -1096,7 +1117,8 @@ export const ReportSheets = memo(function ReportSheets({
   palette = REPORT_PALETTE,
   paletteChosen = false,
   focusRange = null,
-  compact = false
+  compact = false,
+  scrollPages = false
 }: ReportSheetsProps) {
   const geometry = useMemo(() => pageGeometry(pageSize, marginMm), [pageSize, marginMm]);
   const css = useMemo(
@@ -1309,6 +1331,35 @@ export const ReportSheets = memo(function ReportSheets({
     </Fragment>
   );
 
+  /**
+   * A focused page's slices in up to three runs — what belongs to the neighbouring stages before and
+   * after the focused one, and the focused one itself. The neighbours are still drawn exactly where
+   * they fall (the page IS the page), but faded under a quiet label, so a page that begins with the
+   * tail of the previous stage's table reads as context rather than as a cut fragment.
+   */
+  const renderFocusedSlices = (slices: PageSlice[], isCover: boolean) => {
+    const [start, end] = focusRange ?? [0, 0];
+    const runs: Array<{ kind: "before" | "in" | "after"; items: Array<[PageSlice, number]> }> = [];
+    slices.forEach((slice, index) => {
+      const kind = slice.blockIndex < start ? "before" : slice.blockIndex >= end ? "after" : "in";
+      const last = runs[runs.length - 1];
+      if (last && last.kind === kind) last.items.push([slice, index]);
+      else runs.push({ kind, items: [[slice, index]] });
+    });
+    return runs.map((run, runIndex) =>
+      run.kind === "in" ? (
+        <Fragment key={runIndex}>{run.items.map(([slice, index]) => renderSlice(slice, index, isCover))}</Fragment>
+      ) : (
+        <div key={runIndex} className={`rp-context rp-context-${run.kind}`} data-rp-noprint>
+          <span className="rp-context-label" aria-hidden>
+            {run.kind === "before" ? "Continued from the previous stage" : "The next stage continues here"}
+          </span>
+          <div className="rp-context-body">{run.items.map(([slice, index]) => renderSlice(slice, index, isCover))}</div>
+        </div>
+      )
+    );
+  };
+
   const providers = (children: React.ReactNode, measuring = false) => (
     <ReportPaletteProvider palette={palette}>
       <MediaUrlProvider urls={mediaUrls}>
@@ -1320,7 +1371,7 @@ export const ReportSheets = memo(function ReportSheets({
   );
 
   return (
-    <div className="rp-doc">
+    <div className={scrollPages ? "rp-doc lg:flex lg:min-h-0 lg:flex-1 lg:flex-col" : "rp-doc"}>
       <style>{css}</style>
 
       <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-ink-500" data-rp-noprint>
@@ -1493,7 +1544,13 @@ export const ReportSheets = memo(function ReportSheets({
         </div>
       </div>
 
-      <div ref={stageRef} className={scale > fitScale + 0.001 ? "rp-stage rp-stage-pan" : "rp-stage"}>
+      <div
+        ref={stageRef}
+        className={[
+          scale > fitScale + 0.001 ? "rp-stage rp-stage-pan" : "rp-stage",
+          scrollPages ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:rounded-sm lg:border lg:border-line-200 lg:bg-surface-50 lg:p-2" : ""
+        ].join(" ")}
+      >
         <div className="rp-fit" style={{ height: fittedHeight }}>
           <div
             className="rp-scaler"
@@ -1535,7 +1592,9 @@ export const ReportSheets = memo(function ReportSheets({
                           bodyNodes.current[index] = node;
                         }}
                       >
-                        {sheet.slices.map((slice, sliceIndex) => renderSlice(slice, sliceIndex, sheet.isCover))}
+                        {focusRange
+                          ? renderFocusedSlices(sheet.slices, sheet.isCover)
+                          : sheet.slices.map((slice, sliceIndex) => renderSlice(slice, sliceIndex, sheet.isCover))}
                       </div>
 
                       {sheet.isCover ? null : (
