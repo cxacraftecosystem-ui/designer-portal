@@ -176,7 +176,7 @@ export function UploadPlanDialog({
       }
     >
       {error ? (
-        <p className="mb-3 rounded-md border border-error-600/30 bg-error-100 px-3 py-2 text-sm leading-6 text-error-600">
+        <p className="mb-3 rounded-md border border-error-600/30 bg-error-100 px-3 py-2 text-sm leading-6 text-red-800">
           {error}
         </p>
       ) : null}
@@ -244,7 +244,7 @@ export function UploadPlanDialog({
       </label>
 
       {withdrawAbsent ? (
-        <p className="mt-2 flex items-start gap-2 text-sm leading-6 text-amber-800">
+        <p className="mt-2 flex items-start gap-2 text-sm leading-6 text-amber-800 dark:text-amber-100">
           <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
           Every planned entry this sheet does not mention will be marked withdrawn. Nothing is
           deleted — a withdrawn entry comes back the moment it appears in a later sheet.

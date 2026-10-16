@@ -1354,7 +1354,7 @@ export function UploadTabHost({
         ) : null}
         {notice ? <p className="mt-3 text-sm text-ink-muted">{notice}</p> : null}
         {problem ? (
-          <p className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">
+          <p className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">
             {problem}
           </p>
         ) : null}
@@ -1724,7 +1724,7 @@ function RowPicker({
           </button>
         ) : null}
         {emptyHref ? (
-          <Link href={emptyHref} className="mt-2 block text-sm font-medium text-purple-700">
+          <Link href={emptyHref} className="mt-2 block text-sm font-medium text-purple-700 dark:text-purple-300">
             <span className="inline-flex items-center gap-1">
               Add one on its stage
               <ArrowRight className="h-4 w-4" aria-hidden />

@@ -147,7 +147,7 @@ export function TwoStepChallengeForm({
               setCode("");
               setError(null);
             }}
-            className="font-medium text-purple-700 hover:underline"
+            className="font-medium text-purple-700 dark:text-purple-300 hover:underline"
           >
             {useRecovery ? "Use your authenticator app instead" : "Use a recovery code instead"}
           </button>

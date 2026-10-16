@@ -82,7 +82,7 @@ function skinFor(
       heading: "text-ink-900",
       body: "text-ink-700",
       title: "The answers in this workbook were recorded under your name",
-      icon: <Info className="mt-0.5 h-4 w-4 shrink-0 text-field-600" aria-hidden />
+      icon: <Info className="mt-0.5 h-4 w-4 shrink-0 text-field-600 dark:text-purple-300" aria-hidden />
     };
   }
   if (provenance.action === "reused") {
@@ -104,7 +104,7 @@ function skinFor(
       title: subject
         ? `“${subject}” is a copy, and it carries no recorded answers`
         : "This questionnaire is a copy, and it carries no recorded answers",
-      icon: <CopyPlus className="mt-0.5 h-4 w-4 shrink-0 text-field-600" aria-hidden />
+      icon: <CopyPlus className="mt-0.5 h-4 w-4 shrink-0 text-field-600 dark:text-purple-300" aria-hidden />
     };
   }
   return {
@@ -112,7 +112,7 @@ function skinFor(
     heading: "text-amber-800",
     body: "text-amber-800",
     title: "The answers in this workbook were not recorded against your copy",
-    icon: <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+    icon: <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800 dark:text-amber-100" aria-hidden />
   };
 }
 
@@ -230,7 +230,7 @@ export function UploadReport({
             {details.map((detail) => (
               <li key={`${detail.action}-${detail.questionId}`} className="rounded-md border border-line-200 bg-surface-50 p-3">
                 <div className="flex items-start gap-2">
-                  <Info className="mt-0.5 h-4 w-4 shrink-0 text-field-600" aria-hidden />
+                  <Info className="mt-0.5 h-4 w-4 shrink-0 text-field-600 dark:text-purple-300" aria-hidden />
                   <div className="min-w-0">
                     <p className="text-sm text-ink-900">{detail.reason}</p>
                     {detail.before ? (
@@ -262,7 +262,7 @@ export function UploadReport({
 
       {!errors.length && !warnings.length ? (
         <p className="flex items-center gap-2 text-sm text-ink-700">
-          <CheckCircle2 className="h-4 w-4 text-success-600" aria-hidden />
+          <CheckCircle2 className="h-4 w-4 text-success-600 dark:text-emerald-400" aria-hidden />
           {copied
             ? "Every active question came across. Nothing was skipped."
             : "Every row in the workbook was read. Nothing was skipped."}
@@ -285,7 +285,7 @@ function ProblemList({
   // stock Tailwind and do not pair with them (the config deep-merges the two scales).
   const skin =
     tone === "error"
-      ? "border-red-200 bg-error-100 text-error-600"
+      ? "border-red-200 bg-error-100 text-red-800"
       : "border-amber-500/30 bg-amber-100 text-amber-800";
   return (
     <div className="grid gap-2">

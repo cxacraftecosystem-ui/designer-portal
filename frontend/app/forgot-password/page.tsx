@@ -147,7 +147,7 @@ export default function ForgotPasswordPage() {
         </p>
 
         <p className="mt-5 text-sm">
-          <Link href="/login" className="inline-flex items-center gap-1.5 font-medium text-purple-700 hover:underline">
+          <Link href="/login" className="inline-flex items-center gap-1.5 font-medium text-purple-700 dark:text-purple-300 hover:underline">
             <ArrowLeft aria-hidden className="h-4 w-4 shrink-0" />
             Back to sign in
           </Link>

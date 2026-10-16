@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.Context
 import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
@@ -796,7 +798,7 @@ fun StageScreen(
             // And the individual rows, for the same reason and with the same lifetime.
             deletedRows = local?.deletedRowKeys.orEmpty().toSet()
         }.onFailure { error ->
-            onError(error.message ?: "Unable to open this stage.")
+            onError(error.userMessage("Unable to open this stage."))
         }
         loading = false
     }
@@ -896,7 +898,7 @@ fun StageScreen(
                 // not the other, which is how the two disagreed.
                 if (error is CancellationException) throw error
                 saveState = SaveState.PENDING
-                onError(error.message ?: "Could not write this stage to the device.")
+                onError(error.userMessage("Could not write this stage to the device."))
                 return
             }
         // Discharged only if the edit this write was built from is still the newest one. A designer

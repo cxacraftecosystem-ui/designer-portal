@@ -20,6 +20,7 @@ import com.designprototype.workshop.data.ArtisanDto
 import com.designprototype.workshop.data.CraftDto
 import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.apiErrorMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -193,3 +194,7 @@ suspend fun appSearchRemoteItems(
     }
     items
 }
+
+/** A search failure that is not "no network", in the words this app uses for API errors. */
+fun appSearchErrorLine(error: Throwable): String =
+    error.apiErrorMessage("Search could not reach the server. Showing what is saved on this phone.")

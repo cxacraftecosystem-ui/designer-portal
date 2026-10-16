@@ -922,7 +922,7 @@ export default function SanctionOrdersPage() {
                   /* REPORTED, NOT BLOCKED. A designer correcting a mistyped number on their own
                      report cover is doing something legitimate; what an officer needs is to SEE
                      that the document about to be printed says something the register does not. */
-                  <p className="text-xs leading-5 text-amber-800">
+                  <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
                     The report cover says something different from this order. The cover comes from
                     the designer&apos;s stage&nbsp;1; this order is the register&apos;s record.
                   </p>

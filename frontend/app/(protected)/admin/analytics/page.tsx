@@ -74,7 +74,7 @@ function RateFigure({
   const withheld = isWithheld(group);
   return (
     <span
-      className={`${className} ${withheld ? "text-ink-300" : "text-ink-900"}`}
+      className={`${className} ${withheld ? "text-ink-500" : "text-ink-900"}`}
       title={withheld ? group.message : undefined}
     >
       {adoptionRateText(group)}
@@ -138,7 +138,7 @@ function OutcomeLegend() {
       <span className="inline-flex items-center gap-1.5">
         <span className="h-2 w-4 rounded-full bg-line-200" aria-hidden /> Not adopted
       </span>
-      <span className="text-ink-300">Outcomes recorded as “not known” are excluded.</span>
+      <span className="text-ink-500">Outcomes recorded as “not known” are excluded.</span>
     </div>
   );
 }
@@ -319,14 +319,14 @@ export default function WorkshopAnalyticsPage() {
       {data.cautions.length > 0 ? (
         <section className="mb-5 rounded-md border border-line-200 bg-amber-100 p-4">
           <div className="flex items-start gap-2">
-            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800 dark:text-amber-100" aria-hidden />
             <div>
-              <h2 className="font-display text-sm font-bold text-amber-800">
+              <h2 className="font-display text-sm font-bold text-amber-800 dark:text-amber-100">
                 Read these before the numbers
               </h2>
               <ul className="mt-2 grid gap-1.5">
                 {data.cautions.map((caution) => (
-                  <li key={caution} className="text-sm leading-6 text-amber-800">
+                  <li key={caution} className="text-sm leading-6 text-amber-800 dark:text-amber-100">
                     {caution}
                   </li>
                 ))}

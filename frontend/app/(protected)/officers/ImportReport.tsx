@@ -142,7 +142,7 @@ export function ImportReport({ report }: { report: ArtisanImportReport }) {
 
       {!errors.length && !warnings.length ? (
         <p className="mt-4 flex items-center gap-2 text-sm text-ink-700">
-          <CheckCircle2 className="h-4 w-4 text-success-600" aria-hidden />
+          <CheckCircle2 className="h-4 w-4 text-success-600 dark:text-emerald-400" aria-hidden />
           Every row was read exactly as it was typed. Nothing was assumed and nothing was left out.
         </p>
       ) : null}

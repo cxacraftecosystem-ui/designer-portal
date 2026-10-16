@@ -112,7 +112,7 @@ export function MapPointPanel({
       </div>
 
       {error ? (
-        <p className="mt-3 rounded-md bg-error-100 px-3 py-2 text-xs text-error-600">{error}</p>
+        <p className="mt-3 rounded-md bg-error-100 px-3 py-2 text-xs text-red-800">{error}</p>
       ) : items === null ? (
         <p className="mt-3 text-xs text-ink-500">Loading the records here…</p>
       ) : items.length === 0 ? (
@@ -152,7 +152,7 @@ export function MapPointPanel({
 
       <Link
         href={browseHref}
-        className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-purple-700 hover:underline focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-700"
+        className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-purple-700 dark:text-purple-300 hover:underline focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-700"
       >
         Open these in Browse records
         <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />

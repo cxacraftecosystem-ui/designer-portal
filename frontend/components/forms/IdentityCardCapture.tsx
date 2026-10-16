@@ -505,7 +505,7 @@ export function IdentityCardCapture({
             </span>
           </p>
           {currentValue ? (
-            <p className="text-xs leading-5 text-amber-800">
+            <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
               {targetLabel} already holds “{currentValue}”. Confirming replaces it.
             </p>
           ) : null}

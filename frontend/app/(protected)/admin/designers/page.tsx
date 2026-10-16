@@ -571,7 +571,7 @@ function DesignerRosterPageInner() {
       <p className="mb-4 text-sm leading-6 text-ink-500">
         This roster lists who may sign in as a <em>designer</em>. Whether an address may sign in at all is decided
         on{" "}
-        <Link href="/admin/access" className="font-medium text-purple-700 hover:underline">
+        <Link href="/admin/access" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
           Who may sign in
         </Link>
         , where people waiting for approval also appear. Empanelling somebody here admits them there too, and admitting
@@ -801,7 +801,7 @@ function DesignerRosterPageInner() {
                           // this column answers is "who added this row", and for these rows the
                           // honest answer is "nobody did".
                           <span className="mt-1 flex w-fit items-center gap-1 rounded-full border border-line-200 bg-surface-50 px-2 py-0.5 text-[11px] font-medium text-ink-700">
-                            <ShieldCheck className="h-3 w-3 shrink-0 text-purple-700" aria-hidden />
+                            <ShieldCheck className="h-3 w-3 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden />
                             Automatically, from Who may sign in
                           </span>
                         ) : null}
@@ -947,7 +947,7 @@ function StandingChip({ entry }: { entry: DesignerRosterEntry }) {
   }
   return (
     <span className="inline-flex flex-col gap-0.5">
-      <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-error-600/25 bg-error-100 px-2.5 py-1 text-xs font-medium text-error-600">
+      <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-error-600/25 bg-error-100 px-2.5 py-1 text-xs font-medium text-red-800">
         Suspended
       </span>
       <span className="text-xs text-ink-500">

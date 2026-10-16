@@ -685,7 +685,7 @@ function DashboardView() {
       {/* The dashboard is the navigation root — it never shows a back button. */}
       <PageHeader title="What would you like to do?" back={false} />
       {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{error}</div>
+        <div className="mb-4 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{error}</div>
       ) : null}
       {/*
         THE MINISTRY DESK — drawn for the three directorate posts and the master admin, and for
@@ -866,12 +866,12 @@ function DashboardView() {
         <p className="mt-4 rounded-md border border-line-200 bg-surface-50 px-4 py-3 text-sm leading-6 text-ink-500">
           You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>. That covers
           answering existing interviews, uploading media and commenting — find an entry through{" "}
-          <Link href="/search" className="font-medium text-purple-700 underline-offset-2 hover:underline">
+          <Link href="/search" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
             Browse records
           </Link>{" "}
           and add to it. Opening a new artisan, product, process or tool needs Researcher access — ask an admin to
           change your role.{" "}
-          <Link href="/guide" className="font-medium text-purple-700 underline-offset-2 hover:underline">
+          <Link href="/guide" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
             Open the walkthrough
           </Link>
           .
@@ -886,7 +886,9 @@ function DashboardView() {
         {!stats && !error ? (
           <div className="panel p-4 text-sm text-ink-500">Loading...</div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          // Two-up on a phone, like "Your contribution" below it (UX audit DW-19): six full-width
+          // number cards were ~600px of scrolling before the work.
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             {statCards.map((card) => {
               const body = (
                 <>
@@ -927,7 +929,7 @@ function DashboardView() {
             <h2 className="font-display text-lg font-bold text-ink-900">Your contribution</h2>
             <Link
               href="/activity"
-              className="text-xs font-semibold text-purple-700 underline-offset-2 hover:underline"
+              className="text-xs font-semibold text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline"
             >
               Open My Activity
             </Link>
@@ -941,7 +943,7 @@ function DashboardView() {
                 className="panel block p-3 transition-shadow hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-700"
               >
                 <div className="flex items-center gap-2">
-                  <card.icon className="h-4 w-4 shrink-0 text-purple-700" aria-hidden />
+                  <card.icon className="h-4 w-4 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden />
                   <span className="min-w-0 truncate text-xs font-medium text-ink-500">{card.label}</span>
                 </div>
                 <div className="mt-2 font-display text-2xl font-bold text-ink-900">{card.value}</div>
@@ -987,7 +989,7 @@ function DashboardView() {
                     <td className="px-4 py-3 font-medium text-ink-900">
                       {/* The title is the real link — the row's keyboard route; the rest of the row
                           does the same for a pointer (`OpenableRow`). */}
-                      {href ? <OpenableRowLink href={href} className="text-purple-700">{item.title}</OpenableRowLink> : item.title}
+                      {href ? <OpenableRowLink href={href} className="text-purple-700 dark:text-purple-300">{item.title}</OpenableRowLink> : item.title}
                     </td>
                     <td className="px-4 py-3 capitalize text-ink-700">{item.type}</td>
                     <td className="px-4 py-3 text-ink-700">{item.place ?? "-"}</td>

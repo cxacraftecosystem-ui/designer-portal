@@ -62,7 +62,7 @@ export function FeedbackReportCard({
             <span>· {formatDateTime(report.createdAt)}</span>
             {showAuthor && report.user ? (
               <span>
-                · {report.user.name} <span className="text-ink-300">{report.user.email}</span>
+                · {report.user.name} <span className="text-ink-500">{report.user.email}</span>
               </span>
             ) : null}
           </div>
@@ -113,7 +113,7 @@ export function FeedbackReportCard({
         printing it back at them is noise on the screen where they are looking for an answer.
       */}
       {showAuthor && (report.clientLabel || report.clientVersion || report.pagePath || report.platform) ? (
-        <p className="mt-2 wrap-break-word text-xs text-ink-300">
+        <p className="mt-2 wrap-break-word text-xs text-ink-500">
           {[report.clientLabel, report.clientVersion, report.pagePath, report.platform].filter(Boolean).join(" · ")}
         </p>
       ) : null}

@@ -51,7 +51,7 @@ export function ArtisanQuestionnairePanel({ artisanId }: { artisanId: string }) 
   return (
     <section className="panel p-4">
       <div className="mb-2 flex items-center gap-2">
-        <ClipboardList className="h-5 w-5 text-field-700" aria-hidden />
+        <ClipboardList className="h-5 w-5 text-field-700 dark:text-purple-300" aria-hidden />
         <h3 className="font-display font-bold text-lg text-ink">Questionnaire answers ({data.total})</h3>
       </div>
       <p className="mb-3 text-sm text-ink-muted">Only questions this artisan actually answered are shown.</p>
@@ -133,7 +133,7 @@ export function ArtisanQuestionnairePanel({ artisanId }: { artisanId: string }) 
                               href={media.url ?? "#"}
                               target="_blank"
                               rel="noreferrer"
-                              className="truncate text-xs font-medium text-field-700 hover:underline"
+                              className="truncate text-xs font-medium text-field-700 dark:text-purple-300 hover:underline"
                             >
                               {media.originalFilename}
                             </a>
@@ -141,7 +141,7 @@ export function ArtisanQuestionnairePanel({ artisanId }: { artisanId: string }) 
                           {media.transcriptText?.trim() ? (
                             <button
                               type="button"
-                              className="shrink-0 text-xs text-field-700 hover:underline"
+                              className="shrink-0 text-xs text-field-700 dark:text-purple-300 hover:underline"
                               onClick={() => navigator.clipboard?.writeText(media.transcriptText ?? "")}
                             >
                               Copy transcript

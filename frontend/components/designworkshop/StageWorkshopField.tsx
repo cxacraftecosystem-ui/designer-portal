@@ -216,7 +216,7 @@ export function StageWorkshopField({
         ) : (
           <button
             type="button"
-            className="justify-self-start text-xs font-medium text-purple-700 underline underline-offset-2"
+            className="justify-self-start text-xs font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2"
             onClick={() => setTyping(false)}
             disabled={disabled}
           >
@@ -258,7 +258,7 @@ export function StageWorkshopField({
         Only workshops you have access to are listed.{" "}
         <button
           type="button"
-          className="font-medium text-purple-700 underline underline-offset-2"
+          className="font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2"
           onClick={() => setTyping(true)}
           disabled={disabled}
         >

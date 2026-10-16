@@ -432,7 +432,7 @@ class DesignerProfileScreenTest {
             "the address box no longer warns that editing it here replaces the web's formatting — " +
                 "the replacement is defensible and the surprise is not, so if the wording changed, " +
                 "update this test rather than dropping the sentence",
-            source.contains("This address was formatted on the web."),
+            source.contains("This address has bold or other styling."),
         )
         assertTrue(
             "the warning is drawn unconditionally, which makes it a paragraph nobody reads by the " +

@@ -68,7 +68,7 @@ internal fun QChip(text: String, container: Color, content: Color) {
             .background(container, RoundedCornerShape(999.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp),
         color = content,
-        fontSize = 10.sp,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Medium
     )
 }

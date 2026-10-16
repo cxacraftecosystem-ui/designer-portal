@@ -151,7 +151,7 @@ export function FieldProvenance({ stamp }: { stamp?: DwFieldStamp | null }) {
   const line = fieldProvenanceLine(stamp);
   if (!line) return null;
   return (
-    <p aria-hidden className="text-[0.6875rem] leading-4 text-ink-300">
+    <p aria-hidden className="text-[0.6875rem] leading-4 text-ink-500">
       {line}
     </p>
   );

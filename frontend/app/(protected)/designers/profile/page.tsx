@@ -81,7 +81,7 @@ function WelcomeNotice() {
   if (params.get("welcome") !== "1") return null;
   return (
     <div className="mb-4 flex items-start gap-3 rounded-md border border-line-200 bg-field-100 px-3 py-3">
-      <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-field-600" aria-hidden />
+      <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-field-600 dark:text-purple-300" aria-hidden />
       <div className="min-w-0 text-sm leading-6 text-ink-700">
         <p className="font-medium text-ink-900">Welcome — start here.</p>
         <p className="mt-0.5">

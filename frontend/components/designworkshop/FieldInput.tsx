@@ -2176,7 +2176,7 @@ function TagsField({
           sentence nobody hears. `sr-only` rather than `hidden` for the same reason, and because an
           absolutely positioned 1×1 paragraph contributes no row to this `grid gap-2`. The long form
           of this argument is on the three notices at the foot of {@link MediaField}. */}
-      <p role="status" aria-live="polite" className={refusalNotice ? "text-xs leading-5 text-amber-800" : "sr-only"}>
+      <p role="status" aria-live="polite" className={refusalNotice ? "text-xs leading-5 text-amber-800 dark:text-amber-100" : "sr-only"}>
         {refusalNotice}
       </p>
     </div>
@@ -2960,7 +2960,7 @@ function MultiEnumField({
         </p>
       ) : null}
       {/* Present from first paint, hidden when empty — see the identical paragraph in TagsField. */}
-      <p role="status" aria-live="polite" className={refusalNotice ? "text-xs leading-5 text-amber-800" : "sr-only"}>
+      <p role="status" aria-live="polite" className={refusalNotice ? "text-xs leading-5 text-amber-800 dark:text-amber-100" : "sr-only"}>
         {refusalNotice}
       </p>
     </div>
@@ -4252,7 +4252,7 @@ function MediaField({
                     loading="lazy"
                   />
                 ) : (
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-sm bg-field-200 text-field-600">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-sm bg-field-200 text-field-600 dark:text-purple-300">
                     <Paperclip className="h-4 w-4" aria-hidden />
                   </span>
                 )}
@@ -4632,18 +4632,18 @@ function MediaField({
       <p
         role="status"
         aria-live="polite"
-        className={gateNotice ? "text-xs leading-5 text-amber-800" : "sr-only"}
+        className={gateNotice ? "text-xs leading-5 text-amber-800 dark:text-amber-100" : "sr-only"}
       >
         {gateNotice}
       </p>
       <p
         role="status"
         aria-live="polite"
-        className={refusalNotice ? "text-xs leading-5 text-amber-800" : "sr-only"}
+        className={refusalNotice ? "text-xs leading-5 text-amber-800 dark:text-amber-100" : "sr-only"}
       >
         {refusalNotice}
       </p>
-      <p role="status" aria-live="polite" className={notice ? "text-xs leading-5 text-amber-800" : "sr-only"}>
+      <p role="status" aria-live="polite" className={notice ? "text-xs leading-5 text-amber-800 dark:text-amber-100" : "sr-only"}>
         {notice}
       </p>
       <p role="alert" aria-live="assertive" className={problem ? "text-xs font-medium text-error-600" : "sr-only"}>

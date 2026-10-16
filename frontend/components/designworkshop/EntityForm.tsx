@@ -566,7 +566,7 @@ function AdvancedDisclosure({
     <div className="mt-4 border-t border-line-200 pt-4">
       <button
         type="button"
-        className="inline-flex items-center gap-2 text-sm font-medium text-purple-700 transition hover:text-purple-800"
+        className="inline-flex items-center gap-2 text-sm font-medium text-purple-700 dark:text-purple-300 transition hover:text-purple-800 dark:hover:text-purple-200"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
         onClick={() => setOpen((current) => !current)}
@@ -579,7 +579,7 @@ function AdvancedDisclosure({
             summarised do not teach a designer two vocabularies for one thing. Colour never carries
             it alone: the number and the word are the message. */}
         {refused ? (
-          <span className="rounded-full bg-error-100 px-2 py-0.5 text-xs font-medium text-error-600">
+          <span className="rounded-full bg-error-100 px-2 py-0.5 text-xs font-medium text-red-800">
             {refused} to fix
           </span>
         ) : null}
@@ -870,7 +870,7 @@ export function EntityForm({
       {refusedRow ? (
         <RowRefusalLine
           message={refusedRow}
-          className="mb-4 rounded-md bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-error-600"
+          className="mb-4 rounded-md bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-red-800"
         />
       ) : null}
       {mirror ? (
@@ -2030,7 +2030,7 @@ export function CollectionTable({
                     </span>
                   ) : null}
                   {rowErrors && Object.keys(rowErrors).length ? (
-                    <span className="rounded-full bg-error-100 px-2 py-0.5 text-xs font-medium text-error-600">
+                    <span className="rounded-full bg-error-100 px-2 py-0.5 text-xs font-medium text-red-800">
                       {Object.keys(rowErrors).length} to fix
                     </span>
                   ) : null}
@@ -2110,7 +2110,7 @@ export function CollectionTable({
                 {rowRefused ? (
                   <RowRefusalLine
                     message={rowRefused}
-                    className="border-t border-line-200 bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-error-600"
+                    className="border-t border-line-200 bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-red-800"
                   />
                 ) : null}
                 {open ? (

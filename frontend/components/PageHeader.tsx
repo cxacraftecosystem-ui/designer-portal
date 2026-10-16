@@ -42,12 +42,12 @@ export function PageHeader({
           repaint every StatusBadge on the page).
         */}
         {icon ? (
-          <div className="field-header-chip mt-1 grid h-10 w-10 place-items-center rounded-xl bg-field-200 text-field-600">
+          <div className="field-header-chip mt-1 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600 dark:text-purple-300 max-sm:hidden">
             {icon}
           </div>
         ) : null}
         <div>
-          <h1 className="display-title text-3xl md:text-4xl">{title}</h1>
+          <h1 className="display-title text-2xl sm:text-3xl md:text-4xl">{title}</h1>
           {description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">{description}</p> : null}
         </div>
       </div>

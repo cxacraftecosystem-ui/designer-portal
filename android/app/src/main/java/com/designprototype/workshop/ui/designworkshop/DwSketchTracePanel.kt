@@ -762,8 +762,7 @@ private fun DwSketchTraceOpen(
             // compiled into this APK and every phone has it, so a failure here is this load and not
             // this device, and those are different sentences with different remedies. The portal
             // makes the same distinction at `SketchTraceField.tsx:410`.
-            failure = "The tracing engine did not start on this device. " +
-                (t.message?.takeIf { it.isNotBlank() } ?: "No reason was reported.")
+            failure = "The tracing tool did not start. Close this panel and open it again." + traceLog(t)
         }
         loading = false
     }
@@ -865,8 +864,7 @@ private fun DwSketchTraceOpen(
                 if (token != runToken) return@launch
                 result = null
                 resultWire = null
-                failure = "The trace could not be completed. " +
-                    (t.message?.takeIf { it.isNotBlank() } ?: "No reason was reported.")
+                failure = "The trace could not be completed. Try again, or try a clearer photo." + traceLog(t)
             } finally {
                 running = null
                 stopping = false
@@ -1000,8 +998,7 @@ private fun DwSketchTraceOpen(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (t: Throwable) {
-                    failure = "That setting could not be applied. " +
-                        (t.message?.takeIf { it.isNotBlank() } ?: "No reason was reported.")
+                    failure = "That setting could not be applied. Try again." + traceLog(t)
                     return@withLock
                 }
                 params = next
@@ -1022,8 +1019,7 @@ private fun DwSketchTraceOpen(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (t: Throwable) {
-                    failure = "That style could not be applied. " +
-                        (t.message?.takeIf { it.isNotBlank() } ?: "No reason was reported.")
+                    failure = "That style could not be applied. Try again." + traceLog(t)
                     return@withLock
                 }
                 notice = dwTraceOverwriteNotice("The “$name” style", base, next)
@@ -1047,8 +1043,7 @@ private fun DwSketchTraceOpen(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (t: Throwable) {
-                    failure = "That adjustment could not be applied. " +
-                        (t.message?.takeIf { it.isNotBlank() } ?: "No reason was reported.")
+                    failure = "That adjustment could not be applied. Try again." + traceLog(t)
                     return@withLock
                 }
                 notice = dwTraceOverwriteNotice("The “$name” adjustment", base, next)
@@ -2249,4 +2244,14 @@ private fun DwTraceRowTail(control: DwTraceControl, inactive: String?) {
             fontWeight = FontWeight.Medium,
         )
     }
+}
+
+/**
+ * Log the engine's own words for whoever debugs this next, and give the reader nothing of them
+ * (UX audit DA-12): "edge.x was set to NaN" is a developer's sentence. Returns "" so it can sit on
+ * the end of the fixed sentence the reader is shown.
+ */
+private fun traceLog(t: Throwable): String {
+    android.util.Log.w("SketchTrace", "trace step failed", t)
+    return ""
 }

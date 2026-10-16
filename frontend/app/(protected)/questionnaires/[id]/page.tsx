@@ -638,7 +638,7 @@ export default function QuestionnaireDetailPage() {
             against it, download the <span className="font-medium text-ink-900">question set</span>, or{" "}
             <button
               type="button"
-              className="font-medium text-purple-700 underline underline-offset-2 hover:text-purple-800"
+              className="font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2 hover:text-purple-800 dark:hover:text-purple-200"
               onClick={() => setReuseOpen(true)}
             >
               reuse it into a copy of your own

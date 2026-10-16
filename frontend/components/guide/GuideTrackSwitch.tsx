@@ -155,7 +155,7 @@ export function GuideTrackSwitch({
                   <span
                     className={
                       selected
-                        ? "font-display text-sm font-bold text-purple-700"
+                        ? "font-display text-sm font-bold text-purple-700 dark:text-purple-300"
                         : "font-display text-sm font-bold text-ink-900"
                     }
                   >
@@ -164,10 +164,10 @@ export function GuideTrackSwitch({
                   {/* The half of the selected state that is not a colour. `aria-hidden` because
                       `aria-pressed` already carries it for assistive technology, and a screen reader
                       announcing both would say "pressed" twice. */}
-                  {selected ? <Check className="ml-auto h-4 w-4 shrink-0 text-purple-700" aria-hidden /> : null}
+                  {selected ? <Check className="ml-auto h-4 w-4 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden /> : null}
                 </span>
                 <span className="text-xs leading-5 text-ink-500">{track.audience}</span>
-                <span className="text-xs text-ink-300">
+                <span className="text-xs text-ink-500">
                   {/* Derived, never typed. Every count a reader sees on this page comes off the
                       array — the header said "Ten steps" over sixteen for exactly this reason. */}
                   {track.steps.length} steps

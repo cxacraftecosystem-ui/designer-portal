@@ -108,15 +108,13 @@ class DwSketchChooserSentenceTest {
      */
     @Test
     fun `the offline sentence separates an empty list from an unaskable one`() {
-        assertTrue(DW_SKETCH_CHOOSER_OFFLINE.contains("could not be asked for"))
-        assertTrue(DW_SKETCH_CHOOSER_OFFLINE.contains("not a list with nothing in it"))
-        // The Upload tab's own stage-read failure has to draw the same distinction, for the same
-        // reason and about a smaller list. Two sibling sentences, one rule.
-        assertTrue(DW_SKETCH_CHOOSER_STAGE_OFFLINE.contains("could not be asked for"))
-        assertTrue(DW_SKETCH_CHOOSER_STAGE_OFFLINE.contains("not a list with nothing in it"))
-        // And so does the round, which is the third list on this screen that can fail to be asked.
-        assertTrue(DW_SKETCH_CHOOSER_ROUND_OFFLINE.contains("could not be asked for"))
-        assertTrue(DW_SKETCH_CHOOSER_ROUND_OFFLINE.contains("not a round with nothing in it"))
+        // Said in plain words since UX audit 2026-10-16 (DA-39): the cause ("No connection") and the
+        // way forward ("Try again") are what tell a failed read from an empty list.
+        for (sentence in listOf(DW_SKETCH_CHOOSER_OFFLINE, DW_SKETCH_CHOOSER_STAGE_OFFLINE, DW_SKETCH_CHOOSER_ROUND_OFFLINE)) {
+            assertTrue(sentence, sentence.startsWith("No connection"))
+            assertTrue(sentence, sentence.contains("Try again"))
+            assertTrue(sentence, !sentence.contains("asked for"))
+        }
     }
 
     /**

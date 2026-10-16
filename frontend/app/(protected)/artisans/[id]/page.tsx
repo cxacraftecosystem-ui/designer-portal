@@ -58,7 +58,7 @@ export default function ArtisanViewPage() {
               { href: entryHref("/questionnaire", artisan), title: "Start questionnaire", body: "Open the interview with this artisan filled in.", icon: ClipboardList }
             ].map((item) => (
               <Link key={item.href} href={item.href} className="panel group flex min-h-28 items-start gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-panel">
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-field-200 text-field-700">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-field-200 text-field-700 dark:text-purple-300">
                   <item.icon className="h-5 w-5" aria-hidden />
                 </span>
                 <span>

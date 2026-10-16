@@ -226,7 +226,7 @@ export default function ArtisansPage() {
                             researcher scanning for gaps actually needs to know. */}
                         {artisan.pehchanCardNumber ? (
                           <span
-                            className="rounded-full bg-field-200 px-2 py-0.5 text-xs font-semibold text-field-700"
+                            className="rounded-full bg-field-200 px-2 py-0.5 text-xs font-semibold text-field-700 dark:text-purple-300"
                             title="Artisan Pehchan Card number on file"
                           >
                             Pehchan

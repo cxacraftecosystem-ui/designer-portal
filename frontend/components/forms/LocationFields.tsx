@@ -1816,7 +1816,7 @@ export function LocationFields({
         {autofill && autofill.applied.length ? (
           <div className="grid gap-2 rounded-md border border-purple-200 bg-purple-50 px-3 py-2.5 text-sm text-purple-950">
             <p className="flex items-start gap-2">
-              <Radar className="mt-0.5 h-4 w-4 shrink-0 text-purple-700" aria-hidden />
+              <Radar className="mt-0.5 h-4 w-4 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden />
               <span>
                 {/* One wording, because there is now one writer. A second wording here — "filled in
                     from this device's location" — is what a passive GPS write looked like from the
@@ -1869,7 +1869,7 @@ export function LocationFields({
             className="grid gap-2 rounded-md border border-purple-200 bg-purple-50 px-3 py-2.5 text-sm text-purple-950"
           >
             <p className="flex items-start gap-2">
-              <Radar className="mt-0.5 h-4 w-4 shrink-0 text-purple-700" aria-hidden />
+              <Radar className="mt-0.5 h-4 w-4 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden />
               <span>
                 This device is in{" "}
                 <strong className="font-semibold">
@@ -2144,7 +2144,7 @@ export function LocationFields({
                 </span>
                 <button
                   type="button"
-                  className="text-sm font-medium text-purple-700 underline underline-offset-2"
+                  className="text-sm font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2"
                   onClick={() => {
                     setSubjectLatitude("");
                     setSubjectLongitude("");
@@ -2228,7 +2228,7 @@ export function LocationFields({
                 </CardNotice>
               ) : null}
               {captureStatus === "captured" && capturedMetres !== null ? (
-                <CardNotice tone="info" icon={<CheckCircle2 className="h-4 w-4 text-success-600" aria-hidden />}>
+                <CardNotice tone="info" icon={<CheckCircle2 className="h-4 w-4 text-success-600 dark:text-emerald-400" aria-hidden />}>
                   This device&apos;s location was captured automatically: {latitude}, {longitude} (
                   {accuracyLabel(capturedMetres)}). That is where you are, not where {subjectLabel} is — state that
                   above.
