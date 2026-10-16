@@ -246,7 +246,7 @@ function ConsentGateField({
             href="/terms"
             target="_blank"
             rel="noopener noreferrer"
-            className="font-medium text-purple-700 underline underline-offset-2 hover:text-purple-800"
+            className="font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2 hover:text-purple-800 dark:hover:text-purple-200"
           >
             terms and conditions
           </Link>
@@ -1092,7 +1092,7 @@ function LoginView() {
               </div>
               {/* Under the box it is about, and a plain link to a public page: somebody who cannot
                   sign in must be able to reach it without signing in. */}
-              <Link href="/forgot-password" className="justify-self-end text-sm font-medium text-purple-700 hover:underline">
+              <Link href="/forgot-password" className="justify-self-end text-sm font-medium text-purple-700 dark:text-purple-300 hover:underline">
                 Forgot your password?
               </Link>
             </div>
@@ -1205,7 +1205,7 @@ function LoginView() {
 
           <p className="mt-4 text-center text-sm text-ink-500">
             No account yet?{" "}
-            <Link href="/" className="font-medium text-purple-700 hover:underline">
+            <Link href="/" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
               See what Design Prototype Workshop does
             </Link>
           </p>

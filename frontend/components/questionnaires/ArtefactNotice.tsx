@@ -91,7 +91,7 @@ function ArtefactDetail() {
       <div className="grid gap-3 md:grid-cols-2">
         <article className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-            <Share2 className="h-4 w-4 shrink-0 text-field-600" aria-hidden />
+            <Share2 className="h-4 w-4 shrink-0 text-field-600 dark:text-purple-300" aria-hidden />
             Question set — safe to send
           </h3>
           <p className="text-sm leading-6 text-ink-700">
@@ -105,15 +105,15 @@ function ArtefactDetail() {
         </article>
 
         <article className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-100 p-3">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-800">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-100">
             <Lock className="h-4 w-4 shrink-0" aria-hidden />
             Full .xlsx — your fieldwork
           </h3>
-          <p className="text-sm leading-6 text-amber-800">
+          <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
             The same questions <span className="font-semibold">plus every sitting</span>: each respondent&rsquo;s name,
             the notes taken during the interview and every answer given.
           </p>
-          <p className="text-sm leading-6 text-amber-800">
+          <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
             It is the file the app matches your edits against, so it is the one to re-upload after editing in Excel — and
             it is not one to pass on. Only you, a designer working on its design workshop, and an admin can take it.
           </p>
@@ -122,7 +122,7 @@ function ArtefactDetail() {
 
       <div className="grid gap-2 rounded-md border border-line-200 p-3">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-          <Upload className="h-4 w-4 shrink-0 text-field-600" aria-hidden />
+          <Upload className="h-4 w-4 shrink-0 text-field-600 dark:text-purple-300" aria-hidden />
           What happens to answers that are already in a file you upload
         </h3>
         <ul className="grid gap-1.5 text-sm leading-6 text-ink-700">

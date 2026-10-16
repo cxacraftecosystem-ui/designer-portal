@@ -401,7 +401,7 @@ export function ReportAccentPicker({
   return (
     <div className="grid gap-3">
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600">
+        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600 dark:text-purple-300">
           <Palette className="h-4 w-4" aria-hidden />
         </span>
         <div className="min-w-0">

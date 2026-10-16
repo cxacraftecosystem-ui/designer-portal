@@ -1225,8 +1225,7 @@ internal const val DW_SKETCH_CHOOSER_PROTOTYPE_ELSEWHERE: String =
 
 /** COULD NOT READ THE STAGE, with no signal. The offline half of the split. */
 internal const val DW_SKETCH_CHOOSER_STAGE_OFFLINE: String =
-    "No connection, so this stage could not be loaded — a list that could not be asked for, not " +
-        "a list with nothing in it."
+    "No connection, so this stage couldn't be loaded. Try again."
 
 /** COULD NOT READ THE STAGE, and the repository said why. The fallback for when it did not. */
 internal const val DW_SKETCH_CHOOSER_STAGE_REFUSED: String =

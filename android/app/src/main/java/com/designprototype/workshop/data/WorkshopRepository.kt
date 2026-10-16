@@ -4748,7 +4748,8 @@ class WorkshopRepository(
      * six record types reached the screen indistinguishable from a queue that was simply that
      * length, and the rows dropped are the oldest. See [PendingReviewListDto].
      */
-    suspend fun pendingReviews(): PendingReviewListDto = api.pendingReviews()
+    suspend fun pendingReviews(pageSize: Int? = null, before: String? = null): PendingReviewListDto =
+        api.pendingReviews(pageSize = pageSize, before = before)
 
     /** Approve a pending record (admins, or users granted the review permission). */
     suspend fun approveRecord(recordType: String, recordId: String) {
@@ -5048,6 +5049,19 @@ class WorkshopRepository(
      */
     internal suspend fun interviewArtisans(scope: InterviewArtisanScope): List<ArtisanDto> =
         fetchInterviewArtisans(api, scope)
+
+    // ONE PAGE, WITH ITS TOTAL, FOR THE UPDATE-EXISTING PICKER (UX audit 2026-10-16, DA-08). The
+    // list reads above return `.items` alone, so the picker could not tell the 101st artisan from no
+    // artisan at all; these keep the total and pass the route's own `search`, so the box can reach
+    // every record and the screen can say how many there are.
+    suspend fun artisanPage(search: String?) = api.artisans(pageSize = 100, search = search?.blankToNull())
+    suspend fun craftPage(search: String?) = api.crafts(pageSize = 100, search = search?.blankToNull())
+    suspend fun productPage(search: String?) = api.products(pageSize = 100, search = search?.blankToNull())
+    suspend fun toolPage(search: String?) = api.tools(pageSize = 100, search = search?.blankToNull())
+    suspend fun processPage(search: String?) = api.processes(pageSize = 100, search = search?.blankToNull())
+    suspend fun workshopPage(search: String?) = api.workshops(pageSize = 100, search = search?.blankToNull())
+    suspend fun interviewPage(search: String?) = api.interviews(pageSize = 100, search = search?.blankToNull())
+    suspend fun mediaPage(search: String?) = api.media(pageSize = 100, search = search?.blankToNull())
 
     suspend fun crafts(createdBy: String? = null): List<CraftDto> =
         api.crafts(pageSize = 100, createdBy = createdBy?.blankToNull()).items

@@ -199,7 +199,7 @@ export function ReportSettingsPanel({
       <div className="panel grid gap-3 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600">
+            <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600 dark:text-purple-300">
               <Settings2 className="h-4 w-4" aria-hidden />
             </span>
             <div className="min-w-0">
@@ -267,7 +267,7 @@ export function ReportSettingsPanel({
             ) : !dirty ? (
               <span className="text-sm text-ink-muted">
                 {saved ? (
-                  <span className="inline-flex items-center gap-1.5 text-success-600">
+                  <span className="inline-flex items-center gap-1.5 text-success-600 dark:text-emerald-400">
                     <CheckCircle2 className="h-4 w-4" aria-hidden />
                     Saved. The preview below has been rebuilt from them.
                   </span>
@@ -314,7 +314,7 @@ export function TranscriptAnnexurePanel({ transcripts }: { transcripts: DwTransc
   return (
     <section className="panel mb-5 grid gap-3 p-4">
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600">
+        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600 dark:text-purple-300">
           <Mic className="h-4 w-4" aria-hidden />
         </span>
         <div className="min-w-0">
@@ -341,7 +341,7 @@ export function TranscriptAnnexurePanel({ transcripts }: { transcripts: DwTransc
                 <span className="text-sm font-medium text-ink-900">
                   {item.stageNumber}. {item.label}
                 </span>
-                <span className={`text-xs ${item.includedInReport ? "text-ink-500" : "text-amber-800"}`}>
+                <span className={`text-xs ${item.includedInReport ? "text-ink-500" : "text-amber-800 dark:text-amber-100"}`}>
                   {item.includedInReport
                     ? `${item.durationText} · ${item.wordCount} words${item.speakerCount > 1 ? ` · ${item.speakerCount} voices` : ""}`
                     : `Not in the annexure — transcription is ${item.status.toLowerCase() || "not finished"}`}

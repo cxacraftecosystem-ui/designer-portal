@@ -84,7 +84,7 @@ export default function TermsPage() {
           </div>
           <Link
             href="/login"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium text-purple-700 hover:bg-purple-50"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium text-purple-700 dark:text-purple-300 hover:bg-purple-50"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden />
             Sign in
@@ -189,7 +189,7 @@ export default function TermsPage() {
         </div>
 
         <p className="mt-6 text-center text-sm text-ink-500">
-          <Link href="/login" className="font-medium text-purple-700 hover:underline">
+          <Link href="/login" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
             Back to sign in
           </Link>
         </p>

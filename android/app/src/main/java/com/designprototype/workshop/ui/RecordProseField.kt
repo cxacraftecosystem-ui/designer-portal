@@ -41,6 +41,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -896,6 +904,11 @@ fun RecordProseField(
     /** Shown inside an empty box. Ignored by the rich editor, which has nowhere to put one. */
     placeholder: String? = null,
     keyboardType: KeyboardType = KeyboardType.Text,
+    /**
+     * How the keyboard capitalises (UX audit 2026-10-16, DA-25). Null means: sentence case for text,
+     * nothing for numbers, email and phone. A name or a place passes `Words` — the forms' `titleCased`.
+     */
+    capitalization: KeyboardCapitalization? = null,
     /** Re-seed the rich editor when the form loads a different record into the same composition. */
     resetKey: Any? = null,
     /** Drawn under the box, above any dictation sentence. The form's own help for this field. */
@@ -1041,6 +1054,7 @@ fun RecordProseField(
             )
             Text(RECORD_RICH_TEXT_NOTE, color = MaterialTheme.field.muted, fontSize = 11.sp)
         } else {
+            val focusManager = LocalFocusManager.current
             OutlinedTextField(
                 // While a partial is streaming the box shows what has been heard SO FAR, appended to
                 // what was already there. Rendering it anywhere else — a strip below, a toast — is
@@ -1067,7 +1081,15 @@ fun RecordProseField(
                 isError = errorText != null,
                 supportingText = errorText?.let { message -> { Text(message) } },
                 minLines = minLines,
-                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                // Capitalised as a person writes, and a one-line box offers Next, which moves to the
+                // next field, instead of Enter doing nothing (DA-25). Longer boxes keep the newline.
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = keyboardType,
+                    capitalization = capitalization
+                        ?: if (keyboardType == KeyboardType.Text) KeyboardCapitalization.Sentences else KeyboardCapitalization.None,
+                    imeAction = if (minLines == 1) ImeAction.Next else ImeAction.Default,
+                ),
+                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
                 trailingIcon = if (!showMic) null else {
                     {
                         RecordDictationButton(
@@ -1091,6 +1113,14 @@ fun RecordProseField(
                 modifier = Modifier
                     .fillMaxWidth()
                     .let { base -> focusRequester?.let { base.focusRequester(it) } ?: base }
+                    // Autofill knows an email box from a phone box (DA-25).
+                    .let { base ->
+                        when (keyboardType) {
+                            KeyboardType.Email -> base.semantics { contentType = ContentType.EmailAddress }
+                            KeyboardType.Phone -> base.semantics { contentType = ContentType.PhoneNumber }
+                            else -> base
+                        }
+                    }
             )
             help?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp) }
         }

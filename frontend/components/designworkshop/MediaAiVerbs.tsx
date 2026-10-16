@@ -231,7 +231,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
         {/* NO COUNTDOWN AT ALL WHEN THERE IS NO CEILING — `aiVerbsRemaining` is null on an uncapped
             deployment, and "0 left" must never be how "no ceiling" looks. */}
         {allowance && allowance.aiVerbsRemaining !== null && allowance.aiVerbsRemaining <= AI_VERB_COUNTDOWN_FROM ? (
-          <span className="text-xs font-medium text-amber-800">
+          <span className="text-xs font-medium text-amber-800 dark:text-amber-100">
             {allowance.aiVerbsRemaining} run{allowance.aiVerbsRemaining === 1 ? "" : "s"} left today (
             {allowance.aiVerbDay})
           </span>
@@ -249,7 +249,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
           {consent.ready && !granted ? (
             <>
               {" "}
-              <Link href={`/design-workshops/${workshopId}`} className="font-medium text-purple-700 underline">
+              <Link href={`/design-workshops/${workshopId}`} className="font-medium text-purple-700 dark:text-purple-300 underline">
                 Open the workshop&apos;s own screen
               </Link>
               .
@@ -316,7 +316,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
                 // already has a cue list would spend an upload and a run for a file that has one.
                 <p className="text-xs leading-5 text-ink-500">
                   This one already has subtitles.{" "}
-                  <Link href={`/design-workshops/${workshopId}/ai-layers`} className="font-medium text-purple-700 underline">
+                  <Link href={`/design-workshops/${workshopId}/ai-layers`} className="font-medium text-purple-700 dark:text-purple-300 underline">
                     Read them on the AI layers screen
                   </Link>{" "}
                   — running it again would upload the recording again and use another run.

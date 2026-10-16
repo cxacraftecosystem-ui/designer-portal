@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -416,7 +418,7 @@ internal fun ReceivedQuestionnairesCard(
                 // The refusals are written to be shown: damaged, not ours, from a newer build, or
                 // empty. Each one leads to a different next act, which is why they are not one
                 // sentence. See `readQuestionnaireBundle`.
-                .onFailure { error -> onError(error.message ?: "That file could not be read.") }
+                .onFailure { error -> onError(error.userMessage("That file could not be read.")) }
             busy = false
         }
     }
@@ -535,7 +537,7 @@ internal fun ReceivedQuestionnairesCard(
                                 }
                                 .onFailure { error ->
                                     if (error !is CancellationException) {
-                                        onError(error.message ?: "That questionnaire could not be added.")
+                                        onError(error.userMessage("That questionnaire could not be added."))
                                     }
                                 }
                             reload++

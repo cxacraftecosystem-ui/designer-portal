@@ -47,7 +47,7 @@ type Step = "status" | "consent" | "method" | "qr" | "zip" | "otp";
 const STATUS_TONE: Record<string, string> = {
   VERIFIED: "border-success-600/25 bg-success-100 text-success-600",
   NAME_MISMATCH: "border-amber-500/30 bg-amber-100 text-amber-800",
-  REJECTED: "border-error-600/30 bg-error-100 text-error-600"
+  REJECTED: "border-error-600/30 bg-error-100 text-red-800"
 };
 
 export function AadhaarStatusChip({ summary }: { summary: Pick<AadhaarSummary, "status"> }) {
@@ -327,7 +327,7 @@ export function AadhaarVerifyPanel({
               className="flex items-start gap-3 rounded-md border border-line-200 bg-card p-3 text-left transition hover:border-purple-300 hover:bg-purple-50"
               onClick={() => setStep(method.key)}
             >
-              <method.icon className="mt-0.5 h-5 w-5 text-purple-700" aria-hidden />
+              <method.icon className="mt-0.5 h-5 w-5 text-purple-700 dark:text-purple-300" aria-hidden />
               <span className="grid gap-0.5">
                 <span className="text-sm font-medium text-ink-900">{method.label}</span>
                 <span className="text-xs leading-5 text-ink-500">{method.note}</span>

@@ -164,7 +164,7 @@ fun QuestionnaireQuickTranscript(
                     Text(
                         label,
                         color = if (amber) MaterialTheme.field.onWarningContainer else MaterialTheme.field.muted,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                 }

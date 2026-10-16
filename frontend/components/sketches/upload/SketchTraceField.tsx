@@ -2266,7 +2266,7 @@ export function SketchTraceField({
       meets: stated in the copy beside the button rather than quietly tolerated.
     */}
     {edited !== null ? (
-      <p className="mt-2 max-w-prose text-xs leading-5 text-amber-800">
+      <p className="mt-2 max-w-prose text-xs leading-5 text-amber-800 dark:text-amber-100">
         The frame you chose is written into the SVG&apos;s provenance note, the PDF&apos;s title and
         the EPS&apos;s header, so those three say how they were made. The PNG and the DXF have
         nowhere to carry it: saved on their own, neither records that the drawing was cropped or
@@ -2276,7 +2276,7 @@ export function SketchTraceField({
     <p aria-live="polite" aria-atomic="true" className="mt-1 text-xs leading-5 text-ink-500">
       {saved ? (
         <span className="flex items-start gap-2">
-          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600" aria-hidden />
+          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600 dark:text-emerald-400" aria-hidden />
           <span>{saved}</span>
         </span>
       ) : null}
@@ -2517,7 +2517,7 @@ export function SketchTraceField({
           */}
           {pixels ? (
             <div className="mb-3 flex flex-wrap items-start gap-3 rounded-md border border-line-200 bg-card p-3">
-              <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-field-200 text-field-600">
+              <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-field-200 text-field-600 dark:text-purple-300">
                 <Crop className="h-4 w-4" aria-hidden />
               </span>
               <div className="min-w-0 flex-1">
@@ -3036,7 +3036,7 @@ export function SketchTraceField({
               <button
                 type="button"
                 id={advancedToggleId}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-700 transition hover:text-purple-800"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-700 dark:text-purple-300 transition hover:text-purple-800 dark:hover:text-purple-200"
                 onClick={toggleAdvanced}
                 aria-expanded={advancedOpen}
                 /* ONLY WHILE THE PANEL IS MOUNTED (§17). Before the first press the id names nothing,
@@ -3074,7 +3074,7 @@ export function SketchTraceField({
                   in front of them. The count is on the toggle as well, because a designer who has
                   learned to skip a paragraph still reads the button they are about to press. */}
               {!advancedOpen && hiddenModified.length > 0 ? (
-                <p className="mt-2 text-xs leading-5 text-amber-800">
+                <p className="mt-2 text-xs leading-5 text-amber-800 dark:text-amber-100">
                   {hiddenModified.length === 1
                     ? `One setting that is not on screen has moved: ${hiddenModified[0]}.`
                     : `${hiddenModified.length} settings that are not on screen have moved: ${hiddenModified.join(", ")}.`}
@@ -3172,7 +3172,7 @@ export function SketchTraceField({
                 a PNG records how it was made nowhere but on this screen. §1.10: skipped work is said
                 out loud, and this is skipped work in a file rather than on a list. */}
             {format === "png" && edited !== null ? (
-              <p className="text-xs leading-4 text-amber-800">
+              <p className="text-xs leading-4 text-amber-800 dark:text-amber-100">
                 The frame you chose is written into the SVG&apos;s provenance note. A PNG has nowhere to
                 carry it, so a reviewer holding only the PNG cannot tell it was cropped or sharpened.
               </p>
@@ -3182,7 +3182,7 @@ export function SketchTraceField({
           {problem ? (
             <p
               role="alert"
-              className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-xs text-error-600"
+              className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-xs text-red-800"
             >
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>{problem}</span>
@@ -3289,7 +3289,7 @@ export function SketchTraceField({
       <div aria-live="polite" aria-atomic="true">
         {done ? (
           <p className="mt-2 flex items-start gap-2 text-xs text-ink-500">
-            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600" aria-hidden />
+            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600 dark:text-emerald-400" aria-hidden />
             <span>{done}</span>
           </p>
         ) : null}
@@ -3422,7 +3422,7 @@ function SliderRow({
       <div className="flex items-baseline justify-between gap-2">
         <label className="text-xs font-medium text-ink-900" htmlFor={id}>
           {spec.label}
-          {modified ? <span className="ml-1 text-purple-700">·</span> : null}
+          {modified ? <span className="ml-1 text-purple-700 dark:text-purple-300">·</span> : null}
         </label>
         <output className="text-xs tabular-nums text-ink-500" htmlFor={id}>
           {formatValue(value, spec.step)}
@@ -3480,7 +3480,7 @@ function ToggleRow({
         <div className="min-w-0">
           <label className="text-xs font-medium text-ink-900" htmlFor={id}>
             {spec.label}
-            {modified ? <span className="ml-1 text-purple-700">·</span> : null}
+            {modified ? <span className="ml-1 text-purple-700 dark:text-purple-300">·</span> : null}
           </label>
           <p id={`${id}-hint`} className="text-xs leading-4 text-ink-500">
             {spec.hint}
@@ -3526,7 +3526,7 @@ function ChoiceRow({
       */}
       <label className="text-xs font-medium text-ink-900" htmlFor={id}>
         {spec.label}
-        {modified ? <span className="ml-1 text-purple-700">·</span> : null}
+        {modified ? <span className="ml-1 text-purple-700 dark:text-purple-300">·</span> : null}
       </label>
       <select
         id={id}
@@ -3570,7 +3570,7 @@ function ChoiceRow({
  */
 function InertNote({ reason }: { reason: string | null }) {
   if (reason === null) return null;
-  return <p className="mt-0.5 text-xs leading-4 text-amber-800">{reason}</p>;
+  return <p className="mt-0.5 text-xs leading-4 text-amber-800 dark:text-amber-100">{reason}</p>;
 }
 
 /** Re-exported so a host can name the essentials without importing the table. */

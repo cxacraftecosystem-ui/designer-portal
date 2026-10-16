@@ -59,11 +59,27 @@ export function AppSettingsPanel() {
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /** The first read failed: said as a failure with Try again, never as "Loading settings..." forever. */
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
+    let cancelled = false;
     apiFetch<AppSettings>("/settings")
-      .then(setSettings)
-      .catch((err) => setError(err instanceof Error ? err.message : "Unable to load settings"));
-  }, []);
+      .then((loaded) => {
+        if (cancelled) return;
+        setSettings(loaded);
+        setLoadFailed(false);
+        setError(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLoadFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -85,12 +101,28 @@ export function AppSettingsPanel() {
   return (
     <div className="grid gap-4">
       {error ? (
-        <div className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{error}</div>
+        <div className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{error}</div>
       ) : null}
       {success ? (
         <div className="rounded-md border border-emerald-200 bg-success-100 px-3 py-2 text-sm text-success-600">{success}</div>
       ) : null}
-      {!settings ? (
+      {!settings && loadFailed ? (
+        <div role="alert" className="panel flex flex-wrap items-center justify-between gap-3 p-4">
+          <p className="text-sm text-red-700 dark:text-red-400">
+            The settings could not be read, so nothing here can be changed yet.
+          </p>
+          <button
+            type="button"
+            className="field-button-secondary"
+            onClick={() => {
+              setLoadFailed(false);
+              setAttempt((n) => n + 1);
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      ) : !settings ? (
         <div className="panel p-4 text-sm text-ink-500">Loading settings...</div>
       ) : (
         <form className="grid gap-4" onSubmit={save}>

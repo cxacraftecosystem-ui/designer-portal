@@ -121,11 +121,17 @@ const TYPE_OPTIONS: DropdownOption[] = [
   is `RENDER_CAP`, reached through `lib/workshopOptions` so that one number governs the fetch and
   the render on every workshop picker in the app.
 
-  The 200 below is untouched: that request feeds the type MAP, not a list of options, so its ceiling
-  is about how many workshops can be typed rather than how many can be drawn.
+  The type MAP below is different: it is not a list of options, it has to type EVERY workshop, so it
+  pages through `GET /workshops` at the route's own ceiling until the reported total is in hand.
+  It asked for 200 in one page until 2026-10-16; the route caps `pageSize` at 100 and answered 422
+  every time, so the type filter switched itself off on every visit for every admin (UX audit DW-01).
+  `e2e/workshop-page-size-unit.spec.ts` holds every `/workshops` caller to that ceiling.
 */
 const DESIGN_WORKSHOP_PAGE = WORKSHOP_OPTION_PAGE_SIZE;
-const WORKSHOP_PAGE = 200;
+/** `GET /workshops` refuses a `pageSize` over 100 (`backend/app/api/routes/workshops.py`). */
+const WORKSHOP_PAGE = 100;
+/** A bound on the walk, so a runaway total cannot keep the panel paging forever. */
+const WORKSHOP_TYPE_MAP_MAX_PAGES = 50;
 
 /**
  * How long after the last keystroke either search on this panel goes out.
@@ -334,12 +340,17 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
         // Every workshop, not one type at a time: the map has to answer "which type is this one" for
         // both filter values, and two requests would leave the second answer stale whenever an admin
         // switched between them.
-        const result = await listResource<Workshop>("/workshops", { pageSize: WORKSHOP_PAGE });
-        if (cancelled) return;
         const map = new Map<string, WorkshopType>();
-        for (const workshop of result.items) map.set(workshop.id, workshop.workshopType ?? "OTHER");
+        let total = 0;
+        for (let page = 1; page <= WORKSHOP_TYPE_MAP_MAX_PAGES; page += 1) {
+          const result = await listResource<Workshop>("/workshops", { page, pageSize: WORKSHOP_PAGE });
+          if (cancelled) return;
+          total = result.total;
+          for (const workshop of result.items) map.set(workshop.id, workshop.workshopType ?? "OTHER");
+          if (result.items.length < WORKSHOP_PAGE || map.size >= total) break;
+        }
         setTypeByWorkshopId(map);
-        setTypeMapPartial(result.total > result.items.length);
+        setTypeMapPartial(total > map.size);
       } catch {
         if (cancelled) return;
         // Deliberately silent, and deliberately NOT an empty map presented as an answer: with no map
@@ -878,7 +889,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
       ) : null}
 
       {loadError ? (
-        <div className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{loadError}</div>
+        <div className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{loadError}</div>
       ) : null}
 
       {featureMissing ? null : (
@@ -1001,8 +1012,8 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
           ) : null}
           {typeKnown && typeMapPartial ? (
             <p className="mt-2 text-xs leading-5 text-ink-500">
-              Only the first {WORKSHOP_PAGE} workshops were loaded, so a design workshop linked to an older one may show
-              no type and be left out of a filtered list.
+              {WORKSHOP_PAGE * WORKSHOP_TYPE_MAP_MAX_PAGES} of the workshops are typed for this filter. A design
+              workshop linked to an older one shows under &ldquo;Any workshop type&rdquo;.
             </p>
           ) : null}
           {/* THE CAP, WITH THE NUMBER, AND NOW POINTING AT SOMETHING. It used to read "Showing the
@@ -1030,7 +1041,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               {/* The creator sits OUTSIDE the picker, because their access is not this list's to
                   give or take. See the file header. */}
               <div className="mt-4 rounded-md border border-purple-300 bg-purple-50 px-3 py-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">Always has access</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-purple-700 dark:text-purple-300">Always has access</p>
                 <p className="mt-1 text-sm text-ink-900">
                   {creator ? creator.name : "The designer who created it"}
                   {creator?.role ? <span className="text-ink-500"> · {roleLabel(creator.role)}</span> : null}
@@ -1126,7 +1137,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                             {row.grantedAt ? ` · added ${formatDateTime(row.grantedAt)}` : ""}
                           </span>
                           {removed.includes(row.userId) ? (
-                            <span className="rounded-full border border-error-600/25 bg-error-100 px-2 py-0.5 text-[0.6875rem] font-medium text-error-600">
+                            <span className="rounded-full border border-error-600/25 bg-error-100 px-2 py-0.5 text-[0.6875rem] font-medium text-red-800">
                               will be removed on save
                             </span>
                           ) : null}
@@ -1145,7 +1156,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                   rendered five sections away from the control that caused it reads as a button that
                   did nothing. */}
               {saveError ? (
-                <div className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">
+                <div className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">
                   {saveError}
                 </div>
               ) : null}
@@ -1175,7 +1186,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                   </button>
                 ) : null}
                 {/* Colour never carries the meaning on its own — the word "unsaved" does. */}
-                {dirty ? <span className="text-xs text-amber-800">{added.length + removed.length} unsaved change{added.length + removed.length === 1 ? "" : "s"}</span> : null}
+                {dirty ? <span className="text-xs text-amber-800 dark:text-amber-100">{added.length + removed.length} unsaved change{added.length + removed.length === 1 ? "" : "s"}</span> : null}
               </div>
             </>
           )}

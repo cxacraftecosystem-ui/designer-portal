@@ -249,7 +249,7 @@ function FeedbackReportFormBody({
       {error ? (
         // Immediately above the buttons rather than pinned to the top: this form is tall enough that
         // a banner at the top of the page reads as a button that did nothing (§12.11, treatment 2).
-        <div className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600" role="alert">
+        <div className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800" role="alert">
           {error}
         </div>
       ) : null}

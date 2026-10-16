@@ -90,7 +90,7 @@ export function RegionalStatesPanel() {
       </div>
 
       {open && error ? (
-        <p role="alert" className="rounded-md border border-error-600/30 bg-error-100 px-3 py-2 text-sm leading-6 text-error-600">
+        <p role="alert" className="rounded-md border border-error-600/30 bg-error-100 px-3 py-2 text-sm leading-6 text-red-800">
           {error}
         </p>
       ) : null}

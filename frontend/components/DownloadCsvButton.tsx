@@ -49,7 +49,7 @@ export function DownloadCsvButton({
         {busy ? "Exporting…" : "Export CSV"}
       </button>
       {error ? (
-        <span className="text-xs font-medium text-red-700" role="alert">
+        <span className="text-xs font-medium text-red-700 dark:text-red-400" role="alert">
           {error}
         </span>
       ) : null}

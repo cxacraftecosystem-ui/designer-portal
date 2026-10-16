@@ -675,7 +675,7 @@ export function DesignWorkshopInspectorsPanel({
       ) : null}
 
       {loadError ? (
-        <div className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{loadError}</div>
+        <div className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{loadError}</div>
       ) : null}
 
       {featureMissing ? null : (
@@ -845,7 +845,7 @@ export function DesignWorkshopInspectorsPanel({
                           {row.assignedAt ? ` · inspecting since ${formatDateTime(row.assignedAt)}` : ""}
                         </span>
                         {removed.includes(row.userId) ? (
-                          <span className="rounded-full border border-error-600/25 bg-error-100 px-2 py-0.5 text-[0.6875rem] font-medium text-error-600">
+                          <span className="rounded-full border border-error-600/25 bg-error-100 px-2 py-0.5 text-[0.6875rem] font-medium text-red-800">
                             inspection ends on save
                           </span>
                         ) : null}
@@ -863,7 +863,7 @@ export function DesignWorkshopInspectorsPanel({
               {/* Immediately above the buttons: a refusal rendered five sections away from the
                   control that caused it reads as a button that did nothing. */}
               {saveError ? (
-                <div className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">
+                <div className="mt-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">
                   {saveError}
                 </div>
               ) : null}
@@ -888,7 +888,7 @@ export function DesignWorkshopInspectorsPanel({
                 ) : null}
                 {/* Colour never carries the meaning on its own — the word "unsaved" does. */}
                 {dirty ? (
-                  <span className="text-xs text-amber-800">
+                  <span className="text-xs text-amber-800 dark:text-amber-100">
                     {added.length + removed.length} unsaved change{added.length + removed.length === 1 ? "" : "s"}
                   </span>
                 ) : null}

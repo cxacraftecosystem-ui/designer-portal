@@ -391,7 +391,7 @@ export function MediaRepositoryPicker({
         and the sentence is still what the reader has to act on. `MediaField.refused` keeps its own
         list on the same reasoning — an entry leaves only when it stops being true.
       */}
-      <p role="status" aria-live="polite" className={refusal ? "text-xs leading-5 text-amber-800" : "sr-only"}>
+      <p role="status" aria-live="polite" className={refusal ? "text-xs leading-5 text-amber-800 dark:text-amber-100" : "sr-only"}>
         {refusal}
       </p>
     </div>

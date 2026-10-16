@@ -238,7 +238,7 @@ export function UnfiledRecordDialog({
           {/* WHY IT IS HERE, repeated. A keyboard user arrives in this dialog without having read
               the card, and the reason is the whole basis of the decision they are about to make. */}
           <div className="rounded-md border border-amber-100 bg-amber-100/40 p-2.5">
-            <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800 dark:text-amber-100">
               <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
               Left alone by the automatic check
             </p>
@@ -251,7 +251,7 @@ export function UnfiledRecordDialog({
           </div>
 
           {error ? (
-            <p className="rounded-md bg-error-100 px-3 py-2 text-xs leading-5 text-error-600">{error}</p>
+            <p className="rounded-md bg-error-100 px-3 py-2 text-xs leading-5 text-red-800">{error}</p>
           ) : null}
 
           {/* 1 — OPEN THE RECORD. A real link, so middle-click and "open in new tab" work and the

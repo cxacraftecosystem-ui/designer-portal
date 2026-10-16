@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.userMessage
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -90,7 +92,7 @@ fun MyAiKeysScreen(
         runCatching {
             catalogue = repository.aiProviders()
             keys = repository.myAiKeys()
-        }.onFailure { loadError = it.message ?: "Could not load your AI keys." }
+        }.onFailure { loadError = it.userMessage("Could not load your AI keys.") }
         loading = false
     }
 

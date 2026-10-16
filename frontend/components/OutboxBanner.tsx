@@ -643,9 +643,9 @@ export function OutboxBanner() {
             has one ink, and the icon is never the only thing that changed.
           */}
           {waiting ? (
-            <CloudOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+            <CloudOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-800 dark:text-amber-100" aria-hidden />
           ) : (
-            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800 dark:text-amber-100" aria-hidden />
           )}
           <div>
             <h2 className="font-display text-sm font-bold">
@@ -681,7 +681,7 @@ export function OutboxBanner() {
               rather than written inside a component no test can render.
             */}
             {otherAccount ? (
-              <p className="mt-1 text-xs font-medium text-amber-800">{outboxOtherAccountLine(otherAccount)}</p>
+              <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-100">{outboxOtherAccountLine(otherAccount)}</p>
             ) : null}
           </div>
         </div>
@@ -760,7 +760,7 @@ export function OutboxBanner() {
                     <button
                       key={key}
                       type="button"
-                      className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700"
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700 dark:text-purple-300"
                       disabled={syncing}
                       onClick={() => setRepicking({ entry, field: key })}
                     >
@@ -785,7 +785,7 @@ export function OutboxBanner() {
                 */}
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700 dark:text-purple-300"
                   disabled={syncing}
                   onClick={async () => {
                     await retryOutboxEntry(entry.id!).catch(() => {

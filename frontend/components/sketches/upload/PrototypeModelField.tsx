@@ -535,7 +535,7 @@ export function PrototypeModelField({
           {turntableProblem ? (
             <p
               role="alert"
-              className="mt-2 flex items-start gap-2 rounded-md border border-red-200 bg-error-100 px-2 py-1.5 text-xs leading-4 text-error-600"
+              className="mt-2 flex items-start gap-2 rounded-md border border-red-200 bg-error-100 px-2 py-1.5 text-xs leading-4 text-red-800"
             >
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>{turntableProblem}</span>
@@ -563,7 +563,7 @@ export function PrototypeModelField({
               </p>
             ) : turntableDone ? (
               <p className="mt-2 flex items-start gap-2 text-xs text-ink-500">
-                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600" aria-hidden />
+                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600 dark:text-emerald-400" aria-hidden />
                 <span>{turntableDone}</span>
               </p>
             ) : null}
@@ -635,7 +635,7 @@ export function PrototypeModelField({
             card body, everywhere on this tab.
           */}
           <details className="mt-3">
-            <summary className="cursor-pointer text-xs font-medium text-purple-700">
+            <summary className="cursor-pointer text-xs font-medium text-purple-700 dark:text-purple-300">
               Which format should I attach?
             </summary>
             <dl className="mt-2 grid gap-1.5">
@@ -722,7 +722,7 @@ export function PrototypeModelField({
               </p>
             ) : done ? (
               <p className="mt-2 flex items-start gap-2 text-xs text-ink-500">
-                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600" aria-hidden />
+                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600 dark:text-emerald-400" aria-hidden />
                 <span>{done}</span>
               </p>
             ) : null}

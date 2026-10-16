@@ -1254,6 +1254,100 @@ function DesignWorkshopsPageBody() {
     }
   }
 
+  /** The title cell of one row: name, code, and the two device-draft notes. Table and phone card share it. */
+  const workshopTitleBlock = (workshop: (typeof rows)[number]) => (
+    <>
+      <Link href={`/design-workshops/${workshop.id}`} className="font-medium text-ink-900 underline-offset-2 hover:underline">
+        {workshop.title}
+      </Link>
+      {/* The code is denormalised from stage 1 and is null until that stage has
+          been saved — so its absence means "stage 1 is not done", not "missing". */}
+      <div className="text-xs text-ink-500">{workshop.workshopCode ?? "No workshop code yet"}</div>
+      {unsentIds.has(workshop.id) ? (
+        // Worded, not merely tinted — the same sentence the banner in the protected
+        // layout uses, so the two cannot be read as two different situations.
+        <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+          <CloudOff className="h-3 w-3" aria-hidden />
+          Saved on this device only
+        </div>
+      ) : null}
+      {offerMove && orphanDrafts.has(workshop.id) ? (
+        // A SECOND, DIFFERENT FACT FROM THE CHIP ABOVE, and both are shown because
+        // they are not the same situation. "Saved on this device only" is true of a
+        // workshop that will send itself on the next connection; this one will not
+        // send itself ever, because this account may no longer create a workshop
+        // for it to become. Saying only the first would leave a designer waiting for
+        // a sync that is never coming.
+        <div className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-100">
+          {/*
+            TERSE, AND IT NO LONGER TELLS EVERY DESIGNER TO GO AND ASK AN ADMIN.
+
+            The paragraph this replaces was written when the only drafts that could
+            reach this row were the ones stranded by the create rule, whose owner
+            genuinely had no workshop to move into. A designer who starts one here
+            deliberately, offline, usually has several — the picker is the next move,
+            not a conversation — and the admin sentence is still on screen for the
+            other case, in `AdoptLocalDraftDialog`'s own empty state, which is the
+            one surface that KNOWS the account has nothing to move into.
+
+            Two facts and nothing else: what this row is, and what to do with it.
+            The owner's 2026-08-30 ruling on UI copy; the reasoning is here.
+          */}
+          {DW_LOCAL_DRAFT_UNLINKED} {DW_LOCAL_DRAFT_LINK_PROMPT}
+        </div>
+      ) : null}
+    </>
+  );
+
+  /** One row's actions — Open, Report, Show code, Move, Delete. Table and phone card share them. */
+  const workshopActions = (workshop: (typeof rows)[number]) => (
+    <RowActions>
+      <Link className={rowAction("edit")} href={`/design-workshops/${workshop.id}`}>
+        Open
+      </Link>
+      <Link className={rowAction("neutral")} href={`/design-workshops/${workshop.id}/report`}>
+        Report
+      </Link>
+      {/*
+        THE CODE OTHERS SCAN TO GET ONTO THIS WORKSHOP. Offered on every row,
+        including a workshop that exists only on this device — the card renders
+        `encodeWorkshopCode`'s refusal for those, which says the workshop has not
+        been shared yet and to sync first. That is the sentence somebody standing
+        in a courtyard needs; hiding the control would leave them believing the
+        feature is missing rather than that their workshop has not gone up yet.
+      */}
+      <button
+        type="button"
+        className={rowAction("neutral", codeFor?.id === workshop.id ? "bg-surface-50" : undefined)}
+        aria-expanded={codeFor?.id === workshop.id}
+        onClick={() =>
+          setCodeFor((current) =>
+            current?.id === workshop.id ? null : { id: workshop.id, title: workshop.title }
+          )
+        }
+      >
+        {codeFor?.id === workshop.id ? "Hide code" : "Show code"}
+      </button>
+      {offerMove && orphanDrafts.has(workshop.id) ? (
+        <button
+          type="button"
+          className={rowAction("neutral")}
+          onClick={() => setMoving(orphanDrafts.get(workshop.id) ?? null)}
+        >
+          Move into a workshop
+        </button>
+      ) : null}
+      {/* Deleting is stricter than editing everywhere in this app, and the
+          control additionally respects admin view so an admin browsing as an
+          ordinary user is not offered it. */}
+      {allowDelete && adminMode ? (
+        <button type="button" className={rowAction("danger")} onClick={() => remove(workshop)}>
+          Delete
+        </button>
+      ) : null}
+    </RowActions>
+  );
+
   return (
     <>
       <PageHeader
@@ -1818,9 +1912,10 @@ function DesignWorkshopsPageBody() {
             setApplied(query);
             setPage(1);
           }}
-          // The placeholder lists the columns searched; this names what is being searched.
-          ariaLabel="Search design workshops"
-          placeholder="Search by title, craft, cluster or workshop code"
+          // The accessible name lists the columns searched; the placeholder is short so it is not cut
+          // off at 390px (UX audit DW-16).
+          ariaLabel="Search design workshops by title, craft, cluster or workshop code"
+          placeholder="Search workshops"
         />
         <Dropdown
           value={status}
@@ -1934,7 +2029,7 @@ function DesignWorkshopsPageBody() {
                     <li key={door.href} className="text-sm leading-6">
                       <Link
                         href={door.href}
-                        className="font-medium text-purple-700 underline-offset-2 hover:underline"
+                        className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline"
                       >
                         {door.label}
                       </Link>
@@ -1946,7 +2041,39 @@ function DesignWorkshopsPageBody() {
             ) : null}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* PHONES: ONE CARD PER WORKSHOP (UX audit DW-07). At 390px the 900px table showed the
+              title and the craft, with status, dates and every action off-screen in a sideways
+              scroller. Below `md` each workshop is a card: title, status, one meta line, actions. */}
+          <ul className="divide-y divide-line-200 md:hidden">
+            {rows.map((workshop) => (
+              <li key={workshop.id} className="px-4 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">{workshopTitleBlock(workshop)}</div>
+                  <StatusBadge status={workshop.status} />
+                </div>
+                <p className="mt-1 text-xs leading-5 text-ink-500">
+                  {[
+                    workshop.craftName,
+                    workshop.clusterName,
+                    [workshop.district, workshop.state].filter(Boolean).join(", "),
+                    workshop.startDate
+                      ? `${formatDate(workshop.startDate)}${workshop.endDate ? ` to ${formatDate(workshop.endDate)}` : ""}`
+                      : null
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                <div className="mt-3 [&>div]:justify-start">{workshopActions(workshop)}</div>
+                {codeFor?.id === workshop.id ? (
+                  <div className="mt-3 rounded-md bg-surface-50 p-3">
+                    <RecordCodeCard recordType="designWorkshop" id={workshop.id} title={workshop.title} />
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="bg-surface-50 text-xs uppercase text-ink-500">
                 <tr>
@@ -1963,45 +2090,7 @@ function DesignWorkshopsPageBody() {
                   <Fragment key={workshop.id}>
                   <tr>
                     <td className="px-4 py-3">
-                      <Link href={`/design-workshops/${workshop.id}`} className="font-medium text-ink-900 underline-offset-2 hover:underline">
-                        {workshop.title}
-                      </Link>
-                      {/* The code is denormalised from stage 1 and is null until that stage has
-                          been saved — so its absence means "stage 1 is not done", not "missing". */}
-                      <div className="text-xs text-ink-500">{workshop.workshopCode ?? "No workshop code yet"}</div>
-                      {unsentIds.has(workshop.id) ? (
-                        // Worded, not merely tinted — the same sentence the banner in the protected
-                        // layout uses, so the two cannot be read as two different situations.
-                        <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                          <CloudOff className="h-3 w-3" aria-hidden />
-                          Saved on this device only
-                        </div>
-                      ) : null}
-                      {offerMove && orphanDrafts.has(workshop.id) ? (
-                        // A SECOND, DIFFERENT FACT FROM THE CHIP ABOVE, and both are shown because
-                        // they are not the same situation. "Saved on this device only" is true of a
-                        // workshop that will send itself on the next connection; this one will not
-                        // send itself ever, because this account may no longer create a workshop
-                        // for it to become. Saying only the first would leave a designer waiting for
-                        // a sync that is never coming.
-                        <div className="mt-1 text-xs leading-5 text-amber-800">
-                          {/*
-                            TERSE, AND IT NO LONGER TELLS EVERY DESIGNER TO GO AND ASK AN ADMIN.
-
-                            The paragraph this replaces was written when the only drafts that could
-                            reach this row were the ones stranded by the create rule, whose owner
-                            genuinely had no workshop to move into. A designer who starts one here
-                            deliberately, offline, usually has several — the picker is the next move,
-                            not a conversation — and the admin sentence is still on screen for the
-                            other case, in `AdoptLocalDraftDialog`'s own empty state, which is the
-                            one surface that KNOWS the account has nothing to move into.
-
-                            Two facts and nothing else: what this row is, and what to do with it.
-                            The owner's 2026-08-30 ruling on UI copy; the reasoning is here.
-                          */}
-                          {DW_LOCAL_DRAFT_UNLINKED} {DW_LOCAL_DRAFT_LINK_PROMPT}
-                        </div>
-                      ) : null}
+                      {workshopTitleBlock(workshop)}
                     </td>
                     <td className="px-4 py-3 text-ink-700">
                       {workshop.craftName ?? "—"}
@@ -2018,51 +2107,7 @@ function DesignWorkshopsPageBody() {
                       <StatusBadge status={workshop.status} />
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <RowActions>
-                        <Link className={rowAction("edit")} href={`/design-workshops/${workshop.id}`}>
-                          Open
-                        </Link>
-                        <Link className={rowAction("neutral")} href={`/design-workshops/${workshop.id}/report`}>
-                          Report
-                        </Link>
-                        {/*
-                          THE CODE OTHERS SCAN TO GET ONTO THIS WORKSHOP. Offered on every row,
-                          including a workshop that exists only on this device — the card renders
-                          `encodeWorkshopCode`'s refusal for those, which says the workshop has not
-                          been shared yet and to sync first. That is the sentence somebody standing
-                          in a courtyard needs; hiding the control would leave them believing the
-                          feature is missing rather than that their workshop has not gone up yet.
-                        */}
-                        <button
-                          type="button"
-                          className={rowAction("neutral", codeFor?.id === workshop.id ? "bg-surface-50" : undefined)}
-                          aria-expanded={codeFor?.id === workshop.id}
-                          onClick={() =>
-                            setCodeFor((current) =>
-                              current?.id === workshop.id ? null : { id: workshop.id, title: workshop.title }
-                            )
-                          }
-                        >
-                          {codeFor?.id === workshop.id ? "Hide code" : "Show code"}
-                        </button>
-                        {offerMove && orphanDrafts.has(workshop.id) ? (
-                          <button
-                            type="button"
-                            className={rowAction("neutral")}
-                            onClick={() => setMoving(orphanDrafts.get(workshop.id) ?? null)}
-                          >
-                            Move into a workshop
-                          </button>
-                        ) : null}
-                        {/* Deleting is stricter than editing everywhere in this app, and the
-                            control additionally respects admin view so an admin browsing as an
-                            ordinary user is not offered it. */}
-                        {allowDelete && adminMode ? (
-                          <button type="button" className={rowAction("danger")} onClick={() => remove(workshop)}>
-                            Delete
-                          </button>
-                        ) : null}
-                      </RowActions>
+                      {workshopActions(workshop)}
                     </td>
                   </tr>
                   {codeFor?.id === workshop.id ? (
@@ -2112,6 +2157,7 @@ function DesignWorkshopsPageBody() {
               </tbody>
             </table>
           </div>
+          </>
         )}
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>

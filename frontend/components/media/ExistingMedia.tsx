@@ -352,7 +352,7 @@ export function ExistingMedia({
             .
           </p>
         ) : null}
-        {error ? <p className="mt-1 text-sm text-red-700">{error}</p> : null}
+        {error ? <p className="mt-1 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
         {/* Why some ✕s and re-runs are held: one notice for the gallery, a word on each held tile. */}
         <HeldPostNotice
           refusal={mediaListNotice(shown.map(holdOf), "removed or re-transcribed")}

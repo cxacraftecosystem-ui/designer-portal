@@ -178,8 +178,9 @@ data class ConsolidatedQuestionnaireDto(
  * Screen
  * ---------------------------------------------------------------------------------------------- */
 
-private val AmberSurface = Color(0x1FCD9200)
-private val AmberInk = Color(0xFF8A5600)
+// Themed (UX audit 2026-10-16, DA-21): a fixed dark amber ink on a translucent wash was unreadable on the dark card.
+private val AmberSurface: Color get() = legacyWarningContainer()
+private val AmberInk: Color get() = legacyOnWarningContainer()
 
 /** dd MMM yyyy from the API's ISO-8601, without pulling in a formatter for four fields. */
 private fun shortDate(value: String?): String {

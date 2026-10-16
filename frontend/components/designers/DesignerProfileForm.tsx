@@ -816,7 +816,7 @@ export function DesignerProfileForm({
           />
         </Field>
         {pincodeProblem || zoneProblem ? (
-          <p className={`md:col-span-2 text-xs leading-5 ${pincodeProblem ? "text-error-600" : "text-amber-800"}`}>
+          <p className={`md:col-span-2 text-xs leading-5 ${pincodeProblem ? "text-error-600" : "text-amber-800 dark:text-amber-100"}`}>
             {pincodeProblem ?? zoneProblem}
           </p>
         ) : null}
@@ -947,7 +947,7 @@ export function DesignerProfileForm({
           screen could tell them that.
         */}
         {profile.empanelmentNo && profile.signInByEmpanelmentNo === false ? (
-          <p className="text-xs leading-5 text-amber-800 md:col-span-2">
+          <p className="text-xs leading-5 text-amber-800 dark:text-amber-100 md:col-span-2">
             Another designer already holds this number, so you cannot sign in with it. Use your
             email.
           </p>

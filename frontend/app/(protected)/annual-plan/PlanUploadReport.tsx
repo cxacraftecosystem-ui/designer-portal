@@ -107,7 +107,7 @@ function ProblemBlock({
         <span
           className={
             tone === "error"
-              ? "grid h-6 w-6 place-items-center rounded-md bg-error-100 text-error-600"
+              ? "grid h-6 w-6 place-items-center rounded-md bg-error-100 text-red-800"
               : "grid h-6 w-6 place-items-center rounded-md bg-amber-100 text-amber-800"
           }
         >
@@ -195,7 +195,7 @@ export function PlanUploadReport({ report }: { report: Report }) {
                       {change.to ?? "—"}
                       {/* VERBATIM, and this is the one that matters most. */}
                       {change.reason ? (
-                        <span className="mt-1 block text-xs leading-5 text-amber-800">{change.reason}</span>
+                        <span className="mt-1 block text-xs leading-5 text-amber-800 dark:text-amber-100">{change.reason}</span>
                       ) : null}
                     </td>
                   </tr>
@@ -244,7 +244,7 @@ export function PlanUploadReport({ report }: { report: Report }) {
 
       {report.problems.length === 0 ? (
         <p className="mt-4 flex items-center gap-2 text-sm text-ink-muted">
-          <CheckCircle2 className="h-4 w-4 text-success-600" aria-hidden />
+          <CheckCircle2 className="h-4 w-4 text-success-600 dark:text-emerald-400" aria-hidden />
           Every row in that sheet was read cleanly.
         </p>
       ) : null}

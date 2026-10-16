@@ -109,7 +109,7 @@ export function GrievanceRedressalCard() {
             You have filed {total} {total === 1 ? "report" : "reports"}.
           </p>
         )}
-        {open ? <p className="text-xs font-medium text-amber-800">{open} awaiting a reply</p> : null}
+        {open ? <p className="text-xs font-medium text-amber-800 dark:text-amber-100">{open} awaiting a reply</p> : null}
       </div>
     </section>
   );

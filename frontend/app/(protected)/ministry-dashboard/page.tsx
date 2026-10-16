@@ -855,7 +855,7 @@ export default function MinistryDashboardPage() {
           // timer, and a container that later acquired a live role by an edit elsewhere would begin
           // interrupting a screen-reader user every thirty seconds. Written down so the decision is
           // visible at the element it governs.
-          <div className="overflow-x-auto" aria-live="off">
+          <div className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-purple-700" tabIndex={0} role="region" aria-label="Ministry dashboard table" aria-live="off">
             {dataKind === "design" ? (
               <DesignTable rows={(data as DesignRegisterPage).items} />
             ) : (
@@ -950,7 +950,7 @@ function PeoplePanel({
 }) {
   if (error) {
     return (
-      <p role="alert" className="text-sm leading-6 text-red-700">
+      <p role="alert" className="text-sm leading-6 text-red-700 dark:text-red-400">
         {error} This list couldn&apos;t be loaded.
       </p>
     );
@@ -1018,7 +1018,7 @@ function PeoplePanel({
         // `aria-live="off"` EXPLICITLY, for the same reason the workshop table carries it: these
         // rows are replaced on a thirty-second timer and a container that later acquired a live
         // role would interrupt a screen-reader user twice a minute.
-        <div className="overflow-x-auto" aria-live="off">
+        <div className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-purple-700" tabIndex={0} role="region" aria-label="Ministry dashboard table" aria-live="off">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="bg-surface-50 text-xs uppercase text-ink-500">
               <tr>

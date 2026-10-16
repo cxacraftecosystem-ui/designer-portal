@@ -1104,11 +1104,17 @@ fun DesignerProfileScreen(
         uploadInto(slot, capture.second)
     }
 
+    // Asked, and the answer awaited, before TakePicture starts: the manifest declares CAMERA, so a
+    // capture launched without it throws SecurityException (UX audit 2026-10-16, DA-01).
+    val profileCamera = com.designprototype.workshop.ui.rememberPermissionGate(onError)
+
     fun startCapture(slot: ProfileMediaSlot) {
-        val durable = newProfileMediaFile(appContext, slot.filePrefix(), ".jpg")
-        pendingSlot = slot
-        pendingCapture = durableFileUri(appContext, durable) to durable
-        takePhoto.launch(pendingCapture!!.first)
+        profileCamera.run(com.designprototype.workshop.ui.CAMERA_PERMISSION, com.designprototype.workshop.ui.CAMERA_REFUSED_SENTENCE) {
+            val durable = newProfileMediaFile(appContext, slot.filePrefix(), ".jpg")
+            pendingSlot = slot
+            pendingCapture = durableFileUri(appContext, durable) to durable
+            takePhoto.launch(pendingCapture!!.first)
+        }
     }
 
     // ── Render ───────────────────────────────────────────────────────────────────────────────────
@@ -1461,8 +1467,8 @@ fun DesignerProfileScreen(
                             */
                             if (designerProfileAddressIsFormatted(storedAddressLine)) {
                                 Text(
-                                    "This address was formatted on the web. Editing it here " +
-                                        "saves it as plain text.",
+                                    "This address has bold or other styling. Your edits here are " +
+                                        "saved as plain text.",
                                     color = MaterialTheme.field.muted,
                                     fontSize = 11.sp
                                 )
@@ -2363,9 +2369,9 @@ private fun ProfileMediaRow(
                     mediaId.isNotBlank() -> Text(
                         "On file",
                         color = MaterialTheme.field.muted,
-                        fontSize = 10.sp
+                        fontSize = 11.sp
                     )
-                    else -> Text("None", color = MaterialTheme.field.placeholder, fontSize = 10.sp)
+                    else -> Text("None", color = MaterialTheme.field.placeholder, fontSize = 11.sp)
                 }
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {

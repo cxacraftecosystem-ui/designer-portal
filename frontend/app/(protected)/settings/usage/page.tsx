@@ -113,7 +113,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 function Metric({ value, reason }: { value: number | null; reason?: string }) {
   const withheld = value === null;
   return (
-    <span className={withheld ? "text-ink-300" : "text-ink-900"} title={withheld ? reason : undefined}>
+    <span className={withheld ? "text-ink-500" : "text-ink-900"} title={withheld ? reason : undefined}>
       {withheld ? "—" : value.toLocaleString("en-IN")}
     </span>
   );
@@ -182,10 +182,10 @@ function CollectionPosture({ method }: { method: UsageCollectionMethod }) {
             <p className="mt-1">{method.consent.askedAt}</p>
           ) : null}
           <p className="mt-1">{method.consent.explanation}</p>
-          <p className="mt-1 text-amber-800">{method.consent.refusalCost}</p>
-          <p className="mt-1 text-amber-800">{method.consent.consentStateWritten}</p>
+          <p className="mt-1 text-amber-800 dark:text-amber-100">{method.consent.refusalCost}</p>
+          <p className="mt-1 text-amber-800 dark:text-amber-100">{method.consent.consentStateWritten}</p>
           {method.consent.withdrawalCosts ? (
-            <p className="mt-1 text-amber-800">{method.consent.withdrawalCosts}</p>
+            <p className="mt-1 text-amber-800 dark:text-amber-100">{method.consent.withdrawalCosts}</p>
           ) : null}
 
           {method.consent.noticeVersion ? (
@@ -244,7 +244,7 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
   return (
     <section className="panel p-4">
       <div className="flex items-start gap-2.5">
-        <UserSearch className="mt-0.5 h-5 w-5 shrink-0 text-purple-700" aria-hidden />
+        <UserSearch className="mt-0.5 h-5 w-5 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden />
         <div className="min-w-0">
           <h2 className="font-display font-bold text-ink-900">One person&apos;s activity</h2>
           <p className="mt-0.5 text-sm leading-6 text-ink-500">
@@ -291,7 +291,7 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
               Nothing recorded for this person in this period. Activity from before they agreed is not recorded.
             </p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-purple-700" tabIndex={0} role="region" aria-label="Usage table">
               <table className="w-full min-w-[620px] text-left text-sm">
                 <thead className="border-b border-line-200 text-xs uppercase tracking-wide text-ink-500">
                   <tr>
@@ -730,7 +730,7 @@ export default function UsagePage() {
                 }
                 table={
                   <>
-                    <div className="mt-3 overflow-x-auto">
+                    <div className="mt-3 overflow-x-auto focus-visible:outline-2 focus-visible:outline-purple-700" tabIndex={0} role="region" aria-label="Usage table">
                       <table className="w-full min-w-[520px] text-left text-sm">
                         <thead className="border-b border-line-200 text-xs uppercase tracking-wide text-ink-500">
                           <tr>
@@ -749,7 +749,7 @@ export default function UsagePage() {
                                 <Metric value={row.requests} reason={row.withheldBecause} />
                               </td>
                               <td
-                                className={`py-2 pr-3 ${row.errorRate === null ? "text-ink-300" : "text-ink-900"}`}
+                                className={`py-2 pr-3 ${row.errorRate === null ? "text-ink-500" : "text-ink-900"}`}
                                 title={row.errorRate === null ? row.withheldBecause ?? "No requests, so no rate." : undefined}
                               >
                                 {errorRateText(row.errorRate)}
@@ -757,7 +757,7 @@ export default function UsagePage() {
                               <td className="py-2 pr-3">
                                 <Metric value={row.identifiedUsers} reason={row.withheldBecause} />
                               </td>
-                              <td className={`py-2 ${row.avgDurationMs === null ? "text-ink-300" : "text-ink-900"}`}>
+                              <td className={`py-2 ${row.avgDurationMs === null ? "text-ink-500" : "text-ink-900"}`}>
                                 {isWithheldRoute(row) || row.avgDurationMs === null ? "—" : durationText(row.avgDurationMs)}
                               </td>
                             </tr>
@@ -862,7 +862,7 @@ export default function UsagePage() {
                   </p>
                 ) : null}
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-purple-700" tabIndex={0} role="region" aria-label="Usage table">
                 <table className="w-full min-w-[760px] text-left text-sm">
                   <thead className="border-b border-line-200 text-xs uppercase tracking-wide text-ink-500">
                     <tr>

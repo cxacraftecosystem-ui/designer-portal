@@ -4,7 +4,7 @@ import { Fragment, useEffect, useId, useState } from "react";
 import { Check, ClipboardCheck } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
-import { cutOf, queueCutNotice } from "@/components/data/cappedList";
+import { queuePageNotice } from "@/components/data/cappedList";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -15,6 +15,7 @@ import { ReviewEditPanel } from "@/components/review/ReviewEditPanel";
 import { reviewEditableFields } from "@/components/review/reviewEditFields";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { StatusBadge } from "@/components/StatusBadge";
+import { readableError } from "@/components/review/reviewErrors";
 import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { canEditOthersRecord, hasRank, isAdmin, roleLabel } from "@/lib/permissions";
@@ -58,6 +59,8 @@ type PendingEnvelope = {
   total?: number;
   cap?: number;
   truncated?: boolean;
+  /** The cursor for the next older page, on a paged answer; null on the last page. */
+  nextBefore?: string | null;
 };
 
 /** Identifies one queue row. Type + id, because ids are only unique within a record type. */
@@ -66,12 +69,21 @@ function rowKey(item: PendingItem) {
 }
 
 /**
- * The queue arrives in one response (no server paging), so the table pages client-side like every
- * other list. "In one response" is not "whole": the API caps each record type, which is what
- * `truncated` reports and the notice above the table explains — the pages below cover only the
- * rows that arrived.
+ * The table pages client-side, 20 rows at a time, over the rows already downloaded.
  */
 const PAGE_SIZE = 20;
+
+/**
+ * How many records one request to the queue brings in, newest first (UX audit DW-06, 2026-10-16).
+ *
+ * The queue used to arrive whole-but-capped — at most 200 of each record type, with the OLDEST
+ * behind the cap and no way to ask for them. It is now paged by the server: this many at a time, and
+ * "Load older" walks back with the cursor the server hands over. A reload after a decision asks for
+ * as many as are already on screen (up to the server's page ceiling), so deciding a record far down
+ * the list does not throw the reader back to the top.
+ */
+const QUEUE_PAGE = 50;
+const QUEUE_PAGE_MAX = 200;
 
 type DecisionAction = "approve" | "revise" | "reject";
 /** "edit" opens the field editor instead of a note box — the fourth reviewer action (Android parity). */
@@ -94,12 +106,15 @@ export default function ReviewPage() {
    * the queue outgrows the cap, and reporting the page length as the total is precisely the bug the
    * API stopped shipping when it started sending these fields.
    */
-  const [queue, setQueue] = useState<{ total: number; cap: number; truncated: boolean }>({
+  const [queue, setQueue] = useState<{ total: number; more: boolean; nextBefore: string | null }>({
     total: 0,
-    cap: 0,
-    truncated: false
+    more: false,
+    nextBefore: null
   });
   const [loading, setLoading] = useState(true);
+  /** The first read failed — the page says so, with Try again, rather than "No pending submissions". */
+  const [loadFailed, setLoadFailed] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   // The inline panel currently open: which row, and which of the four actions.
@@ -137,27 +152,60 @@ export default function ReviewPage() {
   const noteHelpId = `${noteId}-help`;
   const viewerIsAdmin = isAdmin(user);
 
+  function readEnvelope(result: PendingEnvelope, rows: PendingItem[]) {
+    setItems(rows);
+    setQueue({
+      // `?? rows.length` is the pre-envelope fallback, not a preference: an API that sends `total`
+      // is always telling the truth about rows this page cannot see, so it wins.
+      total: result.total ?? rows.length,
+      more: Boolean(result.truncated) && Boolean(result.nextBefore),
+      nextBefore: result.nextBefore ?? null
+    });
+  }
+
   async function load() {
+    const size = Math.min(QUEUE_PAGE_MAX, Math.max(QUEUE_PAGE, items.length));
     try {
-      const result = await apiFetch<PendingEnvelope>("/review/pending");
-      setItems(result.items);
-      setQueue({
-        // `?? result.items.length` is the pre-envelope fallback, not a preference: an API that sends
-        // `total` is always telling the truth about rows this page cannot see, so it wins.
-        total: result.total ?? result.items.length,
-        cap: result.cap ?? 0,
-        truncated: Boolean(result.truncated)
-      });
-      setError(null);
+      const result = await apiFetch<PendingEnvelope>(`/review/pending?pageSize=${size}`);
+      readEnvelope(result, result.items);
+      setLoadFailed(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load review queue");
+      // A queue that could not be read must not look like an empty one.
+      const reason = readableError(err, "The review queue could not be read.");
+      if (items.length === 0) setLoadFailed(reason);
+      else setError(reason);
     } finally {
       setLoading(false);
     }
   }
 
+  async function loadOlder() {
+    if (!queue.nextBefore) return;
+    setLoadingOlder(true);
+    try {
+      const result = await apiFetch<PendingEnvelope>(
+        `/review/pending?pageSize=${QUEUE_PAGE}&before=${encodeURIComponent(queue.nextBefore)}`
+      );
+      const seen = new Set(items.map(rowKey));
+      readEnvelope(result, [...items, ...result.items.filter((item) => !seen.has(rowKey(item)))]);
+      setError(null);
+    } catch (err) {
+      setError(readableError(err, "Older records could not be loaded. Try again."));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
+  function retryFirstLoad() {
+    setLoading(true);
+    setLoadFailed(null);
+    void load();
+  }
+
   useEffect(() => {
     load();
+    // Mount only: `load` reads `items` to size a RELOAD, and on mount it is empty by construction.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Approving the last row of the final page must not strand the viewer on an empty page.
@@ -315,6 +363,167 @@ export default function ReviewPage() {
     }
   }
 
+  /** The four decision buttons for one row — shared by the table row and the phone card. */
+  function decisionButtons(item: PendingItem, activeAction: PanelAction | null) {
+    return (
+      <RowActions>
+        <button
+          type="button"
+          className={rowAction("positive", activeAction === "approve" ? "bg-success-100" : undefined)}
+          onClick={() => toggleAction(item, "approve")}
+          disabled={submitting}
+        >
+          Approve
+        </button>
+        {/* Fix a small mistake in place rather than costing a round trip through
+            the contributor — the same fourth action the Android review card has. */}
+        {!offersEdit(item) ? null : (
+          <button
+            type="button"
+            className={rowAction("edit", activeAction === "edit" ? "bg-field-100" : undefined)}
+            onClick={() => toggleAction(item, "edit")}
+            disabled={submitting}
+          >
+            {activeAction === "edit" ? "Close editor" : "Edit"}
+          </button>
+        )}
+        <button
+          type="button"
+          className={rowAction("neutral", activeAction === "revise" ? "bg-surface-50" : undefined)}
+          onClick={() => toggleAction(item, "revise")}
+          disabled={submitting}
+        >
+          Send for revision
+        </button>
+        <button
+          type="button"
+          className={rowAction("danger", activeAction === "reject" ? "bg-red-50 dark:bg-red-950/40" : undefined)}
+          onClick={() => toggleAction(item, "reject")}
+          disabled={submitting}
+        >
+          Reject
+        </button>
+      </RowActions>
+    );
+  }
+
+  /** The open panel under a row: the field editor, or the note box for a decision. */
+  function decisionPanel(item: PendingItem, activeAction: PanelAction) {
+    if (activeAction === "edit") {
+      if (!offersEdit(item)) return null;
+      return (
+        <ReviewEditPanel
+          recordType={item.recordType}
+          recordId={item.id}
+          label={item.label}
+          onSaved={(message) => {
+            // The status did not move, so the row stays put; only the receipt changes.
+            setInfo(message);
+            setError(null);
+          }}
+          onApproved={async (message) => {
+            setActive(null);
+            setInfo(message);
+            setError(null);
+            await load();
+          }}
+          onClose={() => setActive(null)}
+        />
+      );
+    }
+    return (
+      <>
+        <label htmlFor={noteId} className="block text-xs font-semibold uppercase tracking-wide text-ink-500">
+          {ACTION_COPY[activeAction].noteLabel}
+        </label>
+        <textarea
+          id={noteId}
+          // Only pointed at while the sentence is on screen: an `aria-describedby`
+          // naming an element that is not rendered reads as silence, which is
+          // worse than no attribute at all.
+          aria-describedby={activeAction === "revise" ? noteHelpId : undefined}
+          className="mt-1.5 w-full rounded-md border border-line-200 bg-card p-2 text-sm text-ink-900"
+          rows={3}
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          autoFocus
+        />
+        {activeAction === "revise" ? (
+          <p id={noteHelpId} className="mt-1 text-xs text-ink-500">
+            Comments are required — the record goes back to the contributor as &quot;Needs revision&quot; and
+            returns to Pending once they edit it.
+          </p>
+        ) : null}
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="field-button h-9 min-h-0 px-3 text-xs pointer-coarse:h-11"
+            disabled={submitting || (activeAction === "revise" && !note.trim())}
+            onClick={() => submitDecision(item, activeAction)}
+          >
+            {submitting ? "Saving..." : ACTION_COPY[activeAction].confirmLabel}
+          </button>
+          <button
+            type="button"
+            className="field-button-secondary h-9 min-h-0 px-3 text-xs pointer-coarse:h-11"
+            disabled={submitting}
+            onClick={() => {
+              setActive(null);
+              setNote("");
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  /**
+   * The bulk-select tick for one row, inside a label that is the whole 44px cell on a touch screen
+   * (UX audit DW-08) — a bare 16px checkbox beside a Reject button is a mis-tap waiting to happen.
+   */
+  function selectBox(item: PendingItem) {
+    if (!bulkEligible(item)) return null;
+    return (
+      <label className="-m-2 inline-flex cursor-pointer items-center justify-center p-2 pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-purple-700 pointer-coarse:h-5 pointer-coarse:w-5"
+          aria-label={`Select ${item.label}`}
+          checked={selected.has(rowKey(item))}
+          onChange={() => toggleSelected(item)}
+        />
+      </label>
+    );
+  }
+
+  function outOfWindow(item: PendingItem) {
+    return item.needsAdminApproval || item.outOfWindow ? (
+      <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+        Out of workshop window — needs approval
+      </span>
+    ) : null;
+  }
+
+  function lockNote(item: PendingItem) {
+    return editLocked(item) ? (
+      <p className="mt-1 max-w-md text-xs text-amber-800 dark:text-amber-100">
+        Submitted outside its workshop&apos;s dates — only an admin or master admin can edit or approve it.
+      </p>
+    ) : null;
+  }
+
+  function toggleAllEligible(on: boolean) {
+    setSelected((current) => {
+      const next = new Set(current);
+      eligible.forEach((item) => (on ? next.add(rowKey(item)) : next.delete(rowKey(item))));
+      return next;
+    });
+  }
+
+  const countLine = queuePageNotice(items.length, queue.total, queue.more);
+
   return (
     <>
       <PageHeader
@@ -326,30 +535,32 @@ export default function ReviewPage() {
         }
         icon={<ClipboardCheck className="h-5 w-5" aria-hidden />}
       />
-      {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
+      {error ? (
+        <div role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
       {info ? (
-        <div className="mb-4 rounded-md border border-success-600/30 bg-success-100 px-3 py-2 text-sm text-success-600">{info}</div>
+        <div role="status" className="mb-4 rounded-md border border-success-600/30 bg-success-100 px-3 py-2 text-sm text-success-600">
+          {info}
+        </div>
       ) : null}
       <section className="panel overflow-hidden">
-        {/* The cap, said out loud, through the one element every truncation line in this app draws
-            (components/data/CappedListNotice) and with the wording decided in cappedList.ts, not
-            here — five screens describing one cut in five sentences is how a reader learns that
-            none of them means much. `queueCutNotice` is the arm for a cut nothing on screen can
-            reach past; its header sets out why neither `CutReach` value would have been honest on
-            this route, and it takes the server's `truncated` so there is no `&&` to get wrong here.
-            It renders nothing when the queue is whole, which is the usual case. */}
-        {loading ? null : (
-          <CappedListNotice
-            className="border-b border-line-200 px-4 py-2.5"
-            cuts={[
-              // `items.length`, not the envelope's `shown`: the two are equal by construction,
-              // and the one this sentence is about is the list the reader is looking at.
-              queueCutNotice(queue.truncated, cutOf(items.length, queue.total, "pending records"), queue.cap)
-            ]}
-          />
+        {/* The count, through the one element every list-length line in this app draws. A number —
+            how far down the newest-first queue the reader is — and nothing about limits: the queue is
+            paged and "Load older" at the foot reaches every record. Empty once all are on screen. */}
+        {loading || loadFailed ? null : (
+          <CappedListNotice className="border-b border-line-200 px-4 py-2.5" cuts={[countLine]} />
         )}
         {loading ? (
           <div className="p-4 text-sm text-ink-700">Loading...</div>
+        ) : loadFailed ? (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <p className="text-sm text-red-700 dark:text-red-400">{loadFailed}</p>
+            <button type="button" className="field-button-secondary" onClick={retryFirstLoad}>
+              Try again
+            </button>
+          </div>
         ) : items.length === 0 ? (
           <div className="p-4">
             <EmptyState
@@ -359,229 +570,171 @@ export default function ReviewPage() {
           </div>
         ) : (
           <>
-          {chosen.length ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line-200 bg-purple-50 px-4 py-3">
-              <span className="text-sm font-medium text-ink-900">
-                {chosen.length} record{chosen.length === 1 ? "" : "s"} selected
-                {bulkProgress ? ` · approving ${bulkProgress.done + 1} of ${bulkProgress.total}…` : ""}
-              </span>
-              <div className="flex items-center gap-3">
-                <button type="button" className="text-xs font-semibold text-ink-500" onClick={() => setSelected(new Set())}>
-                  Clear
-                </button>
-                <button
-                  type="button"
-                  className="field-button h-9 min-h-0 px-3 text-xs"
-                  disabled={submitting}
-                  onClick={() => approveSelected(chosen)}
-                >
-                  <Check className="h-3.5 w-3.5" aria-hidden />
-                  Approve {chosen.length}
-                </button>
+            {chosen.length ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line-200 bg-purple-50 px-4 py-3 dark:bg-purple-950/40">
+                <span className="text-sm font-medium text-ink-900">
+                  {chosen.length} record{chosen.length === 1 ? "" : "s"} selected
+                  {bulkProgress ? ` · approving ${bulkProgress.done + 1} of ${bulkProgress.total}…` : ""}
+                </span>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="text-xs font-semibold text-ink-500 pointer-coarse:min-h-11 pointer-coarse:px-2"
+                    onClick={() => setSelected(new Set())}
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    className="field-button h-9 min-h-0 px-3 text-xs pointer-coarse:h-11"
+                    disabled={submitting}
+                    onClick={() => approveSelected(chosen)}
+                  >
+                    <Check className="h-3.5 w-3.5" aria-hidden />
+                    Approve {chosen.length}
+                  </button>
+                </div>
               </div>
-            </div>
-          ) : null}
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-left text-sm">
-              <thead className="bg-surface-50 text-xs uppercase text-ink-500">
-                <tr>
-                  <th scope="col" className="w-10 px-4 py-3">
+            ) : null}
+            {/* PHONES: ONE CARD PER RECORD (UX audit DW-07). At 390px the 920px table showed two of its
+                eight columns, with status and every decision button off-screen in a sideways scroller
+                that gave no sign it scrolled. Below `md` each record is a card — title, status, one
+                meta line, and the four decisions as a wrapping row. */}
+            <ul className="divide-y divide-line-200 md:hidden">
+              {eligible.length > 0 ? (
+                <li className="px-4 py-2 text-xs text-ink-500">
+                  <label className="inline-flex cursor-pointer items-center gap-3 pointer-coarse:min-h-11">
                     <input
                       type="checkbox"
-                      className="h-4 w-4 accent-purple-700"
-                      aria-label="Select every record on this page"
+                      className="h-4 w-4 accent-purple-700 pointer-coarse:h-5 pointer-coarse:w-5"
                       checked={allEligibleTicked}
-                      disabled={eligible.length === 0}
-                      onChange={(event) => {
-                        const on = event.target.checked;
-                        setSelected((current) => {
-                          const next = new Set(current);
-                          eligible.forEach((item) => (on ? next.add(rowKey(item)) : next.delete(rowKey(item))));
-                          return next;
-                        });
-                      }}
+                      onChange={(event) => toggleAllEligible(event.target.checked)}
                     />
-                  </th>
-                  <ResizableTh>Record</ResizableTh>
-                  <ResizableTh>Type</ResizableTh>
-                  <ResizableTh>Creator</ResizableTh>
-                  <ResizableTh>Place or link</ResizableTh>
-                  <ResizableTh>Status</ResizableTh>
-                  <ResizableTh>Submitted</ResizableTh>
-                  <ResizableTh className="text-right">Decision</ResizableTh>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line-200">
-                {visible.map((item) => {
-                  const key = rowKey(item);
-                  const activeAction = active?.key === key ? active.action : null;
-                  return (
-                    <Fragment key={key}>
-                      <tr className={selected.has(key) ? "bg-purple-50/60" : undefined}>
-                        <td className="px-4 py-3 align-top">
-                          {bulkEligible(item) ? (
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 h-4 w-4 accent-purple-700"
-                              aria-label={`Select ${item.label}`}
-                              checked={selected.has(key)}
-                              onChange={() => toggleSelected(item)}
-                            />
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-ink-900">
-                            {item.label}
-                            {item.needsAdminApproval || item.outOfWindow ? (
-                              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                                Out of workshop window — needs approval
-                              </span>
-                            ) : null}
-                          </div>
-                          {editLocked(item) ? (
-                            <p className="mt-1 max-w-md text-xs text-amber-800">
-                              Submitted outside its workshop&apos;s dates — only an admin or master admin can edit or
-                              approve it.
-                            </p>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-3 capitalize text-ink-700">{item.recordType}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-ink-900">{item.createdBy?.name ?? "Unknown"}</span>
-                            {item.createdBy?.role ? (
-                              <span className="rounded-full border border-line-200 bg-surface-50 px-2 py-0.5 text-xs font-medium text-ink-500">
-                                {roleLabel(item.createdBy.role)}
-                              </span>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-ink-700">{item.place ?? "-"}</td>
-                        <td className="px-4 py-3">
+                    Select every record on this page
+                  </label>
+                </li>
+              ) : null}
+              {visible.map((item) => {
+                const key = rowKey(item);
+                const activeAction = active?.key === key ? active.action : null;
+                const panel = activeAction ? decisionPanel(item, activeAction) : null;
+                return (
+                  <li
+                    key={key}
+                    className={selected.has(key) ? "bg-purple-50/60 px-4 py-3 dark:bg-purple-950/30" : "px-4 py-3"}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="pt-0.5">{selectBox(item)}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <p className="min-w-0 font-medium text-ink-900">{item.label}</p>
                           <StatusBadge status={item.status ?? "PENDING"} />
-                        </td>
-                        <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
-                        <td className="px-4 py-3 text-right">
-                          <RowActions>
-                            <button
-                              className={rowAction("positive", activeAction === "approve" ? "bg-success-100" : undefined)}
-                              onClick={() => toggleAction(item, "approve")}
-                              disabled={submitting}
-                            >
-                              Approve
-                            </button>
-                            {/* Fix a small mistake in place rather than costing a round trip through
-                                the contributor — the same fourth action the Android review card has. */}
-                            {!offersEdit(item) ? null : (
-                              <button
-                                className={rowAction("edit", activeAction === "edit" ? "bg-field-100" : undefined)}
-                                onClick={() => toggleAction(item, "edit")}
-                                disabled={submitting}
-                              >
-                                {activeAction === "edit" ? "Close editor" : "Edit"}
-                              </button>
-                            )}
-                            <button
-                              className={rowAction("neutral", activeAction === "revise" ? "bg-surface-50" : undefined)}
-                              onClick={() => toggleAction(item, "revise")}
-                              disabled={submitting}
-                            >
-                              Send for revision
-                            </button>
-                            <button
-                              className={rowAction("danger", activeAction === "reject" ? "bg-red-50" : undefined)}
-                              onClick={() => toggleAction(item, "reject")}
-                              disabled={submitting}
-                            >
-                              Reject
-                            </button>
-                          </RowActions>
-                        </td>
-                      </tr>
-                      {activeAction === "edit" ? (
-                        !offersEdit(item) ? null : (
-                        <tr className="bg-surface-50">
-                          {/* Eight, not seven: the bulk-select checkbox added a column ahead of
-                              Record, and the expanded row stopped reaching the end of the table. */}
-                          <td className="px-4 py-3" colSpan={8}>
-                            <ReviewEditPanel
-                              recordType={item.recordType}
-                              recordId={item.id}
-                              label={item.label}
-                              onSaved={(message) => {
-                                // The status did not move, so the row stays put; only the receipt changes.
-                                setInfo(message);
-                                setError(null);
-                              }}
-                              onApproved={async (message) => {
-                                setActive(null);
-                                setInfo(message);
-                                setError(null);
-                                await load();
-                              }}
-                              onClose={() => setActive(null)}
-                            />
+                        </div>
+                        {outOfWindow(item)}
+                        <p className="mt-1 text-xs leading-5 text-ink-500">
+                          <span className="capitalize">{item.recordType}</span>
+                          {" · "}
+                          {item.createdBy?.name ?? "Unknown"}
+                          {item.createdBy?.role ? ` (${roleLabel(item.createdBy.role)})` : ""}
+                          {item.place ? ` · ${item.place}` : ""}
+                          {" · "}
+                          {formatDateTime(item.createdAt)}
+                        </p>
+                        {lockNote(item)}
+                        <div className="mt-3 [&>div]:justify-start">{decisionButtons(item, activeAction)}</div>
+                        {panel ? <div className="mt-3 rounded-md bg-surface-50 p-3">{panel}</div> : null}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[920px] text-left text-sm">
+                <thead className="bg-surface-50 text-xs uppercase text-ink-500">
+                  <tr>
+                    <th scope="col" className="w-10 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-purple-700"
+                        aria-label="Select every record on this page"
+                        checked={allEligibleTicked}
+                        disabled={eligible.length === 0}
+                        onChange={(event) => toggleAllEligible(event.target.checked)}
+                      />
+                    </th>
+                    <ResizableTh>Record</ResizableTh>
+                    <ResizableTh>Type</ResizableTh>
+                    <ResizableTh>Creator</ResizableTh>
+                    <ResizableTh>Place or link</ResizableTh>
+                    <ResizableTh>Status</ResizableTh>
+                    <ResizableTh>Submitted</ResizableTh>
+                    <ResizableTh className="text-right">Decision</ResizableTh>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line-200">
+                  {visible.map((item) => {
+                    const key = rowKey(item);
+                    const activeAction = active?.key === key ? active.action : null;
+                    const panel = activeAction ? decisionPanel(item, activeAction) : null;
+                    return (
+                      <Fragment key={key}>
+                        <tr className={selected.has(key) ? "bg-purple-50/60 dark:bg-purple-950/30" : undefined}>
+                          <td className="px-4 py-3 align-top">{selectBox(item)}</td>
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-ink-900">
+                              {item.label}
+                              {outOfWindow(item)}
+                            </div>
+                            {lockNote(item)}
                           </td>
-                        </tr>
-                        )
-                      ) : activeAction ? (
-                        <tr className="bg-surface-50">
-                          <td className="px-4 py-3" colSpan={8}>
-                            <label htmlFor={noteId} className="block text-xs font-semibold uppercase tracking-wide text-ink-500">
-                              {ACTION_COPY[activeAction].noteLabel}
-                            </label>
-                            <textarea
-                              id={noteId}
-                              // Only pointed at while the sentence is on screen: an `aria-describedby`
-                              // naming an element that is not rendered reads as silence, which is
-                              // worse than no attribute at all.
-                              aria-describedby={activeAction === "revise" ? noteHelpId : undefined}
-                              className="mt-1.5 w-full rounded-md border border-line-200 bg-card p-2 text-sm text-ink-900"
-                              rows={3}
-                              value={note}
-                              onChange={(event) => setNote(event.target.value)}
-                              autoFocus
-                            />
-                            {activeAction === "revise" ? (
-                              <p id={noteHelpId} className="mt-1 text-xs text-ink-500">
-                                Comments are required — the record goes back to the contributor as &quot;Needs revision&quot; and
-                                returns to Pending once they edit it.
-                              </p>
-                            ) : null}
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              <button
-                                className="field-button h-9 min-h-0 px-3 text-xs"
-                                disabled={submitting || (activeAction === "revise" && !note.trim())}
-                                onClick={() => submitDecision(item, activeAction)}
-                              >
-                                {submitting ? "Saving..." : ACTION_COPY[activeAction].confirmLabel}
-                              </button>
-                              <button
-                                className="field-button-secondary h-9 min-h-0 px-3 text-xs"
-                                disabled={submitting}
-                                onClick={() => {
-                                  setActive(null);
-                                  setNote("");
-                                }}
-                              >
-                                Cancel
-                              </button>
+                          <td className="px-4 py-3 capitalize text-ink-700">{item.recordType}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-ink-900">{item.createdBy?.name ?? "Unknown"}</span>
+                              {item.createdBy?.role ? (
+                                <span className="rounded-full border border-line-200 bg-surface-50 px-2 py-0.5 text-xs font-medium text-ink-500">
+                                  {roleLabel(item.createdBy.role)}
+                                </span>
+                              ) : null}
                             </div>
                           </td>
+                          <td className="px-4 py-3 text-ink-700">{item.place ?? "-"}</td>
+                          <td className="px-4 py-3">
+                            <StatusBadge status={item.status ?? "PENDING"} />
+                          </td>
+                          <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
+                          <td className="px-4 py-3 text-right">{decisionButtons(item, activeAction)}</td>
                         </tr>
-                      ) : null}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        {panel ? (
+                          <tr className="bg-surface-50">
+                            {/* Eight, not seven: the bulk-select checkbox added a column ahead of
+                                Record, and the expanded row stopped reaching the end of the table. */}
+                            <td className="px-4 py-3" colSpan={8}>
+                              {panel}
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
-        {/* `queue.total` counts what the filter MATCHES; `items.length` is what fitted under the
-            cap. Identical until the queue overflows, and after that the honest number is the one
-            the notice at the top of this panel is explaining. */}
-        {!loading && items.length > 0 ? <Pagination page={page} pages={pages} total={queue.total} onPage={setPage} /> : null}
+        {/* `queue.total` counts every record waiting; `items.length` is how many have been brought in. */}
+        {!loading && !loadFailed && items.length > 0 ? (
+          <Pagination page={page} pages={pages} total={queue.total} onPage={setPage} />
+        ) : null}
+        {!loading && !loadFailed && queue.more ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line-200 px-4 py-3">
+            <p className="text-xs text-ink-500">{countLine}</p>
+            <button type="button" className="field-button-secondary" disabled={loadingOlder} onClick={loadOlder}>
+              {loadingOlder ? "Loading…" : "Load older"}
+            </button>
+          </div>
+        ) : null}
       </section>
     </>
   );

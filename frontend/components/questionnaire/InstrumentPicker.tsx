@@ -188,7 +188,7 @@ export function InstrumentPicker({
         emptyLabel={loading ? "Loading your questionnaires..." : "You have not built a questionnaire yet"}
       />
       {error ? (
-        <p role="alert" className="mt-1 text-xs leading-5 text-red-700">
+        <p role="alert" className="mt-1 text-xs leading-5 text-red-700 dark:text-red-400">
           {error} — only the shared artisan questionnaire is listed.
         </p>
       ) : null}

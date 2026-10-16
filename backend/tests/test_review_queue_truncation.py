@@ -47,11 +47,11 @@ def _user(role: str, user_id: str = "reviewer", can_review: bool = False) -> Sim
     )
 
 
-def _pending(index: int) -> SimpleNamespace:
+def _pending(index: int, prefix: str = "a") -> SimpleNamespace:
     """One PENDING artisan, old enough to be behind the cap. ``createdAt`` descends with the index
     so the newest rows are first, exactly as the route's ``order`` produces them."""
     return SimpleNamespace(
-        id=f"a{index}",
+        id=f"{prefix}{index}",
         name=f"Pending Artisan {index}",
         place="Bagru",
         status="PENDING",
@@ -73,7 +73,14 @@ class _Rows:
     async def find_many(self, where: dict, include: dict | None = None,
                         order: Any = None, take: int | None = None, **_: Any) -> list[Any]:
         self.takes.append(take)
-        return self.rows if take is None else self.rows[:take]
+        rows = self.rows
+        cursor = next((part["OR"] for part in where.get("AND", []) if "OR" in part), None)
+        if cursor is not None:
+            # The paged queue's ``(createdAt, id) < cursor``, honoured the way Postgres would.
+            stamp = cursor[0]["createdAt"]["lt"].isoformat()
+            last_id = cursor[1]["id"]["lt"]
+            rows = [r for r in rows if (r.createdAt, r.id) < (stamp, last_id)]
+        return rows if take is None else rows[:take]
 
     async def count(self, where: dict | None = None, **_: Any) -> int:
         self.counts += 1
@@ -139,7 +146,7 @@ class _Queue:
         ])
 
     def holding(self, count: int, source: str = "artisan") -> _Queue:
-        self.sources[source].rows = [_pending(i) for i in range(count)]
+        self.sources[source].rows = [_pending(i, source[:3]) for i in range(count)]
         return self
 
     def capped_at(self, cap: int) -> _Queue:
@@ -150,15 +157,18 @@ class _Queue:
         _CURRENT["user"] = _user(role, can_review=can_review)
         return self
 
-    def pending(self) -> dict[str, Any]:
+    def pending(self, **params: Any) -> dict[str, Any]:
+        response = self.raw(**params)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def raw(self, **params: Any) -> httpx.Response:
         async def run() -> httpx.Response:
             transport = httpx.ASGITransport(app=_APP)
             async with httpx.AsyncClient(transport=transport, base_url="http://review.test") as client:
-                return await client.get("/api/review/pending")
+                return await client.get("/api/review/pending", params=params)
 
-        response = asyncio.run(run())
-        assert response.status_code == 200, response.text
-        return response.json()
+        return asyncio.run(run())
 
 
 @pytest.fixture
@@ -230,3 +240,52 @@ def test_a_reviewer_with_nobody_beneath_them_gets_the_same_shape(queue: _Queue) 
 
     assert body == {"items": [], "shown": 0, "total": 0, "cap": 2, "truncated": False}
     assert queue.sources["artisan"].takes == []
+
+
+def test_without_a_page_size_the_answer_is_the_old_capped_shape(queue: _Queue) -> None:
+    """Additive: a client that sends no ``pageSize`` must not see a new key or a different cut."""
+    body = queue.holding(3).capped_at(2).as_("PROFESSOR").pending()
+
+    assert "nextBefore" not in body
+    assert body["cap"] == 2 and body["truncated"] is True
+
+
+def test_paging_walks_the_whole_queue_with_no_record_out_of_reach(queue: _Queue) -> None:
+    """DW-06 / DA-09: the oldest pending records used to sit behind the cap with no way to ask
+    for them. Paged, every record is reachable by following ``nextBefore`` to the end, once each."""
+    queue.holding(5, "artisan").holding(2, "process").as_("PROFESSOR")
+    seen: list[str] = []
+    before: str | None = None
+    pages = 0
+    while True:
+        params: dict[str, Any] = {"pageSize": 3}
+        if before:
+            params["before"] = before
+        body = queue.pending(**params)
+        pages += 1
+        assert body["total"] == 7
+        assert body["cap"] == 3
+        seen.extend(item["id"] for item in body["items"])
+        before = body["nextBefore"]
+        assert body["truncated"] is (before is not None)
+        if before is None:
+            break
+        assert pages < 10, "the cursor must make progress"
+    assert len(seen) == 7 and len(set(seen)) == 7
+    assert pages == 3
+
+
+def test_a_page_is_newest_first_across_record_types(queue: _Queue) -> None:
+    queue.holding(2, "artisan").holding(2, "process").as_("PROFESSOR")
+    body = queue.pending(pageSize=10)
+
+    stamps = [item["createdAt"] for item in body["items"]]
+    assert stamps == sorted(stamps, reverse=True)
+    assert body["truncated"] is False and body["nextBefore"] is None
+
+
+def test_a_mangled_cursor_is_a_plain_sentence_not_a_crash(queue: _Queue) -> None:
+    response = queue.holding(2).as_("PROFESSOR").raw(pageSize=2, before="not-a-cursor")
+
+    assert response.status_code == 422
+    assert "Reload the queue" in response.text

@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.userMessage
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -203,7 +205,7 @@ internal fun InspectionFeedbackPanel(
                                     } catch (e: CancellationException) {
                                         throw e
                                     } catch (e: Exception) {
-                                        problem = e.message ?: "That did not go through. Your note is kept."
+                                        problem = e.userMessage("That did not go through. Your note is kept.")
                                     } finally {
                                         busy = false
                                     }

@@ -102,7 +102,7 @@ export function SortableTh({
       >
         <span className="min-w-0 truncate">{label}</span>
         <Icon
-          className={`h-3.5 w-3.5 shrink-0 ${active ? "text-purple-700" : "text-ink-300"}`}
+          className={`h-3.5 w-3.5 shrink-0 ${active ? "text-purple-700 dark:text-purple-300" : "text-ink-300"}`}
           aria-hidden
         />
       </button>
