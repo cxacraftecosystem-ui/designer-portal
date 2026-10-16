@@ -91,6 +91,12 @@ Nothing else called the box directly: the web app, the Android app, `monitor.yml
 `publish-android.yml` use the CloudFront URL, and the deploy's health checks run on the box against
 `127.0.0.1:8000`, which skips nginx. The API was not restarted for any of this; nginx was reloaded.
 
+**The deploy checks CloudFront, not just the box.** After writing the snippet and reloading nginx,
+"Require CloudFront's origin header in nginx" asks `https://d3ekigkotd1xa2.cloudfront.net/health` (through CloudFront)
+for up to two minutes. Loopback is exempt from the check, so only that answer proves the Actions
+secret equals the CloudFront header. Anything but 200 (a mismatch shows as 403) puts the previous
+nginx config back and fails the deploy before the new code is switched in.
+
 ## Changing the secret
 
 Do it without a 403 window. Have the box accept both values while CloudFront switches over:

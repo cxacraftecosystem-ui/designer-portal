@@ -1751,11 +1751,13 @@ jobs:
       # rides ssh's STDIN as the first line of the script, never an argument (visible in `ps`). It is
       # also written to the release .env (the one the new code will read), per the rule that every secret lives in Actions AND the box's .env.
       # A missing secret fails here rather than shipping a box that turns CloudFront away. nginx is
-      # RELOADED, never restarted; a config that fails `nginx -t` is put back as it was.
+      # RELOADED, never restarted; a config that fails `nginx -t`, or that CloudFront itself cannot get
+      # a 200 through, is put back as it was.
       - name: Require CloudFront's origin header in nginx
         env:
           SHA: ${{ env.REL_ID }}
           ORIGIN_VERIFY_SECRET: ${{ secrets.ORIGIN_VERIFY_SECRET }}
+          PUBLIC_API: https://d3ekigkotd1xa2.cloudfront.net
         run: |
           if ! printf '%s' "$ORIGIN_VERIFY_SECRET" | grep -qE '^[A-Za-z0-9]{32,}$'; then
             echo "::error::ORIGIN_VERIFY_SECRET is unset or is not 32+ letters and digits. It must equal the X-Origin-Verify header on the CloudFront origin: docs/INFRA_ORIGIN_LOCK.md."
@@ -1786,13 +1788,35 @@ jobs:
             sudo rm -f /tmp/origin-verify.prev
             echo "::error::nginx refused the origin check; the previous config was put back"; exit 1
           fi
-          sudo rm -f /tmp/origin-verify.prev
           sudo systemctl reload nginx
           [ -s "$ENVFILE" ] && [ -n "$(tail -c1 "$ENVFILE")" ] && printf '\n' >> "$ENVFILE"
           sed -i '/^ORIGIN_VERIFY_SECRET=/d' "$ENVFILE"
           printf 'ORIGIN_VERIFY_SECRET=%s\n' "$secret" >> "$ENVFILE"
-          echo "origin check: nginx $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/health) from loopback"
           REMOTE
+          # Loopback is exempt from the check, so only CloudFront's own answer proves the secret
+          # matches its header. The old API is still serving here, so anything but 200 (403 is a
+          # mismatch) puts the previous nginx config back and fails the deploy before the switch.
+          code=000
+          for i in $(seq 1 12); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$PUBLIC_API/health?origin-check=$GITHUB_RUN_ID-$i" || true)"
+            { [ "$code" = 200 ] || [ "$code" = 403 ]; } && break
+            sleep 10
+          done
+          if [ "$code" = 200 ]; then
+            ssh ubuntu@${{ secrets.EC2_HOST }} 'sudo rm -f /tmp/origin-verify.prev /tmp/fieldrepo.site.prev'
+            echo "origin check: CloudFront answered 200 through the new nginx config"
+          else
+            ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          SNIP=/etc/nginx/snippets/origin-verify.conf
+          sudo cp -a /tmp/fieldrepo.site.prev /etc/nginx/sites-available/fieldrepo
+          if [ -f /tmp/origin-verify.prev ]; then sudo cp -a /tmp/origin-verify.prev "$SNIP"; else sudo rm -f "$SNIP"; fi
+          sudo rm -f /tmp/origin-verify.prev
+          sudo nginx -t && sudo systemctl reload nginx
+          REMOTE
+            echo "::error::CloudFront got $code from the box after the origin check went in, so the previous nginx config was put back. ORIGIN_VERIFY_SECRET must equal the X-Origin-Verify header on the CloudFront origin: docs/INFRA_ORIGIN_LOCK.md."
+            exit 1
+          fi
 
       # ─── THE VENV, AND WHY IT IS COPIED RATHER THAN REBUILT OR HARD-LINKED ──────────────────
       #
