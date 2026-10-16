@@ -105,6 +105,11 @@ import com.designprototype.workshop.ui.IslandScaffold
 import com.designprototype.workshop.ui.APP_SEARCH_NAME
 import com.designprototype.workshop.ui.AppMenuFocusEffect
 import com.designprototype.workshop.ui.AppSearchHeader
+import com.designprototype.workshop.ui.QuickReturnHeader
+import com.designprototype.workshop.ui.rememberQuickReturnHeader
+import com.designprototype.workshop.ui.rememberIslandImeVisible
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
 import com.designprototype.workshop.ui.AppSearchItem
 import com.designprototype.workshop.ui.AppSearchPanel
 import com.designprototype.workshop.ui.AppSearchSettingTarget
@@ -4121,25 +4126,23 @@ private fun HomeScreen(
             }
         )
                 }) { islandReserve ->
+        // The header's quick-return state: the page's scroller reports to it, and the page is padded
+        // by the header's measured height so nothing sits under it at rest. See AppSearch.kt.
+        val quickReturn = rememberQuickReturnHeader(pageScroll, pinned = searchOpen)
+        val pageImeOpen by rememberIslandImeVisible()
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .nestedScroll(quickReturn.connection)
                 .verticalScroll(pageScroll)
+                .padding(top = with(LocalDensity.current) { quickReturn.reservePx.toDp() })
                 // Inside the scroller, so it is the END of the page that clears the bar — and, while
                 // the message banner is up, clears the banner too, so a button it covers can still be
                 // scrolled into view above it rather than hidden until the message is dismissed.
                 .padding(bottom = islandReserve + if (messageState.text != null) 88.dp else 0.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-
-        // The app's name and logo, FIRST INSIDE THE SCROLLER so it scrolls away with the page and is
-        // back at the top; tapping it opens the search panel drawn over the page below. AppSearch.kt.
-        AppSearchHeader(
-            appName = APP_SEARCH_NAME,
-            logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 7.dp) },
-            onOpenSearch = { searchOpen = true }
-        )
 
         // The dashboard is the root of every path, so only the screens below it get a back arrow —
         // and it is also the only screen with no title of its own, so on the dashboard this whole
@@ -4997,6 +5000,17 @@ private fun HomeScreen(
                 ) {
                     AppMessageBanner(messageState)
                 }
+                // The logo-and-name header, as a quick-return overlay on the top of the page: it hides
+                // on the way down and comes back on any move up. Hidden while the keyboard is up for a
+                // field on the page, never while the search field is open. AppSearch.kt.
+                QuickReturnHeader(quickReturn, hidden = pageImeOpen && !searchOpen) { elevated ->
+                    AppSearchHeader(
+                        appName = APP_SEARCH_NAME,
+                        logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 10.dp) },
+                        onOpenSearch = { searchOpen = true },
+                        elevated = elevated
+                    )
+                }
                 // Over the page, under nothing: the page keeps its scroll and any half-filled form.
                 if (searchOpen) {
                     AppSearchPanel(
@@ -5004,7 +5018,8 @@ private fun HomeScreen(
                         logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 7.dp) },
                         localItems = searchLocalItems(),
                         remoteSearch = { q -> searchRemote(q) },
-                        onClose = { searchOpen = false }
+                        onClose = { searchOpen = false },
+                        onError = { showMessage(it) }
                     )
                 }
                 }
