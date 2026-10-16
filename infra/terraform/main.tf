@@ -596,19 +596,42 @@ resource "aws_security_group" "api" {
       cidr_blocks = [ingress.value]
     }
   }
-  ingress {
-    description = "HTTP (nginx)"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+}
+
+# ─── PORT 80 ANSWERS CLOUDFRONT ONLY (2026-10-17) ────────────────────────────────────────────────
+# Port 80 used to be open to 0.0.0.0/0, along with 443, which nothing listens on: CloudFront reaches
+# this origin over plain HTTP (origin protocol policy `http-only`), so the box holds no certificate.
+# Anyone who knew the address could skip CloudFront and send the API a forged X-Forwarded-For. Now:
+#   1. this group admits port 80 only from AWS's managed prefix list of CloudFront's origin-facing
+#      servers. That list weighs about 55 rules against the 60-rule-per-group quota, so it lives in
+#      its own group rather than in `api` above;
+#   2. nginx answers 403 unless the request carries the `X-Origin-Verify` header that only this
+#      portal's distribution sends (deploy-backend.yml writes the check from ORIGIN_VERIFY_SECRET).
+# The prefix list on its own would still admit SOMEBODY ELSE's CloudFront distribution pointed at
+# this address; the header is what makes it this portal's. docs/INFRA_ORIGIN_LOCK.md has the ids
+# and the rollback. Name and description are what the live group was created with: changing either
+# replaces the group.
+data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+resource "aws_security_group" "cloudfront_origin" {
+  name        = "cloudfront-origin-only-designer"
+  description = "HTTP to nginx from CloudFront origin-facing servers only (designer-portal)"
+  tags        = { Name = "cloudfront-origin-only-designer" }
+
   ingress {
-    description = "HTTPS (nginx)"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "CloudFront origin-facing"
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
   }
   egress {
     from_port   = 0
@@ -725,7 +748,7 @@ resource "aws_instance" "api" {
   # there unused. The key is also what CI's transient deploy window authenticates with, so it is not
   # unused at all; it is unusable only while the port is shut, which is most of the time.
   key_name               = var.ssh_key_name
-  vpc_security_group_ids = [aws_security_group.api.id]
+  vpc_security_group_ids = [aws_security_group.api.id, aws_security_group.cloudfront_origin.id]
 
   # THE SSM PROFILE. Attaching one is an in-place update on a running instance — no replacement, no
   # downtime, no reboot — which is why this could be done on a box serving production traffic and

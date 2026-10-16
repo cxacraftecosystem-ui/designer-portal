@@ -67,6 +67,7 @@ server {
     listen 80 default_server;
     server_name _;
     client_max_body_size 200M;
+    include /etc/nginx/snippets/origin-verify.conf;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -78,6 +79,8 @@ server {
     }
 }
 NGINX
+# Fail closed until the first deploy writes the CloudFront header check (docs/INFRA_ORIGIN_LOCK.md).
+echo 'allow 127.0.0.1; deny all;' > /etc/nginx/snippets/origin-verify.conf
 ln -sf /etc/nginx/sites-available/fieldrepo /etc/nginx/sites-enabled/fieldrepo
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
