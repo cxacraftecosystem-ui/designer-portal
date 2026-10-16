@@ -92,6 +92,9 @@ override.tf.json
 
 # Keys / secrets
 *.pem
+# UIDAI's PUBLIC certificates, pinned by fingerprint in manifest.json (docs/AADHAAR.md). Public by
+# design and needed at runtime; without this the blanket rule above silently drops them from git.
+!backend/app/data/uidai/*.pem
 
 # Playwright observation artifacts
 frontend/pw-screens/
