@@ -1375,7 +1375,7 @@ private fun deviceImageLoader(): ImageLoader = { ref ->
  * so a workshop that only captured the Basic tier produces a short report rather than a long one full
  * of blank lines.
  */
-private fun buildWorkshopDocument(
+internal fun buildWorkshopDocument(
     context: Context,
     schema: SchemaResponse,
     draft: WorkshopDraft?,

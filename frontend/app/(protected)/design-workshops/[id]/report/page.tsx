@@ -117,6 +117,7 @@ import { countCodeSpans, useReportMediaUrls } from "@/components/designworkshop/
 import { ReportAccentPicker, resolvePreviewPalette } from "@/components/designworkshop/report/ReportAccentPicker";
 import { ReportSheets } from "@/components/designworkshop/report/ReportSheet";
 import type { PreviewBlock, PreviewMeta } from "@/components/designworkshop/report/previewModel";
+import { useStableBlocks } from "@/components/designworkshop/report/StageDocumentPreview";
 import {
   REPORT_STAGE_KEY,
   ReportSettingsPanel,
@@ -257,6 +258,14 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
    */
   const [templateTouched, setTemplateTouched] = useState(false);
   const [settings, setSettings] = useState<DwEntryData>(EMPTY_SETTINGS);
+  /**
+   * The settings panel's boxes while they differ from what is saved — so the running head, the
+   * running foot and the paper size on the sheets follow the typing rather than the Save. Only those
+   * three are drawn from it: everything else on the sheets is the built document, which changes when
+   * the settings are saved and the preview is rebuilt.
+   */
+  const [settingsDraft, setSettingsDraft] = useState<DwEntryData | null>(null);
+  const drawnSettings = settingsDraft ?? settings;
   const [preview, setPreview] = useState<DwPreview | null>(null);
   const [previewing, setPreviewing] = useState(true);
   /**
@@ -742,8 +751,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
 
   const templateName = templates.find((template) => template.id === templateId)?.name ?? preview?.meta.templateName ?? "";
   const { headerText, footerText } = useMemo(
-    () => runningFurniture(detail, settings, templateName),
-    [detail, settings, templateName]
+    () => runningFurniture(detail, drawnSettings, templateName),
+    [detail, drawnSettings, templateName]
   );
 
   /**
@@ -751,7 +760,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
    * resolve it in once the page sends `pageSize` on the download — and a preview laid out on A4
    * beside a Letter file is a preview of a different document.
    */
-  const pageSize = settingText(settings, "pageSize") || preview?.meta.pageSize || "A4";
+  const pageSize = settingText(drawnSettings, "pageSize") || preview?.meta.pageSize || "A4";
 
   /**
    * The colour the report is written in, resolved the way the server resolves it.
@@ -781,7 +790,9 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
    * `PreviewBlock` widens it with those two and with the resolved rich-text form. The assignment
    * needs no cast in that direction, and every renderer still switches exhaustively.
    */
-  const blocks: PreviewBlock[] = useMemo(() => preview?.blocks ?? [], [preview]);
+  // A rebuilt preview keeps the block objects that did not change, so a settings save or a colour
+  // save re-renders and re-measures what changed and leaves every other page exactly as it was.
+  const blocks: PreviewBlock[] = useStableBlocks(useMemo(() => (preview?.blocks ?? []) as PreviewBlock[], [preview]));
   const mediaUrls = useReportMediaUrls(blocks);
   const codeSpans = useMemo(() => countCodeSpans(blocks), [blocks]);
 
@@ -1288,6 +1299,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           online={online}
           draftPending={stage20Pending}
           readOnlyReason={heldPostReason(postRefusal)}
+          onDraftChange={setSettingsDraft}
           onSaved={() => {
             // The document the server builds has just changed, so the pages below are stale until
             // they are rebuilt. Two round trips is cheap next to a designer approving a preview of

@@ -77,7 +77,8 @@ export function ReportSettingsPanel({
   onSaved,
   online,
   draftPending,
-  readOnlyReason = null
+  readOnlyReason = null,
+  onDraftChange
 }: {
   workshopId: string;
   registry: DwRegistry | null;
@@ -95,6 +96,12 @@ export function ReportSettingsPanel({
    * only this panel's boxes and Save are held, and the sentence is drawn where the Save would be.
    */
   readOnlyReason?: string | null;
+  /**
+   * The boxes as they stand, unsaved — so the sheets below can draw a running head, a running foot
+   * or a paper size while it is being typed, before anything is written. Null when they match the
+   * saved settings.
+   */
+  onDraftChange?: (values: DwEntryData | null) => void;
 }) {
   const entity = useMemo(() => reportSettingsEntity(registry), [registry]);
   const [open, setOpen] = useState(false);
@@ -122,6 +129,10 @@ export function ReportSettingsPanel({
   }, [settings]);
 
   const dirty = useMemo(() => JSON.stringify(values) !== JSON.stringify(settings), [values, settings]);
+
+  useEffect(() => {
+    onDraftChange?.(dirty ? values : null);
+  }, [dirty, values, onDraftChange]);
 
   const change = useCallback((key: string, value: DwValue) => {
     setValues((current) => ({ ...current, [key]: value }));

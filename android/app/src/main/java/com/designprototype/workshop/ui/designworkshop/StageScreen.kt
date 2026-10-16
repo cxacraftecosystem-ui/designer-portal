@@ -371,6 +371,8 @@ fun StageScreen(
     // cancels the pending write rather than queueing a second one behind it.
     var revision by remember(stageKey) { mutableIntStateOf(0) }
     var mediaIndex by remember(workshopId) { mutableStateOf<Map<String, DraftMedia>>(emptyMap()) }
+    /** The registry the live document preview builds from — the one this open loaded. */
+    var previewSchema by remember(workshopId) { mutableStateOf<com.designprototype.workshop.data.SchemaResponse?>(null) }
     /**
      * The id to PUT this stage to, or null while the workshop exists only on this device.
      *
@@ -488,6 +490,7 @@ fun StageScreen(
         loading = true
         runCatching {
             val schema = repository.designWorkshopSchema(appContext)
+            previewSchema = schema
             val spec = schema.stages.firstOrNull { it.key == stageKey }
                 ?: error("This stage is not in the form layout on this phone. Update the app to open it.")
 
@@ -1343,6 +1346,24 @@ fun StageScreen(
             // `droppedCustomKeys ['dyeVatCount','retiredQuestion']` — gave `count == 0`, and this line
             // printed "saved and synced" directly above a card saying two answers had not been stored.
             notStored = refusals?.droppedCustomKeys?.size ?: 0,
+        )
+
+        /*
+          THE STAGE'S PAGES, LIVE. Rebuilt from the draft on disk with this screen's unsaved answers
+          laid over it, on the same debounce rhythm the web uses — see [DwStageDocumentPreview].
+          Closed until asked for: building the document is the right cost for a designer who wants to
+          see it and the wrong one for every stage open.
+        */
+        DwStageDocumentPreview(
+            workshopId = workshopId,
+            stageTitle = spec.title,
+            schema = previewSchema,
+            revision = revision,
+            liveDraft = {
+                WorkshopDraftStore.load(appContext, workshopId)?.let { disk ->
+                    disk.copy(stages = disk.stages + (spec.key to dwLiveStageDraft(spec, state, disk.stages[spec.key])))
+                }
+            },
         )
 
         /*
@@ -3301,6 +3322,26 @@ internal suspend fun dwAdoptDeletionRecordAfterPush(
  * under the store's lock against whatever is actually on disk, so an attachment made a moment ago
  * cannot be erased by a debounce that started before it.
  */
+/**
+ * The stage as it would be stored if it were saved now — the three things the report reads (the
+ * singleton, the custom answers and the rows), over whatever the disk holds for everything else.
+ * For the live preview only: it never reaches the store, which [persistLocally] alone writes.
+ */
+private fun dwLiveStageDraft(stage: StageDto, state: StageState, existing: StageDraft?): StageDraft =
+    (existing ?: StageDraft(stageId = stage.key, title = stage.title, order = stage.number)).copy(
+        values = state.singleton,
+        custom = state.custom,
+        rows = dwStageRowsToStore(
+            stage,
+            drawn = stage.collections.flatMap { entity ->
+                state.collections[entity.key].orEmpty().map { row ->
+                    DraftRow(id = dwRowId(entity.key, row.rowId), values = row.values)
+                }
+            },
+            existing = existing,
+        ),
+    )
+
 private suspend fun persistLocally(
     context: Context,
     workshopId: String,
