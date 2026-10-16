@@ -119,9 +119,15 @@ class AppSearchTest {
 
     private fun user(role: String) = UserDto(id = "u-$role", email = "$role@example.org", name = role, role = role)
 
+    // Every tier the server's ROLE_RANK knows; backend/tests/test_role_ladder_parity.py holds it to the ladder.
+    private val everyRole = listOf(
+        "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "INSPECTOR",
+        "PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"
+    )
+
     @Test
     fun `the screens a search offers are exactly the menu this role sees`() {
-        listOf("CROWDSOURCE_VOLUNTEER", "RESEARCHER", "PROFESSOR", "ADMIN", "MASTER_ADMIN").forEach { role ->
+        everyRole.forEach { role ->
             listOf(true, false).forEach { adminMode ->
                 val visible = visibleNavItems(user(role), adminMode)
                 val screens = appSearchScreenItems(visible) {}

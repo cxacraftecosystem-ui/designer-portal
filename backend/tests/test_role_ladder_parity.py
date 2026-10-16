@@ -839,6 +839,29 @@ MIRRORS: tuple[Mirror, ...] = (
         ),
     ),
     Mirror(
+        path=f"{_ANDROID_TEST}/ui/IslandBottomNavTest.kt",
+        binding="everyRole",
+        kind="closed",
+        pattern=r"private val everyRole = listOf\(([\s\S]*?)\n[ \t]*\)",
+        why=(
+            "Added 2026-10-16 with the bottom island nav. It walks every tier in both admin-view "
+            "states and asserts the visible/More split is a partition of exactly the slots that role "
+            "may see, and that nothing behind More is a destination the role is refused. A tier "
+            "missing here is a tier whose More sheet is never checked for a refused entry."
+        ),
+    ),
+    Mirror(
+        path=f"{_ANDROID_TEST}/ui/AppSearchTest.kt",
+        binding="everyRole",
+        kind="closed",
+        pattern=r"private val everyRole = listOf\(([\s\S]*?)\n[ \t]*\)",
+        why=(
+            "Added 2026-10-16 with the Android search header. It asserts the screens a search offers "
+            "are exactly the menu that role sees, in both admin-view states. A tier missing here is a "
+            "tier whose search could offer a screen its menu refuses, and nothing would notice."
+        ),
+    ),
+    Mirror(
         path=f"{_ANDROID_TEST}/ui/designworkshop/WorkshopViewerAdminGateTest.kt",
         binding="everyRole",
         kind="closed",
