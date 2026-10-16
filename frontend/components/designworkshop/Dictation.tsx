@@ -58,6 +58,7 @@ import {
   storeLanguage,
   type SpeechRecognitionLike
 } from "@/components/dictation/onDeviceSpeech";
+import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { ApiError } from "@/lib/api";
 import {
@@ -69,6 +70,7 @@ import {
   type DwDictationAllowance
 } from "@/lib/designWorkshops";
 import { isLocalWorkshopId } from "@/lib/designWorkshopStore";
+import { downloadLocalMedia } from "@/lib/localMediaDownload";
 import { pickAudioRecorderMimeType, SPEECH_AUDIO_CONSTRAINTS } from "@/lib/media";
 
 /**
@@ -138,6 +140,13 @@ export function DictationButton({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  /**
+   * The recording being sent, kept in memory so the designer can save their own voice note while it
+   * uploads. Dropped when the answer arrives: this route stores no copy and the audio of a named
+   * artisan should not outlive the sentence it became — the handset deletes its clip at the same
+   * moment (`DwDictation.kt`). Never read by the upload.
+   */
+  const [lastRecording, setLastRecording] = useState<{ blob: Blob; at: number } | null>(null);
   /**
    * The commit callback, read through a ref by the recogniser's own handlers.
    *
@@ -329,6 +338,7 @@ export function DictationButton({
           setProblem("Nothing was recorded. Hold the handset closer and try again.");
           return;
         }
+        setLastRecording({ blob, at: Date.now() });
         setTranscribing(true);
         try {
           const result = await dictateAudio(blob, languageRef.current, workshopId);
@@ -381,6 +391,7 @@ export function DictationButton({
           );
         } finally {
           setTranscribing(false);
+          setLastRecording(null);
         }
       };
       recorder.start();
@@ -477,6 +488,13 @@ export function DictationButton({
           the boundary it resets on; a designer refused at nine in the evening needs to know when it
           lifts, and the handset's refusal wording says the same thing.
         */}
+        {mode === "server" && transcribing && lastRecording ? (
+          <DownloadMediaButton
+            name="voice note"
+            onDownload={() => downloadLocalMedia(lastRecording.blob, { capturedAt: lastRecording.at })}
+          />
+        ) : null}
+
         {mode === "server" && allowance && allowance.dictationsRemaining !== null ? (
           <span className="text-xs text-ink-500">
             {allowance.dictationsRemaining} dictation

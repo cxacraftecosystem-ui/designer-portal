@@ -4,9 +4,11 @@ import { Download, ExternalLink, FileText, Headphones, Image as ImageIcon, Loade
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { useMediaUrl } from "@/components/hooks/useMediaUrl";
+import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
 import { Markdown } from "@/components/Markdown";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { bytes } from "@/lib/format";
+import { downloadMediaUrl } from "@/lib/localMediaDownload";
 import type { MediaType } from "@/lib/types";
 
 export type PreviewMedia = {
@@ -175,7 +177,9 @@ export function MediaPreviewTile({
   progress = null,
   failed = false,
   statusLabel = null,
-  onRetry
+  onRetry,
+  onDownload,
+  downloadUnavailableReason = null
 }: {
   item: PreviewMedia;
   onOpen: () => void;
@@ -196,6 +200,13 @@ export function MediaPreviewTile({
   statusLabel?: string | null;
   /** Offered next to the status line when a pre-upload failed. */
   onRetry?: () => void;
+  /**
+   * Save this file to the device. Passed by every surface that shows a file on its way to the
+   * server, reading the copy the browser already holds, so it works while the upload is running.
+   */
+  onDownload?: () => void;
+  /** Disables Download with this sentence as its tooltip — only when the local bytes are gone. */
+  downloadUnavailableReason?: string | null;
 }) {
   const kind = resolvePreviewKind(item);
   // The URL a media row carries can EXPIRE (the API signs read URLs once `MEDIA_PRESIGNED_READS` is
@@ -290,21 +301,26 @@ export function MediaPreviewTile({
             <div className="h-full rounded-full bg-field-600 transition-all" style={{ width: `${percent}%` }} />
           </div>
         ) : null}
-        {statusLabel ? (
+        {statusLabel || onDownload ? (
           <div className="flex min-w-0 items-center justify-between gap-2">
-            <span className={`truncate text-xs ${failed ? "text-error-600" : "text-ink-muted"}`}>{statusLabel}</span>
-            {failed && onRetry ? (
-              <button
-                type="button"
-                className="shrink-0 rounded-sm border border-line-200 bg-card px-2 py-0.5 text-xs font-semibold text-field-600 transition hover:bg-field-50"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onRetry();
-                }}
-              >
-                Retry
-              </button>
-            ) : null}
+            <span className={`min-w-0 truncate text-xs ${failed ? "text-error-600" : "text-ink-muted"}`}>{statusLabel}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              {failed && onRetry ? (
+                <button
+                  type="button"
+                  className="shrink-0 rounded-sm border border-line-200 bg-card px-2 py-0.5 text-xs font-semibold text-field-600 transition hover:bg-field-50"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRetry();
+                  }}
+                >
+                  Retry
+                </button>
+              ) : null}
+              {onDownload ? (
+                <DownloadMediaButton name={item.name} onDownload={onDownload} unavailableReason={downloadUnavailableReason} />
+              ) : null}
+            </span>
           </div>
         ) : null}
         {action ? (
@@ -323,28 +339,7 @@ export function MediaPreviewTile({
  * anchor, and finally to opening the URL in a new tab.
  */
 async function saveToDevice(url: string, name: string) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = name || "media";
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(objectUrl);
-  } catch {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = name || "media";
-    anchor.target = "_blank";
-    anchor.rel = "noreferrer";
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-  }
+  await downloadMediaUrl(url, name || "media");
 }
 
 export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: () => void }) {

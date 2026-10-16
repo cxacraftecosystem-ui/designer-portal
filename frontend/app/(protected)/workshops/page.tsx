@@ -780,7 +780,7 @@ function WorkshopsPageBody() {
           title="Workshop media"
           description="Attach workshop images, videos, audio notes, attendance references, and documents."
         />
-        <UploadProgress progress={uploadProgress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} />
+        <UploadProgress progress={uploadProgress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} files={mediaFiles} />
         {/* Editing an existing workshop: everything already attached to it, with per-file delete.
             `recordHold={null}`: a crafts workshop is never filed under a design workshop, so only a
             file's own workshop columns can hold it — which the panel reads for itself. */}
