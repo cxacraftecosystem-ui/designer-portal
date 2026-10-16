@@ -66,6 +66,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.layout.onSizeChanged
@@ -440,6 +441,12 @@ fun QuickReturnHeader(
             .fillMaxWidth()
             .onSizeChanged { state.heightPx = it.height }
             .offset { IntOffset(0, slide) }
+            // Faded with the slide. The parent does not clip, so a header slid up by its own height
+            // would otherwise still be drawn over the status bar above the page (seen on the
+            // emulator, 2026-10-16).
+            .graphicsLayer {
+                alpha = if (state.heightPx > 0) (1f + slide.toFloat() / state.heightPx).coerceIn(0f, 1f) else 1f
+            }
             // Out of the accessibility tree while it is off-screen, so TalkBack never lands on it.
             .then(if (show) Modifier else Modifier.clearAndSetSemantics { })
     ) {
@@ -469,7 +476,14 @@ fun AppSearchPanel(
     localItems: List<AppSearchItem>,
     remoteSearch: suspend (String) -> List<AppSearchItem>,
     onClose: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * A server failure that is NOT "no network", in words ([appSearchErrorLine]), for the app's one
+     * message surface. It used to be swallowed, so a refused search read exactly like a search with
+     * no matches. "No network" stays the inline note below, because it explains the list under it
+     * rather than reporting a fault.
+     */
+    onError: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val store = remember(context) { AppSearchRecentStore(context) }
@@ -511,6 +525,7 @@ fun AppSearchPanel(
             offline = true
         } catch (e: Exception) {
             remote = emptyList()
+            onError(appSearchErrorLine(e))
         } finally {
             loading = false
         }

@@ -4967,7 +4967,8 @@ private fun HomeScreen(
                         logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 7.dp) },
                         localItems = searchLocalItems(),
                         remoteSearch = { q -> searchRemote(q) },
-                        onClose = { searchOpen = false }
+                        onClose = { searchOpen = false },
+                        onError = { showMessage(it) }
                     )
                 }
                 }
