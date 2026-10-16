@@ -2,6 +2,7 @@ package com.designprototype.workshop.ui.designworkshop
 
 import android.Manifest
 import android.content.Context
+import android.net.Uri
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -75,6 +76,7 @@ import com.designprototype.workshop.data.dwPackOffer
 import com.designprototype.workshop.data.dwPackState
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,7 +84,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import retrofit2.HttpException
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
+import com.designprototype.workshop.ui.MediaDownloadButton
+import com.designprototype.workshop.ui.MediaDownloadNotice
+import com.designprototype.workshop.ui.MediaDownloader
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.rememberMediaDownloader
 import com.designprototype.workshop.ui.field
 
 /**
@@ -398,6 +404,15 @@ internal fun DwDictationButton(
 
     /** The upload in flight, kept so leaving the field can cancel it rather than orphan it. */
     var uploadJob by remember { mutableStateOf<Job?>(null) }
+
+    /**
+     * The clip being sent, so the panel can offer Download while it uploads — the designer's own
+     * recording, saved from the file on this phone. Cleared the moment the clip is deleted (on every
+     * path, below): the endpoint stores nothing, so once the answer is in there is no copy anywhere
+     * to save, and that is deliberate.
+     */
+    var sendingClip by remember { mutableStateOf<File?>(null) }
+    val clipDownloader = rememberMediaDownloader()
 
     /*
      * `serverNote` USED TO LIVE HERE and is gone with the paragraph it carried. It held
@@ -838,6 +853,7 @@ internal fun DwDictationButton(
             return
         }
         state = DwDictationState.UPLOADING
+        sendingClip = clip
         uploadJob = scope.launch {
             var answer: DwDictateDto? = null
             var failure: Throwable? = null
@@ -847,6 +863,7 @@ internal fun DwDictationButton(
                 // The field left the tree mid-upload. Delete the recording and take the cancellation
                 // with us — a composable that has gone must not write into a lambda that has gone.
                 runCatching { clip.delete() }
+                sendingClip = null
                 throw e
             } catch (e: Throwable) {
                 failure = e
@@ -854,6 +871,7 @@ internal fun DwDictationButton(
             // THE CLIP IS DELETED ON EVERY PATH, including this one. Audio of a named artisan has no
             // business outliving the sentence it became; the endpoint stores nothing either.
             runCatching { clip.delete() }
+            sendingClip = null
             // Cleared before anything below can call `release`, so a `release` triggered from inside
             // this coroutine cannot cancel the coroutine it is running in.
             uploadJob = null
@@ -1441,6 +1459,8 @@ internal fun DwDictationButton(
         DwServerDictationPanel(
             label = labelOf(tag),
             uploading = state == DwDictationState.UPLOADING,
+            sendingClip = sendingClip?.takeIf { state == DwDictationState.UPLOADING },
+            downloader = clipDownloader,
             onStop = { finishRecording() },
             onCancel = {
                 // Cancel throws the recording away unsent. Distinct from Stop on purpose: a
@@ -1621,6 +1641,9 @@ private fun DwOnDeviceModelPanel(
 private fun DwServerDictationPanel(
     label: String,
     uploading: Boolean,
+    /** The recording on its way, while it is; null otherwise. Offered as Download. */
+    sendingClip: File?,
+    downloader: MediaDownloader,
     onStop: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -1643,6 +1666,15 @@ private fun DwServerDictationPanel(
                             fontSize = 13.sp
                         )
                     }
+                    sendingClip?.let { clip ->
+                        MediaDownloadButton(
+                            fileName = "voice note",
+                            onDownload = {
+                                downloader.save(Uri.fromFile(clip), null, "audio/mp4", clip.lastModified())
+                            },
+                        )
+                    }
+                    MediaDownloadNotice(downloader)
                 } else {
                     Text(
                         "Recording — speak now, then press Stop.",

@@ -268,6 +268,41 @@ model User {
   /// /api/auth/change-password` writes none. Tokens minted before that date carry no fingerprint
   /// and are ended only by this column, or by expiring.
   sessionsValidFrom  DateTime?
+  /// ── TWO-STEP VERIFICATION (TOTP, RFC 6238) — opt-in for every role ──────────────────────────
+  ///
+  /// See `app/services/two_factor.py` for the whole mechanism. `twoFactorSecret` and
+  /// `twoFactorPendingSecret` are AES-256-GCM ciphertext (`v1.<iv>.<tag>.<ciphertext>`), never a
+  /// plain base32 key, and no response ever carries either: `serialize_user` and
+  /// `records._SENSITIVE_KEYS` strip them with the recovery-code hashes and the last step.
+  /// The pending secret is what `POST /auth/two-factor/setup` stored and `/enable` has not yet
+  /// confirmed; an abandoned setup leaves it here doing nothing until the next setup overwrites it.
+  twoFactorEnabled       Boolean   @default(false)
+  twoFactorSecret        String?
+  twoFactorPendingSecret String?
+  /// bcrypt hashes of the unused recovery codes. A code is spent by a conditional update that
+  /// removes its hash only if the array is still the one that was read, so two sign-ins presenting
+  /// one code cannot both win.
+  twoFactorRecoveryCodes String[]  @default([])
+  /// The highest TOTP time step this account has accepted. A code is accepted only for a step
+  /// strictly above it, written by a conditional update — RFC 6238 §5.2's "one-time" made literal.
+  twoFactorLastStep      Int?
+  twoFactorEnabledAt     DateTime?
+  /// THE PER-ACCOUNT FAILURE BUDGETS for the second step, so signing in again cannot reset the
+  /// guessing (`two_factor.check_second_factor`). Two of them, one mechanism: six-digit codes spend
+  /// the first four columns (ten per 15-minute window), recovery codes the second four (five per
+  /// window), and a lock on one never blocks the other — so somebody holding only the password
+  /// cannot shut the owner out of their recovery codes. A code is checked only after it has CLAIMED a
+  /// slot with one conditional increment; the spent budget is locked by exactly one writer, for 15
+  /// minutes doubling with the lockout count, capped at an hour; the count decays to zero a day after
+  /// the last lock ended. A right code clears its budget; an administrator's reset clears all eight.
+  twoFactorFailedAttempts          Int       @default(0)
+  twoFactorFailureWindowStartedAt  DateTime?
+  twoFactorLockedUntil             DateTime?
+  twoFactorLockouts                Int       @default(0)
+  twoFactorRecoveryFailedAttempts  Int       @default(0)
+  twoFactorRecoveryWindowStartedAt DateTime?
+  twoFactorRecoveryLockedUntil     DateTime?
+  twoFactorRecoveryLockouts        Int       @default(0)
   /// ── AADHAAR VERIFICATION OF THIS ACCOUNT (2026-10-16) ─────────────────────────────────────
   ///
   /// The RESULT of verifying the account holder against a document UIDAI signed (Secure QR or
@@ -340,6 +375,8 @@ model User {
   /// other actor/subject relation on this model uses.
   passwordResetTokens       PasswordResetToken[] @relation("PasswordResetTokenUser")
   passwordResetTokensIssued PasswordResetToken[] @relation("PasswordResetTokenIssuedBy")
+  /// Sign-in challenges waiting on this account's second step. Cascade: a challenge is not authorship.
+  twoFactorChallenges       TwoFactorChallenge[] @relation("TwoFactorChallengeUser")
   aiCredentials           UserAiCredential[]   @relation("UserAiCredentialOwner")
   dataAccessAsOwner   DataAccessGrant[] @relation("DataAccessOwner")
   dataAccessAsGrantee DataAccessGrant[] @relation("DataAccessGrantee")
@@ -5661,6 +5698,27 @@ model PasswordResetToken {
   /// composite index serves both.
   @@index([userId, createdAt])
   @@index([issuedById])
+}
+
+/// One sign-in that passed its first factor and is waiting on the second.
+///
+/// The challenge token handed to the client is a signed JWT carrying this row's `id` as its `jti`;
+/// the row exists only to COUNT wrong codes across every API worker (an in-process counter would
+/// give each worker its own five). `POST /auth/two-factor/verify` spends an attempt with one
+/// conditional UPDATE (`attempts < 5 AND usedAt IS NULL`), so parallel guesses cannot overdraw it,
+/// and stamps `usedAt` on success so one challenge opens one session. Rows past `expiresAt` are
+/// swept whenever a new challenge is issued.
+model TwoFactorChallenge {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation("TwoFactorChallengeUser", fields: [userId], references: [id], onDelete: Cascade)
+  attempts  Int       @default(0)
+  usedAt    DateTime?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 // ======================================================================================

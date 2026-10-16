@@ -33,9 +33,11 @@ import { CircleAlert, CloudOff, Link2, RefreshCw, Trash2, TriangleAlert } from "
 
 import { useAuth } from "@/components/AuthProvider";
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
+import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast, type ToastTone } from "@/components/ui/Toast";
 import { listResource } from "@/lib/api";
+import { downloadLocalMedia } from "@/lib/localMediaDownload";
 import {
   acknowledgeOutboxTrouble,
   danglingKeys,
@@ -708,6 +710,31 @@ export function OutboxBanner() {
                   <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
                   {entry.failure}
                 </p>
+              ) : null}
+              {/*
+                EVERY QUEUED FILE CAN BE SAVED FROM HERE, before it is ever sent. The bytes are the
+                copy this browser stored with the entry, so a researcher can keep her own recording
+                whatever the connection does; saving reads the blob and changes nothing in the queue.
+              */}
+              {fileCount(entry) ? (
+                <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                  {entry.media.flatMap((batch, batchIndex) =>
+                    batch.files.map((file, fileIndex) => (
+                      <li
+                        key={`${batchIndex}-${fileIndex}-${file.name}`}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-line-200 bg-card py-0.5 pl-2 pr-0.5"
+                      >
+                        <span className="max-w-48 truncate text-xs text-ink-700" title={file.name}>
+                          {file.name}
+                        </span>
+                        <DownloadMediaButton
+                          name={file.name}
+                          onDownload={() => downloadLocalMedia(file)}
+                        />
+                      </li>
+                    ))
+                  )}
+                </ul>
               ) : null}
             </div>
             {entry.failure ? (

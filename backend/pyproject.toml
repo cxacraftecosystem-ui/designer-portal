@@ -73,6 +73,13 @@ dependencies = [
     # call, so a deployment that has not installed it answers "Claude is unavailable on this server"
     # instead of failing to boot. Everything else in this backend keeps working.
     "anthropic>=0.40.0",
+    # Two-step verification (app/services/two_factor.py), 2026-10-16. `cryptography` was already
+    # installed through google-auth and is now named, because the TOTP secret's AES-256-GCM
+    # encryption at rest calls it directly. `segno` draws the setup QR code on the server: pure
+    # Python, no dependencies, and the server sending finished SVG geometry is what lets the web and
+    # the phone show the same square without a QR library of their own.
+    "cryptography>=50.0.2",
+    "segno>=1.6.6",
 ]
 
 [project.optional-dependencies]

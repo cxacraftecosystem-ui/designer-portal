@@ -102,6 +102,10 @@ PUBLIC_ALLOWLIST: dict[tuple[str, str], str] = {
     # The machine credential door. Email + password in, a scoped read token out — the second thing in
     # this API that turns a password into a token, and like the first it cannot ask for one.
     ("POST", "/api/datasets/token"): "mints the machine token FROM a password; there is nothing to present.",
+    # The second half of a sign-in for an account with two-step verification on (2026-10-16). The
+    # caller holds a five-minute challenge token from /auth/login and no session yet; the challenge
+    # token in the body IS the credential, signed with its own key and counted five attempts deep.
+    ("POST", "/api/auth/two-factor/verify"): "the sign-in's second step: the challenge token in the body is the credential.",
     # Counts of public record types and when they were counted. World-readable by design: a census is
     # the same number for everybody, and it is the landing page's first request.
     ("GET", "/api/public/census"): "aggregate counts on a public landing page; nothing is attached to a person.",

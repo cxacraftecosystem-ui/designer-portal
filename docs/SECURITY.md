@@ -921,6 +921,38 @@ fingerprint is compared with the row `resolve_user` hands back, which may be the
 write by up to `AUTH_USER_CACHE_TTL_SECONDS`, and a session opened with the NEW password inside that
 window is refused until the cached row expires.
 
+
+### 3.7 Two-step verification (TOTP, 2026-10-16)
+
+**OPT-IN, FOR EVERY ROLE.** Any account may turn it on from its own Settings (web: the "Two-step
+verification" card; Android: Settings → Two-step verification); nobody is made to. Once on, **every
+sign-in method** asks for it — the password, Google, Microsoft and Yahoo — because the challenge is
+issued at the one point all four converge in `routes/auth.login`, after every admission gate and
+before the "first seen" stamps. The mechanism is `backend/app/services/two_factor.py`; the routes are
+`backend/app/api/routes/two_factor.py` and `DELETE /api/users/{id}/two-factor`. Ported from cxa-cms
+(`lib/auth/totp.ts`), with replay protection that implementation lacked.
+
+| Property | What it is |
+|---|---|
+| Algorithm | RFC 6238 TOTP: HMAC-SHA-1, 6 digits, 30-second steps, ±1 step accepted. Standard library only (`hmac`, `hashlib`, `secrets`); `backend/tests/test_two_factor.py` checks RFC 6238 Appendix B's SHA-1 vectors |
+| Secret | 160 random bits, 32 base32 characters. **Encrypted at rest** with AES-256-GCM (`cryptography`), key = scrypt(`JWT_SECRET`, fixed label, N=2^14), stored as `v1.<iv>.<tag>.<ciphertext>` in `User.twoFactorSecret` (or `twoFactorPendingSecret` between setup and confirmation). No response ever carries either column; `serialize_user` and `records._SENSITIVE_KEYS` strip them |
+| Replay | A code is accepted only for a time step **strictly above** `User.twoFactorLastStep`, written by one conditional UPDATE — so a code works once, and two concurrent submissions of it cannot both win. The code that switches it on is recorded too |
+| Recovery codes | Ten, `xxxx-xxxx` from an alphabet without look-alikes, stored as bcrypt hashes (`security.hash_password`). Shown once at enable time and once at "Make new recovery codes" (which needs a current authenticator code). Each is spent by a conditional UPDATE on the whole array, so it works once |
+| The challenge | After the first factor, `POST /api/auth/login` answers 200 `{"two_factor_required": true, "challenge_token": …}` and **no session**. The token is a JWT (`purpose: "2fa"`, `sub`, `jti`, five minutes) signed with a key **derived** from `JWT_SECRET` under its own label, so it can never verify as a bearer token. `POST /api/auth/two-factor/verify` `{challenge_token, code}` re-runs the admission gates and answers exactly what a sign-in answers |
+| Guessing budgets | Four. Five attempts per challenge, counted in `TwoFactorChallenge` with a conditional UPDATE so every API worker shares one count. **Two per-ACCOUNT failure budgets that signing in again does not reset** (`two_factor.check_second_factor`, the documentation portal's mechanism copied): six-digit codes spend ten slots per 15-minute window, recovery codes their own five, and a lock on one never blocks the other — so somebody holding only the password cannot shut the owner out of their recovery codes. Every code checked at `/verify`, the dataset token, `/disable` and `/recovery-codes` first CLAIMS a slot by one conditional UPDATE (`claim_attempt_slot`), so thirty guesses in flight at once check at most ten codes. The spent budget is locked by exactly one writer (`lock_if_spent`, a compare-and-swap on the window it ends) for 15 minutes, doubling with each lockout, capped at an hour; the lockout count decays to zero a day after the last lock ended. Each lock writes a WARNING `AUDIT two-factor locked` line and e-mails the owner through the outbox ("Someone used your Design Prototype Workshop password", no code, no address; a no-op when mail is off). While locked the code is not looked at: 429 "Too many attempts. Try again later." — and once BOTH budgets are locked `/auth/login` issues no challenge and answers the same 429, said plainly because only a password holder reaches it. A right code clears its budget (`settle_success`, which hands back only its own slot if a wrong code raced it); an administrator's reset clears all eight columns. The per-account credential bucket the password doors spend (ten in five minutes, refunded on a right code). And `/verify` is on the per-network credential list (`rate_limit._CREDENTIAL_PREFIXES`) |
+| Turning it off | The owner, with an authenticator code or a recovery code. Or an account provisioner, for an account it manages and never its own — the password-reset rule exactly (`assert_may_reset_credentials`) — which also **ends every session of that account** (`sessionsValidFrom`), since the usual reason is a lost phone that may still be signed in. The secret and every recovery code go with it |
+| Audit | Log lines naming account ids: switched on, switched off (and with which kind of code), new recovery codes, a sign-in with a recovery code, and an administrator's reset with the number of recovery codes it destroyed |
+| Every door that turns a password into a credential | `POST /api/auth/login` (all four first factors) answers a challenge; `POST /api/datasets/token` — a thirty-day read token — asks for `twoFactorCode` in its body and answers 401 without it. `change-password` needs a session already (opened through the second step), and a password link's redemption mints no session. Nothing else mints a token |
+| What it does not change | Existing sessions carry on when it is switched on. Android asks only at an online sign-in; a session already cached on a handset keeps working offline |
+
+The QR square is drawn **on the server** (`segno`, finished SVG geometry: one white square and one
+black path), so neither client carries a QR library and the `otpauth://` URI — which contains the
+secret — is never sent to a third-party image service. Android draws the same path with Compose's own
+path parser and also offers "Open in authenticator app" and "Copy key", because the phone is usually
+the device the authenticator is on. No new environment variable: the keys derive from `JWT_SECRET`,
+so **rotating `JWT_SECRET` makes every stored secret undecryptable** — those accounts then get in with
+a recovery code or an administrator's reset, and enrol again.
+
 ---
 
 ## 4. Authorisation: the eleven-tier ladder

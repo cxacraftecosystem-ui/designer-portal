@@ -21,8 +21,9 @@ from app.core.deps import (
     role_value,
 )
 from app.core.security import hash_password
+from app.core.user_fields import SECRET_USER_FIELDS
 from app.schemas.users import UserCreate, UserUpdate
-from app.services import access_roster, credential_links
+from app.services import access_roster, credential_links, two_factor
 from app.services.aadhaar import flags as aadhaar_flags
 
 # THE RULES OF WHO MAY DO WHAT TO WHOSE ACCOUNT, imported rather than defined here. ``assert_role``
@@ -39,6 +40,7 @@ from app.services.account_provisioning import (
     PROMOTION_WITH_A_TEMPORARY_PASSWORD_DETAIL,
     assert_can_manage_target,
     assert_may_grant,
+    assert_may_reset_credentials,
     assert_not_escaping_a_bar,
     assert_not_overturning_a_bar,
     assert_role,
@@ -98,7 +100,10 @@ logger = logging.getLogger(__name__)
 
 def serialize_user(user: Any) -> dict[str, Any]:
     payload = jsonable_encoder(user)
-    payload.pop("passwordHash", None)
+    # ``app/core/user_fields.py``: the hash and every second-factor secret, counter and lock.
+    # ``twoFactorEnabled`` stays: it is the "Two-step on" badge.
+    for field in SECRET_USER_FIELDS:
+        payload.pop(field, None)
     # The Aadhaar result columns ride out only while a verification feature is switched on.
     return aadhaar_flags.hide_columns(payload)
 
@@ -783,6 +788,49 @@ def _undeletable_detail(
         listed = nouns[0] if len(nouns) == 1 else f"{', '.join(nouns[:-1])} and {nouns[-1]}"
         sentences.append(f"This list may be incomplete: {listed} could not be counted.")
     return " ".join(sentences)
+
+
+@router.delete("/{user_id}/two-factor")
+async def reset_two_factor(
+    user_id: str, current_user: Any = Depends(require_account_provisioner)
+) -> dict[str, Any]:
+    """Turn somebody's two-step verification off — they have lost the phone it was on.
+
+    THE PASSWORD-RESET RULE, EXACTLY: ``account_provisioning.assert_may_reset_credentials``, which the
+    PATCH password field and both password-link routes ask. A provisioner, on an account it may
+    manage, and never its own — your own goes off from the account screen with a code, because a
+    session alone is not proof of presence and this route asks for none.
+
+    AN ADMINISTRATOR MAY REMOVE A SECOND FACTOR AND MAY NEVER READ ONE: the secret is not selected,
+    decrypted or returned, and the recovery-code hashes are only counted, for the audit line. They go
+    with the secret, or a "switched off" factor would keep ten live credentials nobody remembers.
+
+    EVERY SESSION OF THE ACCOUNT ENDS (``sessionsValidFrom``). The person asking for this has usually
+    lost a device, and that device may still hold a signed-in session.
+
+    409 when it is already off: the screen offers this only for an account that has it on, so the list
+    in front of the administrator is out of date and should be reloaded rather than silently agreed with.
+    """
+    target = await db.user.find_unique(where={"id": user_id})
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    assert_may_reset_credentials(current_user, target)
+    if not target.twoFactorEnabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Two-step verification is already off for this account. Reload the list.",
+        )
+    destroyed = await two_factor.reset_by_administrator(target)
+    invalidate_cached_user(target.id)
+    logger.info(
+        "users: %s turned two-step verification off for account %s (%d recovery code(s) destroyed, "
+        "sessions ended)",
+        current_user.id,
+        target.id,
+        destroyed,
+    )
+    updated = await db.user.find_unique(where={"id": target.id})
+    return serialize_user(updated)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

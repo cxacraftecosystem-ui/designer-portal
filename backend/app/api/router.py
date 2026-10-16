@@ -42,6 +42,7 @@ from app.api.routes import (
     settings,
     tasks,
     tools,
+    two_factor,
     usage,
     users,
     workshop_types,
@@ -52,6 +53,9 @@ api_router = APIRouter(prefix="/api")
 
 api_router.include_router(auth.router)
 api_router.add_api_route("/me", auth.me, methods=["GET"], tags=["auth"])
+# Two-step verification — /api/auth/two-factor. Its own module because it is its own mechanism; its
+# /verify ends in auth.open_session, so a sign-in finished there answers exactly as /login does.
+api_router.include_router(two_factor.router)
 api_router.include_router(users.router)
 api_router.include_router(aadhaar.router)
 api_router.include_router(aadhaar.features_router)

@@ -13,7 +13,7 @@ switches a flag on (§2).
 | Web | `frontend/components/aadhaar/`, `frontend/lib/aadhaar.ts`, `frontend/lib/aadhaarQrImage.ts` |
 | Android | `android/app/src/main/java/com/designprototype/workshop/ui/aadhaar/AadhaarVerification.kt`, `android/app/src/main/java/com/designprototype/workshop/data/AadhaarApi.kt` |
 | Certificates | `backend/app/data/uidai/` + `manifest.json` |
-| Schema | `20261016100000_aadhaar_verification` |
+| Schema | `20261016110000_aadhaar_verification` |
 | Tests | `backend/tests/test_aadhaar_offline.py`, `test_aadhaar_online.py`, `test_aadhaar_api.py`, `test_aadhaar_names.py`; `frontend/e2e/aadhaar-unit.spec.ts`; `AadhaarVerificationTest.kt` |
 
 ---

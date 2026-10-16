@@ -42,6 +42,7 @@ import {
   type IssuedPasswordLink,
   type PasswordLinkDelivery
 } from "@/lib/signIn";
+import { resetTwoFactorForUser } from "@/lib/twoFactor";
 import type { PageResult, User, UserRole } from "@/lib/types";
 
 import {
@@ -118,6 +119,12 @@ function AccountStatusCell({ user }: { user: User }) {
         </span>
         {user.firstLoginAt ? (
           <span className="text-xs text-ink-500">First signed in {formatDate(user.firstLoginAt)}</span>
+        ) : null}
+        {user.twoFactorEnabled ? (
+          <span className="inline-flex w-fit items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-800">
+            <ShieldCheck className="h-3 w-3" aria-hidden />
+            Two-step on
+          </span>
         ) : null}
       </span>
     </td>
@@ -419,6 +426,29 @@ function UsersScreen() {
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update access");
+    }
+  }
+
+  async function turnOffTwoFactor(user: User) {
+    const ok = await confirm({
+      title: "Turn off two-step verification?",
+      body: (
+        <>
+          <span className="font-medium text-ink-900">{user.name || user.email}</span> will sign in with just their
+          password or their usual sign-in, and is signed out everywhere now. Their recovery codes stop working.
+        </>
+      ),
+      note: "They can turn it on again from their own Settings, with a new phone.",
+      confirmLabel: "Turn off",
+      tone: "warning"
+    });
+    if (!ok) return;
+    try {
+      await resetTwoFactorForUser(user.id);
+      setError(null);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to turn off two-step verification");
     }
   }
 
@@ -969,6 +999,15 @@ function UsersScreen() {
                               onClick={() => setTemporary({ open: true, user })}
                             >
                               Set temporary password
+                            </button>
+                          ) : null}
+                          {offers.resetTwoFactor ? (
+                            <button
+                              type="button"
+                              className={rowAction("neutral")}
+                              onClick={() => turnOffTwoFactor(user)}
+                            >
+                              Turn off two-step verification
                             </button>
                           ) : null}
                           {offers.remove ? (

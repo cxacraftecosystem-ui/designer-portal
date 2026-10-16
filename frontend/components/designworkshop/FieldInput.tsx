@@ -115,6 +115,7 @@ import { DateField, TimeField } from "@/components/forms/DateTimeField";
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { DocumentPreview } from "@/components/media/DocumentPreview";
+import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
 import { GalleryProgress } from "@/components/media/GalleryProgress";
 import { MediaCarousel, type CarouselItem } from "@/components/media/MediaCarousel";
 import { capCeilingClause, mediaPickerTypeFilter } from "@/components/media/mediaPicker";
@@ -169,9 +170,20 @@ import {
   subscribeStaging,
   uploadMediaBatch
 } from "@/lib/media";
+import { downloadLocalMedia, downloadMediaUrl } from "@/lib/localMediaDownload";
 import { isTransient } from "@/lib/offline";
 import { loadStageReferences } from "@/lib/referenceCache";
 import type { MediaFile, MediaType } from "@/lib/types";
+
+/** A `dwlocal:` reference read out of the draft store: what its tile draws, and the bytes to save. */
+type StagedTile = {
+  name: string;
+  url: string | null;
+  sizeBytes: number;
+  blob: Blob | null;
+  mimeType: string;
+  capturedAt: number;
+};
 
 /**
  * The record type media captured against a design workshop is linked by.
@@ -279,6 +291,7 @@ const EMPTY_PENDING: File[] = [];
  * `usePendingMedia` falls back to local state, which is exactly what this replaced, so a surface
  * that mounts a `FieldInput` outside a stage page needs no change.
  */
+
 export function StagePendingMediaProvider({ children }: { children: React.ReactNode }) {
   const [held, setHeld] = useState<Record<string, File[]>>({});
 
@@ -3196,7 +3209,7 @@ function MediaField({
    * the local store is built to make impossible and therefore the one worth a sentence: the blob is
    * gone.
    */
-  const [staged, setStaged] = useState<Record<string, { name: string; url: string | null; sizeBytes: number } | null>>(
+  const [staged, setStaged] = useState<Record<string, StagedTile | null>>(
     {}
   );
   const [problem, setProblem] = useState<string | null>(null);
@@ -3389,7 +3402,7 @@ function MediaField({
       return;
     }
     (async () => {
-      const tiles: Record<string, { name: string; url: string | null; sizeBytes: number } | null> = {};
+      const tiles: Record<string, StagedTile | null> = {};
       /**
        * References the sync pass has since turned into real media ids.
        *
@@ -3417,7 +3430,14 @@ function MediaField({
         }
         const url = media.blob && media.mimeType.startsWith("image/") ? URL.createObjectURL(media.blob) : null;
         if (url) created.push(url);
-        tiles[ref] = { name: media.name, url, sizeBytes: media.sizeBytes };
+        tiles[ref] = {
+          name: media.name,
+          url,
+          sizeBytes: media.sizeBytes,
+          blob: media.blob,
+          mimeType: media.mimeType,
+          capturedAt: media.capturedAt
+        };
       }
       if (cancelled) {
         created.forEach((url) => URL.revokeObjectURL(url));
@@ -4285,6 +4305,33 @@ function MediaField({
                   <span className="shrink-0 rounded-full bg-field-200 px-2 py-0.5 text-xs font-medium text-ink-700">
                     You don&apos;t have access to this file
                   </span>
+                ) : null}
+                {/*
+                  DOWNLOAD, FROM WHICHEVER COPY EXISTS. A `dwlocal:` file is saved from the blob in
+                  the draft store, so it works while the sync pass is still sending it; an uploaded
+                  one from the URL the server handed back. Disabled with a sentence only when the
+                  local bytes are genuinely gone; never drawn while the store is still being read.
+                */}
+                {local ? (
+                  <DownloadMediaButton
+                    name={local.name}
+                    onDownload={() => {
+                      if (local.blob)
+                        downloadLocalMedia(local.blob, { name: local.name, mimeType: local.mimeType, capturedAt: local.capturedAt });
+                    }}
+                    unavailableReason={local.blob ? null : "This copy is no longer on this device."}
+                  />
+                ) : local === null ? (
+                  <DownloadMediaButton
+                    name={id}
+                    onDownload={() => undefined}
+                    unavailableReason="This copy is no longer on this device."
+                  />
+                ) : file?.url ? (
+                  <DownloadMediaButton
+                    name={file.originalFilename}
+                    onDownload={() => void downloadMediaUrl(file.url!, file.originalFilename, file.mimeType)}
+                  />
                 ) : null}
                 <button
                   type="button"

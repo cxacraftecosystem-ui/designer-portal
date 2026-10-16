@@ -141,7 +141,9 @@ data class UserDto(
     val aadhaarVerifiedAt: String? = null,
     val aadhaarVerifyLast4: String? = null,
     val aadhaarVerifyName: String? = null,
-    val aadhaarVerifyNameMatch: Boolean? = null
+    val aadhaarVerifyNameMatch: Boolean? = null,
+    /** Two-step verification is on. Drives the "Two-step on" badge and the administrator's reset. */
+    val twoFactorEnabled: Boolean = false
 )
 
 /**

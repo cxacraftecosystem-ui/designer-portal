@@ -102,7 +102,8 @@ from app.core.security import create_access_token, verify_password
 # rather than reimplemented: one account is one allowance across every door in this API that turns a
 # password into something. See the second banner in that module.
 from app.scale.rate_limit import account_credential_attempt, account_credential_refund
-from app.schemas.auth import LoginRequest
+from app.schemas.auth import DatasetTokenRequest
+from app.services import two_factor
 from app.services.concurrency import gather_reads
 from app.services.csv_export import record_media
 from app.services.feedback_vocabulary import label_for
@@ -693,8 +694,15 @@ DATASET_TOKEN_NEEDS_OWN_PASSWORD_DETAIL = (
 )
 
 
+#: The answer to a correct password on an account with two-step verification on and no code sent.
+DATASET_TOKEN_NEEDS_CODE_DETAIL = (
+    "This account uses two-step verification. Send the 6-digit code from your authenticator app as "
+    "twoFactorCode."
+)
+
+
 @router.post("/token")
-async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
+async def mint_dataset_token(payload: DatasetTokenRequest) -> dict[str, Any]:
     """Exchange ADMIN credentials for a long-lived, read-only token for this API.
 
     This is how a machine authenticates. It is a separate endpoint from ``POST /api/auth/login``
@@ -831,6 +839,29 @@ async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=DATASET_TOKEN_NEEDS_OWN_PASSWORD_DETAIL,
         )
+    # ── THE SECOND STEP, BECAUSE THIS DOOR TURNS A PASSWORD INTO A CREDENTIAL TOO (2026-10-16) ──
+    #
+    # A thirty-day read token over the whole repository is a strictly better prize than a session,
+    # so an account with two-step verification on must prove it here exactly as at `/auth/login`:
+    # `twoFactorCode` in the body, checked and SPENT through the same per-account failure budget.
+    # Without it this route would be the way round the second factor for anybody holding the password.
+    if getattr(user, "twoFactorEnabled", False):
+        if not payload.twoFactorCode:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail=DATASET_TOKEN_NEEDS_CODE_DETAIL
+            )
+        try:
+            accepted = await two_factor.check_second_factor(user, payload.twoFactorCode)
+        except two_factor.SecondFactorLocked as locked:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=two_factor.TOO_MANY_ATTEMPTS_DETAIL,
+            ) from locked
+        if not accepted:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail=two_factor.WRONG_CODE_DETAIL
+            )
+        user = await db.user.find_unique(where={"id": user.id}) or user
 
     minutes = get_settings().dataset_token_expires_minutes
     token = create_access_token(

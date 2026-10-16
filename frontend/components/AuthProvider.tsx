@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import type { loginBody } from "@/lib/oidcSignIn";
 import { mustChangePassword } from "@/lib/signIn";
+import { isTwoFactorChallenge, type SignInResult, type TwoFactorChallenge } from "@/lib/twoFactor";
 import type { User } from "@/lib/types";
 
 type OidcLoginBody = ReturnType<typeof loginBody>;
@@ -32,10 +33,16 @@ type AuthContextValue = {
    * own "already signed in" effect has already fired and replaced the route. The row is in hand the
    * moment the request resolves; handing it back is what lets the caller decide in the same tick.
    */
-  login: (email: string, password: string) => Promise<User>;
-  loginWithGoogle: (googleIdToken: string) => Promise<User>;
+  login: (email: string, password: string) => Promise<User | TwoFactorChallenge>;
+  loginWithGoogle: (googleIdToken: string) => Promise<User | TwoFactorChallenge>;
   /** Microsoft or Yahoo: the code the provider sent back, with this tab's half of the flow. See `lib/oidcSignIn.ts`. */
-  loginWithOidc: (body: OidcLoginBody) => Promise<User>;
+  loginWithOidc: (body: OidcLoginBody) => Promise<User | TwoFactorChallenge>;
+  /**
+   * The second half of a sign-in for an account with two-step verification on: the challenge token
+   * any of the three calls above answered, and a 6-digit or recovery code. Resolves to the account,
+   * signed in exactly as the first three would have; rejects with the server's sentence.
+   */
+  verifyTwoFactor: (challengeToken: string, code: string) => Promise<User>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
   /**
@@ -169,43 +176,71 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [refreshMe]
   );
 
-  const login = useCallback(
-    async (email: string, password: string) => {
-      const result = await apiFetch<{ accessToken: string; user: User }>("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password })
-      });
+  /**
+   * A sign-in's answer, taken: a session is adopted and its account returned; a TWO-STEP CHALLENGE is
+   * returned untouched, with no token stored and no account adopted — nobody is signed in until
+   * `verifyTwoFactor` turns it into a session. The caller branches on `isTwoFactorChallenge`.
+   */
+  const open = useCallback(
+    (result: SignInResult): User | TwoFactorChallenge => {
+      if (isTwoFactorChallenge(result)) return result;
       setToken(result.accessToken);
       adopt(result.user);
       return result.user;
     },
     [adopt]
+  );
+
+  const verifyTwoFactor = useCallback(
+    async (challengeToken: string, code: string) => {
+      // `redirectOn401: false`: a wrong code is a 401 (nobody is signed in yet), and it belongs in the
+      // form under the box, never in a navigation.
+      const result = await apiFetch<SignInResult>(
+        "/auth/two-factor/verify",
+        { method: "POST", body: JSON.stringify({ challenge_token: challengeToken, code }) },
+        { redirectOn401: false }
+      );
+      const account = open(result);
+      if (isTwoFactorChallenge(account)) throw new Error("Sign in again.");
+      return account;
+    },
+    [open]
+  );
+
+  const login = useCallback(
+    async (email: string, password: string) => {
+      return open(
+        await apiFetch<SignInResult>("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password })
+        })
+      );
+    },
+    [open]
   );
 
   const loginWithGoogle = useCallback(
     async (googleIdToken: string) => {
-      const result = await apiFetch<{ accessToken: string; user: User }>("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ googleIdToken })
-      });
-      setToken(result.accessToken);
-      adopt(result.user);
-      return result.user;
+      return open(
+        await apiFetch<SignInResult>("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ googleIdToken })
+        })
+      );
     },
-    [adopt]
+    [open]
   );
 
   const loginWithOidc = useCallback(
     async (body: OidcLoginBody) => {
-      const result = await apiFetch<{ accessToken: string; user: User }>("/auth/login", {
-        method: "POST",
-        body: JSON.stringify(body)
-      });
-      setToken(result.accessToken);
-      adopt(result.user);
-      return result.user;
+      return open(
+        await apiFetch<SignInResult>("/auth/login", {
+          method: "POST",
+          body: JSON.stringify(body)
+        })
+      );
     },
-    [adopt]
+    [open]
   );
 
   const logout = useCallback(async () => {
@@ -248,13 +283,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       login,
       loginWithGoogle,
       loginWithOidc,
+      verifyTwoFactor,
       logout,
       refreshMe,
       passwordChangeRequired,
       markPasswordChanged,
       clearSession
     }),
-    [user, loading, login, loginWithGoogle, loginWithOidc, logout, refreshMe, passwordChangeRequired, markPasswordChanged, clearSession]
+    [user, loading, login, loginWithGoogle, loginWithOidc, verifyTwoFactor, logout, refreshMe, passwordChangeRequired, markPasswordChanged, clearSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

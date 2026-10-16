@@ -20,6 +20,7 @@ from app.core.deps import (
     role_value,
 )
 from app.core.security import create_access_token, hash_password, verify_password
+from app.core.user_fields import SECRET_USER_FIELDS
 from app.scale.rate_limit import account_credential_attempt, account_credential_refund
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -28,8 +29,9 @@ from app.schemas.auth import (
     PasswordLinkCheckRequest,
     SetPasswordRequest,
     TokenResponse,
+    TwoFactorChallengeResponse,
 )
-from app.services import access_roster, credential_links, identity, oidc_sign_in, usage
+from app.services import access_roster, credential_links, identity, oidc_sign_in, two_factor, usage
 from app.services.aadhaar import flags as aadhaar_flags
 from app.services.account_provisioning import (
     GOOGLE_ONLY_LINK_DETAIL,
@@ -229,7 +231,10 @@ def serialize_user(user: Any) -> dict[str, Any]:
     every ``/me`` in the product.
     """
     payload = jsonable_encoder(user)
-    payload.pop("passwordHash", None)
+    # The password hash and every second-factor secret, hash, counter and lock — one list,
+    # `app/core/user_fields.py`. Whether it is on (`twoFactorEnabled`) and since when do go out.
+    for field in SECRET_USER_FIELDS:
+        payload.pop(field, None)
     payload[USAGE_CONSENT_GATE_KEY] = usage.consent_gate(user)
     # The optional features this deployment has switched on, so a client can draw (or not draw)
     # them from the payload it already holds — and a handset can keep the answer offline. While
@@ -780,7 +785,7 @@ async def _sign_in_verified_mailbox(
     return created, access
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse | TwoFactorChallengeResponse)
 async def login(payload: LoginRequest) -> dict[str, Any]:
     # ONE SIGN-IN DOOR, FOR BOTH CREDENTIALS. There used to be a `POST /auth/google` beside this —
     # four lines that rejected a body without a `googleIdToken` and then called straight into here.
@@ -886,6 +891,39 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
         # row was never written still gets in.
         access = await assert_access_admits(user.email, is_master=is_break_glass_master(user))
 
+    await admit_signed_in_account(user, access)
+
+    # ── THE SECOND STEP, FOR AN ACCOUNT THAT SWITCHED IT ON ─────────────────────────────────────
+    #
+    # AFTER EVERY ADMISSION GATE, AND BEFORE ANY "FIRST SEEN" STAMP. After the gates, so a suspended
+    # designer or a barred address is told what actually happened rather than asked for a code that
+    # would only lead to the same refusal; before the stamps, because those mean "somebody actually
+    # got IN" and nobody has until the second factor is proved. Every first factor reaches this line —
+    # the password, Google, Microsoft and Yahoo — which is why the challenge lives here and not in the
+    # branches. No session is minted: the answer is a five-minute challenge token that only
+    # ``POST /auth/two-factor/verify`` accepts, and that route ends in :func:`open_session`, the same
+    # tail as the line below. See ``app/services/two_factor.py``.
+    if getattr(user, "twoFactorEnabled", False):
+        # LOCKED: no challenge is minted, so none can be stockpiled to spend the moment the lock
+        # lapses. Said plainly, with /verify's own words: only somebody holding the password reaches
+        # this line, and hiding the lock would hide from the owner that the password is known.
+        # "Locked" means EVERY way in — a six-digit lock alone still leaves the owner's recovery
+        # codes, and they need a challenge to use one.
+        if two_factor.fully_locked(user):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=two_factor.TOO_MANY_ATTEMPTS_DETAIL
+            )
+        return {
+            "two_factor_required": True,
+            "challenge_token": await two_factor.issue_challenge(user),
+        }
+    return await open_session(user, access)
+
+
+async def admit_signed_in_account(user: Any, access: Any) -> None:
+    """The admission that follows ANY proved first factor: auto-empanelment, then the designer
+    roster's own gate. Shared by :func:`login` and ``POST /auth/two-factor/verify``, which re-runs it
+    because up to five minutes can pass between the two and an empanelment can end in them."""
     # AUTO-EMPANELMENT: SOMEBODY THE ALLOW-LIST ADMITS AS A DESIGNER IS EMPANELLED BY DEFAULT.
     #
     # An admin who admits an address as a designer has empanelled them, and until this line existed
@@ -930,6 +968,15 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
     # path has had its chance to promote a newly empanelled account — checking earlier would refuse
     # the very designer the roster was added to admit.
     await assert_roster_admits(user)
+
+
+async def open_session(user: Any, access: Any) -> dict[str, Any]:
+    """The "first seen" stamps and the session itself — the answer a successful sign-in gets.
+
+    Reached from :func:`login` for an account without two-step verification, and from
+    ``POST /auth/two-factor/verify`` once the second step is proved, so both answer with exactly the
+    same body.
+    """
     # Only now: "first seen" means the first time somebody actually got IN, so a suspended
     # designer's rejected attempt must not consume the stamp an admin reads as "the invitation
     # was accepted". Both rosters carry the stamp, for the same reason, on the same rule.
