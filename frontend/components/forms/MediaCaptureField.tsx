@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Camera, FolderOpen, Mic, Square, Video } from "lucide-react";
 
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
+import { downloadLocalMedia } from "@/lib/localMediaDownload";
 import { RecordingStrip } from "@/components/media/Waveform";
 import {
   findQualityIssues,
@@ -797,6 +798,11 @@ export function MediaCaptureField({
                   failed={entry?.status === "error"}
                   statusLabel={stageStatusLabel(entry)}
                   onRetry={entry ? () => staging.retry(entry.file) : undefined}
+                  // From the File this field holds, so it works mid-upload and after it alike.
+                  onDownload={() => {
+                    const file = files[index];
+                    if (file) downloadLocalMedia(file);
+                  }}
                 />
               );
             })}

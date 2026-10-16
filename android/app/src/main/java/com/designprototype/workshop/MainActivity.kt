@@ -99,6 +99,10 @@ import com.designprototype.workshop.ui.IslandGroup
 import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.OfflineOutboxTray
+import com.designprototype.workshop.ui.MediaDownloadButton
+import com.designprototype.workshop.ui.MediaDownloadNotice
+import com.designprototype.workshop.ui.rememberMediaDownloader
+import com.designprototype.workshop.data.mediaDisplayNameOf
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.TextButton
@@ -9464,7 +9468,7 @@ private fun MediaCaptureSection(
                         progress = media.stagedProgress[uri],
                         failed = uri in media.stagedFailed,
                         onRetry = { startEagerUpload(repository, context, media, uri, scope) },
-                        onDownload = { saveLocalUriToDevice(context, uri) },
+                        downloadable = true,
                         onRemove = {
                             // Drop just this file from the batch and clean up its staged object (if any).
                             val deferred = media.stagedDeferred[uri]
@@ -9580,7 +9584,7 @@ private fun AttachedUploadsCard(
                 progress = media.stagedProgress[uri],
                 failed = uri in media.stagedFailed,
                 onRetry = { startEagerUpload(repository, context, media, uri, scope) },
-                onDownload = { saveLocalUriToDevice(context, uri) },
+                downloadable = true,
                 onRemove = { onRemove(uri) }
             )
         }
@@ -16822,7 +16826,7 @@ private fun AndroidMediaForm(
                     AndroidUriPreview(
                         context = context,
                         uri = uri,
-                        onDownload = { saveLocalUriToDevice(context, uri) },
+                        downloadable = true,
                         onRemove = { selectedUris = selectedUris.filterNot { it == uri } }
                     )
                 }
@@ -17218,13 +17222,15 @@ private fun AndroidUriPreview(
     onRemove: (() -> Unit)? = null,
     progress: Float? = null,
     failed: Boolean = false,
-    // Per-file actions. [onRetry] re-runs just this file's upload (shown when it failed); [onDownload]
-    // saves a copy of the captured media straight to the device's Downloads — available regardless of
-    // upload state, so the user never loses the media even when the network is failing.
+    // Per-file actions. [onRetry] re-runs just this file's upload (shown when it failed); [downloadable]
+    // offers Download, which saves a copy of the captured media to the device's Downloads from the
+    // local handle — available regardless of upload state, so the user never loses the media even
+    // when the network is failing. See `data/MediaDownloads.kt`.
     onRetry: (() -> Unit)? = null,
-    onDownload: (() -> Unit)? = null
+    downloadable: Boolean = false
 ) {
     val mimeType = remember(uri) { context.contentResolver.getType(uri) }
+    val downloader = rememberMediaDownloader()
     val mediaType = remember(mimeType) { mediaTypeFromMime(mimeType) }
     var showViewer by remember { mutableStateOf(false) }
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -17261,7 +17267,7 @@ private fun AndroidUriPreview(
         }
         progress != null && progress >= 1f -> Text("Uploaded ✓", color = SuccessGreen, fontSize = 10.sp)
     }
-    if (onRetry != null || onDownload != null) {
+    if (onRetry != null || downloadable) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -17276,17 +17282,16 @@ private fun AndroidUriPreview(
                     Text("Retry", fontSize = 12.sp)
                 }
             }
-            if (onDownload != null) {
-                TextButton(
-                    onClick = onDownload,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Download", fontSize = 12.sp)
-                }
+            if (downloadable) {
+                MediaDownloadButton(
+                    fileName = uri.lastPathSegment.orEmpty(),
+                    onDownload = {
+                        downloader.save(uri, mediaDisplayNameOf(context, uri), mimeType)
+                    }
+                )
             }
         }
+        MediaDownloadNotice(downloader)
     }
     if (showViewer) {
         MediaViewerDialog(uri = uri, mediaType = mediaType, onDismiss = { showViewer = false })
@@ -22028,57 +22033,6 @@ private fun saveTranscriptToDownloads(
                     Toast.LENGTH_LONG
                 ).show()
             }
-    }
-}
-
-/**
- * Save a locally-captured (content://) attachment straight into the device's public Downloads folder
- * by streaming its bytes from the content resolver. Unlike [saveMediaToDevice] — which hands a remote
- * URL to the system DownloadManager — this works for files that have NOT been uploaded yet (or whose
- * upload failed), so a user can always keep the media on-device while the network is unreliable.
- */
-private fun saveLocalUriToDevice(context: Context, uri: Uri) {
-    val resolver = context.contentResolver
-    val mimeType = resolver.getType(uri) ?: "application/octet-stream"
-    val rawName = run {
-        var name: String? = null
-        runCatching {
-            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (index >= 0 && cursor.moveToFirst()) name = cursor.getString(index)
-            }
-        }
-        name ?: uri.lastPathSegment ?: "field-media-${System.currentTimeMillis()}"
-    }
-    val safeName = rawName.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "field-media-${System.currentTimeMillis()}" }
-    runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, safeName)
-                put(MediaStore.Downloads.MIME_TYPE, mimeType)
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            }
-            val target = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IllegalStateException("Couldn't create a Downloads entry")
-            resolver.openOutputStream(target)?.use { out ->
-                resolver.openInputStream(uri)?.use { input -> input.copyTo(out) }
-                    ?: throw IllegalStateException("Couldn't read the media")
-            } ?: throw IllegalStateException("Couldn't open the Downloads file")
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(target, values, null, null)
-        } else {
-            @Suppress("DEPRECATION")
-            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            if (!dir.exists()) dir.mkdirs()
-            val outFile = File(dir, safeName)
-            resolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(outFile).use { out -> input.copyTo(out) }
-            } ?: throw IllegalStateException("Couldn't read the media")
-        }
-        Toast.makeText(context, "Saved \"$safeName\" to Downloads", Toast.LENGTH_SHORT).show()
-    }.onFailure {
-        Toast.makeText(context, "Couldn't save: ${it.message ?: "download failed"}", Toast.LENGTH_LONG).show()
     }
 }
 

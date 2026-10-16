@@ -535,6 +535,7 @@ function CraftsPageBody() {
           progress={uploadProgress}
           sectionId={MEDIA_SECTION}
           label={MEDIA_SECTION_LABEL}
+          files={mediaFiles}
           className="md:col-span-2 lg:col-span-4"
         />
         {/* Editing an existing craft: everything already attached to it, with playback and per-file

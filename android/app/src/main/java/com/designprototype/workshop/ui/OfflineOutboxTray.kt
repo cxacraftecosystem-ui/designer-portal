@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DW_DRAFT_OTHER_ACCOUNT_ROW
 import com.designprototype.workshop.data.REFERENCE_FIELD_NOUNS
 import com.designprototype.workshop.data.OutboxFailureRow
+import com.designprototype.workshop.data.OutboxQueuedFile
 import com.designprototype.workshop.data.RepickChoices
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.outboxDiscardConfirmation
@@ -41,6 +43,7 @@ import com.designprototype.workshop.data.outboxFailureRows
 import com.designprototype.workshop.data.outboxRetryAllMessage
 import com.designprototype.workshop.data.outboxRetryMessage
 import com.designprototype.workshop.data.repickEmptyLine
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -362,6 +365,10 @@ private fun OutboxFailureCard(
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
         )
+        // EVERY QUEUED FILE CAN BE SAVED FROM HERE, before it is ever sent: Download reads the
+        // outbox's private copy on this phone and changes nothing in the queue. Not gated on [busy]
+        // or [OutboxFailureRow.otherAccount] — keeping a copy acts on nothing.
+        if (row.files.isNotEmpty()) OutboxQueuedFiles(row.files)
         if (row.danglingNouns.isNotEmpty()) {
             // AN EYEBROW, for the clash eyebrow's reason and with the opposite words. The sentence
             // below carries the whole argument; this line is what a designer scanning six refused
@@ -597,4 +604,31 @@ private fun RepickDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Not now", fontSize = 13.sp) } },
     )
+}
+
+/** One line per queued file: its name and Download, in the same place on every row. */
+@Composable
+private fun OutboxQueuedFiles(files: List<OutboxQueuedFile>) {
+    val downloader = rememberMediaDownloader()
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        files.forEach { file ->
+            val local = remember(file.localPath) { File(file.localPath) }
+            val exists = remember(file.localPath) { local.isFile }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    file.name,
+                    color = MaterialTheme.field.body,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+                MediaDownloadButton(
+                    fileName = file.name,
+                    onDownload = { downloader.save(Uri.fromFile(local), file.name, file.mimeType) },
+                    unavailableReason = if (exists) null else "This copy is no longer on this device.",
+                )
+            }
+        }
+        MediaDownloadNotice(downloader)
+    }
 }

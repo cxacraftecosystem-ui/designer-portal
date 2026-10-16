@@ -37,6 +37,7 @@ import {
 } from "@/components/questionnaires/interviewArtisans";
 import { dictateAudio, dictationAnswerSentence } from "@/lib/designWorkshops";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
+import { downloadLocalMedia } from "@/lib/localMediaDownload";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { UploadTray } from "@/components/media/UploadTray";
 import { RecordingStrip } from "@/components/media/Waveform";
@@ -2748,7 +2749,7 @@ function QuestionnairePageBody() {
           allowDocuments={false}
           allowedTypes={["AUDIO"]}
         />
-        <UploadProgress progress={interviewProgress} sectionId={INTERVIEW_SECTION} label={INTERVIEW_SECTION_LABEL} />
+        <UploadProgress progress={interviewProgress} sectionId={INTERVIEW_SECTION} label={INTERVIEW_SECTION_LABEL} files={mediaFiles} />
         <LocationFields />
         <div className="grid gap-3">
           {orderedGroups.map(([code, group], index) => {
@@ -2824,6 +2825,7 @@ function QuestionnairePageBody() {
                       progress={questionProgress[sectionClipKey(group.section.id)] ?? null}
                       sectionId={clipTraySectionId(sectionClipKey(group.section.id))}
                       label={`Section ${group.section.code} audio`}
+                      files={questionAudioFiles[sectionClipKey(group.section.id)]}
                       className="mt-2"
                     />
                     {/*
@@ -3024,6 +3026,7 @@ function QuestionnairePageBody() {
                       progress={questionProgress[question.id] ?? null}
                       sectionId={clipTraySectionId(question.id)}
                       label={`Q${question.sectionCode}${question.sortOrder} audio`}
+                      files={questionAudioFiles[question.id]}
                       className="mt-2"
                     />
                   </div>
@@ -3492,6 +3495,10 @@ function ClipRecorder({
               key={item.key}
               item={item}
               onOpen={() => onOpenPreview(item)}
+              onDownload={() => {
+                const file = files[index];
+                if (file) downloadLocalMedia(file);
+              }}
               action={
                 <button type="button" className="text-xs font-semibold text-red-700" onClick={() => onRemove(index)}>
                   Remove

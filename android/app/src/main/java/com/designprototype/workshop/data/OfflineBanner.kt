@@ -220,6 +220,9 @@ fun outboxDeviceBanner(counts: OutboxCounts, online: Boolean): OutboxBanner? {
     )
 }
 
+/** One file waiting in the outbox: the private copy on this phone, and what to call it when saved. */
+data class OutboxQueuedFile(val localPath: String, val name: String, val mimeType: String)
+
 /**
  * One refused entry, as the tray lists it: what it was, why it will not send, what it is carrying.
  *
@@ -314,6 +317,12 @@ data class OutboxFailureRow(
      * caller with nobody signed in gets the behaviour it has always had.
      */
     val otherAccount: Boolean = false,
+    /**
+     * The files queued with this entry, as this phone holds them, so the tray can offer Download on
+     * each before anything is sent. Paths and names only — never the record body, for the reason
+     * the rest of this projection gives.
+     */
+    val files: List<OutboxQueuedFile> = emptyList(),
 )
 
 /**
@@ -488,6 +497,7 @@ fun outboxFailureRows(
                 ),
                 reason = entry.failure.orEmpty(),
                 mediaCount = entry.media.size,
+                files = entry.media.map { OutboxQueuedFile(it.localPath, it.originalFilename, it.mimeType) },
                 awaitingUpdate = entry.skewRun != null,
                 // BOTH HALVES, and neither implies the other. `failure` is what stopped the pass and
                 // is already the filter above; `conflict` is what this entry IS. An entry carrying
