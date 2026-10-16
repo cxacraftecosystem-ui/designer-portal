@@ -57,6 +57,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 
 import com.designprototype.workshop.data.UserDto
 
@@ -964,7 +967,13 @@ fun AppNavigationDrawerContent(
         .filter { (_, entries) -> entries.isNotEmpty() }
     val isAdmin = FieldPermissions.isAdmin(user)
 
-    ModalDrawerSheet {
+    ModalDrawerSheet(
+        // Width capped and inner edge rounded, and announced as a pane: see AppMenuDrawer.kt.
+        modifier = Modifier
+            .widthIn(max = appMenuDrawerMaxWidth())
+            .semantics { paneTitle = "Menu" },
+        drawerShape = APP_MENU_DRAWER_SHAPE
+    ) {
         // Brand block — the island's left end: the mark in its cream tile, the wordmark in the
         // display face, and who you are signed in as.
         Row(

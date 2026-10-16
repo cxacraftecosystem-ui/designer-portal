@@ -305,7 +305,9 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
         // Server-side ownership filter — see the note on [artisans].
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        // The route's own text filter (`crafts.py`'s `search`), used by the app-wide search panel.
+        @Query("search") search: String? = null
     ): PageResponse<CraftDto>
 
     @POST("artisans")
@@ -739,7 +741,9 @@ interface WorkshopRepositoryApi {
         @Query("pageSize") pageSize: Int = 100,
         @Query("productId") productId: String? = null,
         // Server-side ownership filter — see the note on [artisans].
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        // The route's own text filter (`processes.py`'s `search`), used by the app-wide search panel.
+        @Query("search") search: String? = null
     ): PageResponse<ProcessDetailDto>
 
     @GET("processes/{id}")
@@ -814,7 +818,9 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
         // Server-side ownership filter — see the note on [artisans].
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        // The route's own text filter (`questionnaire.py`'s `search`), used by the app-wide search.
+        @Query("search") search: String? = null
     ): PageResponse<QuestionnaireInterviewDetailDto>
 
     @GET("questionnaire/interviews/{id}")
