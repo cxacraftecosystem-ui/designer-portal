@@ -74,7 +74,7 @@
  * control and a branch nobody can execute is a branch nobody has checked.
  */
 
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Search, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { AnchoredPopover } from "@/components/ui/AnchoredPopover";
@@ -1680,7 +1680,18 @@ export type SearchableMultiSelectProps = {
    * empty array, and a second spelling of that state is the thing `bulk` above exists to prevent.
    */
   serverQuery?: SelectServerQuery;
+  /**
+   * Draw each selection as a chip under the trigger, with a remove button on each. **On by default**
+   * (owner's ruling, 2026-10-17: "chips for selections with remove"); a trigger reading "3 selected"
+   * tells nobody WHICH three. A disabled option's chip has no remove button — the panel would refuse
+   * that untick too. Pass `false` only where the screen already lists the selection beside the
+   * control, so it is not drawn twice.
+   */
+  chips?: boolean;
 };
+
+/** Chips drawn before "and N more": enough for a field's answer, few enough not to bury the form. */
+export const CHIP_LIMIT = 12;
 
 export function SearchableMultiSelect({
   values,
@@ -1697,7 +1708,8 @@ export function SearchableMultiSelect({
   confirmOnSelect = true,
   confirmLabel = "Confirm",
   bulk = true,
-  serverQuery
+  serverQuery,
+  chips = true
 }: SearchableMultiSelectProps) {
   const [open, setOpen] = useState(false);
   /** This control's own term, unread when `serverQuery` owns it — see the single-select's. */
@@ -2083,6 +2095,39 @@ export function SearchableMultiSelect({
           aria-hidden
         />
       </button>
+
+      {chips && values.length ? (
+        <ul className="mt-2 flex flex-wrap gap-1.5" aria-label={ariaLabel ? `${ariaLabel}: selected` : "Selected"}>
+          {values.slice(0, CHIP_LIMIT).map((value) => {
+            const option = options.find((candidate) => candidate.value === value);
+            const label = option?.label ?? value;
+            const removable = !disabled && !option?.disabled;
+            return (
+              <li
+                key={value}
+                className="inline-flex min-h-8 max-w-full items-center gap-1 rounded-full border border-purple-200 bg-purple-50 py-0.5 pl-3 pr-1 text-xs font-medium text-purple-800 dark:border-purple-800 dark:bg-purple-950/40 dark:text-purple-200"
+              >
+                <span className="min-w-0 truncate">{label}</span>
+                {removable ? (
+                  <button
+                    type="button"
+                    aria-label={`Remove ${label}`}
+                    onClick={() => onChange(values.filter((kept) => kept !== value))}
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-purple-700 transition hover:bg-purple-100 dark:text-purple-200 dark:hover:bg-purple-900"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                ) : (
+                  <span className="w-2" aria-hidden />
+                )}
+              </li>
+            );
+          })}
+          {values.length > CHIP_LIMIT ? (
+            <li className="self-center text-xs text-ink-500">and {values.length - CHIP_LIMIT} more</li>
+          ) : null}
+        </ul>
+      ) : null}
 
       <AnchoredPopover
         open={open}

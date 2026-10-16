@@ -4,9 +4,19 @@ The mechanism — the TOTP arithmetic, the encryption at rest, the recovery code
 and every conditional update that makes a code single-use — is in ``app/services/two_factor.py``.
 This module is the HTTP surface and the audit lines, nothing else.
 
-Six routes. ``POST /verify`` is the only unauthenticated one: it is the second half of a sign-in, and
-its answer is exactly ``POST /auth/login``'s (it ends in ``auth.open_session``). The other five are
+Seven routes. ``POST /verify`` is the only unauthenticated one: it is the second half of a sign-in,
+and its answer is exactly ``POST /auth/login``'s (it ends in ``auth.open_session``). The other six are
 the account's own controls, available to every role and forced on none.
+
+── A SETUP IS NOT "ON" UNTIL A CODE CONFIRMS IT ──────────────────────────────────────────────────────
+
+``POST /setup`` stores a PENDING secret and switches nothing on; only ``/enable`` does, after a code
+from that secret checks out. ``GET`` reports ``pending`` beside ``enabled`` so a client that was closed
+half-way through (back, reload, app backgrounded) comes back to a switch reading Off with an offer to
+continue, and ``POST /setup/cancel`` discards the pending secret the moment a person leaves setup. A
+pending secret older than ``two_factor.PENDING_SETUP_MINUTES`` is ignored by ``/enable`` and cleared
+by the next ``GET``. Sign-in asks for a code only when ``twoFactorEnabled`` is true — a pending secret
+never makes anybody's sign-in ask for one.
 
 ── THE GUESSING BUDGETS ─────────────────────────────────────────────────────────────────────────────
 
@@ -85,8 +95,22 @@ async def _fresh(user_id: str) -> Any:
 
 @router.get("")
 async def two_factor_status(current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """``{enabled, recovery_codes_remaining, enabled_at}`` — what the account screen's card draws."""
-    return two_factor.status_of(await _fresh(current_user.id))
+    """``{enabled, pending, recovery_codes_remaining, enabled_at}`` — what the account screen's switch
+    draws. A stale pending secret (an abandoned setup) is cleared here, on the way past."""
+    row = await _fresh(current_user.id)
+    if two_factor.has_stale_pending(row):
+        await two_factor.clear_pending(current_user.id)
+        row = await _fresh(current_user.id)
+    return two_factor.status_of(row)
+
+
+@router.post("/setup/cancel", status_code=status.HTTP_204_NO_CONTENT)
+async def two_factor_setup_cancel(current_user: Any = Depends(get_current_user)) -> Response:
+    """Discard a setup that was started and not confirmed. Idempotent: no pending secret is a 204 too.
+    Never touches a switched-on second factor — the write is conditioned on the account being off."""
+    if await two_factor.clear_pending(current_user.id):
+        logger.info("two-factor: account %s left setup without confirming; pending key discarded", current_user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/setup")

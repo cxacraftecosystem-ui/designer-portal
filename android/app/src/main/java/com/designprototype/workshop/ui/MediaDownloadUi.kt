@@ -17,6 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
@@ -170,11 +176,64 @@ private class PendingSave {
 }
 
 /**
- * The one Download control every upload surface draws: the repo's download icon and the word
- * "Download", as `AndroidUriPreview` has always drawn it, so it reads the same on every row.
+ * The action buttons on a media card, tile or row — Retry and Download — drawn ONE way on every
+ * surface (upload queue, outbox, record forms, stage attachments, media screens). The web's twin is
+ * `MediaActionButton` (frontend/components/media/MediaActionButton.tsx).
  *
- * [unavailableReason] disables it and says why, both on screen and to TalkBack. It is for one case
- * only — the local bytes are genuinely gone — and never for a file that is still uploading.
+ * WHY (owner, 2026-10-17: "the buttons for retry and download on media card are not clearly visible").
+ * They were 12sp TextButtons with 2dp of vertical padding: a purple word on a white card, easy to miss
+ * and well under a thumb's 48dp. Now each is a [FilledTonalButton] — the theme's secondaryContainer
+ * ground with its onSecondaryContainer ink, a pair Material 3 derives to meet AA contrast in BOTH the
+ * light and the dark scheme — carrying the icon AND the word, at least 48dp tall.
+ */
+@Composable
+fun MediaActionButton(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    /** The full name for TalkBack — "Download interview-3.m4a". */
+    accessibleLabel: String? = null,
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        enabled = enabled,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+        colors = ButtonDefaults.filledTonalButtonColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ),
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .semantics { accessibleLabel?.let { contentDescription = it } },
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+    }
+}
+
+/** "Retry" on a failed upload — the same button as Download, so the two read as one pair. */
+@Composable
+fun MediaRetryButton(fileName: String?, onRetry: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    MediaActionButton(
+        label = "Retry",
+        icon = Icons.Filled.Refresh,
+        onClick = onRetry,
+        enabled = enabled,
+        accessibleLabel = fileName?.takeIf { it.isNotBlank() }?.let { "Retry $it" },
+        modifier = modifier,
+    )
+}
+
+/**
+ * The one Download control every upload surface draws — [MediaActionButton] with the download icon
+ * and the word "Download", so it reads the same on every row.
+ *
+ * [unavailableReason] disables it and says why, both on screen (under the button, never beside it,
+ * so a long sentence cannot squeeze the button) and to TalkBack. It is for one case only — the local
+ * bytes are genuinely gone — and never for a file that is still uploading.
  */
 @Composable
 fun MediaDownloadButton(
@@ -183,21 +242,16 @@ fun MediaDownloadButton(
     unavailableReason: String? = null,
     modifier: Modifier = Modifier,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
-        TextButton(
+    Column(modifier = modifier) {
+        MediaActionButton(
+            label = "Download",
+            icon = Icons.Filled.Download,
             onClick = onDownload,
             enabled = unavailableReason == null,
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-            modifier = Modifier.semantics {
-                contentDescription = unavailableReason?.let { "Download $fileName. $it" } ?: "Download $fileName"
-            },
-        ) {
-            Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("Download", fontSize = 12.sp)
-        }
+            accessibleLabel = unavailableReason?.let { "Download $fileName. $it" } ?: "Download $fileName",
+        )
         if (unavailableReason != null) {
-            Text(unavailableReason, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(unavailableReason, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
     }
 }

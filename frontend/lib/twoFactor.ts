@@ -12,7 +12,13 @@ import { apiFetch } from "@/lib/api";
 import type { User } from "@/lib/types";
 
 export type TwoFactorStatus = {
+  /** True only once the server has CONFIRMED a code (`/enable`). The switch reads this and nothing else. */
   enabled: boolean;
+  /**
+   * A setup was started and may still be finished (under 15 minutes old, never confirmed). Never makes
+   * `enabled` true. Optional because a server older than 2026-10-17 does not send it.
+   */
+  pending?: boolean;
   recovery_codes_remaining: number;
   enabled_at: string | null;
 };
@@ -67,6 +73,15 @@ export function fetchTwoFactorStatus(): Promise<TwoFactorStatus> {
 
 export function beginTwoFactorSetup(): Promise<TwoFactorSetup> {
   return apiFetch<TwoFactorSetup>("/auth/two-factor/setup", { method: "POST" });
+}
+
+/**
+ * Discard a setup that was started and not confirmed (`POST /auth/two-factor/setup/cancel`). Idempotent,
+ * and it can never switch a confirmed second factor off. `keepalive` lets it outlive the page when it
+ * is sent from `pagehide` (a reload, a closed tab).
+ */
+export async function cancelTwoFactorSetup(options: { keepalive?: boolean } = {}): Promise<void> {
+  await apiFetch("/auth/two-factor/setup/cancel", { method: "POST", keepalive: options.keepalive });
 }
 
 export async function enableTwoFactor(code: string): Promise<string[]> {

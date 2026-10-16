@@ -84,6 +84,7 @@ import com.designprototype.workshop.ui.RecordingIndicator
 import com.designprototype.workshop.ui.MediaDownloadButton
 import com.designprototype.workshop.ui.MediaDownloadNotice
 import com.designprototype.workshop.ui.MediaDownloader
+import com.designprototype.workshop.ui.MediaRetryButton
 import com.designprototype.workshop.ui.rememberMediaDownloader
 import com.designprototype.workshop.ui.rememberMediaImageLoader
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text. Without this import the bare
@@ -1496,18 +1497,13 @@ private fun DwAttachmentRow(
                 // Under the status line, in the same place on every row, while the file uploads and after.
                 DwAttachmentDownload(item = item, exists = exists, fileUri = fileUri, downloader = downloader)
                 if (status.canRetry && onRetry != null) {
-                    TextButton(
-                        onClick = onRetry,
+                    // The same tonal Retry as every other media row (owner's report, 2026-10-17).
+                    MediaRetryButton(
+                        fileName = item?.displayName,
+                        onRetry = onRetry,
                         enabled = enabled,
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                    ) {
-                        Text(
-                            "Try this file again",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
             }
             IconButton(onClick = onRemove, enabled = enabled) {

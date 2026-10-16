@@ -74,6 +74,7 @@ import { readableError } from "@/components/review/reviewErrors";
 import { useAuth } from "@/components/AuthProvider";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { isAdmin } from "@/lib/permissions";
+import { Toggle } from "@/components/ui/Toggle";
 import {
   createWorkshopType,
   deleteWorkshopType,
@@ -433,21 +434,12 @@ export default function WorkshopTypesPage() {
             ))}
           </fieldset>
 
-          <label className="flex items-start gap-3 text-sm text-ink-700">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={draft.isActive}
-              onChange={(event) => setDraft((d) => ({ ...d, isActive: event.target.checked }))}
-            />
-            <span>
-              Offer this type in the &ldquo;Type of workshop&rdquo; dropdown.
-              <span className="block text-xs leading-5 text-ink-500">
-                Unticking retires it. It leaves every dropdown and every workshop already filed under
-                it keeps its type and its label.
-              </span>
-            </span>
-          </label>
+          <Toggle
+            checked={draft.isActive}
+            onChange={(next) => setDraft((d) => ({ ...d, isActive: next }))}
+            label="Offer this type in the “Type of workshop” dropdown"
+            description="Switching it off retires it. It leaves every dropdown and every workshop already filed under it keeps its type and its label."
+          />
 
           <div className="flex flex-wrap gap-2">
             <button type="submit" className="field-button" disabled={busy}>

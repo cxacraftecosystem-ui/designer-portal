@@ -46,6 +46,10 @@ traps — check it before "simplifying" anything that looks redundant.
    dropdown twice.
 10. **Truncation, caps and skipped work must be stated on screen.** A list that quietly stops is
     indistinguishable from a place with no records — the single most repeated bug class in this repo.
+11. **One control per job, on every surface of both apps** (owner, 2026-10-17): a setting is a
+    `Toggle`/`AppToggle`, a choice is `SearchableSelect`/`SearchableMultiSelect`, a date is
+    `CalendarField`, a six-digit code is `OtpCodeInput`/`OtpCodeField`. **No plain `<select>`, no
+    checkbox-as-setting, no native date input, no single-box code input** — §11.11.
 
 ---
 
@@ -1364,6 +1368,114 @@ subtlety below is a bug already paid for once.
 
 ---
 
+### 11.11 The five form primitives — one of each, same name on both clients
+
+Owner's ruling, 2026-10-17, and it is not a style preference: **every surface of both apps** uses
+these five and nothing else for these five jobs. The documentation portal mirrors the components
+under the same names and APIs; keep this section identical in both repos' copies of this skill.
+
+| Job | Web (`components/ui/`) | Android (`ui/`) | Never |
+|---|---|---|---|
+| A setting that is on or off | `Toggle` (`Toggle.tsx`), `ToggleSwitch` for a row that draws its own label | `AppToggle` (`AppToggle.kt`) | the word "On"/"Off" beside a button; a checkbox |
+| Pick one from a list | `SearchableSelect` | `SearchableSelectField` (`SearchableSelect.kt`) | a plain `<select>` |
+| Pick several | `SearchableMultiSelect` (chips on by default) | `SearchableMultiSelectField` | a wall of checkboxes |
+| A date | `CalendarField` (`CalendarField.tsx`, over `DateField`) | `CalendarField` (`CalendarField.kt`, over `FieldDateField`) | `<input type="date">` |
+| A six-digit code | `OtpCodeInput` (`OtpCodeInput.tsx` + pure `otpCode.ts`) | `OtpCodeField` (`OtpCodeField.kt`, pure `OtpCode`) | one text box for the code |
+
+**`e2e/form-primitives-rule-unit.spec.ts` fails the build** on a line that starts with `<select`, a
+native date input, or `autoComplete="one-time-code"` anywhere but `OtpCodeInput`. A checkbox used as a
+setting cannot be told from one choosing rows by a scan, so that half is held by review: **a checkbox
+chooses ROWS (select these three records); a switch changes a SETTING.**
+
+#### `Toggle` / `AppToggle`
+
+```tsx
+<Toggle label="Two-step verification" description="…" status="On since 17 Oct 2026 · 8 recovery codes left"
+        checked={on} onChange={setOn} busy={saving} busyLabel="Working…" />
+<Toggle name="mustChangePassword" defaultChecked label="Ask them to choose a new one at first sign-in" />
+```
+
+- A real `<button role="switch" aria-checked>` at the end of a full-width row; the **whole row** is the
+  target (≥44px on a phone; Android 48dp, `toggleable(role = Role.Switch)` on the row, the M3 `Switch`
+  is decoration with `onCheckedChange = null`).
+- **No keydown handler.** Space and Enter come from the native `<button>`; a hand-written one is how a
+  switch flips twice. `toggleKeys.ts` (`switchAria`, `toggleOutcome`) is the pure half and
+  `e2e/toggle-semantics-unit.spec.ts` pins it.
+- `busy` = mid-change: clicks refused, `aria-busy`, `checked` still the truth. Do **not** make a
+  switch busy just because a step is open under it — the two-step switch must stay pressable to LEAVE
+  setup.
+- `name` for FormData: **"on" while on, nothing while off** — exactly a checkbox's submission, so every
+  `form.get(name) === "on"` reader survives the swap. Uncontrolled via `defaultChecked`.
+- A themed switch fires no native `input` event: a form tracking dirtiness with `onInput` must mark
+  dirty from `onChange` by hand (§12.1, same as every themed dropdown).
+
+#### `SearchableSelect` / `SearchableMultiSelect`
+
+§11.5 is the whole contract. What 2026-10-17 added: the multi-select draws each selection as a **chip
+with a remove button** under the trigger (`chips`, default true, `CHIP_LIMIT` 12 then "and N more"; a
+disabled option's chip has no remove). Pass `chips={false}` only where the screen already lists the
+selection beside the control. Long lists stay on `RENDER_CAP` + the filter box + the cap sentence (they
+are not virtualised: the cap already bounds the DOM at 80 rows, and every highlight/pin invariant in
+§11.5 is written against `rendered`). Name a trigger with `ariaLabel` — a `<label htmlFor>` cannot.
+
+#### `CalendarField`
+
+```tsx
+<CalendarField label="Started on or after" value={from} max={to || undefined} maxLabel="Started on or before"
+               onChange={setFrom} />
+<CalendarField label="Sanction date" name="sanctionOrderDate" required clearable={false} />
+```
+
+Typed dd/mm/yyyy **or** the calendar; min/max greyed in the grid and refused-with-a-reason when typed
+(§12.7, `DateField`'s held refusal); Clear on by default. The value is a **local** `yyyy-mm-dd`
+(`toIsoDate`/`fromIsoDate`; Android `toIsoLocalDate`/`fromIsoLocalDate`) — never `new Date("yyyy-mm-dd")`.
+A page whose API wants UTC day bounds (e.g. `/settings/usage`) converts the string itself.
+
+#### `OtpCodeInput` / `OtpCodeField` — the code rules
+
+- **Exactly six boxes. ASCII digits only** — a typed letter, space, hyphen or full-width digit is
+  refused and the box does not change. Web: `inputMode="numeric"`, `pattern="[0-9]*"`,
+  `autoComplete="one-time-code"` on the FIRST box only. Android: `KeyboardType.NumberPassword`.
+- **Paste or autofill of the code fills all six from any box**; separators inside a paste ("123 456",
+  "123-456") are stripped. Typing advances; Backspace on an empty box steps back and empties that one;
+  arrows/Home/End move but never past the first empty box (the code has no holes).
+- **`onComplete` fires once, from the change handler** when the sixth digit lands — never from an
+  effect. Submit-on-complete is the default for two-step forms.
+- **Error:** `error` paints every box red (the static signal, non-negotiable 5); bump `errorKey` on each
+  refusal to shake the row once (±6px, 360ms, house ease-out). Under EITHER reduced-motion switch there
+  is no shake (`otpShake(reduce)` / `OtpCode.shake(reducedMotion)`).
+- Each box is "Digit n of 6"; the group carries the visible label. Android draws six boxes over ONE
+  text field (paste, IME and Backspace from the platform) and speaks "n of 6 digits entered".
+- **Typeface: Plus Jakarta Sans** — the owner's choice for the code — with tabular figures, large
+  (`font-display tabular-nums text-2xl/3xl`; Android `FieldDisplayFontFamily` + `"tnum"`, 28sp). It is
+  the local `jakarta-latin-var.woff2` / `res/font/jakarta_variable.ttf` already shipped (§2); nothing
+  is loaded from Google.
+- **A recovery code is not a six-digit code.** It gets its own text box behind "Use a recovery code
+  instead" — `TwoStepCodeEntry` (web `components/TwoStepCodeEntry.tsx`, Android in
+  `TwoStepVerification.kt`). Never one box that takes either.
+- Surfaces on the six boxes today: two-step setup, the sign-in challenge, turning it off, new recovery
+  codes, the first-password form on an account with it on, and the Aadhaar OTP. The dataset-token door
+  is API-only (`POST /datasets/token` takes `twoFactorCode` in JSON) and has no screen.
+
+#### The two-step verification switch — the pattern for any setting that needs proof
+
+1. Off → switch on → setup opens (QR, key, six boxes). The switch is **not on**: its status line reads
+   "Setting up…". It reads On only after the SERVER accepted a code (`/enable`).
+2. Leaving setup unconfirmed **discards** it: Cancel, switching back off, navigating away / unmount,
+   reload or closed tab (`pagehide`, `keepalive`) call `POST /auth/two-factor/setup/cancel`. **Hiding
+   the tab or backgrounding the app does not** — that is how a phone reaches the authenticator app.
+   The server ignores and clears a pending key older than 15 minutes, `GET` reports `pending`, and a
+   returning client shows Off with "start again" — **never On, never a request for a code nobody saved**.
+   Sign-in asks for a code only when `twoFactorEnabled` is true.
+3. On → switch off → a current code (six boxes) or a recovery code, then off.
+4. Status line in plain words: "On since 17 Oct 2026 · 8 recovery codes left" (`twoStepSwitchView`,
+   Android `TwoStepSwitch.view` — one table, two clients).
+
+**Do:** reuse these five; pass `ariaLabel` to a dropdown; keep a setting's switch pressable while a
+step is open; say the state under the switch in words. **Don't:** write `<select>`, `type="date"`, a
+single code box, `aria-pressed` for a setting, or a checkbox that changes a setting; show a switch as
+on before the server says so.
+
 ## 12. Forms and record editing
 
 ### 12.1 The shell
@@ -2302,6 +2414,10 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
 - `border` alone = literal gray-200; `ring-2` alone = stock **blue**.
 - `rounded-2xl` == `rounded-lg` (16px); `rounded` is 4px, tighter than `rounded-sm`.
 - `font-serif` is Plus Jakarta Sans.
+- A six-digit code is six boxes in Plus Jakarta Sans with tabular figures (`OtpCodeInput`, §11.11) —
+  never one text box, and a recovery code is never typed into the six boxes.
+- A setting's switch reads ON only when the server says so; setup in progress reads "Setting up…"
+  (§11.11, the two-step pattern).
 - `ease-out` the *class* is the brand expo curve; `ease-out` in *handwritten CSS* is the spec curve.
 - `.nav-sheet`'s doubled `max-height` (vh then dvh) is progressive enhancement.
 - The scroll lock is on `<html>`, not `<body>` (iOS Safari).

@@ -31,6 +31,13 @@ interface TwoFactorApi {
     @POST("auth/two-factor/setup")
     suspend fun setup(): TwoFactorSetupDto
 
+    /**
+     * Discard a setup that was started and never confirmed. 204, idempotent, and the server conditions
+     * the write on the account being OFF, so it can never switch a confirmed second factor off.
+     */
+    @POST("auth/two-factor/setup/cancel")
+    suspend fun cancelSetup()
+
     @POST("auth/two-factor/enable")
     suspend fun enable(@Body body: TwoFactorCodeRequest): RecoveryCodesDto
 
@@ -78,7 +85,10 @@ data class TwoFactorCodeRequest(val code: String)
 
 @Serializable
 data class TwoFactorStatusDto(
+    /** True only once the server CONFIRMED a code. The switch reads this and nothing else. */
     val enabled: Boolean = false,
+    /** A setup was started and may still be finished (under 15 minutes). Never makes [enabled] true. */
+    val pending: Boolean = false,
     @SerialName("recovery_codes_remaining") val recoveryCodesRemaining: Int = 0,
     @SerialName("enabled_at") val enabledAt: String? = null,
 )

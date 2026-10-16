@@ -199,6 +199,7 @@ import {
   isDifference
 } from "./comparisonPlates";
 import { REVEAL_PEEK_HOLD_MS } from "@/components/ui/reveal1Transform";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import {
   PROGRESS_UNMEASURED_NOTE,
   UNWEIGHTED,
@@ -3512,36 +3513,28 @@ function ChoiceRow({
   return (
     <div className={modified ? `${MODIFIED_RING} p-1` : "p-1"}>
       {/*
-        ── DELIBERATELY A NATIVE <select>, UNLIKE THE STYLE AND SUBJECT PICKERS ABOVE ──
-        Two reasons, and neither is inertia. First, every one of these lists is a per-parameter enum
-        of two to four values declared in `traceParamTable` — "Light / Dark", "Off / Low / High" —
-        which is exactly the fixed vocabulary a filter box makes worse: an extra tab stop and a "No
-        matches" state over a list read at a glance.
-
-        Second, and this is the part that would not be recoverable: a `<label htmlFor>` and an
-        `aria-describedby` are wired to this control by id, and the themed dropdown renders a
-        `<button>` and accepts no id or ref (`e2e/process-refusal-a11y-unit.spec.ts` records that
-        gap). Converting would trade a correctly named and described field for a filter box nobody
-        needs, on a panel that renders up to `PARAM_COUNT` of these at once.
+        ── THE THEMED DROPDOWN, NO FILTER BOX ──
+        This was a native <select> until 2026-10-17; the owner's rule now forbids one on any surface.
+        Every list here is a per-parameter enum of two to four values from `traceParamTable`, so
+        `searchable={false}` keeps the filter box (a tab stop and a "No matches" state over a list
+        read at a glance) away. The name comes from `ariaLabel` and the hint from `describedBy`,
+        because the trigger is a <button> that a <label htmlFor> cannot name.
       */}
-      <label className="text-xs font-medium text-ink-900" htmlFor={id}>
+      <span className="text-xs font-medium text-ink-900">
         {spec.label}
         {modified ? <span className="ml-1 text-purple-700 dark:text-purple-300">·</span> : null}
-      </label>
-      <select
-        id={id}
-        className="field-input mt-1"
+      </span>
+      <SearchableSelect
+        className="mt-1"
+        ariaLabel={spec.label}
+        describedBy={`${id}-hint`}
+        searchable={false}
         value={value}
         disabled={disabled}
-        aria-describedby={`${id}-hint`}
-        onChange={(event) => onPatch(spec.patch(event.target.value))}
-      >
-        {spec.options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        onChange={(next) => onPatch(spec.patch(next))}
+        options={spec.options.map((option) => ({ value: option.value, label: option.label }))}
+        advanceOnSelect={false}
+      />
       <p id={`${id}-hint`} className="mt-0.5 text-xs leading-4 text-ink-500">
         {spec.hint}
       </p>

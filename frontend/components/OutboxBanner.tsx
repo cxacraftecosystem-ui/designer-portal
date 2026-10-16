@@ -34,6 +34,7 @@ import { CircleAlert, CloudOff, Link2, RefreshCw, Trash2, TriangleAlert } from "
 import { useAuth } from "@/components/AuthProvider";
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
+import { MediaActionButton } from "@/components/media/MediaActionButton";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast, type ToastTone } from "@/components/ui/Toast";
 import { listResource } from "@/lib/api";
@@ -783,9 +784,9 @@ export function OutboxBanner() {
                   goes, or it comes back with what is now wrong. `retryOutboxEntry` re-sends nothing
                   by itself — see its note.
                 */}
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700 dark:text-purple-300"
+                <MediaActionButton
+                  label="Retry"
+                  icon={<RefreshCw className="h-4 w-4" aria-hidden />}
                   disabled={syncing}
                   onClick={async () => {
                     await retryOutboxEntry(entry.id!).catch(() => {
@@ -797,10 +798,7 @@ export function OutboxBanner() {
                     });
                     await drain("manual");
                   }}
-                >
-                  <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-                  Try again
-                </button>
+                />
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 text-xs font-semibold text-error-600"

@@ -37,6 +37,8 @@ import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { TwoStepCodeEntry, type TwoStepCodeKind } from "@/components/TwoStepCodeEntry";
+import { isCompleteCode } from "@/components/ui/otpCode";
 import { setToken } from "@/lib/api";
 import { isUnreachable } from "@/lib/failureTriage";
 import {
@@ -71,6 +73,8 @@ export function ChangePasswordCard() {
   /** The code from the authenticator app — asked for only when a first password is set on an
    *  account with two-step verification on, so a session alone cannot add a password. */
   const [code, setCode] = useState("");
+  const [codeKind, setCodeKind] = useState<TwoStepCodeKind>("totp");
+  const [codeErrorKey, setCodeErrorKey] = useState(0);
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +108,7 @@ export function ChangePasswordCard() {
       setError(problem);
       return;
     }
-    if (askCode && !code.trim()) {
+    if (askCode && (codeKind === "totp" ? !isCompleteCode(code) : !code.trim())) {
       setError("Enter the code from your authenticator app to set a password.");
       return;
     }
@@ -142,6 +146,7 @@ export function ChangePasswordCard() {
       } else if (settingFirst && twoFactorCodeRequired(err)) {
         // The code was missing or wrong. Only the code is emptied: the passwords were not refused.
         setCode("");
+        setCodeErrorKey((key) => key + 1);
       } else if (!settingFirst && currentPasswordRefused(err)) {
         // Emptied because what was in it is wrong. The new password and its repeat are kept: nothing
         // was said against them, and retyping a long one twice is how a typo gets saved.
@@ -277,24 +282,20 @@ export function ChangePasswordCard() {
         </div>
 
         {askCode ? (
-          <div>
-            <label htmlFor="settings-two-factor-code" className="field-label">
-              Code from your authenticator app
-            </label>
-            <input
-              id="settings-two-factor-code"
-              type="text"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              required
-              maxLength={64}
+          <div className="grid gap-1">
+            <TwoStepCodeEntry
+              idPrefix="settings-two-factor"
+              kind={codeKind}
+              onKindChange={setCodeKind}
               value={code}
-              onChange={(event) => setCode(event.target.value)}
-              className="field-input mt-1.5"
+              onChange={setCode}
+              allowRecovery
+              totpLabel="Code from your authenticator app"
+              totpHint="Two-step verification is on for your account."
+              error={codeErrorKey > 0 && !code}
+              errorKey={codeErrorKey}
+              disabled={saving}
             />
-            <p className="mt-1 text-xs leading-5 text-ink-500">
-              Two-step verification is on for your account. A recovery code works here too.
-            </p>
           </div>
         ) : null}
 

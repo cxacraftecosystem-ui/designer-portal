@@ -132,7 +132,11 @@ import com.designprototype.workshop.ui.WorkshopLogo
 import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.OfflineOutboxTray
+import com.designprototype.workshop.ui.AppToggle
+import com.designprototype.workshop.ui.CalendarField
+import com.designprototype.workshop.ui.MediaActionButton
 import com.designprototype.workshop.ui.MediaDownloadButton
+import com.designprototype.workshop.ui.MediaRetryButton
 import com.designprototype.workshop.ui.MediaDownloadNotice
 import com.designprototype.workshop.ui.rememberMediaDownloader
 import com.designprototype.workshop.data.mediaDisplayNameOf
@@ -523,7 +527,6 @@ import com.designprototype.workshop.ui.walkthroughSeen
 import kotlinx.coroutines.launch
 import coil3.compose.AsyncImage
 import retrofit2.HttpException
-import android.app.DatePickerDialog
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -5629,18 +5632,13 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider()
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Process during an off-peak window", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "When on, transcription & refinement run only between the times below (IST), so the " +
-                        "heavy work happens when nobody is uploading. When off, they run immediately.",
-                    color = Muted,
-                    fontSize = 12.sp
-                )
-            }
-            Switch(checked = windowEnabled, onCheckedChange = { windowEnabled = it })
-        }
+        AppToggle(
+            label = "Process during an off-peak window",
+            description = "When on, transcription & refinement run only between the times below (IST), so the " +
+                "heavy work happens when nobody is uploading. When off, they run immediately.",
+            checked = windowEnabled,
+            onCheckedChange = { windowEnabled = it }
+        )
         if (windowEnabled) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 Box(modifier = Modifier.weight(1f)) { TimePickerField("Start", startTime) { startTime = it } }
@@ -9435,25 +9433,10 @@ private fun CheckboxMultiSelectField(
 
 @Composable
 private fun DatePickerField(label: String, value: LocalDate?, onChange: (LocalDate) -> Unit) {
-    val context = LocalContext.current
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, color = Muted, fontSize = 12.sp)
-        OutlinedButton(
-            onClick = {
-                val initial = value ?: LocalDate.now()
-                DatePickerDialog(
-                    context,
-                    { _, year, month, day -> onChange(LocalDate.of(year, month + 1, day)) },
-                    initial.year,
-                    initial.monthValue - 1,
-                    initial.dayOfMonth
-                ).show()
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(value?.toString() ?: "Pick date")
-        }
-    }
+    // The shared `CalendarField` (typed dd/mm/yyyy or the themed calendar) instead of the platform's
+    // own DatePickerDialog behind a button reading "2026-10-17" (owner's rule, 2026-10-17). Not
+    // clearable: every caller here needs a day.
+    CalendarField(label = label, value = value, onValueChange = { day -> day?.let(onChange) }, clearable = false)
 }
 
 private enum class RecPhase { IDLE, RECORDING, PAUSED, RECORDED }
@@ -18622,19 +18605,13 @@ private fun AndroidUriPreview(
         progress != null && progress >= 1f -> Text("Uploaded", color = SuccessGreen, fontSize = 12.sp)
     }
     if (onRetry != null || downloadable) {
+        // Real tonal buttons, icon and word, 48dp (owner's report, 2026-10-17) — `MediaActionButton`.
         Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top
         ) {
             if (failed && onRetry != null) {
-                TextButton(
-                    onClick = onRetry,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Retry", fontSize = 12.sp)
-                }
+                MediaRetryButton(fileName = uri.lastPathSegment, onRetry = onRetry)
             }
             if (downloadable) {
                 MediaDownloadButton(
@@ -18754,11 +18731,12 @@ private fun AndroidSavedMediaPreview(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             // `readableUrl`, NOT `media.url`: a refreshed signature that reached the thumbnail and
             // not the download is the shape of "the picture is there and Save fails".
-            TextButton(onClick = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) }) {
-                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Save to device", fontSize = 12.sp)
-            }
+            MediaActionButton(
+                label = "Download",
+                icon = Icons.Filled.Download,
+                onClick = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) },
+                accessibleLabel = "Download ${media.originalFilename}",
+            )
             if (onDelete != null) {
                 TextButton(onClick = { confirmDelete = true }) {
                     Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
@@ -19726,13 +19704,12 @@ private fun QuestionnaireForm(
         ) { recordMode = it }
         // On by default: keep the UI to just the record button; reveal answer boxes only on demand.
         var hideAnswers by remember { mutableStateOf(true) }
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Do not display answer text boxes", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-                Text("On by default — show only the record button. Toggle off to type written answers.", color = Muted, fontSize = 11.sp)
-            }
-            Switch(checked = hideAnswers, onCheckedChange = { hideAnswers = it })
-        }
+        AppToggle(
+            label = "Do not display answer text boxes",
+            description = "On by default — show only the record button. Toggle off to type written answers.",
+            checked = hideAnswers,
+            onCheckedChange = { hideAnswers = it }
+        )
         LocationAddressEditor(
             repository = repository,
             value = capturedLocation,

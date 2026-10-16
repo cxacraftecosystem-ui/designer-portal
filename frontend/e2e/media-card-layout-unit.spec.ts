@@ -147,7 +147,9 @@ test("min-w-0 runs the whole way down the card, root included", () => {
   expect(tile).toContain("aspect-4/3 min-w-0 flex-[1_1_6rem]");
   expect(tile).toContain('<div className="grid min-w-0 flex-[999_1_8rem] gap-2">');
   expect(tile).toContain('<div className="flex min-w-0 items-start gap-2">');
-  expect(tile).toContain('<div className="flex min-w-0 items-center justify-between gap-2">');
+  // The status line and the (full-size, wrapping) Retry / Download buttons — owner's report, 2026-10-17.
+  expect(tile).toContain('<div className="grid min-w-0 gap-1.5">');
+  expect(tile).toContain('<span className="flex flex-wrap items-center gap-2">');
 });
 
 test("the filename breaks at a character, because break-words does not change min-content", () => {

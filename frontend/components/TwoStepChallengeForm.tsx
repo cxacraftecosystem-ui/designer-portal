@@ -8,9 +8,10 @@
  * this form trades it and a code for the session at `POST /auth/two-factor/verify`. Nobody is signed in
  * until that succeeds, so "Back to sign in" simply forgets the challenge.
  *
- * ONE BOX FOR BOTH KINDS OF CODE. The server tells a 6-digit authenticator code from an `xxxx-xxxx`
- * recovery code by shape, so the toggle below changes only the label, the keyboard and the autofill
- * hint — a recovery code typed into the authenticator box still works.
+ * SIX BOXES FOR THE CODE, A SEPARATE BOX FOR A RECOVERY CODE (owner's rule, 2026-10-17). The
+ * authenticator code goes in `OtpCodeInput` — six boxes, digits only, submitted the moment the sixth
+ * lands — and "Use a recovery code instead" swaps in a plain text box for an `xxxx-xxxx` code
+ * (`TwoStepCodeEntry`). The server still tells the two apart by shape.
  *
  * Every refusal is the server's sentence, in the card: a wrong code keeps the form, and a finished
  * challenge (five wrong codes, or five minutes) says to sign in again and offers the way back.
@@ -20,6 +21,8 @@ import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { TwoStepCodeEntry, type TwoStepCodeEntryHandle, type TwoStepCodeKind } from "@/components/TwoStepCodeEntry";
+import { isCompleteCode } from "@/components/ui/otpCode";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
 import { isUnreachable } from "@/lib/failureTriage";
@@ -38,29 +41,33 @@ export function TwoStepChallengeForm({
   onCancel: () => void;
 }) {
   const { verifyTwoFactor } = useAuth();
-  const [useRecovery, setUseRecovery] = useState(false);
+  const [kind, setKind] = useState<TwoStepCodeKind>("totp");
+  const useRecovery = kind === "recovery";
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorKey, setErrorKey] = useState(0);
   /** The challenge is finished; only signing in again leads anywhere. */
   const [dead, setDead] = useState(false);
-  const box = useRef<HTMLInputElement | null>(null);
+  const box = useRef<TwoStepCodeEntryHandle | null>(null);
 
-  // On arrival and on every switch of kind: the box is where the next keystroke belongs.
+  // On arrival: the six boxes are where the next keystroke belongs.
   useEffect(() => {
     box.current?.focus();
-  }, [useRecovery]);
+  }, []);
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!code.trim() || busy || dead) return;
+  async function submit(entered: string) {
+    const typed = entered.trim();
+    if (!typed || busy || dead) return;
+    if (!useRecovery && !isCompleteCode(typed)) return;
     setBusy(true);
     setError(null);
     try {
-      const account = await verifyTwoFactor(challengeToken, code.trim());
+      const account = await verifyTwoFactor(challengeToken, typed);
       await onSignedIn(account);
     } catch (err) {
       setCode("");
+      setErrorKey((key) => key + 1);
       if (err instanceof ApiError && err.status === 401 && err.message === CHALLENGE_ENDED_DETAIL) setDead(true);
       setError(
         isUnreachable(err)
@@ -104,31 +111,34 @@ export function TwoStepChallengeForm({
           Sign in again
         </Button>
       ) : (
-        <form onSubmit={submit} className="grid gap-3">
-          <div className="grid gap-2">
-            <label htmlFor="two-step-code" className="text-sm font-medium text-ink-900">
-              {useRecovery ? "Recovery code" : "6-digit code"}
-            </label>
-            <input
-              id="two-step-code"
-              ref={box}
-              type="text"
-              required
-              inputMode={useRecovery ? "text" : "numeric"}
-              autoComplete={useRecovery ? "off" : "one-time-code"}
-              autoCapitalize="none"
-              spellCheck={false}
-              maxLength={useRecovery ? 20 : 7}
-              placeholder={useRecovery ? "xxxx-xxxx" : "123456"}
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              className="field-input h-[52px] text-center font-mono text-lg tracking-[0.3em]"
-            />
-          </div>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit(code);
+          }}
+          className="grid gap-3"
+        >
+          <TwoStepCodeEntry
+            ref={box}
+            idPrefix="two-step"
+            kind={kind}
+            onKindChange={(next) => {
+              setKind(next);
+              setError(null);
+            }}
+            value={code}
+            onChange={setCode}
+            onComplete={(full) => void submit(full)}
+            allowRecovery
+            totpLabel="6-digit code"
+            error={Boolean(error)}
+            errorKey={errorKey}
+            disabled={busy}
+          />
           <Button
             type="submit"
             size="auth"
-            disabled={busy || !code.trim()}
+            disabled={busy || (useRecovery ? !code.trim() : !isCompleteCode(code))}
             className="w-full font-display text-base font-bold"
           >
             {busy ? "Checking…" : "Verify"}
@@ -136,22 +146,7 @@ export function TwoStepChallengeForm({
         </form>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        {dead ? (
-          <span />
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setUseRecovery((value) => !value);
-              setCode("");
-              setError(null);
-            }}
-            className="font-medium text-purple-700 dark:text-purple-300 hover:underline"
-          >
-            {useRecovery ? "Use your authenticator app instead" : "Use a recovery code instead"}
-          </button>
-        )}
+      <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
         <button type="button" onClick={onCancel} className="text-ink-500 hover:text-ink-900">
           Back to sign in
         </button>

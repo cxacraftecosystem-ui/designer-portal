@@ -785,15 +785,67 @@ async def close_challenge(challenge: Challenge) -> bool:
 # ==================================================================================================
 
 
-def status_of(user: Any) -> dict[str, Any]:
+#: How long a setup that was started and never confirmed stays resumable. Past this the pending secret
+#: is treated as abandoned: :func:`status_of` reports no setup in progress, :func:`enable` refuses it,
+#: and the status route clears it. Fifteen minutes is far longer than scanning a square and typing six
+#: digits takes, and short enough that a key left on a screen somebody walked away from does not stay
+#: redeemable for the rest of the day.
+PENDING_SETUP_MINUTES = 15
+
+
+def pending_is_live(user: Any, now: datetime | None = None) -> bool:
+    """Is there a setup in progress that may still be confirmed?
+
+    A pending secret with no timestamp (stored before ``twoFactorPendingSince`` existed) is stale by
+    definition: nobody can still be looking at a key shown before that column was written.
+    """
+    if getattr(user, "twoFactorEnabled", False):
+        return False
+    if not getattr(user, "twoFactorPendingSecret", None):
+        return False
+    since = _aware(getattr(user, "twoFactorPendingSince", None))
+    if since is None:
+        return False
+    return (now or datetime.now(UTC)) - since < timedelta(minutes=PENDING_SETUP_MINUTES)
+
+
+def has_stale_pending(user: Any, now: datetime | None = None) -> bool:
+    """A pending secret is stored but may no longer be confirmed — the status route clears it."""
+    return (
+        not getattr(user, "twoFactorEnabled", False)
+        and bool(getattr(user, "twoFactorPendingSecret", None))
+        and not pending_is_live(user, now)
+    )
+
+
+def status_of(user: Any, now: datetime | None = None) -> dict[str, Any]:
+    """What the account screen's switch draws.
+
+    ``enabled`` is true ONLY once ``/enable`` has confirmed a code. ``pending`` says a setup was
+    started and may still be finished; it never makes ``enabled`` true, so a client closed half-way
+    through setup comes back to a switch that reads Off and offers to continue — never one that reads
+    On and asks for a code nobody ever saved.
+    """
     enabled = bool(getattr(user, "twoFactorEnabled", False))
     return {
         "enabled": enabled,
+        "pending": pending_is_live(user, now),
         "recovery_codes_remaining": len(getattr(user, "twoFactorRecoveryCodes", None) or [])
         if enabled
         else 0,
         "enabled_at": getattr(user, "twoFactorEnabledAt", None) if enabled else None,
     }
+
+
+async def clear_pending(user_id: str) -> bool:
+    """Discard an unconfirmed setup. Idempotent, and conditioned on the account NOT being on, so it can
+    never touch a confirmed secret — not even one another tab switched on a moment ago. Returns whether
+    there was a pending secret to discard."""
+    cleared = await db.user.update_many(
+        where={"id": user_id, "twoFactorEnabled": False, "NOT": [{"twoFactorPendingSecret": None}]},
+        data={"twoFactorPendingSecret": None, "twoFactorPendingSince": None},
+    )
+    return cleared > 0
 
 
 async def begin_setup(user: Any) -> dict[str, str]:
@@ -806,7 +858,8 @@ async def begin_setup(user: Any) -> dict[str, str]:
         raise TwoFactorError("conflict", ALREADY_ON_DETAIL)
     secret = generate_secret()
     await db.user.update(
-        where={"id": user.id}, data={"twoFactorPendingSecret": encrypt_secret(secret)}
+        where={"id": user.id},
+        data={"twoFactorPendingSecret": encrypt_secret(secret), "twoFactorPendingSince": datetime.now(UTC)},
     )
     uri = totp_uri(secret, user.email)
     return {"secret": secret, "otpauth_uri": uri, "qr_svg": qr_svg(uri)}
@@ -823,7 +876,9 @@ async def enable(user: Any, code: str) -> list[str]:
     if getattr(user, "twoFactorEnabled", False):
         raise TwoFactorError("conflict", ALREADY_ON_DETAIL)
     pending = getattr(user, "twoFactorPendingSecret", None)
-    secret = decrypt_secret(pending)
+    # A setup abandoned more than PENDING_SETUP_MINUTES ago is not resumable: its key may have been
+    # left on a screen, and the switch only ever turns on from a setup somebody is finishing now.
+    secret = decrypt_secret(pending) if pending_is_live(user) else None
     if secret is None:
         raise TwoFactorError("invalid", NO_SETUP_DETAIL)
     step = match_totp_step(secret, code)
@@ -837,6 +892,7 @@ async def enable(user: Any, code: str) -> list[str]:
             "twoFactorEnabled": True,
             "twoFactorSecret": pending,
             "twoFactorPendingSecret": None,
+            "twoFactorPendingSince": None,
             "twoFactorRecoveryCodes": {"set": hashes},
             "twoFactorLastStep": step,
             "twoFactorEnabledAt": datetime.now(UTC),
@@ -859,6 +915,7 @@ _OFF: dict[str, Any] = {
     "twoFactorEnabled": False,
     "twoFactorSecret": None,
     "twoFactorPendingSecret": None,
+    "twoFactorPendingSince": None,
     # Cleared WITH the secret: codes left behind would still open the account, so a switched-off
     # second factor would go on holding ten live credentials nobody remembers exist.
     "twoFactorRecoveryCodes": {"set": []},

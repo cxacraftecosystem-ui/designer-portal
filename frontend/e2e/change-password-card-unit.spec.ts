@@ -212,9 +212,11 @@ test("it is drawn with the data-screen recipes, not the auth stack", () => {
   // §11.2 of the frontend reference: a data screen is never standardised onto the auth `Button`.
   expect(CARD).not.toMatch(/from "@\/components\/ui\/button"/);
   expect(CARD).toContain('<section className="panel p-5">');
-  // Four boxes: current, new, repeat — and the two-step code, drawn only for a first password on an
-  // account with two-step verification on.
-  expect((CARD.match(/className="field-input/g) ?? []).length).toBe(4);
+  // Three boxes: current, new, repeat. The two-step code, drawn only for a first password on an account
+  // with two-step verification on, is the shared six-box entry (owner's rule, 2026-10-17) — with its
+  // separate recovery-code box behind "Use a recovery code instead".
+  expect((CARD.match(/className="field-input/g) ?? []).length).toBe(3);
+  expect(CARD).toContain("<TwoStepCodeEntry");
   expect(CARD).toMatch(/<button type="submit" className="field-button"/);
   // The rule line under the boxes is the gate's, from the same function and the same constant — which
   // no longer says other devices stay signed in: a change now ends every session but the fresh one.

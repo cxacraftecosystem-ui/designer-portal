@@ -31,6 +31,7 @@ import {
   setTemporaryPassword
 } from "@/lib/signIn";
 import type { User } from "@/lib/types";
+import { Toggle } from "@/components/ui/Toggle";
 
 import { hasPassword, passwordFrom, passwordHasEdgeSpace } from "./accountAdmin";
 
@@ -216,15 +217,7 @@ export function TemporaryPasswordDialog({
             </p>
           </div>
           {edgeSpace ? <EdgeSpaceNote /> : null}
-          <label className="flex items-start gap-2 text-sm text-ink-700">
-            <input
-              type="checkbox"
-              checked={requireChange}
-              onChange={(event) => setRequireChange(event.target.checked)}
-              className="mt-1"
-            />
-            <span>Require a new password at next sign-in</span>
-          </label>
+          <Toggle checked={requireChange} onChange={setRequireChange} label="Require a new password at next sign-in" />
           <RequireChangeNote required={requireChange} when="next" />
         </form>
       ) : null}
@@ -340,16 +333,13 @@ export function RequirePasswordChangeDialog({
             Their current password still works once, to reach the screen where they choose a new one.
             Somebody who signs in with Google is asked for it too; if they do not know it, they need a password link.
           </p>
-          <label className="flex items-start gap-2 text-sm text-ink-700">
-            <input
-              type="checkbox"
-              checked={withLink}
-              disabled={busy}
-              onChange={(event) => setWithLinkChoice(event.target.checked)}
-              className="mt-1"
-            />
-            <span>Also issue a password link — shown to you once, on this page, to send them yourself</span>
-          </label>
+          <Toggle
+            checked={withLink}
+            disabled={busy}
+            onChange={setWithLinkChoice}
+            label="Also issue a password link"
+            description="Shown to you once, on this page, to send them yourself."
+          />
         </div>
       ) : null}
     </FieldDialog>

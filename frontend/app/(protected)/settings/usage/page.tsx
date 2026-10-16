@@ -72,6 +72,7 @@ import {
   type PercentileRow
 } from "@/components/settings/usageCharts";
 import { isAdmin, isMasterAdmin } from "@/lib/permissions";
+import { CalendarField } from "@/components/ui/CalendarField";
 import {
   bucketTickText,
   consentMoment,
@@ -496,37 +497,39 @@ export default function UsagePage() {
 
         <section className="panel p-4">
           <div className="flex flex-wrap items-end gap-4">
-            <label className="grid gap-1 text-sm">
-              <span className="field-label">From</span>
-              <input
-                type="date"
-                className="field-input"
-                value={from.slice(0, 10)}
-                max={to.slice(0, 10)}
-                onChange={(event) => {
-                  if (!event.target.value) return;
-                  setFrom(new Date(`${event.target.value}T00:00:00.000Z`).toISOString());
-                  setPage(1);
-                }}
-              />
-            </label>
-            <label className="grid gap-1 text-sm">
-              <span className="field-label">To</span>
-              <input
-                type="date"
-                className="field-input"
-                value={to.slice(0, 10)}
-                min={from.slice(0, 10)}
-                onChange={(event) => {
-                  if (!event.target.value) return;
-                  // The END of the named day, so "To" is inclusive of the day a reader picks — the
-                  // API's own window is half-open [from, to), and a bare midnight on the end date
-                  // would silently drop everything that happened on it.
-                  setTo(new Date(`${event.target.value}T23:59:59.999Z`).toISOString());
-                  setPage(1);
-                }}
-              />
-            </label>
+            {/* The calendar field (owner's rule, 2026-10-17). The window is a UTC day pair, exactly
+                as it was with the native inputs: the picker hands back a yyyy-mm-dd and this page
+                pins it to that day's UTC start or end. Clearing is refused (an empty window means
+                nothing here), so neither field offers Clear. */}
+            <CalendarField
+              label="From"
+              className="w-44"
+              value={from.slice(0, 10)}
+              max={to.slice(0, 10)}
+              maxLabel="To"
+              clearable={false}
+              onChange={(value) => {
+                if (!value) return;
+                setFrom(new Date(`${value}T00:00:00.000Z`).toISOString());
+                setPage(1);
+              }}
+            />
+            <CalendarField
+              label="To"
+              className="w-44"
+              value={to.slice(0, 10)}
+              min={from.slice(0, 10)}
+              minLabel="From"
+              clearable={false}
+              onChange={(value) => {
+                if (!value) return;
+                // The END of the named day, so "To" is inclusive of the day a reader picks — the
+                // API's own window is half-open [from, to), and a bare midnight on the end date
+                // would silently drop everything that happened on it.
+                setTo(new Date(`${value}T23:59:59.999Z`).toISOString());
+                setPage(1);
+              }}
+            />
             <label className="grid gap-1 text-sm">
               <span id="usage-bucket-label" className="field-label">
                 Chart detail

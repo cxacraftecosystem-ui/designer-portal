@@ -80,6 +80,7 @@ import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { canManageQuestionnaire, canRunDesignWorkshops, hasRank, isAdmin } from "@/lib/permissions";
 import { UploadsProvider, useEagerStaging, useUploads } from "@/lib/uploads";
 import type { Artisan, MediaFile, PageResult, QuestionnaireInterview, QuestionnaireQuestion, QuestionnaireSection } from "@/lib/types";
+import { Toggle } from "@/components/ui/Toggle";
 
 /** Section ids the two questionnaire upload paths publish under, for the page-level tray. */
 const INTERVIEW_SECTION = "interview-audio";
@@ -4260,10 +4261,7 @@ function QuestionnaireAdminEditor({
                     uncontrolled — it lives inside a `.map` and its form reads `FormData` — while
                     `DictatedTextInput` is controlled-only on purpose. See the component above. */}
                 <SeededSectionTitle key={`${section.id}-${section.title}`} initial={section.title} />
-                <label className="flex items-end gap-2 pb-2 text-sm text-ink-muted">
-                  <input name="isActive" type="checkbox" defaultChecked={section.isActive} />
-                  Active
-                </label>
+                <Toggle name="isActive" defaultChecked={section.isActive} label="Active" className="self-end" />
                 <div className="flex flex-wrap items-end gap-2">
                   <button className="field-button-secondary" type="submit">
                     <Save className="h-4 w-4" aria-hidden />
@@ -4511,10 +4509,7 @@ function QuestionTile({
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {editing ? (
             <>
-              <label className="flex items-center gap-2 text-sm text-ink-muted">
-                <input type="checkbox" checked={isActive} onChange={(event) => setIsActive(event.target.checked)} />
-                Active
-              </label>
+              <Toggle checked={isActive} onChange={setIsActive} label="Active" />
               <button type="button" className="field-button-secondary" onClick={handleSave} disabled={savingTile || disabled}>
                 <Save className="h-4 w-4" aria-hidden />
                 {savingTile ? "Saving..." : "Save"}

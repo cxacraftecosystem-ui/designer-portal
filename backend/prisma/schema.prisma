@@ -275,10 +275,15 @@ model User {
   /// plain base32 key, and no response ever carries either: `serialize_user` and
   /// `records._SENSITIVE_KEYS` strip them with the recovery-code hashes and the last step.
   /// The pending secret is what `POST /auth/two-factor/setup` stored and `/enable` has not yet
-  /// confirmed; an abandoned setup leaves it here doing nothing until the next setup overwrites it.
+  /// confirmed; an abandoned setup is cleared by `/setup/cancel`, or ignored and cleared once stale.
   twoFactorEnabled       Boolean   @default(false)
   twoFactorSecret        String?
   twoFactorPendingSecret String?
+  /// When the pending secret above was stored by `POST /auth/two-factor/setup`. A pending secret
+  /// older than `two_factor.PENDING_SETUP_MINUTES` is treated as abandoned and cleared: a setup is
+  /// only ever "on" once `/enable` has confirmed a code, and a half-finished one must never come back
+  /// later looking like a switch that is on (`POST /auth/two-factor/setup/cancel` clears it at once).
+  twoFactorPendingSince  DateTime?
   /// bcrypt hashes of the unused recovery codes. A code is spent by a conditional update that
   /// removes its hash only if the array is still the one that was read, so two sign-ins presenting
   /// one code cannot both win.

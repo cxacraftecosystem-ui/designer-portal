@@ -88,8 +88,14 @@ test.describe("localMediaFileName", () => {
 test.describe("every upload surface offers Download", () => {
   test("the shared button reads 'Download' with the repo's download icon", () => {
     const button = read("components", "media", "DownloadMediaButton.tsx");
-    expect(button).toContain('import { Download } from "lucide-react"');
-    expect(button).toMatch(/<Download className="h-3\.5 w-3\.5" aria-hidden \/>\s*Download\s*<\/button>/);
+    // The tonal `MediaActionButton` since 2026-10-17 (the owner could not see the old 2px chip): the
+    // icon AND the word, 44px on a phone.
+    expect(button).toContain('label="Download"');
+    expect(button).toContain("icon={DOWNLOAD_ICON}");
+    const action = read("components", "media", "MediaActionButton.tsx");
+    expect(action).toContain('import { Download, RefreshCw } from "lucide-react"');
+    expect(action).toContain('export const DOWNLOAD_ICON = <Download className="h-4 w-4" aria-hidden />;');
+    expect(action).toContain("min-h-11");
   });
 
   test("the helper revokes its object URL through saveBlobToDisk", () => {

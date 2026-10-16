@@ -5,6 +5,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 
 import { useMediaUrl } from "@/components/hooks/useMediaUrl";
 import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
+import { RetryMediaButton } from "@/components/media/MediaActionButton";
 import { Markdown } from "@/components/Markdown";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { bytes } from "@/lib/format";
@@ -302,21 +303,14 @@ export function MediaPreviewTile({
           </div>
         ) : null}
         {statusLabel || onDownload ? (
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            <span className={`min-w-0 truncate text-xs ${failed ? "text-error-600" : "text-ink-muted"}`}>{statusLabel}</span>
-            <span className="flex shrink-0 items-center gap-2">
-              {failed && onRetry ? (
-                <button
-                  type="button"
-                  className="shrink-0 rounded-sm border border-line-200 bg-card px-2 py-0.5 text-xs font-semibold text-field-600 dark:text-purple-300 transition hover:bg-field-50"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRetry();
-                  }}
-                >
-                  Retry
-                </button>
-              ) : null}
+          // The status on its own line and the buttons on the next, wrapping: the buttons are full
+          // size (`MediaActionButton`) and must never squeeze the label or overlap each other.
+          <div className="grid min-w-0 gap-1.5">
+            {statusLabel ? (
+              <span className={`min-w-0 truncate text-xs ${failed ? "text-error-600" : "text-ink-muted"}`}>{statusLabel}</span>
+            ) : null}
+            <span className="flex flex-wrap items-center gap-2">
+              {failed && onRetry ? <RetryMediaButton name={item.name} onRetry={onRetry} /> : null}
               {onDownload ? (
                 <DownloadMediaButton name={item.name} onDownload={onDownload} unavailableReason={downloadUnavailableReason} />
               ) : null}

@@ -83,6 +83,7 @@ import { RecordDetailsDialog } from "@/components/records/RecordDetailsDialog";
 import { SearchInput } from "@/components/SearchInput";
 import { describeApiDetail } from "@/lib/api";
 import { namedDesignerTeam } from "@/lib/designWorkshops";
+import { CalendarField } from "@/components/ui/CalendarField";
 import {
   confirmSanctionImport,
   downloadSanctionProForma,
@@ -697,9 +698,9 @@ export default function SanctionOrdersPage() {
           </Field>
         </div>
         <div className="md:col-span-2">
-          <Field label="Sanction date" required>
-            <TextInput name="sanctionOrderDate" type="date" required />
-          </Field>
+          {/* The calendar field, never <input type="date"> (owner's rule, 2026-10-17). The hidden input it
+              renders carries the same local yyyy-mm-dd the native one did, under the same name. */}
+          <CalendarField label="Sanction date" name="sanctionOrderDate" required clearable={false} />
         </div>
         <div className="md:col-span-2">
           <Field label="Sanction amount (₹)" required>

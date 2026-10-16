@@ -18,6 +18,8 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { BadgeCheck, FileArchive, KeyRound, QrCode, ShieldAlert, ShieldCheck } from "lucide-react";
 
+import { OtpCodeInput } from "@/components/ui/OtpCodeInput";
+import { isCompleteCode } from "@/components/ui/otpCode";
 import { useAuth } from "@/components/AuthProvider";
 import {
   type AadhaarSubject,
@@ -457,20 +459,19 @@ export function AadhaarVerifyPanel({
             </span>
           </label>
           {issued ? (
-            <label className="grid gap-1">
-              <span className="field-label">The six-digit code UIDAI sent</span>
-              <input
-                className="field-input"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                value={otp}
-                onChange={(event) => setOtp(event.target.value)}
-                required
-              />
-            </label>
+            // The owner's six boxes (OtpCodeInput): digits only, paste fills all six. Not submitted on
+            // completion here — the Verify button below is the act, as on the rest of this panel.
+            <OtpCodeInput
+              id="aadhaar-otp"
+              label="The six-digit code UIDAI sent"
+              value={otp}
+              onChange={setOtp}
+              disabled={busy}
+              autoFocus
+            />
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <button type="submit" className="field-button" disabled={busy || !uid.trim() || (!!issued && !otp.trim())}>
+            <button type="submit" className="field-button" disabled={busy || !uid.trim() || (!!issued && !isCompleteCode(otp))}>
               {busy ? "Please wait…" : issued ? "Verify" : "Send the code"}
             </button>
             <button type="button" className="field-button-secondary" disabled={busy} onClick={() => reset()}>

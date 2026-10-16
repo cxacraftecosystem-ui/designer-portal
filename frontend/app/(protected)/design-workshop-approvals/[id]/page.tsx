@@ -79,6 +79,7 @@ import {
 import { formatDate, formatDateTime } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canApproveDesignWorkshops } from "@/lib/permissions";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 function describeFailure(error: unknown): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
@@ -559,22 +560,15 @@ function DecisionPanel({
             placeholder={REVISE_COPY[reviseKind].placeholder}
             value={reason}
           />
-          <label className="field-label" htmlFor="revise-stage">
-            Which stage is it about?
-          </label>
-          <select
-            className="field-input"
-            id="revise-stage"
-            onChange={(event) => setReasonStage(event.target.value)}
+          <span className="field-label">Which stage is it about?</span>
+          <SearchableSelect
+            ariaLabel="Which stage is it about?"
             value={reasonStage}
-          >
-            <option value="">The report as a whole</option>
-            {stages.map((stage) => (
-              <option key={stage.key} value={stage.key}>
-                {stage.title}
-              </option>
-            ))}
-          </select>
+            onChange={setReasonStage}
+            noneLabel="The report as a whole"
+            options={stages.map((stage) => ({ value: stage.key, label: stage.title }))}
+            advanceOnSelect={false}
+          />
           <div className="flex flex-wrap gap-2">
             <button
               className="field-button"
