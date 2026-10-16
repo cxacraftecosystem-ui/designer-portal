@@ -69,7 +69,7 @@ const tone: Record<string, string> = {
   DRAFT: "border-line-200 bg-surface-50 text-ink-500",
   PENDING: "border-amber-500/30 bg-amber-100 text-amber-800",
   APPROVED: "border-success-600/25 bg-success-100 text-success-600",
-  REJECTED: "border-error-600/25 bg-error-100 text-error-600",
+  REJECTED: "border-error-600/25 bg-error-100 text-red-800",
   NEEDS_REVISION: "border-purple-300 bg-purple-50 text-purple-700",
   // ── DesignWorkshopStatus ──
   IN_PROGRESS: "border-purple-300 bg-purple-50 text-purple-700",
@@ -99,6 +99,14 @@ const label: Record<string, string> = {
   SUBMITTED: "Submitted",
   ARCHIVED: "Archived"
 };
+
+/**
+ * The words a status is shown in, everywhere — the badge, and the Status picker on the record forms,
+ * which printed the raw enum ("NEEDS_REVISION") until 2026-10-16 (UX audit DW-15).
+ */
+export function statusLabel(status: string): string {
+  return label[status] ?? humanize(String(status));
+}
 
 /** Fallback for statuses without a curated label: SOME_STATUS -> "Some status". */
 function humanize(status: string): string {

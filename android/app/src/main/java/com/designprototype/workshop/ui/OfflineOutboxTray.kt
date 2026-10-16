@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.userMessage
+
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -160,7 +162,7 @@ fun OfflineOutboxTray(
                 }
                 .onFailure { error ->
                     if (error !is CancellationException) {
-                        note = "That did not work: ${error.message ?: "no reason given"}."
+                        note = error.userMessage("That did not work. Try again.")
                     }
                 }
             busy = false

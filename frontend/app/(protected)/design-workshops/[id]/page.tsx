@@ -58,7 +58,6 @@ import {
   dwFrozenReason,
   dwPatchableFrom,
   getDesignWorkshop,
-  overallPercent,
   patchDesignWorkshop,
   type DwDecision,
   type DwInspectionFeedback,
@@ -680,7 +679,7 @@ function InspectionFeedbackPanel({
         </div>
       ))}
       {truncated ? (
-        <p className="text-xs leading-5 text-amber-800">
+        <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
           This is the most recent part of a longer correspondence — older suggestions are on the record and are not
           shown here.
         </p>
@@ -991,7 +990,7 @@ function SubmissionCard({
       ) : (
         // RULE 10: the count is missing, so the screen says the count is missing. Rendering nothing
         // here would read as "there is nothing outstanding", which is the one wrong answer.
-        <p className="text-sm leading-6 text-amber-800">
+        <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
           What&rsquo;s still outstanding couldn&rsquo;t be counted. The buttons below still work. Reload the page to see
           the count.
         </p>
@@ -1022,7 +1021,7 @@ function SubmissionCard({
           <p>{WORKSHOP_STATUS_IS}</p>
           <p>
             {STAGE_CHECK_IS}{" "}
-            <Link href={`/design-workshops/${workshopId}/readiness`} className="font-medium text-purple-700 underline">
+            <Link href={`/design-workshops/${workshopId}/readiness`} className="font-medium text-purple-700 dark:text-purple-300 underline">
               See the {outstanding} outstanding field{outstanding === 1 ? "" : "s"}
             </Link>{" "}
             if you would rather fill them in first.
@@ -1033,7 +1032,7 @@ function SubmissionCard({
       {!known ? (
         // A status from a newer server. Say what is on the record, and that this build has no step to
         // offer from it — a card with no buttons and no sentence reads as broken.
-        <p className="text-sm leading-6 text-amber-800">
+        <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
           There&rsquo;s no next step available from this workshop&apos;s status. Reload the page to update the app,
           then try again.
         </p>
@@ -1437,7 +1436,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
     () => (registry && draft ? localCompleteness(registry, draft) : {}),
     [registry, draft]
   );
-  const percent = overallPercent(completeness);
   /**
    * The search index over everything this device holds for this workshop.
    *
@@ -1751,15 +1749,41 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
                 two screens read identically at 22 stages and only diverge if the registry moves — at
                 which point THIS one is the one telling the truth.
               */}
+              {/*
+                ONE HEADLINE, COUNTED IN STAGES (UX audit DW-10, 2026-10-16). This card printed "5%" —
+                required FIELDS filled — beside the submission card's "9 of 22 stages complete", two
+                true numbers that read together as a bug. The headline and the bar now count stages,
+                the sentence `readinessSummary` prints, and the field count is the secondary line.
+              */}
               <span className="font-medium text-ink-900">
-                {stageCount === null
-                  ? "Required fields across every stage"
-                  : `Required fields across all ${stageCount} stages`}
+                {readiness
+                  ? `${readiness.stagesComplete} of ${readiness.stagesTotal} stages complete`
+                  : stageCount === null
+                    ? "Stages complete"
+                    : `Stages complete, of ${stageCount}`}
               </span>
-              <span className="text-ink-muted">{percent}%</span>
+              <span className="text-ink-muted">
+                {readiness
+                  ? readiness.blocking.length
+                    ? `${readiness.blocking.length} required field${readiness.blocking.length === 1 ? "" : "s"} left`
+                    : "No required fields left"
+                  : null}
+              </span>
             </div>
-            <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-field-200">
-              <div className="h-full rounded-full bg-purple-700" style={{ width: `${percent}%` }} />
+            <div
+              className="mt-1.5 h-2 overflow-hidden rounded-full bg-field-200"
+              role="progressbar"
+              aria-label="Stages complete"
+              aria-valuemin={0}
+              aria-valuemax={readiness?.stagesTotal ?? 0}
+              aria-valuenow={readiness?.stagesComplete ?? 0}
+            >
+              <div
+                className="h-full rounded-full bg-purple-700"
+                style={{
+                  width: `${readiness && readiness.stagesTotal ? Math.round((100 * readiness.stagesComplete) / readiness.stagesTotal) : 0}%`
+                }}
+              />
             </div>
           </div>
           {/* The two things that go stale silently, both stated rather than assumed. */}
@@ -1870,7 +1894,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
       */}
       {detail && !neverSent && canApproveDesignWorkshops(user) ? (
         <p className="mb-5 text-sm leading-6 text-ink-700">
-          <Link className="font-medium text-purple-700 underline" href={`/design-workshop-approvals/${draft?.remoteId ?? id}`}>
+          <Link className="font-medium text-purple-700 dark:text-purple-300 underline" href={`/design-workshop-approvals/${draft?.remoteId ?? id}`}>
             Open this report on Reports to approve
           </Link>{" "}
           to approve it, send it back or hand it on to the office.

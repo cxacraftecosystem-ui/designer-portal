@@ -88,7 +88,7 @@ function Hit({ workshopId, hit }: { workshopId: string; hit: WorkshopSearchHit }
             </>
           ) : null}
           <span aria-hidden>·</span>
-          <span className="font-medium text-purple-700">{hit.fieldLabel}</span>
+          <span className="font-medium text-purple-700 dark:text-purple-300">{hit.fieldLabel}</span>
         </span>
         <Snippet hit={hit} />
       </Link>

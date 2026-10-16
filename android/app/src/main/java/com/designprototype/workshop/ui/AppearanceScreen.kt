@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.filled.DarkMode
 // row `Icons.Filled.Explore`, and a settings row that led to the same place behind a different
 // picture would be a second sign on one door.
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Palette
@@ -35,6 +38,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 // leads to a CONSENT and its withdrawal — the figures behind it are the smaller half. A chart glyph
 // here would read as the admin's aggregate, which is a different screen at a different rank.
 import androidx.compose.material.icons.filled.Policy
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.VpnKey
@@ -446,11 +450,18 @@ fun AppearanceScreen(
     onOpenUsageRecording: () -> Unit,
     /** Open this account's own two-step verification. */
     onOpenTwoStepVerification: () -> Unit,
+    /** Open Settings → Password: change it, or set a first one. */
+    onOpenPassword: () -> Unit = {},
     /**
      * Re-open the first-run walkthrough. See the row at the bottom of this screen for why a settings
      * page carries it at all.
      */
     onOpenWalkthrough: () -> Unit,
+    /**
+     * Open this account's Aadhaar verification. NULL — and then no row is drawn at all — unless the
+     * server has an Aadhaar method switched on; see `ui/aadhaar/AadhaarVerification.kt`.
+     */
+    onOpenAadhaar: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -509,10 +520,11 @@ fun AppearanceScreen(
                 .onSuccess { prefsStore.clearPending(changedAt) }
                 .onFailure {
                     if (it is kotlinx.coroutines.CancellationException) return@onFailure
+                    // Kept on this device either way; the words say whether it is waiting for signal.
                     error = if (!repository.isOnline(prefsContext)) {
                         "Saved on this device. It is sent to your account when you are back online."
                     } else {
-                        it.message ?: "Unable to save preferences"
+                        it.userMessage("Unable to save preferences")
                     }
                 }
             saving = false
@@ -669,6 +681,13 @@ fun AppearanceScreen(
          * whether it is on, for the usage row's reason: the state is a network read.
          */
         SettingsRow(
+            icon = Icons.Filled.Key,
+            title = "Password",
+            summary = "Change your password, or set one to sign in with your email address",
+            onClick = onOpenPassword,
+        )
+
+        SettingsRow(
             icon = Icons.Filled.Security,
             title = "Two-step verification",
             summary = "A code from an authenticator app each time you sign in",
@@ -681,6 +700,15 @@ fun AppearanceScreen(
             summary = "What is recorded about how you use this app, what is held, and how to withdraw",
             onClick = onOpenUsageRecording,
         )
+
+        if (onOpenAadhaar != null) {
+            SettingsRow(
+                icon = Icons.Filled.VerifiedUser,
+                title = "Aadhaar verification",
+                summary = "Confirm that this account belongs to you by checking it against your Aadhaar",
+                onClick = onOpenAadhaar,
+            )
+        }
 
         /*
          * ---- READ THE WALKTHROUGH AGAIN ---------------------------------------------------------

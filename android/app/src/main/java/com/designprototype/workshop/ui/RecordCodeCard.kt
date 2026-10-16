@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -146,7 +148,7 @@ private fun renderRecordCode(recordType: DwWorkshopRecordType, id: String?): Cod
         is DwEncodeResult.Refused -> CodeRender.Refused(encoded.message)
         is DwEncodeResult.Ok -> runCatching {
             CodeRender.Ok(encoded.code, formatWorkshopCodeForPrint(encoded.code), DwQrEncode.encode(encoded.code, CODE_ECC))
-        }.getOrElse { CodeRender.Refused(it.message ?: "This code could not be drawn.") }
+        }.getOrElse { CodeRender.Refused(it.userMessage("This code could not be drawn.")) }
     }
 
 /** Where a shared code landed on this device. */
@@ -301,7 +303,7 @@ fun RecordCodeSection(
         scope.launch {
             runCatching { writeCodePng(context, repository, entry) }
                 .onSuccess { saved = it }
-                .onFailure { problem = it.message ?: "The code could not be saved as a picture." }
+                .onFailure { problem = it.userMessage("The code could not be saved as a picture.") }
             sharing = false
         }
     }
@@ -378,7 +380,7 @@ fun RecordCodeSection(
                                 "The last four characters are a check. Typed into a lookup, they are what stops one " +
                                     "wrong character opening a different record.",
                                 color = MaterialTheme.field.muted,
-                                fontSize = 10.sp,
+                                fontSize = 11.sp,
                                 lineHeight = 14.sp,
                             )
                         }

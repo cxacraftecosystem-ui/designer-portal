@@ -340,7 +340,7 @@ async def name_on_the_allow_list(email: Any, *, client: Any = None) -> str | Non
     return str(getattr(named[0], "fullName", "") or "").strip()
 
 
-async def adopt_allow_list_name(email: Any, full_name: Any) -> bool:
+async def adopt_allow_list_name(email: Any, full_name: Any, *, client: Any = None) -> bool:
     """Give an existing empanelment the allow-list's name — ONLY where it has none of its own.
 
     Returns True only when this call actually wrote a name, so a caller can report what it changed
@@ -379,12 +379,13 @@ async def adopt_allow_list_name(email: Any, full_name: Any) -> bool:
         return False
     # Both spellings, for the reason every other lookup in this module gives: the roster row may
     # have been written under the canonical mailbox while the allow-list holds the dotted form.
-    existing = await db.designerroster.find_first(where={"email": {"in": keys}})
+    writer = db if client is None else client  # the caller's transaction, when it has one
+    existing = await writer.designerroster.find_first(where={"email": {"in": keys}})
     if existing is None:
         return False
     if str(getattr(existing, "fullName", "") or "").strip():
         return False
-    await db.designerroster.update(where={"id": existing.id}, data={"fullName": cleaned})
+    await writer.designerroster.update(where={"id": existing.id}, data={"fullName": cleaned})
     return True
 
 

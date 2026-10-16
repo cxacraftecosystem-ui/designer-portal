@@ -1010,7 +1010,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <label className="flex items-start gap-2.5 text-sm font-medium leading-6 text-ink-900">
             <input
               type="checkbox"
-              className="mt-1 h-4 w-4 rounded border-line-300 text-purple-700"
+              className="mt-1 h-4 w-4 rounded border-line-300 text-purple-700 dark:text-purple-300"
               checked={includeAiLayers}
               onChange={(event) => setIncludeAiLayers(event.target.checked)}
             />
@@ -1336,7 +1336,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                 <li key={stage.key} className="text-sm">
                   <Link
                     href={`/design-workshops/${id}/stages/${stage.key}`}
-                    className="font-medium text-purple-700 underline-offset-2 hover:underline"
+                    className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline"
                   >
                     {stage.number}. {stage.title}
                   </Link>
@@ -1378,7 +1378,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           the thing this page exists to show below the fold.
         */}
         <details className="border-t border-line-200 pt-3">
-          <summary className="cursor-pointer text-sm font-medium text-purple-700">
+          <summary className="cursor-pointer text-sm font-medium text-purple-700 dark:text-purple-300">
             Open a stage to correct something the preview shows
           </summary>
           <p className="mt-2 text-xs leading-5 text-ink-500">
@@ -1391,7 +1391,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               <li key={stage.key} className="text-sm">
                 <Link
                   href={`/design-workshops/${id}/stages/${stage.key}`}
-                  className="text-purple-700 underline-offset-2 hover:underline"
+                  className="text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline"
                 >
                   {stage.number}. {stage.title}
                 </Link>

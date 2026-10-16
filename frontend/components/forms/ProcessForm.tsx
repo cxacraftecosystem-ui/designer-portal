@@ -1287,7 +1287,7 @@ export function ProcessForm({
           — a refusal, or a failure the server answered with — so it has to be spoken when it
           appears rather than waiting to be stumbled across on the next pass through the form. */}
       {error ? (
-        <div id={errorId} role="alert" className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">
+        <div id={errorId} role="alert" className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">
           {error}
         </div>
       ) : null}
@@ -1550,7 +1550,7 @@ export function ProcessForm({
             onRemoved={(id) => setExistingPreMedia((current) => current.filter((media) => media.id !== id))}
             onError={setError}
           />
-          <p className="text-xs font-medium text-amber-800">🎥 Video is the preferred format here — capture the action as it happens.</p>
+          <p className="text-xs font-medium text-amber-800 dark:text-amber-100">🎥 Video is the preferred format here — capture the action as it happens.</p>
           <MediaCaptureField
             files={preFiles}
             onFilesChange={setPreFiles}
@@ -1681,7 +1681,7 @@ export function ProcessForm({
                   onChange={(value) => updateStep(step.key, { notes: value })}
                 />
               ) : null}
-              <p className="text-xs font-medium text-amber-800">🎥 Video is the preferred format here — capture the action as it happens.</p>
+              <p className="text-xs font-medium text-amber-800 dark:text-amber-100">🎥 Video is the preferred format here — capture the action as it happens.</p>
               <MediaCaptureField
                 files={step.files}
                 onFilesChange={(files) => updateStep(step.key, { files })}

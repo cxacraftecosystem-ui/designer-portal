@@ -123,7 +123,7 @@ fun CarryContextBanner(
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    Text(label.uppercase(), fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
+                                    Text(label.uppercase(), fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                                     Text(value, fontSize = 11.sp, color = Body)
                                 }
                             }

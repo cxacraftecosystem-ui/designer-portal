@@ -324,7 +324,7 @@ export function MarketFindingsPanel({
 function Heading() {
   return (
     <h2 id="market-findings-heading" className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-      <BarChart3 className="h-4 w-4 text-purple-700" aria-hidden />
+      <BarChart3 className="h-4 w-4 text-purple-700 dark:text-purple-300" aria-hidden />
       What the survey says
     </h2>
   );

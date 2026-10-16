@@ -473,7 +473,7 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
                   to prevent, so the wording narrows to the half that WAS checked — and the amber
                   line above names the half that was not. The tick stays green because everything
                   this page could count is genuinely done. */}
-              <p className="flex items-center gap-2 text-sm font-medium text-success-600">
+              <p className="flex items-center gap-2 text-sm font-medium text-success-600 dark:text-emerald-400">
                 <CheckCircle2 className="h-4 w-4" aria-hidden />
                 {uncountedQuestions
                   ? `Every required field of the standard form, across all ${readiness.stagesTotal} stages, is filled in.`
@@ -527,7 +527,7 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
             <section className="panel mb-5 overflow-hidden">
               <div className="border-b border-line-200 px-4 py-3">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-                  <FileWarning className="h-4 w-4 text-amber-800" aria-hidden />
+                  <FileWarning className="h-4 w-4 text-amber-800 dark:text-amber-100" aria-hidden />
                   What the report would warn about
                 </h2>
                 {/* "These do not refuse a submit" named no act either, and this section is the one place on
@@ -542,7 +542,7 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
                 {readiness.checks.map((check) => (
                   <li key={check.id} className="border-b border-line-200 last:border-b-0">
                     <Link href={check.href} className="flex items-start gap-3 px-4 py-3 transition hover:bg-surface-50">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-800 dark:text-amber-100" aria-hidden />
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-medium text-ink-900">{check.title}</span>
                         <span className="mt-0.5 block text-sm leading-6 text-ink-700">{check.detail}</span>

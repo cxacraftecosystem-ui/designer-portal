@@ -171,7 +171,7 @@ export function DeletedWorkshopsCard() {
             screen reader reads as two sections. Same look, correct level.
           */}
           <div className="rounded-xl border border-dashed border-line-200 bg-field-100 px-6 py-10 text-center">
-            <div className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-full bg-field-200 text-field-600">
+            <div className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-full bg-field-200 text-field-600 dark:text-purple-300">
               <Undo2 className="h-5 w-5" aria-hidden />
             </div>
             {strandedPage ? (

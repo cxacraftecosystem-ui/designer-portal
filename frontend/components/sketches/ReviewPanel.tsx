@@ -623,7 +623,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
 
         {orderNote ? <p className="mt-2 text-sm text-ink-muted">{orderNote}</p> : null}
         {orderProblem ? (
-          <p className="mt-2 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">
+          <p className="mt-2 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">
             {orderProblem}
           </p>
         ) : null}
@@ -641,7 +641,7 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, read
           className={
             unreachable
               ? "flex items-start gap-2 rounded-md border border-line-200 bg-amber-100 px-3 py-2 text-sm text-amber-800"
-              : "flex items-start gap-2 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600"
+              : "flex items-start gap-2 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800"
           }
         >
           {unreachable ? (

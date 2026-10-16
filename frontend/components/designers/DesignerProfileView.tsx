@@ -263,7 +263,7 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
         href={href}
         target="_blank"
         rel="noreferrer"
-        className="wrap-break-word text-purple-700 underline-offset-2 hover:underline"
+        className="wrap-break-word text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline"
       >
         {String(raw)}
       </a>
@@ -272,7 +272,7 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
 
   if (field === "email") {
     return (
-      <a href={`mailto:${String(raw)}`} className="wrap-break-word text-purple-700 underline-offset-2 hover:underline">
+      <a href={`mailto:${String(raw)}`} className="wrap-break-word text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
         {String(raw)}
       </a>
     );
@@ -308,5 +308,5 @@ function ExperienceValue({ profile }: { profile: DesignerProfile }) {
 }
 
 function Blank() {
-  return <span className="text-ink-300">{BLANK}</span>;
+  return <span className="text-ink-500">{BLANK}</span>;
 }

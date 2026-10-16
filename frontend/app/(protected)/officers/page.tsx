@@ -1240,7 +1240,7 @@ function DesignerPanel({
                       </span>
                     ) : null}
                     {removed.includes(row.userId) ? (
-                      <span className="rounded-full border border-error-600/25 bg-error-100 px-2 py-0.5 text-[0.6875rem] font-medium text-error-600">
+                      <span className="rounded-full border border-error-600/25 bg-error-100 px-2 py-0.5 text-[0.6875rem] font-medium text-red-800">
                         loses access on save
                       </span>
                     ) : null}
@@ -1317,7 +1317,7 @@ function DesignerPanel({
             ) : null}
             {/* Colour never carries the meaning on its own — the word "unsaved" does. */}
             {dirty ? (
-              <span className="text-xs text-amber-800">
+              <span className="text-xs text-amber-800 dark:text-amber-100">
                 {added.length + removed.length + (leadMoved ? 1 : 0)} unsaved change
                 {added.length + removed.length + (leadMoved ? 1 : 0) === 1 ? "" : "s"}
               </span>
@@ -1871,7 +1871,7 @@ function ArtisanListPanel({
               </span>
               <StatusBadge status={row.status} />
               {comingOff.some((candidate) => candidate.id === row.id) ? (
-                <span className="rounded-full border border-error-600/25 bg-error-100 px-2 py-0.5 text-[0.6875rem] font-medium text-error-600">
+                <span className="rounded-full border border-error-600/25 bg-error-100 px-2 py-0.5 text-[0.6875rem] font-medium text-red-800">
                   comes off the roster on save
                 </span>
               ) : null}
@@ -1906,7 +1906,7 @@ function ArtisanListPanel({
             Discard changes
           </button>
           {/* Colour never carries the meaning on its own — the word does. */}
-          <span className="text-xs text-amber-800">
+          <span className="text-xs text-amber-800 dark:text-amber-100">
             {comingOff.length} artisan{comingOff.length === 1 ? "" : "s"} unticked, not yet saved
           </span>
         </div>

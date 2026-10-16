@@ -385,7 +385,7 @@ export function UsageConsentCard() {
   return (
     <section className="panel p-5">
       <div className="flex items-start gap-2.5">
-        <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-purple-700" aria-hidden />
+        <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {/* The server's own title, so this card and the sign-in card are visibly one thing. */}

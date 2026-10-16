@@ -1,6 +1,12 @@
 package com.designprototype.workshop.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -614,6 +620,19 @@ fun AccessRosterScreen(
                 mutate("$email may sign in.") {
                     repository.addToAccessRoster(email = email, fullName = fullName, role = role, notes = notes)
                 }
+            },
+            onSubmitWithPassword = { email, fullName, role, notes, password, mustChange ->
+                adding = false
+                mutate(accessAddedLine(email, AccessSignIn.PASSWORD)) {
+                    repository.addToAccessRoster(
+                        email = email,
+                        fullName = fullName,
+                        role = role,
+                        notes = notes,
+                        password = password,
+                        mustChangePassword = mustChange
+                    )
+                }
             }
         )
     }
@@ -1022,8 +1041,24 @@ private fun AccessEditDialog(
     busy: Boolean,
     onDismiss: () -> Unit,
     onSubmit: (email: String, fullName: String, role: String?, notes: String) -> Unit,
+    /**
+     * The "With a password" answer to "How will they sign in?" — only offered when adding. The
+     * account is created now; the person can still sign in with Google on the same address later.
+     */
+    onSubmitWithPassword: (
+        email: String,
+        fullName: String,
+        role: String?,
+        notes: String,
+        password: String,
+        mustChangePassword: Boolean,
+    ) -> Unit = { _, _, _, _, _, _ -> },
 ) {
     var email by remember(existing) { mutableStateOf(existing?.email.orEmpty()) }
+    var signIn by remember(existing) { mutableStateOf(AccessSignIn.PROVIDER) }
+    var password by remember(existing) { mutableStateOf("") }
+    var mustChange by remember(existing) { mutableStateOf(true) }
+    var revealPassword by remember { mutableStateOf(false) }
     var fullName by remember(existing) { mutableStateOf(existing?.fullName.orEmpty()) }
     var notes by remember(existing) { mutableStateOf(existing?.notes.orEmpty()) }
     var role by remember(existing) { mutableStateOf(existing?.admitRole) }
@@ -1071,10 +1106,61 @@ private fun AccessEditDialog(
                 OutlinedTextField(
                     value = fullName,
                     onValueChange = { fullName = it },
-                    label = { Text("Full name") },
+                    label = { Text(requiredMarked(if (signIn == AccessSignIn.PASSWORD) "Full name *" else "Full name")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                // HOW WILL THEY SIGN IN — adding only. A provider sign-in makes the account at the
+                // first sign-in; a password makes it now. See `accessSignInNote`.
+                if (existing == null) {
+                    Text(ACCESS_SIGN_IN_QUESTION, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    listOf(
+                        AccessSignIn.PROVIDER to ACCESS_SIGN_IN_PROVIDER,
+                        AccessSignIn.PASSWORD to ACCESS_SIGN_IN_PASSWORD,
+                    ).forEach { (option, label) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = signIn == option,
+                                    role = Role.RadioButton,
+                                    onClick = { signIn = option }
+                                )
+                        ) {
+                            RadioButton(selected = signIn == option, onClick = null)
+                            Text(label, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                    Text(accessSignInNote(signIn), color = MaterialTheme.field.muted, fontSize = 12.sp)
+                    if (signIn == AccessSignIn.PASSWORD) {
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            label = { Text(requiredMarked("Password *")) },
+                            supportingText = { Text(passwordRuleLine()) },
+                            singleLine = true,
+                            visualTransformation = passwordTransformation(revealPassword),
+                            trailingIcon = { PasswordRevealIcon(revealPassword, { revealPassword = !revealPassword }) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .toggleable(
+                                    value = mustChange,
+                                    role = Role.Checkbox,
+                                    onValueChange = { mustChange = it }
+                                )
+                        ) {
+                            Checkbox(checked = mustChange, onCheckedChange = null)
+                            Text(ACCESS_MUST_CHANGE_LABEL, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
 
                 // THE TIER THEY JOIN AT. The first option is the platform's documented default — the
                 // lowest rung — because that is this platform's rule for a new joiner: everybody
@@ -1116,9 +1202,16 @@ private fun AccessEditDialog(
             }
         },
         confirmButton = {
+            val addProblem = if (existing == null) accessAddProblem(signIn, password, fullName) else null
             TextButton(
-                enabled = !busy && emailLooksUsable,
-                onClick = { onSubmit(cleaned, fullName, role, notes) }
+                enabled = !busy && emailLooksUsable && addProblem == null,
+                onClick = {
+                    if (existing == null && signIn == AccessSignIn.PASSWORD) {
+                        onSubmitWithPassword(cleaned, fullName, role, notes, password, mustChange)
+                    } else {
+                        onSubmit(cleaned, fullName, role, notes)
+                    }
+                }
             ) { Text(if (existing == null) "Add" else "Save") }
         },
         dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } }

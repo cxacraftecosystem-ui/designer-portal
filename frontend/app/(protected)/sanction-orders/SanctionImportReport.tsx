@@ -112,7 +112,7 @@ function ProblemBlock({
         <span
           className={
             tone === "error"
-              ? "grid h-6 w-6 place-items-center rounded-md bg-error-100 text-error-600"
+              ? "grid h-6 w-6 place-items-center rounded-md bg-error-100 text-red-800"
               : "grid h-6 w-6 place-items-center rounded-md bg-amber-100 text-amber-800"
           }
         >
@@ -171,7 +171,7 @@ export function SanctionImportReport({
           </h2>
           <Tally report={report} />
           {!sums ? (
-            <p className="mt-2 flex items-start gap-2 text-sm leading-6 text-amber-800">
+            <p className="mt-2 flex items-start gap-2 text-sm leading-6 text-amber-800 dark:text-amber-100">
               <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
               These numbers do not add up: {accounted} rows are accounted for out of{" "}
               {report.rowsRead} read. Upload the sheet again — every order already recorded will be

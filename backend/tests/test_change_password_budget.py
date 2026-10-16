@@ -33,13 +33,16 @@ the module skips itself when ``DATABASE_URL`` does not point at a local database
 full allowance without knowing about the others.
 """
 
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+import jwt
 import pytest
 from conftest import needs_db
 
+from app.core.config import get_settings
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
 from app.scale.rate_limit import _ACCOUNT_FAILURES
@@ -144,6 +147,18 @@ def _headers(world: dict[str, Any], slug: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(subject=world['people'][slug].id)}"}
 
 
+def _stale_headers(world: dict[str, Any], slug: str) -> dict[str, str]:
+    """A session token minted an hour ago — too old to SET a first password with."""
+    settings = get_settings()
+    now = int(time.time())
+    token = jwt.encode(
+        {"sub": world["people"][slug].id, "iat": now - 3600, "exp": now + 3600},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _change(client: Any, world: dict[str, Any], slug: str, current: str, new: str) -> Any:
     return client.post(
         "/api/auth/change-password",
@@ -216,25 +231,33 @@ async def test_the_owner_changing_their_own_password_is_charged_nothing(world, c
 async def test_an_account_with_no_password_is_told_so_and_charged_nothing(world, client):
     """THE 400 IS NOT A GUESS. There is nothing stored to compare against, so nothing was tried.
 
-    Charging it would let somebody spend a Google-provisioned account's budget by asking a question
-    that cannot be answered — and the account's owner, who has no password to type, would then find
-    the SIGN-IN door refusing them as well, over a route they cannot use in the first place.
+    Since 2026-10-17 an account with no password SETS its first one here — but only on a session
+    opened in the last fifteen minutes. On an older one it is told to sign in again, and charging that
+    would let somebody spend a Google-provisioned account's budget by asking a question that cannot be
+    answered — and the owner would then find the SIGN-IN door refusing them as well.
     """
+    stale = _stale_headers(world, "googler")
     statuses = [
-        _change(client, world, "googler", WRONG, "a-brand-new-password").status_code
+        client.post(
+            "/api/auth/change-password",
+            json={"currentPassword": WRONG, "newPassword": "a-brand-new-password"},
+            headers=stale,
+        ).status_code
         for _ in range(_ACCOUNT_FAILURES + 5)
     ]
     assert statuses == [400] * (_ACCOUNT_FAILURES + 5), (
         "an account with no password to change was charged a guessing budget for saying so: "
         f"{statuses}"
     )
-    # This account was seeded with the default provider, LOCAL, so a set-password link is a remedy
-    # the link route will issue; a GOOGLE account is told something else
-    # (``tests/test_account_provisioning.py``).
-    told = _change(client, world, "googler", WRONG, "a-brand-new-password")
-    assert told.json()["detail"] == (
-        "This account has no password to change. Ask an administrator for a set-password link."
+    told = client.post(
+        "/api/auth/change-password",
+        json={"newPassword": "a-brand-new-password"},
+        headers=stale,
     )
+    assert told.json()["detail"] == (
+        "For your security, sign out and sign in again, then set your password within 15 minutes."
+    )
+    assert told.headers.get("x-sign-in-again") == "1"
 
 
 async def test_the_budget_here_is_the_same_one_the_sign_in_door_spends(world, client):

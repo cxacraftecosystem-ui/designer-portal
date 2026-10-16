@@ -22,7 +22,7 @@ import {
   roleLabel,
   roleRank
 } from "@/lib/permissions";
-import type { NewPasswordAccount } from "@/lib/signIn";
+import type { NewPasswordAccount, PasswordMode } from "@/lib/signIn";
 import type { User, UserRole } from "@/lib/types";
 
 /**
@@ -92,6 +92,12 @@ export type RowOffers = {
    * server's `assert_may_reset_credentials`), and only for an account that has it on.
    */
   resetTwoFactor: boolean;
+  /**
+   * "Sign out of every device" — somebody has lost a phone, or a session is open somewhere it should
+   * not be. The password-reset rule exactly (`POST /users/{id}/sign-out-everywhere` asks the server's
+   * `assert_may_reset_credentials`), on any account the reader manages.
+   */
+  signOutEverywhere: boolean;
   /** Delete — an admin's alone. */
   remove: boolean;
   /** The capability checkboxes — an admin's alone, and only below Professor, where they mean something. */
@@ -105,6 +111,8 @@ export type RowOffers = {
  * hash was backfilled with a `passwordSetAt` when the column landed, so the stamp is the fact.
  */
 export function hasPassword(user: User): boolean {
+  // The server's derived `hasPassword` wins where it is sent; the stamp is the fallback for an older API.
+  if (typeof user.hasPassword === "boolean") return user.hasPassword;
   return user.passwordSetAt != null;
 }
 
@@ -125,6 +133,7 @@ export function rowOffers(viewer: User | null | undefined, target: User, powers:
     // protecting — taken here explicitly rather than refused.
     temporaryPassword: provision,
     resetTwoFactor: provision && target.twoFactorEnabled === true,
+    signOutEverywhere: provision,
     remove: managed && powers.admin,
     grants: managed && powers.admin && !hasRank(target, "PROFESSOR")
   };
@@ -238,25 +247,38 @@ export type NewAccountForm = {
   name: string;
   email: string;
   role: UserRole;
+  /** "How will they sign in?" — absent means SET, the form's first answer. */
+  passwordMode?: PasswordMode;
   password: string;
   mustChangePassword: boolean;
+  /** NONE only: also e-mail them a link to set a password. */
+  sendPasswordLink?: boolean;
   canManageQuestionnaire: boolean;
   canDownloadDataset: boolean;
 };
 
 /**
- * What `POST /api/users` is sent. The capability grants travel only for an ADMIN: a provisioner who
- * is not one is refused with a 403 for any grant set true, so the boxes are not drawn for them and
- * nothing they did not choose is sent on their behalf.
+ * What `POST /api/users` is sent. Each sign-in answer sends only its own fields: a typed password and
+ * the first-sign-in box for SET; nothing about a password for GENERATE (the server makes one and the
+ * account must change it); and for NONE no password at all, plus `sendPasswordLink` only when it was
+ * ticked. The capability grants travel only for an ADMIN: a provisioner who is not one is refused with
+ * a 403 for any grant set true, so the boxes are not drawn for them and nothing they did not choose
+ * is sent on their behalf.
  */
 export function newAccountBody(form: NewAccountForm, powers: Pick<TablePowers, "admin">): NewPasswordAccount {
+  const passwordMode = form.passwordMode ?? "SET";
   const body: NewPasswordAccount = {
     name: form.name,
     email: form.email,
     role: form.role,
-    password: form.password,
-    mustChangePassword: form.mustChangePassword
+    passwordMode
   };
+  if (passwordMode === "SET") {
+    body.password = form.password;
+    body.mustChangePassword = form.mustChangePassword;
+  } else if (passwordMode === "NONE" && form.sendPasswordLink) {
+    body.sendPasswordLink = true;
+  }
   if (powers.admin) {
     body.canManageQuestionnaire = form.canManageQuestionnaire;
     body.canDownloadDataset = form.canDownloadDataset;

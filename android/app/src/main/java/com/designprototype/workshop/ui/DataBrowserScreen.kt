@@ -542,7 +542,7 @@ fun DataBrowserScreen(
                 item("error") { ErrorBanner(message, onDismiss = state::dismissError) }
             }
             state.cachedNote?.let { note ->
-                item("cached") { Text(note, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
+                item("cached") { CachedCopyNote(note) }
             }
 
             // Above the browser, not inside it: walking down four levels of folders to reach one
@@ -723,7 +723,7 @@ fun DataBrowserScreen(
                             if (zipTotal > 0) {
                                 "Fetching file ${minOf(zipDone + 1, zipTotal)} of $zipTotal"
                             } else {
-                                "Reading the folder manifest…"
+                                "Preparing the download…"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant

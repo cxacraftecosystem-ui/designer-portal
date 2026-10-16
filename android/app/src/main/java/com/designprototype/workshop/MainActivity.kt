@@ -48,12 +48,17 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -75,6 +80,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Timeline
+import com.designprototype.workshop.ui.CachedCopyNote
 import com.designprototype.workshop.ui.FormDraftRestoredNote
 import com.designprototype.workshop.ui.draftDate
 import com.designprototype.workshop.ui.draftList
@@ -102,6 +108,27 @@ import com.designprototype.workshop.ui.visibleNavItems
 import com.designprototype.workshop.ui.IslandEntry
 import com.designprototype.workshop.ui.IslandGroup
 import com.designprototype.workshop.ui.IslandScaffold
+import com.designprototype.workshop.ui.APP_SEARCH_NAME
+import com.designprototype.workshop.ui.AppMenuFocusEffect
+import com.designprototype.workshop.ui.AppSearchHeader
+import com.designprototype.workshop.ui.QuickReturnHeader
+import com.designprototype.workshop.ui.rememberQuickReturnHeader
+import com.designprototype.workshop.ui.rememberIslandImeVisible
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
+import com.designprototype.workshop.ui.AppSearchItem
+import com.designprototype.workshop.ui.AppSearchPanel
+import com.designprototype.workshop.ui.AppSearchSettingTarget
+import com.designprototype.workshop.ui.appMenuBleed
+import com.designprototype.workshop.ui.appMenuHidesPage
+import com.designprototype.workshop.ui.appMenuShowing
+import com.designprototype.workshop.ui.appSearchCachedItems
+import com.designprototype.workshop.ui.appSearchRemoteItems
+import com.designprototype.workshop.ui.appSearchScreenItems
+import com.designprototype.workshop.ui.appSearchSettingItems
+import com.designprototype.workshop.ui.closeAppMenu
+import com.designprototype.workshop.ui.openAppMenu
+import com.designprototype.workshop.ui.WorkshopLogo
 import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.OfflineOutboxTray
@@ -152,6 +179,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.window.Dialog
@@ -166,6 +194,7 @@ import com.designprototype.workshop.ui.passwordTransformation
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -251,6 +280,18 @@ import com.designprototype.workshop.data.IssuedPasswordLinkDto
 import com.designprototype.workshop.data.SignInHint
 import com.designprototype.workshop.data.signInHint
 import com.designprototype.workshop.data.apiErrorMessage
+import com.designprototype.workshop.data.userMessage
+import com.designprototype.workshop.ui.AppMessageBanner
+import com.designprototype.workshop.ui.AppMessageState
+import com.designprototype.workshop.ui.LocalAppNotice
+import com.designprototype.workshop.ui.rememberPermissionGate
+import com.designprototype.workshop.ui.holdsLocation
+import com.designprototype.workshop.ui.LOCATION_PERMISSIONS
+import com.designprototype.workshop.ui.CAMERA_PERMISSION
+import com.designprototype.workshop.ui.CAMERA_REFUSED_SENTENCE
+import com.designprototype.workshop.ui.MICROPHONE_PERMISSION
+import com.designprototype.workshop.ui.MICROPHONE_REFUSED_SENTENCE
+import com.designprototype.workshop.ui.LoadFailedCard
 import com.designprototype.workshop.data.DW_DICTATION_MAX_BYTES
 import com.designprototype.workshop.data.dwDictationServerAnswerSentence
 import com.designprototype.workshop.data.signInErrorMessage
@@ -282,7 +323,16 @@ import com.designprototype.workshop.ui.UsageDoorState
 import com.designprototype.workshop.ui.UsageRecordingScreen
 import com.designprototype.workshop.ui.TwoStepChallengeForm
 import com.designprototype.workshop.ui.TwoStepVerificationScreen
+import com.designprototype.workshop.ui.AccountPasswordScreen
+import com.designprototype.workshop.ui.ForgotPasswordScreen
+import com.designprototype.workshop.ui.HelpThemBackInActions
+import com.designprototype.workshop.ui.AddPersonCard
 import com.designprototype.workshop.data.SignInOutcome
+import com.designprototype.workshop.ui.aadhaar.AadhaarSelfScreen
+import com.designprototype.workshop.ui.aadhaar.AadhaarUserBadge
+import com.designprototype.workshop.ui.aadhaar.AadhaarVerifyCard
+import com.designprototype.workshop.data.AadhaarFeatures
+import com.designprototype.workshop.data.AadhaarSubject
 import com.designprototype.workshop.ui.UsageScreen
 import com.designprototype.workshop.ui.rememberUsageDoorState
 import com.designprototype.workshop.ui.usageAnswerAtTheDoor
@@ -297,6 +347,13 @@ import com.designprototype.workshop.ui.AppNavigationDrawerContent
 import com.designprototype.workshop.ui.AppearanceScreen
 import com.designprototype.workshop.ui.SpeechAndAiScreen
 import com.designprototype.workshop.ui.Body
+import com.designprototype.workshop.ui.StatusError
+import com.designprototype.workshop.ui.StatusSuccess
+import com.designprototype.workshop.ui.StatusWarning
+import com.designprototype.workshop.ui.StatusEmpty
+import com.designprototype.workshop.ui.OnStatusError
+import com.designprototype.workshop.ui.OnStatusSuccess
+import com.designprototype.workshop.ui.OnStatusWarning
 import com.designprototype.workshop.ui.NavDestination
 import com.designprototype.workshop.ui.ArtisanPhoneField
 import com.designprototype.workshop.ui.artisanPhoneValidationError
@@ -449,6 +506,7 @@ import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.Muted
 import com.designprototype.workshop.ui.resolveDarkTheme
 import com.designprototype.workshop.ui.reviewQueueCutNotice
+import com.designprototype.workshop.ui.REVIEW_QUEUE_PAGE_SIZE
 import com.designprototype.workshop.ui.syncAppPreferences
 import com.designprototype.workshop.ui.SurfaceCard
 // The walkthrough: its surface, and the device-local flag that opens it exactly once. The step list
@@ -1039,6 +1097,14 @@ private sealed interface Screen {
      * reason, and its own TopAppBar.
      */
     data object TwoStepVerification : Screen
+    /** Settings → Password: change it, or set a first one — `ui/AccountRecovery.kt`. */
+    data object AccountPassword : Screen
+    /**
+     * THIS ACCOUNT's Aadhaar verification, one level below [Appearance] beside [UsageRecording] —
+     * the web's card on /settings. Reachable only while the server has an Aadhaar method switched on
+     * (`UserDto.features`); the Settings row that opens it is not drawn otherwise.
+     */
+    data object Aadhaar : Screen
     /**
      * The /data directory-tree browser. Its own Screen rather than a Create mode because it owns its
      * whole viewport: it draws its own top bar and lays out with a LazyColumn, which must never be
@@ -1522,6 +1588,10 @@ private fun RepositoryApp(
      * alternatives rather than a screen and its dialog.
      */
     var redeemingLink by remember { mutableStateOf(false) }
+    /** "Forgot your password?" in place of the sign-in card — the link screen's arrangement. */
+    var forgotPassword by remember { mutableStateOf(false) }
+    /** The address typed on the card when it was pressed, so the screen does not ask for it again. */
+    var forgotPasswordEmail by remember { mutableStateOf("") }
     /**
      * The link a deep-link tap handed this app, waiting to be put in the redeem screen's box.
      *
@@ -1895,6 +1965,14 @@ private fun RepositoryApp(
              * one thing that is going to refuse them. `redeemingLink` is cleared on both exits, so
              * the card comes straight back either way.
              */
+            user == null && forgotPassword -> ForgotPasswordScreen(
+                repository = repository,
+                initialEmail = forgotPasswordEmail,
+                onBack = {
+                    forgotPassword = false
+                    forgotPasswordEmail = ""
+                }
+            )
             user == null && redeemingLink -> SetPasswordLinkScreen(
                 repository = repository,
                 initialLink = pastedLink,
@@ -1962,6 +2040,10 @@ private fun RepositoryApp(
                         }
                 },
                 onOpenSetPasswordLink = { redeemingLink = true },
+                onForgotPassword = { typed ->
+                    forgotPasswordEmail = typed
+                    forgotPassword = true
+                },
                 onLogin = { email, password ->
                     scope.launch {
                         loading = true
@@ -2381,7 +2463,9 @@ private fun LoginScreen(
      * links cannot sign in — that is the whole reason they were sent it — so a route to the screen
      * from inside the app would be a route past a door they cannot open.
      */
-    onOpenSetPasswordLink: () -> Unit = {}
+    onOpenSetPasswordLink: () -> Unit = {},
+    /** "Forgot your password?", with whatever is in the email box. See `ui/AccountRecovery.kt`. */
+    onForgotPassword: (String) -> Unit = {}
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -2598,6 +2682,13 @@ private fun LoginScreen(
                 // not a third full-height button: it is the least-used of the three ways in, and
                 // giving it the same weight as Google would make the card read as three equal
                 // choices when it is two and an exception.
+                TextButton(
+                    onClick = { onForgotPassword(email.trim()) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RectangleShape
+                ) {
+                    Text("Forgot your password?", fontSize = 12.sp)
+                }
                 TextButton(
                     onClick = onOpenSetPasswordLink,
                     modifier = Modifier.fillMaxWidth(),
@@ -3084,7 +3175,18 @@ private fun HomeScreen(
      */
     var craftRegister by remember { mutableStateOf(RegisterLoad()) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
-    var message by remember { mutableStateOf<String?>(null) }
+    // The reduced-motion switch, which the menu now honours when it opens and closes.
+    val reducedMotion = preferences.reducedMotion
+    // The search panel the page header opens. See AppSearch.kt.
+    var searchOpen by remember { mutableStateOf(false) }
+    // Written as a string (success); errors go through showError. See ui/AppMessage.kt.
+    val messageState = remember { AppMessageState() }
+    var message by messageState
+    // Android 8 and 9 only: the Downloads write needs this granted before an export runs on IO.
+    val legacyStorage = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
+    LaunchedEffect(Unit) {
+        requiredAndroidPermissions().takeIf { it.isNotEmpty() }?.let { legacyStorage.launch(it) }
+    }
     // Every gate below mirrors one backend dependency (see the capability block near ROLE_RANK).
     // Do not re-derive a rule inline here: this screen used to hard-code admin-only variants of half
     // of them, which locked professors out of screens the API would happily have served.
@@ -3238,6 +3340,14 @@ private fun HomeScreen(
         message = text
     }
 
+    // The same filter, drawn with the error treatment (ui/AppMessage.kt). Every `onError` lands here.
+    fun showError(text: String?) {
+        if (text.isNullOrBlank()) return
+        val lower = text.lowercase()
+        if ("left the composition" in lower || "was cancelled" in lower || "job was cancelled" in lower) return
+        messageState.showError(text)
+    }
+
     /**
      * ONTO A DESIGN WORKSHOP FROM A SEARCH HIT — or null, which means this account has no such route.
      *
@@ -3356,7 +3466,7 @@ private fun HomeScreen(
         scope.launch {
             runCatching { repository.stats() }
                 .onSuccess { stats = it }
-                .onFailure { showMessage(it.message) }
+                .onFailure { showError(it.userMessage("Couldn't load the dashboard numbers.")) }
         }
     }
 
@@ -3383,7 +3493,7 @@ private fun HomeScreen(
         loadLookups()
         runCatching { repository.questionnaireSections() }
             .onSuccess { sections = it }
-            .onFailure { showMessage(it.message) }
+            .onFailure { showError(it.userMessage("Couldn't load the questionnaire sections.")) }
     }
 
     // Leave the current screen, but if a form has unsaved work, route through the Save/Discard prompt
@@ -3498,7 +3608,7 @@ private fun HomeScreen(
         // Closing the sheet is not the navigation and must not wait on the answer: a drawer left open
         // behind the dialog is still open after "Keep editing", covering the form the user chose to
         // stay on.
-        scope.launch { drawerState.close() }
+        scope.launch { drawerState.closeAppMenu(reducedMotion) }
         if (destination == NavDestination.WALKTHROUGH || destination == NavDestination.TERMS) {
             // The two destinations that are not departures — both draw OVER the page you are already
             // on (see the branches above), so there is nothing to save or discard, and prompting
@@ -3527,6 +3637,8 @@ private fun HomeScreen(
             is Screen.MyAiKeys -> Screen.Appearance
             is Screen.UsageRecording -> Screen.Appearance
             is Screen.TwoStepVerification -> Screen.Appearance
+            is Screen.AccountPassword -> Screen.Appearance
+            is Screen.Aadhaar -> Screen.Appearance
             is Screen.DataBrowser -> Screen.Dashboard
             // One level at a time: from a tool back to the tool list, and only then out. This is
             // what lets the single header arrow replace the in-page "All admin tools" button — the
@@ -3624,6 +3736,8 @@ private fun HomeScreen(
         // Its own TopAppBar too, for the same reason.
         is Screen.UsageRecording -> null
         is Screen.TwoStepVerification -> null
+        is Screen.AccountPassword -> null
+        is Screen.Aadhaar -> null
         is Screen.DataBrowser -> "Data Browser"
         // Null on all eight arms immediately below — counted by reading them: workshops, stages,
         // one stage, report, report history, codes, photos, viewers. Each of those screens draws its
@@ -3702,6 +3816,8 @@ private fun HomeScreen(
         // no admin rights that they are inside an administrative tool.
         is Screen.UsageRecording -> NavDestination.SETTINGS
         is Screen.TwoStepVerification -> NavDestination.SETTINGS
+        is Screen.AccountPassword -> NavDestination.SETTINGS
+        is Screen.Aadhaar -> NavDestination.SETTINGS
         is Screen.DataBrowser -> NavDestination.VIEW_DATA
         is Screen.AdminHub -> NavDestination.SETTINGS_HUB
         // Every screen of the 22-stage record lights the one menu row that reaches it. Unlike the
@@ -3785,18 +3901,54 @@ private fun HomeScreen(
         }
     }
 
-    BackHandler(enabled = drawerState.isOpen) {
-        scope.launch { drawerState.close() }
+    // The search panel's sources (ui/AppSearchSources.kt). Screens are this account's own menu,
+    // so a search offers nothing the menu would not; every opener goes through the same router,
+    // and the same unsaved-changes guard, as a menu tap.
+    fun searchLocalItems(): List<AppSearchItem> =
+        appSearchScreenItems(visibleNavItems(user, adminView), ::navigate) +
+            appSearchSettingItems { target ->
+                attemptExit {
+                    message = null
+                    screen = when (target) {
+                        AppSearchSettingTarget.APPEARANCE -> Screen.Appearance
+                        AppSearchSettingTarget.SPEECH_AND_AI -> Screen.SpeechAndAi
+                        AppSearchSettingTarget.AI_KEYS -> Screen.MyAiKeys
+                        AppSearchSettingTarget.USAGE_RECORDING -> Screen.UsageRecording
+                        AppSearchSettingTarget.TWO_STEP -> Screen.TwoStepVerification
+                    }
+                }
+            } +
+            appSearchCachedItems(artisans, crafts) { type, id -> attemptExit { openSearchRecord(type, id) } }
+
+    suspend fun searchRemote(query: String): List<AppSearchItem> =
+        appSearchRemoteItems(
+            repository = repository,
+            query = query,
+            includeCustomQuestionnaires = FieldPermissions.canRunDesignWorkshops(user),
+            openRecord = { type, id -> attemptExit { openSearchRecord(type, id) } },
+            openCustomQuestionnaire = { id -> attemptExit { message = null; screen = Screen.QuestionnaireDetail(id) } }
+        )
+
+    // `appMenuShowing` and not `isOpen`, which stays false for the whole opening slide: Back pressed
+    // while the menu is still arriving closes it instead of navigating the page underneath.
+    BackHandler(enabled = drawerState.appMenuShowing) {
+        scope.launch { drawerState.closeAppMenu(reducedMotion) }
     }
-    BackHandler(enabled = drawerState.isClosed && screen !is Screen.Dashboard) {
+    BackHandler(enabled = !drawerState.appMenuShowing && screen !is Screen.Dashboard) {
         attemptExit { goBack() }
     }
+    AppMenuFocusEffect(drawerState)
 
     // Right-anchored drawer: wrap in RTL so the sheet slides in from the right (web parity),
     // then flip drawer + page content back to LTR so their own layout reads normally.
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         ModalNavigationDrawer(
             drawerState = drawerState,
+            // Through the root's 16dp padding, so the scrim and the sheet reach the screen edges.
+            modifier = Modifier.appMenuBleed(16.dp),
+            // Swipe to CLOSE only. Swipe-to-open listened to the whole page and pulled the menu
+            // across sketch canvases and sliders; the hamburger is the way in.
+            gesturesEnabled = drawerState.appMenuShowing,
             drawerContent = {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                     /*
@@ -3814,7 +3966,7 @@ private fun HomeScreen(
                         pushingUpdate = pushingUpdate,
                         onToggleAdminView = { adminViewRequested = !adminView },
                         onPushUpdate = {
-                            scope.launch { drawerState.close() }
+                            scope.launch { drawerState.closeAppMenu(reducedMotion) }
                             if (!pushingUpdate) {
                                 pushingUpdate = true
                                 Toast.makeText(context, "Publishing this version as the update for everyone…", Toast.LENGTH_SHORT).show()
@@ -3830,13 +3982,13 @@ private fun HomeScreen(
                                             ).show()
                                         }
                                         .onFailure {
-                                            Toast.makeText(context, it.message ?: "Unable to publish the update", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, it.userMessage("Unable to publish the update"), Toast.LENGTH_LONG).show()
                                         }
                                     pushingUpdate = false
                                 }
                             }
                         },
-                        onLogout = { scope.launch { drawerState.close() }; onLogout() }
+                        onLogout = { scope.launch { drawerState.closeAppMenu(reducedMotion) }; onLogout() }
                     )
                 }
             }
@@ -3845,6 +3997,9 @@ private fun HomeScreen(
                 LocalLayoutDirection provides LayoutDirection.Ltr,
                 LocalUnsavedGuard provides unsavedGuard
             ) {
+            // The page gets back the 16dp the drawer bleeds through, and leaves the accessibility
+            // tree while the menu is over it. See AppMenuDrawer.kt.
+            Box(modifier = Modifier.padding(16.dp).appMenuHidesPage(drawerState.appMenuShowing)) {
                 /*
                  * Two hosting shapes. Almost everything renders into the scrolling Column below,
                  * under the app's own header. The two screens branched off here own
@@ -3869,6 +4024,13 @@ private fun HomeScreen(
                         onOpenMyAiKeys = { screen = Screen.MyAiKeys },
                         onOpenUsageRecording = { screen = Screen.UsageRecording },
                         onOpenTwoStepVerification = { screen = Screen.TwoStepVerification },
+                        onOpenPassword = { screen = Screen.AccountPassword },
+                        // Null — no row at all — unless the server has an Aadhaar method switched on.
+                        onOpenAadhaar = if (AadhaarFeatures.of(user).enabled) {
+                            { screen = Screen.Aadhaar }
+                        } else {
+                            null
+                        },
                         // Through the ROUTER and not by setting the flag directly, so the settings
                         // row and the menu chip are one code path: whatever `openDestination` decides
                         // the Walkthrough means, both doors mean it. Note that this leaves the
@@ -3887,6 +4049,11 @@ private fun HomeScreen(
                         onBack = { attemptExit { goBack() } }
                     )
 
+                    is Screen.Aadhaar -> AadhaarSelfScreen(
+                        viewer = user,
+                        onBack = { attemptExit { goBack() } }
+                    )
+
                     is Screen.UsageRecording -> UsageRecordingScreen(
                         repository = repository,
                         onBack = { attemptExit { goBack() } }
@@ -3895,6 +4062,12 @@ private fun HomeScreen(
                     is Screen.TwoStepVerification -> TwoStepVerificationScreen(
                         repository = repository,
                         onBack = { attemptExit { goBack() } }
+                    )
+
+                    is Screen.AccountPassword -> AccountPasswordScreen(
+                        repository = repository,
+                        onBack = { attemptExit { goBack() } },
+                        onSignOut = onLogout
                     )
 
                     else -> {
@@ -3932,7 +4105,9 @@ private fun HomeScreen(
             modifier = islandModifier,
             // The drawer: the full menu, the admin-view switch (which left the bar when it moved to
             // the bottom) and Logout.
-            onOpenDrawer = { scope.launch { drawerState.open() } },
+            onOpenDrawer = { scope.launch { drawerState.openAppMenu(reducedMotion) } },
+            // Out of the way while the search panel is over the page.
+            visible = !searchOpen,
             // The bar highlights by label, so the label has to be looked up from the DESTINATION the
             // user is on. This used to pass `headerTitle` — a page title, matched against nav labels
             // that are written for a menu — so the Dashboard ("Design Workshop" against "Dashboard")
@@ -3959,13 +4134,21 @@ private fun HomeScreen(
             }
         )
                 }) { islandReserve ->
+        // The header's quick-return state: the page's scroller reports to it, and the page is padded
+        // by the header's measured height so nothing sits under it at rest. See AppSearch.kt.
+        val quickReturn = rememberQuickReturnHeader(pageScroll, pinned = searchOpen)
+        val pageImeOpen by rememberIslandImeVisible()
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .nestedScroll(quickReturn.connection)
                 .verticalScroll(pageScroll)
-                // Inside the scroller, so it is the END of the page that clears the bar.
-                .padding(bottom = islandReserve),
+                .padding(top = with(LocalDensity.current) { quickReturn.reservePx.toDp() })
+                // Inside the scroller, so it is the END of the page that clears the bar — and, while
+                // the message banner is up, clears the banner too, so a button it covers can still be
+                // scrolled into view above it rather than hidden until the message is dismissed.
+                .padding(bottom = islandReserve + if (messageState.text != null) 88.dp else 0.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
@@ -3997,6 +4180,9 @@ private fun HomeScreen(
             }
         }
 
+        // Success notes from sections that only hold an onError (media capture, process steps) go here,
+        // so "Audio recording added" is drawn as a success and not as a problem. ui/AppMessage.kt.
+        CompositionLocalProvider(LocalAppNotice provides { showMessage(it) }) {
         when (val s = screen) {
             is Screen.Dashboard -> {
                 carryForward?.let { prefill ->
@@ -4081,14 +4267,14 @@ private fun HomeScreen(
                 repository = repository,
                 mode = s.mode,
                 onPick = { recordId -> screen = Screen.Edit(s.mode, recordId) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             is Screen.Create -> when (s.mode) {
                 EntryMode.CRAFT -> CraftForm(
                     repository = repository,
                     onDone = { message = "Craft saved"; refresh(); refreshLookups(); goDashboard() },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 EntryMode.ARTISAN -> ArtisanForm(
                     repository = repository,
@@ -4104,7 +4290,7 @@ private fun HomeScreen(
                         goDashboard()
                     },
                     onDone = { message = "Artisan saved"; refresh(); refreshLookups(); goDashboard() },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 /*
                  * THE ONE ARM IN THIS `when` THAT CAN REFUSE, and it has to be here rather than only
@@ -4134,7 +4320,7 @@ private fun HomeScreen(
                         prefill = s.prefill,
                         adminView = adminView,
                         onDone = { message = "Workshop saved"; refresh(); goDashboard() },
-                        onError = { showMessage(it) }
+                        onError = { showError(it) }
                     )
                 } else {
                     // THE EDIT DOOR, HANDED TO THE ACCOUNTS THAT STILL HOLD IT — see the card's own
@@ -4156,13 +4342,13 @@ private fun HomeScreen(
                     prefill = s.prefill,
                     adminView = adminView,
                     onDone = { message = "Product saved"; refresh(); goDashboard() },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 EntryMode.PROCESS -> ProcessForm(
                     repository = repository,
                     adminView = adminView,
                     onDone = { message = "Process saved"; refresh(); goDashboard() },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 EntryMode.VIEW_DATA -> ViewDataScreen(
                     repository = repository,
@@ -4173,7 +4359,7 @@ private fun HomeScreen(
                     showProvenance = canViewProvenance,
                     canDownloadDataset = canDownloadDataset,
                     onOpenDataBrowser = { message = null; screen = Screen.DataBrowser },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 // /search on the web — open to every signed-in user. It renders into the shared
                 // chrome, which already draws the Back pill, so its own back control stays off.
@@ -4223,7 +4409,7 @@ private fun HomeScreen(
                 // scaffold and no back control of its own.
                 EntryMode.MAP -> MapScreen(
                     repository = repository,
-                    onError = { showMessage(it) },
+                    onError = { showError(it) },
                     // A pin's records are the way out of the map. The map speaks the SINGULAR record
                     // type — the same vocabulary [SearchRecordTypes] uses — so the search screen's own
                     // ARM is reused, not merely its mapper: sharing the value is what makes "the same
@@ -4236,7 +4422,7 @@ private fun HomeScreen(
                 // document its own address.
                 EntryMode.CONSOLIDATED_QUESTIONNAIRE -> ConsolidatedQuestionnaireScreen(
                     repository = repository,
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 EntryMode.TOOL -> ToolForm(
                     repository = repository,
@@ -4246,7 +4432,7 @@ private fun HomeScreen(
                     prefill = s.prefill,
                     adminView = adminView,
                     onDone = { message = "Tool saved"; refresh(); goDashboard() },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 EntryMode.MEDIA -> AndroidMediaForm(
                     repository = repository,
@@ -4254,7 +4440,7 @@ private fun HomeScreen(
                         message = "$count media file${if (count == 1) "" else "s"} uploaded and queued"
                         refresh()
                     },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 EntryMode.QUESTIONNAIRE -> QuestionnaireForm(
                     repository = repository,
@@ -4269,12 +4455,12 @@ private fun HomeScreen(
                     onRefreshSections = {
                         runCatching { repository.questionnaireSections() }
                             .onSuccess { sections = it }
-                            .onFailure { showMessage(it.message) }
+                            .onFailure { showError(it.userMessage("Couldn't load the questionnaire sections.")) }
                     },
                     onSync = {
                         runCatching { repository.questionnaireSections() }
                             .onSuccess { sections = it }
-                            .onFailure { showMessage(it.message) }
+                            .onFailure { showError(it.userMessage("Couldn't load the questionnaire sections.")) }
                         loadLookups()
                     },
                     onSubmit = { body, key ->
@@ -4282,7 +4468,7 @@ private fun HomeScreen(
                         refresh()
                         created.id
                     },
-                    onError = { showMessage(it) },
+                    onError = { showError(it) },
                     onSaved = { message = "Questionnaire interview saved"; refresh(); goDashboard() }
                 )
                 EntryMode.TASKS -> MyTasksScreen(
@@ -4293,17 +4479,17 @@ private fun HomeScreen(
                     canAssign = isAdmin && adminChrome,
                     onOpenAssignmentBoard = { message = null; screen = Screen.AdminHub(AdminHubEntry.TASKS) },
                     onMessage = { showMessage(it) },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 EntryMode.SHARING -> SharingForm(
                     repository = repository,
                     isAdmin = isAdmin,
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 EntryMode.WORKSHOP_ACCESS -> WorkshopAccessScreen(
                     repository = repository,
                     onMessage = { showMessage(it) },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 // The card and the menu entry both disappear when admin view is off, but an admin who
                 // was already standing here when they flipped the switch has to be shown the same
@@ -4312,7 +4498,7 @@ private fun HomeScreen(
                     UserManagementForm(
                         repository = repository,
                         isMasterAdmin = isMasterAdmin,
-                        onError = { showMessage(it) }
+                        onError = { showError(it) }
                     )
                 } else {
                     AdminViewHiddenCard(
@@ -4341,9 +4527,9 @@ private fun HomeScreen(
                     onRefreshSections = {
                         runCatching { repository.questionnaireSections() }
                             .onSuccess { sections = it }
-                            .onFailure { showMessage(it.message) }
+                            .onFailure { showError(it.userMessage("Couldn't load the questionnaire sections.")) }
                     },
-                    onError = { showMessage(it) },
+                    onError = { showError(it) },
                     onDone = { message = "Interview updated"; refresh(); goDashboard() }
                 )
             } else EditScreen(
@@ -4356,24 +4542,24 @@ private fun HomeScreen(
                 // Same rule as the interview loader above: `adminMode` gates Delete on every web list.
                 canDelete = isAdmin && adminChrome,
                 onDone = { message = "${s.mode.label} updated"; refresh(); refreshLookups(); goDashboard() },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             is Screen.MyActivity -> MyActivityScreen(
                 repository = repository,
                 userId = user.id,
                 onOpen = { mode, recordId -> message = null; screen = Screen.Edit(mode, recordId) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             is Screen.ToolAssign -> ToolAssignScreen(
                 repository = repository,
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             is Screen.Feedback -> FeedbackScreen(
                 repository = repository,
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             // The whole hub is admin chrome (/admin heads the web's ADMIN_CHROME_ROUTES). The role
@@ -4386,7 +4572,7 @@ private fun HomeScreen(
                     section = s.section,
                     onSectionChange = { next -> screen = Screen.AdminHub(next) },
                     onMessage = { showMessage(it) },
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 // Reviewing is a Field Contributor capability an admin merely also holds, so the
                 // dashboard's Pending figure hands a non-admin reviewer the review tool ITSELF —
@@ -4394,7 +4580,7 @@ private fun HomeScreen(
                 // refuses.
                 s.section == AdminHubEntry.REVIEWS && canReview -> ReviewApprovalCard(
                     repository = repository,
-                    onError = { showMessage(it) }
+                    onError = { showError(it) }
                 )
                 // The blurb names what is actually behind the toggle, and only the part EVERY admin
                 // gets. It used to promise "user management", which is not in this hub at all
@@ -4435,7 +4621,7 @@ private fun HomeScreen(
                 startCreating = s.startCreating,
                 onOpen = { id -> message = null; screen = Screen.DesignWorkshopStages(id) },
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             is Screen.DesignWorkshopStages -> StageIndexScreen(
@@ -4474,7 +4660,7 @@ private fun HomeScreen(
                 // Ungated HERE for the same reason as the row above it, and the index HIDES this one
                 // from a non-admin rather than explaining it — see the comment on that control.
                 onOpenProvenance = { message = null; screen = Screen.DesignWorkshopProvenance(s.workshopId) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             is Screen.DesignWorkshopStage -> StageScreen(
@@ -4484,7 +4670,7 @@ private fun HomeScreen(
                 // Where the stage index sent them, when it sent them to a particular box.
                 focus = s.focus,
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) },
+                onError = { showError(it) },
                 /*
                  * WHAT LETS A REFERENCE PICKER MAKE THE RECORD IT IS MISSING.
                  *
@@ -4505,7 +4691,7 @@ private fun HomeScreen(
                 repository = repository,
                 workshopId = s.workshopId,
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             // NEITHER an `onMessage` NOR an `onError` arm, the same shape as the provenance screen
@@ -4521,14 +4707,14 @@ private fun HomeScreen(
                 repository = repository,
                 workshopId = s.workshopId,
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             is Screen.DesignWorkshopPhotos -> PhotoIntakeScreen(
                 repository = repository,
                 workshopId = s.workshopId,
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             // No `onError` arm, unlike its siblings: every failure on that screen is rendered beside
@@ -4625,7 +4811,7 @@ private fun HomeScreen(
                     message = null
                     screen = Screen.DesignWorkshopStage(workshopId = workshopId, stageKey = stageKey)
                 },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             /*
@@ -4681,7 +4867,7 @@ private fun HomeScreen(
                     }
                 )
                 if (canReview) {
-                    ReviewApprovalCard(repository = repository, onError = { showMessage(it) })
+                    ReviewApprovalCard(repository = repository, onError = { showError(it) })
                 }
             }
 
@@ -4713,10 +4899,8 @@ private fun HomeScreen(
                  * it opens records rather than linking them into a stage form.
                  */
                 Text(
-                    "A workshop's Cards & tags screen reads that workshop's own codes off this " +
-                        "handset first, so a prototype tag still resolves with no signal. Inside a " +
-                        "stage form, the reference picker takes a scan to LINK a record to what you " +
-                        "are filling in rather than to open it.",
+                    // One line (UX audit 2026-10-16, DA-41).
+                    "Scanning inside a workshop's Cards & tags screen also works with no signal.",
                     color = Muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp
@@ -4728,7 +4912,7 @@ private fun HomeScreen(
                 targetUserId = s.userId,
                 targetLabel = s.label,
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             is Screen.DesignerRoster -> DesignerRosterScreen(
@@ -4742,7 +4926,7 @@ private fun HomeScreen(
                     screen = Screen.DesignerProfile(userId = userId, label = label)
                 },
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             /*
@@ -4754,7 +4938,7 @@ private fun HomeScreen(
             is Screen.AccessRoster -> AccessRosterScreen(
                 repository = repository,
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) },
+                onError = { showError(it) },
                 // The screen has just READ the queue, so its number is fresher than the 45-second
                 // poll's and the badge adopts it immediately. Without this an admin who approves the
                 // last waiting request watches the menu go on claiming somebody is waiting for up to
@@ -4781,7 +4965,7 @@ private fun HomeScreen(
                 repository = repository,
                 onOpen = { id -> message = null; screen = Screen.QuestionnaireDetail(id) },
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) },
+                onError = { showError(it) },
                 incoming = incomingQuestionnaire,
                 onIncomingConsumed = onIncomingQuestionnaireConsumed,
             )
@@ -4794,7 +4978,7 @@ private fun HomeScreen(
                     screen = Screen.QuestionnaireAnswers(s.questionnaireId, entryId)
                 },
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             is Screen.QuestionnaireAnswers -> QuestionnaireAnswerScreen(
@@ -4802,20 +4986,49 @@ private fun HomeScreen(
                 questionnaireId = s.questionnaireId,
                 entryId = s.entryId,
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
+                onError = { showError(it) }
             )
 
             // Hosted above, outside this scrolling Column, because they own their whole viewport.
             // Rendered by the FIRST dispatcher above, which owns the destinations that draw
             // their own chrome. Listed here only to keep this `when` exhaustive.
             is Screen.Appearance, is Screen.SpeechAndAi, is Screen.MyAiKeys,
-            is Screen.UsageRecording, is Screen.TwoStepVerification, is Screen.DataBrowser -> Unit
+            is Screen.UsageRecording, is Screen.TwoStepVerification, is Screen.AccountPassword,
+            is Screen.Aadhaar, is Screen.DataBrowser -> Unit
+        }
         }
 
-        message?.let {
-            Text(it, color = Body, modifier = Modifier.padding(bottom = 24.dp))
-        }
-
+                }
+                // The app's one message (ui/AppMessage.kt), pinned to the bottom of the viewport just
+                // above the island rather than at the foot of the scroll, so a save on a long form is
+                // answered where the reader is looking. It used to be one plain line under the page.
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(bottom = islandReserve),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    AppMessageBanner(messageState)
+                }
+                // The logo-and-name header, as a quick-return overlay on the top of the page: it hides
+                // on the way down and comes back on any move up. Hidden while the keyboard is up for a
+                // field on the page, never while the search field is open. AppSearch.kt.
+                QuickReturnHeader(quickReturn, hidden = pageImeOpen && !searchOpen) { elevated ->
+                    AppSearchHeader(
+                        appName = APP_SEARCH_NAME,
+                        logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 10.dp) },
+                        onOpenSearch = { searchOpen = true },
+                        elevated = elevated
+                    )
+                }
+                // Over the page, under nothing: the page keeps its scroll and any half-filled form.
+                if (searchOpen) {
+                    AppSearchPanel(
+                        appName = APP_SEARCH_NAME,
+                        logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 7.dp) },
+                        localItems = searchLocalItems(),
+                        remoteSearch = { q -> searchRemote(q) },
+                        onClose = { searchOpen = false },
+                        onError = { showMessage(it) }
+                    )
                 }
                 }
                 }
@@ -4864,7 +5077,7 @@ private fun HomeScreen(
                             }
                             request.onFinished(outcome)
                         },
-                        onError = { showMessage(it) }
+                        onError = { showError(it) }
                     )
                 }
 
@@ -5001,6 +5214,7 @@ private fun HomeScreen(
                         }
                     )
                 }
+            }
             }
         }
     }
@@ -5281,7 +5495,15 @@ private fun SettingsScreen(
     var startTime by remember { mutableStateOf("02:00") }
     var endTime by remember { mutableStateOf("05:00") }
 
-    LaunchedEffect(Unit) {
+    // NULL UNTIL THE REAL SETTINGS HAVE ARRIVED (UX audit 2026-10-16, DA-03, P0). The boxes above
+    // start on defaults; if the read failed and Save stayed live, one tap wrote those defaults over
+    // the deployment's real configuration. So a failed read is drawn as a failure with Try again,
+    // and Save does not exist until a read has succeeded.
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var loadAttempt by remember { mutableStateOf(0) }
+    LaunchedEffect(loadAttempt) {
+        loading = true
+        loadError = null
         runCatching { repository.appSettings() }
             .onSuccess { s ->
                 mode = s.transcriptionMode
@@ -5289,7 +5511,7 @@ private fun SettingsScreen(
                 startTime = s.batchWindowStart
                 endTime = s.batchWindowEnd
             }
-            .onFailure { onError(it.message ?: "Couldn't load settings") }
+            .onFailure { loadError = it.userMessage("Couldn't load the settings.") }
         loading = false
     }
 
@@ -5301,6 +5523,13 @@ private fun SettingsScreen(
             }
             return@RecordCard
         }
+        loadError?.let { reason ->
+            LoadFailedCard(
+                message = "$reason Nothing can be saved until the current settings have been read.",
+                onRetry = { loadAttempt++ }
+            )
+            return@RecordCard
+        }
         Text("Transcription output", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
         Text(
             "How recorded audio is turned into text after upload. Refinement/translation use AI and " +
@@ -5308,9 +5537,11 @@ private fun SettingsScreen(
             color = Muted,
             fontSize = 12.sp
         )
+        Column(modifier = Modifier.selectableGroup()) {
         SettingsRadioRow("Raw transcript only", "Fastest, lowest cost — the plain speech-to-text.", mode == "RAW") { mode = "RAW" }
         SettingsRadioRow("Refined transcript", "Cleaned into a readable interviewer/interviewee dialogue.", mode == "REFINED") { mode = "REFINED" }
         SettingsRadioRow("Refined + translated to English", "Refined, then translated to English (default).", mode == "REFINED_TRANSLATED") { mode = "REFINED_TRANSLATED" }
+        }
 
         HorizontalDivider()
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -5352,7 +5583,7 @@ private fun SettingsScreen(
                         startTime = it.batchWindowStart
                         endTime = it.batchWindowEnd
                         onMessage("Settings saved")
-                    }.onFailure { onError(it.message ?: "Couldn't save settings") }
+                    }.onFailure { onError(it.userMessage("Couldn't save settings")) }
                     saving = false
                 }
             },
@@ -5368,11 +5599,14 @@ private fun SettingsScreen(
 @Composable
 private fun SettingsRadioRow(title: String, subtitle: String, selected: Boolean, onSelect: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { onSelect() },
+        modifier = Modifier.fillMaxWidth()
+            // One focus stop with the radio role (DA-36): the row is the control, the dot is drawing.
+            .selectable(selected = selected, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onSelect)
+            .heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        RadioButton(selected = selected, onClick = onSelect)
+        RadioButton(selected = selected, onClick = null)
         Column(modifier = Modifier.weight(1f)) {
             Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
             Text(subtitle, color = Muted, fontSize = 11.sp)
@@ -7687,6 +7921,8 @@ private fun GridMeasurementSection(
     var capturedUris by remember { mutableStateOf<Map<String, Uri>>(emptyMap()) }
     var status by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var pendingGroup by remember { mutableStateOf<String?>(null) }
+    // The camera is asked for, and the answer awaited, before TakePicture starts (UX audit DA-01).
+    val gridCamera = rememberPermissionGate { sentence -> pendingGroup?.let { status = status + (it to sentence) } }
     var pendingCaptureUri by remember { mutableStateOf<Uri?>(null) }
     // WHAT THE MODEL SAID, HELD UNTIL SOMEBODY ACCEPTS IT. Two separate values rather than a map
     // keyed by group, because the two carry different shapes and the group keys are a closed set of
@@ -7821,10 +8057,13 @@ private fun GridMeasurementSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
                     onClick = {
-                        val uri = createAppFileUri(context, "grid-$key-", ".jpg")
                         pendingGroup = key
-                        pendingCaptureUri = uri
-                        takePhoto.launch(uri)
+                        gridCamera.run(CAMERA_PERMISSION, CAMERA_REFUSED_SENTENCE) {
+                            val uri = createAppFileUri(context, "grid-$key-", ".jpg")
+                            pendingGroup = key
+                            pendingCaptureUri = uri
+                            takePhoto.launch(uri)
+                        }
                     },
                     modifier = Modifier.weight(1f),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
@@ -8060,10 +8299,27 @@ private fun StatusControl(canSetStatus: Boolean, value: String, onSelect: (Strin
                     .background(SurfaceCard, RoundedCornerShape(999.dp))
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
-                Box(modifier = Modifier.size(8.dp).background(Color(0xFFE2A400), CircleShape))
-                Text("Pending", color = Body, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                // The record's REAL status (UX audit 2026-10-16, DA-33): this chip said "Pending"
+                // with an amber dot even on an approved record being edited.
+                val dot = when (value) {
+                    "APPROVED" -> StatusSuccess
+                    "REJECTED" -> StatusError
+                    else -> StatusWarning
+                }
+                Box(modifier = Modifier.size(8.dp).background(dot, CircleShape))
+                Text(
+                    value.ifBlank { "PENDING" }.lowercase().split('_').joinToString(" ").replaceFirstChar { it.uppercase() },
+                    color = Body,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
-            Text("New records are reviewed before they're published.", color = Muted, fontSize = 11.sp)
+            Text(
+                if (value.isBlank() || value == "PENDING") "New records are reviewed before they're published."
+                else "Your edit goes to review when you save.",
+                color = Muted,
+                fontSize = 12.sp
+            )
         }
     }
 }
@@ -9117,8 +9373,8 @@ private enum class RecPhase { IDLE, RECORDING, PAUSED, RECORDED }
 /** Transient outcome of an action button: drives a 5-second green/red flash. */
 private enum class ActionStatus { IDLE, SUCCESS, ERROR }
 
-private val SuccessGreen = Color(0xFF2E7D32)
-private val FailureRed = Color(0xFFD13438)
+private val SuccessGreen: Color get() = StatusSuccess
+private val FailureRed: Color get() = StatusError
 
 /** Auto-reset a SUCCESS/ERROR status back to IDLE after 5 seconds. */
 @Composable
@@ -9220,7 +9476,7 @@ private fun AudioClipRecorder(
             recordingFile = file
             capNotice = null
             phase = RecPhase.RECORDING
-        }.onFailure { onError(it.message ?: "Unable to start recording"); phase = RecPhase.IDLE }
+        }.onFailure { onError(it.userMessage("Unable to start recording")); phase = RecPhase.IDLE }
     }
 
     fun stopAndSave() {
@@ -9237,7 +9493,7 @@ private fun AudioClipRecorder(
                 onAddClip(uriForFile(context, it))
                 finished = it
             }
-        }.onFailure { onError(it.message ?: "Unable to stop recording") }
+        }.onFailure { onError(it.userMessage("Unable to stop recording")) }
         recorder = null
         recordingFile = null
         phase = RecPhase.RECORDED
@@ -9279,7 +9535,7 @@ private fun AudioClipRecorder(
             RecPhase.RECORDING -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(
-                        onClick = { runCatching { recorder?.pause(); phase = RecPhase.PAUSED }.onFailure { onError(it.message ?: "Unable to pause") } },
+                        onClick = { runCatching { recorder?.pause(); phase = RecPhase.PAUSED }.onFailure { onError(it.userMessage("Unable to pause")) } },
                         modifier = Modifier.weight(1f),
                         contentPadding = pad
                     ) {
@@ -9296,7 +9552,7 @@ private fun AudioClipRecorder(
             RecPhase.PAUSED -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(
-                        onClick = { runCatching { recorder?.resume(); phase = RecPhase.RECORDING }.onFailure { onError(it.message ?: "Unable to resume") } },
+                        onClick = { runCatching { recorder?.resume(); phase = RecPhase.RECORDING }.onFailure { onError(it.userMessage("Unable to resume")) } },
                         modifier = Modifier.weight(1f),
                         contentPadding = pad
                     ) { Text("Resume ●", maxLines = 1, softWrap = false, fontSize = 13.sp) }
@@ -9420,7 +9676,9 @@ private fun MediaCaptureSection(
         }
     }
 
+    // Location only, asked when "Use GPS" is tapped. The camera and microphone go through the gate.
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
+    val capturePermission = rememberPermissionGate(onError)
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) media.uris = media.uris + uris
     }
@@ -9435,8 +9693,6 @@ private fun MediaCaptureSection(
         pendingCaptureUri = null
     }
 
-    LaunchedEffect(Unit) { permissionLauncher.launch(requiredAndroidPermissions()) }
-
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HorizontalDivider()
         Text("Attach media", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
@@ -9449,25 +9705,30 @@ private fun MediaCaptureSection(
             OutlinedButton(onClick = { pickMedia.launch("*/*") }, modifier = Modifier.weight(1f)) { Text("Pick files") }
             OutlinedButton(
                 onClick = {
-                    permissionLauncher.launch(requiredAndroidPermissions())
-                    val uri = createAppFileUri(context, "field-photo-", ".jpg")
-                    pendingCaptureUri = uri
-                    takePhoto.launch(uri)
+                    capturePermission.run(CAMERA_PERMISSION, CAMERA_REFUSED_SENTENCE) {
+                        val uri = createAppFileUri(context, "field-photo-", ".jpg")
+                        pendingCaptureUri = uri
+                        takePhoto.launch(uri)
+                    }
                 },
                 modifier = Modifier.weight(1f)
             ) { Text("Take photo") }
         }
         if (emphasizeVideo) {
-            Text("🎥 Video is the preferred format here — capture the action as it happens.", color = Color(0xFFE0C9B0), fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Filled.Videocam, contentDescription = null, tint = MaterialTheme.field.muted, modifier = Modifier.size(18.dp))
+                Text("Video is the preferred format here: capture the action as it happens.", color = MaterialTheme.field.muted, fontSize = 12.sp)
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             if (emphasizeVideo) {
                 Button(
                     onClick = {
-                        permissionLauncher.launch(requiredAndroidPermissions())
-                        val uri = createAppFileUri(context, "field-video-", ".mp4")
+                        capturePermission.run(CAMERA_PERMISSION, CAMERA_REFUSED_SENTENCE) {
+                            val uri = createAppFileUri(context, "field-video-", ".mp4")
                             pendingCaptureUri = uri
-                        takeVideo.launch(uri)
+                            takeVideo.launch(uri)
+                        }
                     },
                     modifier = Modifier.weight(1f),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
@@ -9475,10 +9736,11 @@ private fun MediaCaptureSection(
             } else {
                 OutlinedButton(
                     onClick = {
-                        permissionLauncher.launch(requiredAndroidPermissions())
-                        val uri = createAppFileUri(context, "field-video-", ".mp4")
+                        capturePermission.run(CAMERA_PERMISSION, CAMERA_REFUSED_SENTENCE) {
+                            val uri = createAppFileUri(context, "field-video-", ".mp4")
                             pendingCaptureUri = uri
-                        takeVideo.launch(uri)
+                            takeVideo.launch(uri)
+                        }
                     },
                     modifier = Modifier.weight(1f),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
@@ -9486,21 +9748,22 @@ private fun MediaCaptureSection(
             }
             OutlinedButton(
                 onClick = {
-                    permissionLauncher.launch(requiredAndroidPermissions())
-                    if (!recording) {
+                    if (!recording && !capturePermission.holds(MICROPHONE_PERMISSION)) {
+                        capturePermission.ask(MICROPHONE_PERMISSION, MICROPHONE_REFUSED_SENTENCE)
+                    } else if (!recording) {
                         runCatching {
                             val file = createAppFile(context, "field-audio-", ".m4a")
                             recorder = createAudioRecorder(context, file).also { it.start() }
                             recordingFile = file
                             recording = true
                             onMessage("Recording audio...")
-                        }.onFailure { onError(it.message ?: "Unable to start audio recording") }
+                        }.onFailure { onError(it.userMessage("Unable to start audio recording")) }
                     } else {
                         runCatching {
                             recorder?.stop()
                             recorder?.release()
                             recordingFile?.let { file -> media.uris = media.uris + uriForFile(context, file) }
-                        }.onFailure { onError(it.message ?: "Unable to stop audio recording") }
+                        }.onFailure { onError(it.userMessage("Unable to stop audio recording")) }
                         recorder = null
                         recordingFile = null
                         recording = false
@@ -9519,7 +9782,7 @@ private fun MediaCaptureSection(
             repository = repository,
             value = media.location,
             onUseGps = {
-                permissionLauncher.launch(requiredAndroidPermissions())
+                if (!holdsLocation(context)) permissionLauncher.launch(LOCATION_PERMISSIONS)
                 readLastKnownLocation(context)
             },
             onChange = { media.location = it },
@@ -9690,13 +9953,51 @@ private fun AttachedUploadsCard(
 
 /** Lightweight loading placeholder shown while a record's detail is being fetched for editing. */
 @Composable
-private fun LoadingCard(mode: EntryMode) {
+private fun LoadingCard(mode: EntryMode, failed: String? = null, onRetry: () -> Unit = {}) {
+    // A read that failed says so, with Try again (UX audit 2026-10-16, DA-06). It used to stay on
+    // "Fetching…" for ever, which reads as a slow connection rather than as a refusal.
+    if (failed != null) {
+        RecordCard(title = "Couldn't open this ${mode.label.lowercase()}") {
+            LoadFailedCard(message = failed, onRetry = onRetry)
+        }
+        return
+    }
     RecordCard(title = "Loading ${mode.label.lowercase()}") {
         Text("Fetching the latest saved values…", color = Muted, fontSize = 13.sp)
     }
 }
 
 /** Dropdown-driven picker for choosing an existing record to edit. */
+/**
+ * The picker's read, with the last UNFILTERED list this phone read served when nothing reaches the
+ * server (see [ReadCache]). A search is never answered from the device.
+ */
+private suspend fun pickerReadCached(
+    context: Context,
+    mode: EntryMode,
+    search: String?,
+    onCached: (String) -> Unit,
+    fetch: suspend () -> Pair<Int, List<Pair<String, String>>>,
+): Pair<Int, List<Pair<String, String>>> {
+    if (search != null) return fetch()
+    val read = ReadCache.read(
+        context,
+        "picker:${mode.name}",
+        kotlinx.serialization.builtins.PairSerializer(
+            kotlinx.serialization.serializer<Int>(),
+            kotlinx.serialization.builtins.ListSerializer(
+                kotlinx.serialization.builtins.PairSerializer(
+                    kotlinx.serialization.serializer<String>(),
+                    kotlinx.serialization.serializer<String>(),
+                )
+            ),
+        ),
+        fetch,
+    )
+    if (read.fromCache) onCached(readCacheNotice(read.cachedAt))
+    return read.value
+}
+
 @Composable
 private fun RecordPickerScreen(
     repository: WorkshopRepository,
@@ -9704,40 +10005,47 @@ private fun RecordPickerScreen(
     onPick: (String) -> Unit,
     onError: (String) -> Unit
 ) {
+    // UX audit 2026-10-16, DA-08. This picker used to read the first page of 100 and stop, so the
+    // 101st artisan could not be reached and nothing said so; a failed read drew "No … records found
+    // yet"; and "Or tap a recent record" sat over an unordered slice. Now: the server's own `search`
+    // reaches every record, the total is stated when one page does not hold them all, a failed read
+    // is drawn as a failure with Try again, and the shortcut list is the newest records by name.
+    var query by remember(mode) { mutableStateOf("") }
     var loading by remember(mode) { mutableStateOf(true) }
+    var loadError by remember(mode) { mutableStateOf<String?>(null) }
+    var attempt by remember(mode) { mutableStateOf(0) }
     var options by remember(mode) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var total by remember(mode) { mutableStateOf(0) }
     var selected by remember(mode) { mutableStateOf("") }
 
     val pickerContext = LocalContext.current.applicationContext
-    LaunchedEffect(mode) {
+    /** Set when the list is this phone's saved copy — see [ReadCache]. */
+    var cachedNote by remember(mode) { mutableStateOf<String?>(null) }
+    LaunchedEffect(mode, query, attempt) {
+        // Typing settles before the server is asked, so one name is one request rather than six.
+        if (query.isNotBlank()) delay(350)
         loading = true
-        // The last list read is offered with no signal, so a record can be opened for a correction
-        // (see [cachedRecordForCorrection]). The notice says it is a copy.
+        loadError = null
+        val search = query.trim().ifBlank { null }
+        cachedNote = null
         runCatching {
-          ReadCache.read(
-            pickerContext,
-            "picker:${mode.name}",
-            kotlinx.serialization.builtins.ListSerializer(
-                kotlinx.serialization.builtins.PairSerializer(
-                    kotlinx.serialization.serializer<String>(),
-                    kotlinx.serialization.serializer<String>(),
-                )
-            ),
-          ) {
+          // The last unfiltered list this phone read is offered with no signal, so a record can be
+          // opened for a correction (see [cachedRecordForCorrection]); a search is always asked live.
+          pickerReadCached(pickerContext, mode, search, onCached = { cachedNote = it }) {
             when (mode) {
-                EntryMode.ARTISAN -> repository.artisans().map { it.id to "${it.name} · ${it.place}" }
-                EntryMode.CRAFT -> repository.crafts().map { it.id to (it.name + (it.place?.let { p -> " · $p" } ?: "")) }
-                EntryMode.PRODUCT -> repository.products().map { it.id to "${it.productName} · ${it.artisanName}" }
-                EntryMode.PROCESS -> repository.processes().map { it.id to (it.name + (it.product?.productName?.let { p -> " · $p" } ?: "")) }
-                EntryMode.TOOL -> repository.tools().map { it.id to "${it.toolkitName} · ${it.artisanName}" }
-                EntryMode.WORKSHOP -> repository.workshops().map { it.id to it.title.ifBlank { "Untitled workshop" } }
-                EntryMode.MEDIA -> repository.media().map { m ->
-                    m.id to (m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename)
+                EntryMode.ARTISAN -> repository.artisanPage(search).let { p -> p.total to p.items.map { it.id to "${it.name} · ${it.place}" } }
+                EntryMode.CRAFT -> repository.craftPage(search).let { p -> p.total to p.items.map { it.id to (it.name + (it.place?.let { pl -> " · $pl" } ?: "")) } }
+                EntryMode.PRODUCT -> repository.productPage(search).let { p -> p.total to p.items.map { it.id to "${it.productName} · ${it.artisanName}" } }
+                EntryMode.PROCESS -> repository.processPage(search).let { p -> p.total to p.items.map { it.id to (it.name + (it.product?.productName?.let { pr -> " · $pr" } ?: "")) } }
+                EntryMode.TOOL -> repository.toolPage(search).let { p -> p.total to p.items.map { it.id to "${it.toolkitName} · ${it.artisanName}" } }
+                EntryMode.WORKSHOP -> repository.workshopPage(search).let { p -> p.total to p.items.map { it.id to it.title.ifBlank { "Untitled workshop" } } }
+                EntryMode.MEDIA -> repository.mediaPage(search).let { p ->
+                    p.total to p.items.map { m -> m.id to (m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename) }
                 }
-                EntryMode.QUESTIONNAIRE -> {
+                EntryMode.QUESTIONNAIRE -> repository.interviewPage(search).let { p ->
                     // Idempotent: all saved interview records for the same set of artisan(s) collapse
                     // into one entry (open the most recent); the label notes how many sessions exist.
-                    repository.interviews().groupBy { interviewGroupKey(it) }.values.map { group ->
+                    p.total to p.items.groupBy { interviewGroupKey(it) }.values.map { group ->
                         val rep = representativeInterview(group)
                         val artisanNames = rep.artisans.mapNotNull { it.artisan?.name }.distinct().joinToString(", ")
                         val parts = listOfNotNull(
@@ -9746,26 +10054,43 @@ private fun RecordPickerScreen(
                             if (group.size > 1) "${group.size} sessions" else null
                         )
                         rep.id to parts.joinToString(" · ").ifBlank { "Untitled interview" }
-                    }.sortedBy { it.second.lowercase() }
+                    }
                 }
-                else -> emptyList()
+                else -> 0 to emptyList()
             }
           }
-        }.onSuccess { read ->
-            options = read.value
-            if (read.fromCache) onError(readCacheNotice(read.cachedAt))
-        }.onFailure { onError(it.message ?: "Unable to load records") }
+        }.onSuccess { (count, rows) ->
+            // The server answers newest first; that order is what "Recently added" means below.
+            options = rows
+            total = count
+        }.onFailure {
+            if (it is kotlinx.coroutines.CancellationException) throw it
+            loadError = it.userMessage("Couldn't load the ${mode.label.lowercase()} records.")
+        }
         loading = false
     }
 
-    RecordCard(title = "Update existing ${mode.label.lowercase()}") {
-        Text("Pick a record from the dropdown to open and edit it. Edits are attributed to you per field.", color = Muted, fontSize = 12.sp)
+    val noun = mode.label.lowercase()
+    RecordCard(title = "Update existing $noun") {
+        Text("Pick a record to open and edit it. Edits are attributed to you per field.", color = Muted, fontSize = 12.sp)
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            label = { Text("Search ${noun} records") },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Search),
+            modifier = Modifier.fillMaxWidth()
+        )
+        cachedNote?.let { CachedCopyNote(it) }
         when {
-            loading -> Text("Loading ${mode.label.lowercase()} records…", color = Muted)
-            options.isEmpty() -> Text("No ${mode.label.lowercase()} records found yet.", color = Muted)
+            loadError != null -> LoadFailedCard(message = loadError.orEmpty(), onRetry = { attempt++ })
+            loading && options.isEmpty() -> Text("Loading $noun records…", color = Muted)
+            options.isEmpty() && query.isNotBlank() -> Text("No $noun record matches “${query.trim()}”.", color = Muted)
+            options.isEmpty() -> Text("There are no $noun records yet.", color = Muted)
             else -> {
                 DropdownField(
-                    label = "Select ${mode.label.lowercase()}",
+                    label = "Select $noun",
                     options = options,
                     selectedValue = selected,
                     placeholder = "Select a record",
@@ -9777,19 +10102,27 @@ private fun RecordPickerScreen(
                     enabled = selected.isNotBlank(),
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Open for editing") }
-                Text("Or tap a recent record", color = Muted, fontSize = 12.sp)
-                options.take(12).forEach { (id, label) ->
+                if (total > options.size) {
+                    Text(
+                        "Showing the newest ${options.size} of $total. Type a name above to find any of them.",
+                        color = Muted,
+                        fontSize = 12.sp
+                    )
+                }
+                Text(if (query.isBlank()) "Recently added" else "Matches", color = Muted, fontSize = 12.sp)
+                options.take(if (query.isBlank()) 12 else 50).forEach { (id, label) ->
                     ElevatedCard(
                         colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 48.dp)
                             .clickable { onPick(id) }
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(label, color = Body, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, modifier = Modifier.weight(1f))
                             Text("Edit ›", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
@@ -9826,7 +10159,7 @@ private fun DeleteRecordSection(
     var confirm by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     val noun = mode.label.lowercase()
-    RecordCard(title = "Danger zone") {
+    RecordCard(title = "Delete this $noun") {
         Text("Deleting permanently removes this $noun and its links. This cannot be undone.", color = Muted, fontSize = 12.sp)
         OutlinedButton(
             onClick = { confirm = true },
@@ -9836,7 +10169,7 @@ private fun DeleteRecordSection(
         ) {
             Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text(if (deleting) "Deleting…" else "Delete this $noun")
+            Text(if (deleting) "Deleting…" else "Delete")
         }
     }
     if (confirm) {
@@ -9852,7 +10185,7 @@ private fun DeleteRecordSection(
                             deleting = true
                             runCatching { deleteByMode(repository, mode, recordId) }
                                 .onSuccess { confirm = false; deleting = false; onDeleted() }
-                                .onFailure { deleting = false; onError(it.message ?: "Unable to delete (admin only)") }
+                                .onFailure { deleting = false; onError(it.userMessage("Unable to delete (admin only)")) }
                         }
                     }
                 ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
@@ -10149,22 +10482,28 @@ private fun EditScreen(
 ) {
     // For [cachedRecordForCorrection]: a record opened before can be corrected with no signal.
     val editContext = LocalContext.current.applicationContext
+    // A failed read is drawn as a failure with Try again, never as "Fetching…" for ever, and the
+    // delete section waits for a record that actually loaded (UX audit 2026-10-16, DA-06).
+    var loadFailed by remember(recordId) { mutableStateOf<String?>(null) }
+    var loadAttempt by remember(recordId) { mutableStateOf(0) }
+    var loaded by remember(recordId) { mutableStateOf(false) }
     when (mode) {
         EntryMode.ARTISAN -> {
             var detail by remember(recordId) { mutableStateOf<ArtisanDetailDto?>(null) }
             var answers by remember(recordId) { mutableStateOf<List<ArtisanAnswerDto>>(emptyList()) }
             var answersLoading by remember(recordId) { mutableStateOf(true) }
-            LaunchedEffect(recordId) {
+            LaunchedEffect(recordId, loadAttempt) {
+                loadFailed = null
                 runCatching { cachedRecordForCorrection(editContext, "artisan", recordId, ArtisanDetailDto.serializer(), onError) { repository.artisan(recordId) } }
-                    .onSuccess { detail = it }
-                    .onFailure { onError(it.message ?: "Unable to load artisan") }
+                    .onSuccess { detail = it; loaded = true }
+                    .onFailure { loadFailed = it.userMessage("Unable to load artisan") }
                 runCatching { repository.artisanQuestionnaire(recordId) }
                     .onSuccess { answers = it.answered }
                 answersLoading = false
             }
             val d = detail
             if (d == null) {
-                LoadingCard(mode)
+                LoadingCard(mode, loadFailed) { loadAttempt++ }
             } else {
                 ArtisanForm(
                     repository = repository,
@@ -10183,14 +10522,15 @@ private fun EditScreen(
         }
         EntryMode.PRODUCT -> {
             var detail by remember(recordId) { mutableStateOf<ProductDetailDto?>(null) }
-            LaunchedEffect(recordId) {
+            LaunchedEffect(recordId, loadAttempt) {
+                loadFailed = null
                 runCatching { cachedRecordForCorrection(editContext, "product", recordId, ProductDetailDto.serializer(), onError) { repository.product(recordId) } }
-                    .onSuccess { detail = it }
-                    .onFailure { onError(it.message ?: "Unable to load product") }
+                    .onSuccess { detail = it; loaded = true }
+                    .onFailure { loadFailed = it.userMessage("Unable to load product") }
             }
             val d = detail
             if (d == null) {
-                LoadingCard(mode)
+                LoadingCard(mode, loadFailed) { loadAttempt++ }
             } else {
                 ProductForm(
                     repository = repository,
@@ -10206,14 +10546,15 @@ private fun EditScreen(
         }
         EntryMode.PROCESS -> {
             var detail by remember(recordId) { mutableStateOf<ProcessDetailDto?>(null) }
-            LaunchedEffect(recordId) {
+            LaunchedEffect(recordId, loadAttempt) {
+                loadFailed = null
                 runCatching { cachedRecordForCorrection(editContext, "process", recordId, ProcessDetailDto.serializer(), onError) { repository.process(recordId) } }
-                    .onSuccess { detail = it }
-                    .onFailure { onError(it.message ?: "Unable to load process") }
+                    .onSuccess { detail = it; loaded = true }
+                    .onFailure { loadFailed = it.userMessage("Unable to load process") }
             }
             val d = detail
             if (d == null) {
-                LoadingCard(mode)
+                LoadingCard(mode, loadFailed) { loadAttempt++ }
             } else {
                 ProcessForm(
                     repository = repository,
@@ -10227,14 +10568,15 @@ private fun EditScreen(
         }
         EntryMode.TOOL -> {
             var detail by remember(recordId) { mutableStateOf<ToolDetailDto?>(null) }
-            LaunchedEffect(recordId) {
+            LaunchedEffect(recordId, loadAttempt) {
+                loadFailed = null
                 runCatching { cachedRecordForCorrection(editContext, "tool", recordId, ToolDetailDto.serializer(), onError) { repository.tool(recordId) } }
-                    .onSuccess { detail = it }
-                    .onFailure { onError(it.message ?: "Unable to load tool") }
+                    .onSuccess { detail = it; loaded = true }
+                    .onFailure { loadFailed = it.userMessage("Unable to load tool") }
             }
             val d = detail
             if (d == null) {
-                LoadingCard(mode)
+                LoadingCard(mode, loadFailed) { loadAttempt++ }
             } else {
                 ToolForm(
                     repository = repository,
@@ -10250,14 +10592,15 @@ private fun EditScreen(
         }
         EntryMode.WORKSHOP -> {
             var detail by remember(recordId) { mutableStateOf<WorkshopDetailDto?>(null) }
-            LaunchedEffect(recordId) {
+            LaunchedEffect(recordId, loadAttempt) {
+                loadFailed = null
                 runCatching { cachedRecordForCorrection(editContext, "workshop", recordId, WorkshopDetailDto.serializer(), onError) { repository.workshop(recordId) } }
-                    .onSuccess { detail = it }
-                    .onFailure { onError(it.message ?: "Unable to load workshop") }
+                    .onSuccess { detail = it; loaded = true }
+                    .onFailure { loadFailed = it.userMessage("Unable to load workshop") }
             }
             val d = detail
             if (d == null) {
-                LoadingCard(mode)
+                LoadingCard(mode, loadFailed) { loadAttempt++ }
             } else {
                 WorkshopForm(
                     repository = repository,
@@ -10272,14 +10615,15 @@ private fun EditScreen(
         }
         EntryMode.CRAFT -> {
             var detail by remember(recordId) { mutableStateOf<CraftDto?>(null) }
-            LaunchedEffect(recordId) {
+            LaunchedEffect(recordId, loadAttempt) {
+                loadFailed = null
                 runCatching { cachedRecordForCorrection(editContext, "craft", recordId, CraftDto.serializer(), onError) { repository.craft(recordId) } }
-                    .onSuccess { detail = it }
-                    .onFailure { onError(it.message ?: "Unable to load craft") }
+                    .onSuccess { detail = it; loaded = true }
+                    .onFailure { loadFailed = it.userMessage("Unable to load craft") }
             }
             val d = detail
             if (d == null) {
-                LoadingCard(mode)
+                LoadingCard(mode, loadFailed) { loadAttempt++ }
             } else {
                 CraftForm(
                     repository = repository,
@@ -10309,7 +10653,9 @@ private fun EditScreen(
         }
         else -> Text("This record type cannot be edited here.", color = Muted)
     }
-    if (canDelete && mode != EntryMode.MEDIA && mode != EntryMode.USERS && mode != EntryMode.VIEW_DATA) {
+    if (canDelete && mode != EntryMode.MEDIA && mode != EntryMode.USERS && mode != EntryMode.VIEW_DATA &&
+        (loaded || mode !in setOf(EntryMode.ARTISAN, EntryMode.PRODUCT, EntryMode.PROCESS, EntryMode.TOOL, EntryMode.WORKSHOP, EntryMode.CRAFT))
+    ) {
         DeleteRecordSection(repository, mode, recordId, onDeleted = onDone, onError = onError)
     }
 }
@@ -10343,14 +10689,17 @@ private fun InterviewEditLoader(
     onDone: () -> Unit
 ) {
     var detail by remember(recordId) { mutableStateOf<QuestionnaireInterviewDetailDto?>(null) }
-    LaunchedEffect(recordId) {
+    var loadFailed by remember(recordId) { mutableStateOf<String?>(null) }
+    var loadAttempt by remember(recordId) { mutableStateOf(0) }
+    LaunchedEffect(recordId, loadAttempt) {
+        loadFailed = null
         runCatching { repository.interview(recordId) }
             .onSuccess { detail = it }
-            .onFailure { onError(it.message ?: "Unable to load interview") }
+            .onFailure { loadFailed = it.userMessage("Unable to load interview") }
     }
     val d = detail
     if (d == null) {
-        LoadingCard(EntryMode.QUESTIONNAIRE)
+        LoadingCard(EntryMode.QUESTIONNAIRE, loadFailed) { loadAttempt++ }
     } else {
         QuestionnaireForm(
             repository = repository,
@@ -10497,7 +10846,7 @@ private fun CraftForm(
                     submit(forceOffline = true)
                     return@launch
                 }
-                onError(it.message ?: "Unable to save craft")
+                onError(it.userMessage("Unable to save craft"))
             }
             saving = false
         }
@@ -10541,7 +10890,7 @@ private fun CraftForm(
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "craft", recordId = editing!!.id, onError = onError)
         }
-        MediaCaptureSection(repository = repository, media = media, onMessage = onError, onError = onError)
+        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
             idleLabel = if (isEdit) "Update craft" else "Save craft"
@@ -10648,7 +10997,9 @@ private fun ArtisanForm(
         }
     var name by remember(editing) { mutableStateOf(editing?.name ?: prefill?.artisanName ?: "") }
     var localName by remember(editing) { mutableStateOf(editing?.localName ?: "") }
-    var gender by remember(editing) { mutableStateOf(editing?.gender?.takeIf { it.isNotBlank() } ?: "Male") }
+    // No pre-selected gender (UX audit 2026-10-16, DW-09 [both]): a box nobody touched used to save
+    // "Male" as a claim about a person. Unanswered stays unanswered, and saves as null.
+    var gender by remember(editing) { mutableStateOf(editing?.gender?.takeIf { it.isNotBlank() } ?: "") }
     var phone by remember(editing) { mutableStateOf(editing?.phone ?: "") }
     var email by remember(editing) { mutableStateOf(editing?.email ?: "") }
     var place by remember(editing) { mutableStateOf(editing?.place ?: prefill?.place ?: "") }
@@ -11081,7 +11432,7 @@ private fun ArtisanForm(
             label = "Gender",
             options = genderOptions.map { it to it },
             selectedValue = gender,
-            includeNone = false
+            placeholder = "Not stated"
         ) { gender = it }
         /*
          * ── TWO DATES, AND NO BOX FOR EITHER NUMBER THEY PRODUCE ─────────────────────────────
@@ -11304,7 +11655,7 @@ private fun ArtisanForm(
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "artisan", recordId = editing!!.id, onError = onError)
         }
-        MediaCaptureSection(repository = repository, media = media, onMessage = onError, onError = onError)
+        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
             idleLabel = if (isEdit) "Update artisan" else "Save artisan"
@@ -11527,7 +11878,7 @@ private fun WorkshopForm(
                     submit(forceOffline = true)
                     return@launch
                 }
-                onError(it.message ?: "Unable to save workshop")
+                onError(it.userMessage("Unable to save workshop"))
             }
             saving = false
         }
@@ -11618,7 +11969,7 @@ private fun WorkshopForm(
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "workshop", recordId = editing!!.id, onError = onError)
         }
-        MediaCaptureSection(repository = repository, media = media, onMessage = onError, onError = onError)
+        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
             idleLabel = if (isEdit) "Update workshop" else "Save workshop"
@@ -11910,7 +12261,7 @@ private fun ProductForm(
                     submit(forceOffline = true)
                     return@launch
                 }
-                onError(it.message ?: "Unable to save product")
+                onError(it.userMessage("Unable to save product"))
             }
             saving = false
         }
@@ -12069,7 +12420,7 @@ private fun ProductForm(
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "product", recordId = editing!!.id, onError = onError)
         }
-        MediaCaptureSection(repository = repository, media = media, onMessage = onError, onError = onError)
+        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
             idleLabel = if (isEdit) "Update product" else "Save product"
@@ -12701,7 +13052,7 @@ private fun ToolForm(
                     submit(forceOffline = true)
                     return@launch
                 }
-                onError(it.message ?: "Unable to save tool")
+                onError(it.userMessage("Unable to save tool"))
             }
             saving = false
         }
@@ -12932,11 +13283,11 @@ private fun ToolForm(
         TextInput("Suggestions for improvement", suggestions, minLines = 2, rich = true) { suggestions = it }
         TextInput("Remarks", remarks, minLines = 3, rich = true) { remarks = it }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
-        ToolStagesSection(stages = stages, onMessage = onError, onError = onError)
+        ToolStagesSection(stages = stages, onMessage = LocalAppNotice.current, onError = onError)
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "tool", recordId = editing!!.id, onError = onError)
         }
-        MediaCaptureSection(repository = repository, media = media, onMessage = onError, onError = onError)
+        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
             idleLabel = if (isEdit) "Update tool" else "Save tool"
@@ -12957,7 +13308,9 @@ private fun ToolStagesSection(
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var pendingCaptureUri by remember { mutableStateOf<Uri?>(null) }
 
+    // Location only, asked when "Use GPS" is tapped. The camera and microphone go through the gate.
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
+    val capturePermission = rememberPermissionGate(onError)
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) stages.uris = stages.uris + uris
     }
@@ -12984,10 +13337,11 @@ private fun ToolStagesSection(
             OutlinedButton(onClick = { pickMedia.launch("*/*") }, modifier = Modifier.weight(1f)) { Text("Add files") }
             OutlinedButton(
                 onClick = {
-                    permissionLauncher.launch(requiredAndroidPermissions())
-                    val uri = createAppFileUri(context, "stage-photo-", ".jpg")
-                    pendingCaptureUri = uri
-                    takePhoto.launch(uri)
+                    capturePermission.run(CAMERA_PERMISSION, CAMERA_REFUSED_SENTENCE) {
+                        val uri = createAppFileUri(context, "stage-photo-", ".jpg")
+                        pendingCaptureUri = uri
+                        takePhoto.launch(uri)
+                    }
                 },
                 modifier = Modifier.weight(1f)
             ) { Text("Photo step") }
@@ -12995,29 +13349,31 @@ private fun ToolStagesSection(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedButton(
                 onClick = {
-                    permissionLauncher.launch(requiredAndroidPermissions())
-                    val uri = createAppFileUri(context, "stage-video-", ".mp4")
-                    pendingCaptureUri = uri
-                    takeVideo.launch(uri)
+                    capturePermission.run(CAMERA_PERMISSION, CAMERA_REFUSED_SENTENCE) {
+                        val uri = createAppFileUri(context, "stage-video-", ".mp4")
+                        pendingCaptureUri = uri
+                        takeVideo.launch(uri)
+                    }
                 },
                 modifier = Modifier.weight(1f)
             ) { Text("Video step") }
             OutlinedButton(
                 onClick = {
-                    permissionLauncher.launch(requiredAndroidPermissions())
-                    if (!recording) {
+                    if (!recording && !capturePermission.holds(MICROPHONE_PERMISSION)) {
+                        capturePermission.ask(MICROPHONE_PERMISSION, MICROPHONE_REFUSED_SENTENCE)
+                    } else if (!recording) {
                         runCatching {
                             val file = createAppFile(context, "stage-audio-", ".m4a")
                             recorder = createAudioRecorder(context, file).also { it.start() }
                             recordingFile = file
                             recording = true
                             onMessage("Recording stage audio…")
-                        }.onFailure { onError(it.message ?: "Unable to start stage audio") }
+                        }.onFailure { onError(it.userMessage("Unable to start stage audio")) }
                     } else {
                         runCatching {
                             recorder?.stop(); recorder?.release()
                             recordingFile?.let { file -> stages.uris = stages.uris + uriForFile(context, file) }
-                        }.onFailure { onError(it.message ?: "Unable to stop stage audio") }
+                        }.onFailure { onError(it.userMessage("Unable to stop stage audio")) }
                         recorder = null; recordingFile = null; recording = false
                         onMessage("Stage audio step added")
                     }
@@ -13297,7 +13653,7 @@ private fun ProcessForm(
         }.onFailure {
             if (it is kotlinx.coroutines.CancellationException) throw it
             artisanProducts = emptyList()
-            productLoadError = "Couldn't load this artisan's products: ${it.message ?: "network error"}. Tap the artisan again to retry."
+            productLoadError = it.userMessage("Couldn't load this artisan's products.") + " Tap the artisan again to retry."
         }
     }
 
@@ -13494,7 +13850,7 @@ private fun ProcessForm(
                     submit(forceOffline = true)
                     return@launch
                 }
-                onError(it.message ?: "Unable to save process")
+                onError(it.userMessage("Unable to save process"))
             }
             saving = false
         }
@@ -13650,14 +14006,14 @@ private fun ProcessForm(
                             scope.launch {
                                 runCatching { repository.deleteMedia(saved.id) }
                                     .onSuccess { existingPreMedia = existingPreMedia.filterNot { it.id == saved.id } }
-                                    .onFailure { error -> onError(error.message ?: "Unable to remove media") }
+                                    .onFailure { error -> onError(error.userMessage("Unable to remove media")) }
                             }
                         },
                         repository = repository
                     )
                 }
             }
-            MediaCaptureSection(repository = repository, media = preMedia, emphasizeVideo = true, onMessage = onError, onError = onError)
+            MediaCaptureSection(repository = repository, media = preMedia, emphasizeVideo = true, onMessage = LocalAppNotice.current, onError = onError)
             if (preMediaError != null) Text(preMediaError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
         }
 
@@ -13687,7 +14043,7 @@ private fun ProcessForm(
                                     scope.launch {
                                         runCatching { repository.deleteMedia(saved.id) }
                                             .onSuccess { step.existingMedia = step.existingMedia.filterNot { it.id == saved.id } }
-                                            .onFailure { error -> onError(error.message ?: "Unable to remove media") }
+                                            .onFailure { error -> onError(error.userMessage("Unable to remove media")) }
                                     }
                                 },
                                 repository = repository
@@ -13710,7 +14066,7 @@ private fun ProcessForm(
                                 MultiNoteInput(label = "Additional context for this step", value = step.notes, resetKey = step.key) { step.notes = it }
                             }
                         },
-                        onMessage = onError,
+                        onMessage = LocalAppNotice.current,
                         onError = onError
                     )
                 }
@@ -13741,12 +14097,12 @@ private fun ProcessForm(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF2A2520), RoundedCornerShape(12.dp))
+                .background(MaterialTheme.field.surface100, RoundedCornerShape(12.dp))
                 .padding(12.dp)
         ) {
             Text(
                 "Note: Different users may contribute to processes created by others. Even when documenting the same process, it is recommended that each researcher documents it individually, so that different perspectives on the same process are preserved.",
-                color = Color(0xFFE0C9B0),
+                color = MaterialTheme.field.body,
                 fontSize = 12.sp
             )
         }
@@ -14010,7 +14366,7 @@ private fun MyActivityScreen(
                 // ON to, about a request they themselves abandoned. Rethrow instead, which is also
                 // what stops the dead composable writing state (ConsolidatedQuestionnaireScreen.kt:276).
                 if (it is kotlinx.coroutines.CancellationException) throw it
-                onError(it.message ?: "Couldn't load your activity")
+                onError(it.userMessage("Couldn't load your activity"))
                 // Not `emptyList()`: a throw out of the gatherer is a total failure, and recording it
                 // as "nothing to show" is the very lie the failure count exists to prevent.
                 loaded = MyActivityResult(emptyList(), failedLists = 1, totalLists = 1)
@@ -14024,7 +14380,7 @@ private fun MyActivityScreen(
             color = Muted,
             fontSize = 13.sp
         )
-        cachedNote?.let { Text(it, color = Coral, fontSize = 12.sp) }
+        cachedNote?.let { CachedCopyNote(it) }
         val current = loaded
         // SOME answered and some did not. The rows below are real but the list is short by an unknown
         // amount, so it is captioned rather than presented as the whole of someone's work — the same
@@ -14178,7 +14534,7 @@ private fun ToolAssignScreen(
                     saving = true
                     runCatching { repository.assignToolArtisans(toolId, artisanIds.toList()) }
                         .onSuccess { result -> assigned = result; artisanIds = emptySet(); info = "Done. This tool now maps to ${result.size} artisan(s)." }
-                        .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; onError(it.message ?: "Assignment failed") }
+                        .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; onError(it.userMessage("Assignment failed")) }
                     saving = false
                 }
             },
@@ -14204,7 +14560,7 @@ private fun ToolAssignScreen(
                             scope.launch {
                                 runCatching { repository.unassignToolArtisan(toolId, artisan.id) }
                                     .onSuccess { assigned = assigned.filter { it.id != artisan.id } }
-                                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; onError(it.message ?: "Could not remove") }
+                                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; onError(it.userMessage("Could not remove")) }
                             }
                         }) { Text("Remove") }
                     }
@@ -14341,7 +14697,7 @@ private fun MediaWithTranscript(context: Context, media: MediaFileDto, repositor
                                 Text(
                                     "Edited",
                                     color = MaterialTheme.field.onWarningContainer,
-                                    fontSize = 10.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -14501,7 +14857,7 @@ private fun TranscriptRefineControls(
                     }
                 }
                 .onFailure {
-                    if (it !is kotlinx.coroutines.CancellationException) refineError = it.message ?: "Couldn't refine the transcript."
+                    if (it !is kotlinx.coroutines.CancellationException) refineError = it.userMessage("Couldn't refine the transcript.")
                 }
             refining = false
         }
@@ -14562,7 +14918,7 @@ private fun TranscriptRefineControls(
                                 }
                                 .onFailure {
                                     if (it !is kotlinx.coroutines.CancellationException)
-                                        refineError = it.message ?: "Couldn't save the refined transcript."
+                                        refineError = it.userMessage("Couldn't save the refined transcript.")
                                 }
                             applying = false
                         }
@@ -14678,7 +15034,7 @@ private fun RecordMediaSection(
         loading = true
         runCatching { repository.mediaForRecord(linkedType, recordId) }
             .onSuccess { media = it }
-            .onFailure { onError(it.message ?: "Unable to load media") }
+            .onFailure { onError(it.userMessage("Unable to load media")) }
         loading = false
     }
     HorizontalDivider()
@@ -14690,14 +15046,26 @@ private fun RecordMediaSection(
     }
 }
 
-private val StarGold = Color(0xFFF5B301)
+private val StarGold: Color get() = StatusWarning
 
 /** Tappable 1–5 star input for a quantitative rating (0 = not yet rated). */
 @Composable
 private fun StarRatingInput(rating: Int, max: Int = 5, onChange: (Int) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    // 48dp targets, one radio group, and a selected state TalkBack can read ("3 of 5 selected")
+    // rather than five buttons all called "N stars" (UX audit 2026-10-16, DA-42).
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.selectableGroup()) {
         (1..max).forEach { i ->
-            IconButton(onClick = { onChange(if (rating == i) 0 else i) }, modifier = Modifier.size(40.dp)) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(48.dp)
+                    .selectable(
+                        selected = rating == i,
+                        role = androidx.compose.ui.semantics.Role.RadioButton,
+                        onClick = { onChange(if (rating == i) 0 else i) }
+                    )
+                    .semantics { stateDescription = if (rating == i) "$i of $max selected" else "$i of $max" }
+            ) {
                 Icon(
                     imageVector = if (i <= rating) Icons.Filled.Star else Icons.Filled.StarBorder,
                     contentDescription = "$i star${if (i == 1) "" else "s"}",
@@ -14921,7 +15289,7 @@ private fun FeedbackReportSection(repository: WorkshopRepository, onError: (Stri
                 // Unless a restored draft already chose one — see `draft` below.
                 if (kind.isBlank()) kind = served.kind.firstOrNull()?.value.orEmpty()
             }
-            .onFailure { if (it !is kotlinx.coroutines.CancellationException) onError(it.message ?: "Could not load the feedback options") }
+            .onFailure { if (it !is kotlinx.coroutines.CancellationException) onError(it.userMessage("Could not load the feedback options")) }
         reloadMine()
     }
 
@@ -15024,7 +15392,7 @@ private fun FeedbackReportSection(repository: WorkshopRepository, onError: (Stri
                             .onFailure {
                                 if (it !is kotlinx.coroutines.CancellationException) {
                                     status = ActionStatus.ERROR
-                                    onError(it.message ?: "Could not send that report")
+                                    onError(it.userMessage("Could not send that report"))
                                 }
                             }
                         sending = false
@@ -15157,7 +15525,7 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
                     featureRequests = fb.featureRequests.orEmpty()
                 }
             }
-            .onFailure { onError(it.message ?: "Unable to load your feedback") }
+            .onFailure { onError(it.userMessage("Unable to load your feedback")) }
         loading = false
     }
 
@@ -15274,7 +15642,7 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
                             .onFailure {
                                 if (it !is kotlinx.coroutines.CancellationException) {
                                     status = ActionStatus.ERROR
-                                    onError(it.message ?: "Unable to save your feedback")
+                                    onError(it.userMessage("Unable to save your feedback"))
                                 }
                             }
                         saving = false
@@ -15293,7 +15661,7 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
                 Text(
                     when {
                         saving -> "Saving…"
-                        status == ActionStatus.SUCCESS -> "Saved ✓"
+                        status == ActionStatus.SUCCESS -> "Saved"
                         existing != null -> "Update feedback"
                         else -> "Submit feedback"
                     }
@@ -15318,7 +15686,7 @@ private fun MasterFeedbackCard(repository: WorkshopRepository, onError: (String)
         loading = true
         runCatching { repository.allFeedback() }
             .onSuccess { feedback = it }
-            .onFailure { onError(it.message ?: "Unable to load feedback") }
+            .onFailure { onError(it.userMessage("Unable to load feedback")) }
         loading = false
     }
 
@@ -15439,7 +15807,7 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
                 orphans = it
                 loadOptionsFor(it.mapNotNull { m -> m.linkedRecordType }.toSet())
             }
-            .onFailure { onError(it.message ?: "Unable to load recovered recordings") }
+            .onFailure { onError(it.userMessage("Unable to load recovered recordings")) }
         loading = false
     }
 
@@ -15487,7 +15855,7 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
                                         busy = busy + m.id
                                         runCatching { repository.relinkMedia(m.id, m.linkedRecordType ?: "", target) }
                                             .onSuccess { orphans = orphans.filterNot { it.id == m.id }; selections.remove(m.id) }
-                                            .onFailure { onError(it.message ?: "Unable to re-link this recording") }
+                                            .onFailure { onError(it.userMessage("Unable to re-link this recording")) }
                                         busy = busy - m.id
                                     }
                                 },
@@ -15531,7 +15899,7 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
                             busy = busy + toDelete.id
                             runCatching { repository.deleteMedia(toDelete.id) }
                                 .onSuccess { orphans = orphans.filterNot { it.id == toDelete.id }; selections.remove(toDelete.id) }
-                                .onFailure { onError(it.message ?: "Unable to delete this recording") }
+                                .onFailure { onError(it.userMessage("Unable to delete this recording")) }
                             busy = busy - toDelete.id
                         }
                     }
@@ -15856,11 +16224,11 @@ private fun ViewDataScreen(
                     iv.artisans.forEach { link -> (link.artisan ?: byId[link.artisanId])?.let { involved.putIfAbsent(it.id, it) } }
                 }
                 artisanFilterList = involved.values.sortedBy { it.name.lowercase() }
-            }.onFailure { onError(it.message ?: "Unable to load questionnaires") }
+            }.onFailure { onError(it.userMessage("Unable to load questionnaires")) }
         } else {
             runCatching { loadViewEntriesCached(viewContext, repository, mode, onCached = onError) }
                 .onSuccess { options = it }
-                .onFailure { onError(it.message ?: "Unable to load list") }
+                .onFailure { onError(it.userMessage("Unable to load list")) }
         }
         loadingList = false
     }
@@ -16113,15 +16481,35 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
     var queue by remember { mutableStateOf(PendingReviewListDto()) }
     val pending: List<PendingReviewDto> = queue.items
     var loading by remember { mutableStateOf(true) }
+    var loadingOlder by remember { mutableStateOf(false) }
+    // A failed read is a failure, never "Nothing pending" (UX audit 2026-10-16, DA-07).
+    var loadError by remember { mutableStateOf<String?>(null) }
     var info by remember { mutableStateOf<String?>(null) }
 
+    // PAGED, newest first (DA-09): one page, then "Load older" appends the next from `nextBefore`.
     fun refresh() {
         scope.launch {
             loading = true
-            runCatching { repository.pendingReviews() }
+            loadError = null
+            runCatching { repository.pendingReviews(pageSize = REVIEW_QUEUE_PAGE_SIZE) }
                 .onSuccess { queue = it }
-                .onFailure { onError(it.apiErrorMessage("Unable to load the review queue")) }
+                .onFailure { loadError = it.userMessage("The review queue could not be read.") }
             loading = false
+        }
+    }
+
+    fun loadOlder() {
+        val cursor = queue.nextBefore ?: return
+        scope.launch {
+            loadingOlder = true
+            runCatching { repository.pendingReviews(pageSize = REVIEW_QUEUE_PAGE_SIZE, before = cursor) }
+                .onSuccess { older ->
+                    val seen = queue.items.map { it.recordType to it.id }.toSet()
+                    val merged = queue.items + older.items.filterNot { (it.recordType to it.id) in seen }
+                    queue = older.copy(items = merged, shown = merged.size)
+                }
+                .onFailure { onError(it.userMessage("Older records could not be loaded.")) }
+            loadingOlder = false
         }
     }
     LaunchedEffect(Unit) { refresh() }
@@ -16138,13 +16526,14 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
                 androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text("Loading pending records…", color = Muted, fontSize = 12.sp)
             }
-            pending.isEmpty() -> Text("Nothing pending — everything has been reviewed. 🎉", color = Muted, fontSize = 12.sp)
+            loadError != null -> LoadFailedCard(message = loadError.orEmpty(), onRetry = { refresh() })
+            pending.isEmpty() -> Text("Nothing is waiting for review.", color = Muted, fontSize = 12.sp)
             else -> {
                 // ``total``, not ``pending.size``: they are the same number until the queue outgrows
                 // the cap, and after that the length of the list is the one figure that is certainly
                 // wrong — 200 of 340 announced as "200 record(s) awaiting review". The line below
                 // says which of the two the reader is looking at.
-                Text("${queue.total} record(s) awaiting review", color = Body, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(if (queue.total == 1) "1 record awaiting review" else "${queue.total} records awaiting review", color = Body, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 // Wording decided in ui/ReviewQueueCopy.kt, the twin of the web's `queueCutNotice`,
                 // never assembled here: one queue described in two sentences by two clients is how a
                 // reviewer learns that neither means much. Renders nothing when the queue is whole.
@@ -16153,7 +16542,7 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
                     shown = pending.size,
                     total = queue.total,
                     cap = queue.cap,
-                )?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp) }
+                )?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp) }
                 info?.let { Text(it, color = SuccessGreen, fontSize = 11.sp) }
                 pending.forEach { item ->
                     // Keyed by the record, not by position in the list. Every row here remembers state
@@ -16191,6 +16580,13 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
                             onError = onError
                         )
                     }
+                }
+                if (queue.nextBefore != null) {
+                    OutlinedButton(
+                        onClick = { loadOlder() },
+                        enabled = !loadingOlder,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(if (loadingOlder) "Loading older records…" else "Load older") }
                 }
             }
         }
@@ -16516,7 +16912,7 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
                                             "found and are not in the archive.)"
                                     } else ""
                             } else ""
-                    }.onFailure { onError(it.message ?: "Unable to download the dataset") }
+                    }.onFailure { onError(it.userMessage("Unable to download the dataset")) }
                     downloading = false
                 }
             },
@@ -16543,7 +16939,7 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
                 scope.launch {
                     runCatching { repository.downloadReport(context) }
                         .onSuccess { location -> reportMessage = "Report saved to $location" }
-                        .onFailure { onError(it.message ?: "Unable to download the report") }
+                        .onFailure { onError(it.userMessage("Unable to download the report")) }
                     reportBusy = false
                 }
             },
@@ -16560,10 +16956,12 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
 // Completion-matrix colours: section done (green), flagged for review (amber), to redo (red),
 // and not-yet-started (neutral). Green also covers a section recorded in any group/superset the
 // artisan belongs to, or individually.
-private val CompletionGreen = Color(0xFF2E9E5B)
-private val CompletionAmber = Color(0xFFE2A400)
-private val CompletionRed = Color(0xFFD25141)
-private val CompletionEmpty = Color(0xFFE7E0D6)
+// Themed (UX audit 2026-10-16, DA-19): the fixed hexes left a beige empty cell in dark mode and
+// white glyphs on amber at about 2:1. Each fill now has its own on-colour below.
+private val CompletionGreen: Color get() = StatusSuccess
+private val CompletionAmber: Color get() = StatusWarning
+private val CompletionRed: Color get() = StatusError
+private val CompletionEmpty: Color get() = StatusEmpty
 
 private fun completionColor(status: String?, derived: Boolean): Color = when (status) {
     "COMPLETED" -> CompletionGreen
@@ -16631,7 +17029,7 @@ private fun CompletionMatrixCard(
                 // Rethrown rather than reported: a superseded request is not a failed one, and
                 // rethrowing also leaves `loading` to the pass that replaced this one.
                 if (it is kotlinx.coroutines.CancellationException) throw it
-                onError(it.message ?: "Unable to load completion")
+                onError(it.userMessage("Unable to load completion"))
                 loading = false
             }
     }
@@ -16734,7 +17132,7 @@ private fun CompletionMatrixCard(
                     remember(grid) { grid.cells.associateBy { c -> c.artisanId to c.sectionId } }
                 val nameWidth = 132.dp
                 val colWidth = 52.dp
-                val rowHeight = 40.dp
+                val rowHeight = 48.dp
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -16792,15 +17190,25 @@ private fun CompletionMatrixCard(
                                                 .background(completionColor(status, derived), RoundedCornerShape(3.dp))
                                                 .then(
                                                     if (canEdit) Modifier.clickable { editing = key } else Modifier
-                                                ),
+                                                )
+                                                // TalkBack hears the artisan, the section and the state,
+                                                // not a bare glyph.
+                                                .semantics {
+                                                    contentDescription = "${artisan.name}, ${section.code}: " + when {
+                                                        status == "COMPLETED" || (status == null && derived) -> "Completed"
+                                                        status == "NEEDS_REVIEW" -> "Requires review"
+                                                        status == "NEEDS_REDO" -> "Needs redo"
+                                                        else -> "Not started"
+                                                    }
+                                                },
                                             contentAlignment = Alignment.Center
                                         ) {
                                             if (status == "COMPLETED" || (status == null && derived)) {
-                                                Text("✓", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text("✓", color = OnStatusSuccess, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                             } else if (status == "NEEDS_REVIEW") {
-                                                Text("!", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text("!", color = OnStatusWarning, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                             } else if (status == "NEEDS_REDO") {
-                                                Text("✗", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text("✗", color = OnStatusError, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                     }
@@ -16826,7 +17234,7 @@ private fun CompletionMatrixCard(
             scope.launch {
                 runCatching { repository.setCompletionCell(cellToEdit.first, cellToEdit.second, status) }
                     .onFailure {
-                        onError(it.message ?: "Unable to update status")
+                        onError(it.userMessage("Unable to update status"))
                         // Roll back the optimistic change on failure.
                         cellOverrides = cellOverrides - cellToEdit
                     }
@@ -16854,7 +17262,7 @@ private fun CompletionMatrixCard(
 private fun CompletionLegendChip(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(modifier = Modifier.size(12.dp).background(color, RoundedCornerShape(3.dp)))
-        Text(label, color = Muted, fontSize = 10.sp)
+        Text(label, color = Muted, fontSize = 11.sp)
     }
 }
 
@@ -16898,13 +17306,16 @@ private fun ViewDataDetail(
     onError: (String) -> Unit
 ) {
     val context = LocalContext.current
+    // A failed read shows its reason and Try again instead of a card that never stops loading (DA-06).
+    var loadFailed by remember(recordId) { mutableStateOf<String?>(null) }
+    var loadAttempt by remember(recordId) { mutableStateOf(0) }
     when (mode) {
         EntryMode.PROCESS -> {
             var detail by remember(recordId) { mutableStateOf<ProcessDetailDto?>(null) }
-            LaunchedEffect(recordId) {
-                runCatching { repository.process(recordId) }.onSuccess { detail = it }.onFailure { onError(it.message ?: "Unable to load process") }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null;
+                runCatching { repository.process(recordId) }.onSuccess { detail = it }.onFailure { loadFailed = it.userMessage("Unable to load process") }
             }
-            val d = detail ?: return run { LoadingCard(mode) }
+            val d = detail ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = d.name.ifBlank { "Process" }) {
                 if (showProvenance) ProvenanceSection(meta = d.extraMetadata, createdByName = d.createdBy?.name)
                 DetailRow("Product", d.product?.productName)
@@ -16927,8 +17338,8 @@ private fun ViewDataDetail(
         }
         EntryMode.ARTISAN -> {
             var d by remember(recordId) { mutableStateOf<ArtisanDetailDto?>(null) }
-            LaunchedEffect(recordId) { runCatching { repository.artisan(recordId) }.onSuccess { d = it }.onFailure { onError(it.message ?: "Unable to load artisan") } }
-            val v = d ?: return run { LoadingCard(mode) }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.artisan(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load artisan") } }
+            val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.name.ifBlank { "Artisan" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
                 DetailRow("Craft", v.craft?.name)
@@ -16954,11 +17365,18 @@ private fun ViewDataDetail(
             // from every interview they belong to (alone, in a subset, or a larger set), so a group
             // recording surfaces here for this artisan to be validated individually.
             ArtisanQuestionnaireData(repository = repository, artisanId = recordId)
+            // Field staff verify an artisan by scanning the card's QR. Draws nothing unless the
+            // server has an Aadhaar method switched on; the server decides who may verify.
+            AadhaarVerifyCard(
+                subject = AadhaarSubject.Artisan(recordId),
+                viewer = repository.cachedUser(),
+                recordName = v.name,
+            )
         }
         EntryMode.PRODUCT -> {
             var d by remember(recordId) { mutableStateOf<ProductDetailDto?>(null) }
-            LaunchedEffect(recordId) { runCatching { repository.product(recordId) }.onSuccess { d = it }.onFailure { onError(it.message ?: "Unable to load product") } }
-            val v = d ?: return run { LoadingCard(mode) }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.product(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load product") } }
+            val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.productName.ifBlank { "Product" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
                 DetailRow("Craft", v.craftName)
@@ -16976,8 +17394,8 @@ private fun ViewDataDetail(
         }
         EntryMode.TOOL -> {
             var d by remember(recordId) { mutableStateOf<ToolDetailDto?>(null) }
-            LaunchedEffect(recordId) { runCatching { repository.tool(recordId) }.onSuccess { d = it }.onFailure { onError(it.message ?: "Unable to load tool") } }
-            val v = d ?: return run { LoadingCard(mode) }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.tool(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load tool") } }
+            val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.toolkitName.ifBlank { "Tool" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
                 DetailRow("Craft", v.craftName)
@@ -16994,8 +17412,8 @@ private fun ViewDataDetail(
         }
         EntryMode.WORKSHOP -> {
             var d by remember(recordId) { mutableStateOf<WorkshopDetailDto?>(null) }
-            LaunchedEffect(recordId) { runCatching { repository.workshop(recordId) }.onSuccess { d = it }.onFailure { onError(it.message ?: "Unable to load workshop") } }
-            val v = d ?: return run { LoadingCard(mode) }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.workshop(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load workshop") } }
+            val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.title.ifBlank { "Workshop" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
                 DetailRow("Place", v.place)
@@ -17008,8 +17426,8 @@ private fun ViewDataDetail(
         }
         EntryMode.CRAFT -> {
             var d by remember(recordId) { mutableStateOf<CraftDto?>(null) }
-            LaunchedEffect(recordId) { runCatching { repository.craft(recordId) }.onSuccess { d = it }.onFailure { onError(it.message ?: "Unable to load craft") } }
-            val v = d ?: return run { LoadingCard(mode) }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.craft(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load craft") } }
+            val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.name.ifBlank { "Craft" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
                 DetailRow("Local name", v.localName)
@@ -17026,7 +17444,7 @@ private fun ViewDataDetail(
             // core fix for "not all features of the record(s) are visible".
             var members by remember(recordId) { mutableStateOf<List<QuestionnaireInterviewDetailDto>?>(null) }
             var groupMedia by remember(recordId) { mutableStateOf<List<MediaFileDto>>(emptyList()) }
-            LaunchedEffect(recordId) {
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null;
                 runCatching {
                     val all = repository.interviews()
                     val selected = all.firstOrNull { it.id == recordId } ?: repository.interview(recordId)
@@ -17041,9 +17459,9 @@ private fun ViewDataDetail(
                     }
                     group to mediaById.values.toList()
                 }.onSuccess { (g, media) -> members = g; groupMedia = media }
-                    .onFailure { onError(it.message ?: "Unable to load interview") }
+                    .onFailure { loadFailed = it.userMessage("Unable to load interview") }
             }
-            val g = members ?: return run { LoadingCard(mode) }
+            val g = members ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             val rep = representativeInterview(g)
             RecordCard(title = rep.title.ifBlank { "Interview" }) {
                 if (showProvenance) ProvenanceSection(meta = rep.extraMetadata, createdByName = rep.createdBy?.name)
@@ -17087,8 +17505,8 @@ private fun ViewDataDetail(
         }
         EntryMode.MEDIA -> {
             var d by remember(recordId) { mutableStateOf<MediaFileDto?>(null) }
-            LaunchedEffect(recordId) { runCatching { repository.mediaItem(recordId) }.onSuccess { d = it }.onFailure { onError(it.message ?: "Unable to load media") } }
-            val v = d ?: return run { LoadingCard(mode) }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.mediaItem(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load media") } }
+            val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.originalFilename.ifBlank { "Media" }) {
                 DetailRow("Type", v.mediaType)
                 DetailRow("Caption", v.caption)
@@ -17136,7 +17554,7 @@ private fun RecordCollabSection(
     fun reload() {
         scope.launch {
             runCatching { comments = repository.entryComments(recordType, recordId) }
-                .onFailure { onError(it.message ?: "Unable to load comments") }
+                .onFailure { onError(it.userMessage("Unable to load comments")) }
             // Edit history is owner/admin only; silently hide if not permitted.
             revisions = runCatching { repository.recordRevisions(recordType, recordId) }.getOrNull()
         }
@@ -17175,7 +17593,7 @@ private fun RecordCollabSection(
                                 busy = true
                                 runCatching { repository.deleteEntryComment(c.id) }
                                     .onSuccess { reload() }
-                                    .onFailure { onError(it.message ?: "Unable to remove the comment") }
+                                    .onFailure { onError(it.userMessage("Unable to remove the comment")) }
                                 busy = false
                             }
                         }
@@ -17192,7 +17610,7 @@ private fun RecordCollabSection(
                         busy = true
                         runCatching { repository.addEntryComment(recordType, recordId, draft.trim()); draft = "" }
                             .onSuccess { reload() }
-                            .onFailure { onError(it.message ?: "Unable to post comment") }
+                            .onFailure { onError(it.userMessage("Unable to post comment")) }
                         busy = false
                     }
                 }
@@ -17333,7 +17751,7 @@ private fun AndroidMediaForm(
             localMessage = message
             onError(message)
         }.onFailure { error ->
-            onError("These files could not be kept on this device: ${error.message ?: "unknown error"}. They are still selected.")
+            onError(error.userMessage("These files could not be kept on this device. They are still selected."))
         }
         return result.isSuccess
     }
@@ -17343,11 +17761,13 @@ private fun AndroidMediaForm(
         scope.launch {
             runCatching { repository.media() }
                 .onSuccess { savedMedia = it }
-                .onFailure { error -> onError(error.message ?: "Unable to load saved media") }
+                .onFailure { error -> onError(error.userMessage("Unable to load saved media")) }
         }
     }
 
+    // Location only, asked when "Use GPS" is tapped. The camera and microphone go through the gate.
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
+    val capturePermission = rememberPermissionGate(onError)
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) selectedUris = selectedUris + uris
     }
@@ -17363,7 +17783,6 @@ private fun AndroidMediaForm(
     }
 
     LaunchedEffect(Unit) {
-        permissionLauncher.launch(requiredAndroidPermissions())
         refreshMedia()
     }
     // When the linked record type changes, load that type's entries for the second dropdown.
@@ -17375,7 +17794,7 @@ private fun AndroidMediaForm(
         loadingEntries = true
         runCatching { loadViewEntriesCached(context, repository, mode, onCached = onError) }
             .onSuccess { entryOptions = it }
-            .onFailure { error -> onError(error.message ?: "Unable to load ${mode.label} entries") }
+            .onFailure { error -> onError(error.userMessage("Unable to load ${mode.label} entries")) }
         loadingEntries = false
     }
 
@@ -17394,10 +17813,11 @@ private fun AndroidMediaForm(
         }
         OutlinedButton(
             onClick = {
-                permissionLauncher.launch(requiredAndroidPermissions())
-                val uri = createAppFileUri(context, "field-photo-", ".jpg")
-                pendingCaptureUri = uri
-                takePhoto.launch(uri)
+                capturePermission.run(CAMERA_PERMISSION, CAMERA_REFUSED_SENTENCE) {
+                    val uri = createAppFileUri(context, "field-photo-", ".jpg")
+                    pendingCaptureUri = uri
+                    takePhoto.launch(uri)
+                }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -17405,10 +17825,11 @@ private fun AndroidMediaForm(
         }
         OutlinedButton(
             onClick = {
-                permissionLauncher.launch(requiredAndroidPermissions())
-                val uri = createAppFileUri(context, "field-video-", ".mp4")
-                pendingCaptureUri = uri
-                takeVideo.launch(uri)
+                capturePermission.run(CAMERA_PERMISSION, CAMERA_REFUSED_SENTENCE) {
+                    val uri = createAppFileUri(context, "field-video-", ".mp4")
+                    pendingCaptureUri = uri
+                    takeVideo.launch(uri)
+                }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -17416,8 +17837,9 @@ private fun AndroidMediaForm(
         }
         OutlinedButton(
             onClick = {
-                permissionLauncher.launch(requiredAndroidPermissions())
-                if (!recording) {
+                if (!recording && !capturePermission.holds(MICROPHONE_PERMISSION)) {
+                    capturePermission.ask(MICROPHONE_PERMISSION, MICROPHONE_REFUSED_SENTENCE)
+                } else if (!recording) {
                     runCatching {
                         val file = createAppFile(context, "field-audio-", ".m4a")
                         recorder = createAudioRecorder(context, file).also { it.start() }
@@ -17425,7 +17847,7 @@ private fun AndroidMediaForm(
                         recording = true
                         localMessage = "Recording audio..."
                     }.onFailure { error ->
-                        onError(error.message ?: "Unable to start audio recording")
+                        onError(error.userMessage("Unable to start audio recording"))
                     }
                 } else {
                     runCatching {
@@ -17433,7 +17855,7 @@ private fun AndroidMediaForm(
                         recorder?.release()
                         recordingFile?.let { file -> selectedUris = selectedUris + uriForFile(context, file) }
                     }.onFailure { error ->
-                        onError(error.message ?: "Unable to stop audio recording")
+                        onError(error.userMessage("Unable to stop audio recording"))
                     }
                     recorder = null
                     recordingFile = null
@@ -17505,7 +17927,7 @@ private fun AndroidMediaForm(
             repository = repository,
             value = location,
             onUseGps = {
-                permissionLauncher.launch(requiredAndroidPermissions())
+                if (!holdsLocation(context)) permissionLauncher.launch(LOCATION_PERMISSIONS)
                 readLastKnownLocation(context)
             },
             onChange = { location = it },
@@ -17694,7 +18116,7 @@ private fun AndroidMediaForm(
                                     savedMedia = savedMedia.filterNot { it.id == item.id }
                                     localMessage = "Media removed"
                                 }
-                                .onFailure { error -> onError(error.message ?: "Unable to remove media") }
+                                .onFailure { error -> onError(error.userMessage("Unable to remove media")) }
                         }
                     },
                     repository = repository
@@ -17761,7 +18183,7 @@ private fun MediaProcessingJobsCard(
             // Deliberately does NOT fall back to an empty list: "no jobs" and "we could not ask" look
             // identical on screen and mean opposite things, and this card's whole job is to stop a
             // failure reading as an absence.
-            loadError = error.message ?: "Unable to load media processing jobs"
+            loadError = error.userMessage("Unable to load media processing jobs")
         }
     }
 
@@ -17813,7 +18235,7 @@ private fun MediaProcessingJobsCard(
                                 }
                                 tick += 1
                             }
-                            .onFailure { error -> onError(error.message ?: "Unable to run the queue") }
+                            .onFailure { error -> onError(error.userMessage("Unable to run the queue")) }
                         draining = false
                     }
                 },
@@ -17846,7 +18268,7 @@ private fun MediaProcessingJobsCard(
                                 notice = "Re-queued ${job.mediaFile?.originalFilename ?: "this file"}. It runs on the next pass."
                                 tick += 1
                             }
-                            .onFailure { error -> onError(error.message ?: "Unable to re-queue this job") }
+                            .onFailure { error -> onError(error.userMessage("Unable to re-queue this job")) }
                         busyJobId = null
                     }
                 }
@@ -17935,6 +18357,30 @@ private fun formatEta(seconds: Long): String {
     return "~${seconds / 60}m ${seconds % 60}s left"
 }
 
+/** "Photo · 2.1 MB" for a picked or captured file: what it is, and how big, in a person's words. */
+private fun mediaKindAndSize(context: Context, uri: Uri, mediaType: String): String {
+    val kind = when (mediaType) {
+        "IMAGE" -> "Photo"
+        "VIDEO" -> "Video"
+        "AUDIO" -> "Audio"
+        "PDF" -> "PDF document"
+        else -> "File"
+    }
+    val bytes = runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) cursor.getLong(index) else null
+        }
+    }.getOrNull() ?: uri.path?.let { java.io.File(it) }?.takeIf { it.isFile }?.length()
+    return if (bytes == null || bytes <= 0L) kind else "$kind · ${readableBytes(bytes)}"
+}
+
+private fun readableBytes(bytes: Long): String = when {
+    bytes >= 1_000_000L -> "%.1f MB".format(bytes / 1_000_000.0)
+    bytes >= 1_000L -> "${bytes / 1_000L} KB"
+    else -> "$bytes bytes"
+}
+
 private fun mediaTypeFromMime(mime: String?): String = when {
     mime == null -> "DOCUMENT"
     mime.startsWith("image/") -> "IMAGE"
@@ -17962,21 +18408,26 @@ private fun AndroidUriPreview(
     val downloader = rememberMediaDownloader()
     val mediaType = remember(mimeType) { mediaTypeFromMime(mimeType) }
     var showViewer by remember { mutableStateOf(false) }
-    Box(modifier = Modifier.fillMaxWidth()) {
+    // The discard control sits BESIDE the tile at 48dp, not over its corner at 28dp where a near-miss
+    // on "Open" threw the file away (UX audit 2026-10-16, DA-16). Title and subtitle are what a person
+    // recognises — the file's name and "Photo · 2.1 MB" — not "image:1000034" and a MIME type (DA-15).
+    val displayName = remember(uri) { mediaDisplayNameOf(context, uri) ?: "Attached file" }
+    val sizeLabel = remember(uri, mediaType) { mediaKindAndSize(context, uri, mediaType) }
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         MediaThumb(
             uri = uri,
             mediaType = mediaType,
-            title = uri.lastPathSegment.orEmpty(),
-            subtitle = mimeType ?: "Unknown file type",
+            modifier = Modifier.weight(1f),
+            title = displayName,
+            subtitle = sizeLabel,
             onOpen = {
                 if (mediaType in IN_APP_PLAYABLE) showViewer = true else openUri(context, uri, mimeType)
             }
         )
         if (onRemove != null) {
             DiscardBadge(
-                contentDescription = "Discard ${uri.lastPathSegment.orEmpty()}",
-                onClick = onRemove,
-                modifier = Modifier.align(Alignment.TopEnd)
+                contentDescription = "Discard $displayName",
+                onClick = onRemove
             )
         }
     }
@@ -17992,9 +18443,9 @@ private fun AndroidUriPreview(
                 modifier = Modifier.fillMaxWidth().height(4.dp),
                 color = Coral
             )
-            Text("Uploading ${(progress * 100).toInt()}%", color = SurfaceCard, fontSize = 10.sp)
+            Text("Uploading ${(progress * 100).toInt()}%", color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
-        progress != null && progress >= 1f -> Text("Uploaded ✓", color = SuccessGreen, fontSize = 10.sp)
+        progress != null && progress >= 1f -> Text("Uploaded", color = SuccessGreen, fontSize = 12.sp)
     }
     if (onRetry != null || downloadable) {
         Row(
@@ -18030,14 +18481,9 @@ private fun AndroidUriPreview(
 /** A small circular "✕" badge pinned to a media tile's top-right corner to discard/remove that file. */
 @Composable
 private fun DiscardBadge(contentDescription: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    IconButton(
-        onClick = onClick,
-        modifier = modifier
-            .padding(2.dp)
-            .size(28.dp)
-            .background(Color(0xCC1A1A1A), CircleShape)
-    ) {
-        Icon(Icons.Filled.Close, contentDescription = contentDescription, tint = Color.White, modifier = Modifier.size(16.dp))
+    // IconButton's own 48dp target, beside the tile rather than over its corner.
+    IconButton(onClick = onClick, modifier = modifier) {
+        Icon(Icons.Filled.Close, contentDescription = contentDescription, tint = MaterialTheme.colorScheme.error)
     }
 }
 
@@ -18112,10 +18558,11 @@ private fun AndroidSavedMediaPreview(
             }
         }
     } else {
-        Box(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             MediaThumb(
                 uri = uri,
                 mediaType = media.mediaType,
+                modifier = Modifier.weight(1f),
                 title = media.originalFilename,
                 subtitle = listOfNotNull(media.mimeType ?: media.mediaType, media.transcriptStatus?.let { "Transcript: $it" }).joinToString(" · "),
                 onOpen = {
@@ -18126,8 +18573,7 @@ private fun AndroidSavedMediaPreview(
             if (onDelete != null) {
                 DiscardBadge(
                     contentDescription = "Remove ${media.originalFilename}",
-                    onClick = { confirmDelete = true },
-                    modifier = Modifier.align(Alignment.TopEnd)
+                    onClick = { confirmDelete = true }
                 )
             }
         }
@@ -18790,7 +19236,7 @@ private fun QuestionnaireForm(
                     .onFailure {
                         if (it !is kotlinx.coroutines.CancellationException) {
                             syncStatus = ActionStatus.ERROR
-                            onError(it.message ?: "Could not refresh. Check your connection and try again.")
+                            onError(it.userMessage("Could not refresh. Check your connection and try again."))
                         }
                     }
                 syncing = false
@@ -19118,7 +19564,7 @@ private fun QuestionnaireForm(
             value = capturedLocation,
             onUseGps = { readLastKnownLocation(context) },
             onChange = { capturedLocation = it },
-            onMessage = onError
+            onMessage = LocalAppNotice.current
         )
         Text("Tap a section to answer its questions. Only answered questions are saved.", color = Muted, fontSize = 12.sp)
         sections.forEach { section ->
@@ -19506,7 +19952,7 @@ private fun QuestionnaireForm(
         }
         // Attach photos, video, audio files and other media to this interview (with live upload
         // progress) — the same media array used by every other record form.
-        MediaCaptureSection(repository = repository, media = media, onMessage = onError, onError = onError)
+        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
         /*
          * THIS LINE CARRIED `dictate = false` AND NO LONGER DOES — 2026-08-28.
          *
@@ -20089,7 +20535,7 @@ private fun QuestionnaireBuilder(
                         newCode = ""
                         newTitle = ""
                         onRefresh()
-                    }.onFailure { onError(it.message ?: "Unable to add section") }
+                    }.onFailure { onError(it.userMessage("Unable to add section")) }
                 }
             },
             enabled = newCode.isNotBlank() && newTitle.isNotBlank(),
@@ -20128,7 +20574,7 @@ private fun QuestionnaireBuilder(
                                         runCatching {
                                             repository.updateQuestionnaireSection(section.id, QuestionnaireSectionUpdateRequest(code = code.trim(), title = sectionTitle.trim(), isActive = true))
                                             onRefresh()
-                                        }.onFailure { onError(it.message ?: "Unable to update section") }
+                                        }.onFailure { onError(it.userMessage("Unable to update section")) }
                                     }
                                 },
                                 modifier = Modifier.weight(1f)
@@ -20140,7 +20586,7 @@ private fun QuestionnaireBuilder(
                                         runCatching {
                                             repository.reorderQuestionnaireSections(moveIds(sections.map { it.id }, sectionIndex, -1))
                                             onRefresh()
-                                        }.onFailure { onError(it.message ?: "Unable to move section") }
+                                        }.onFailure { onError(it.userMessage("Unable to move section")) }
                                     }
                                 }
                             ) { Text("Up") }
@@ -20151,7 +20597,7 @@ private fun QuestionnaireBuilder(
                                         runCatching {
                                             repository.reorderQuestionnaireSections(moveIds(sections.map { it.id }, sectionIndex, 1))
                                             onRefresh()
-                                        }.onFailure { onError(it.message ?: "Unable to move section") }
+                                        }.onFailure { onError(it.userMessage("Unable to move section")) }
                                     }
                                 }
                             ) { Text("Down") }
@@ -20162,7 +20608,7 @@ private fun QuestionnaireBuilder(
                                     runCatching {
                                         repository.deleteQuestionnaireSection(section.id)
                                         onRefresh()
-                                    }.onFailure { onError(it.message ?: "Unable to remove section") }
+                                    }.onFailure { onError(it.userMessage("Unable to remove section")) }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -20186,7 +20632,7 @@ private fun QuestionnaireBuilder(
                                                 runCatching {
                                                     repository.updateQuestionnaireQuestion(question.id, QuestionnaireQuestionUpdateRequest(prompt = prompt.trim(), isActive = true))
                                                     onRefresh()
-                                                }.onFailure { onError(it.message ?: "Unable to update question") }
+                                                }.onFailure { onError(it.userMessage("Unable to update question")) }
                                             }
                                         },
                                         modifier = Modifier.weight(1f)
@@ -20198,7 +20644,7 @@ private fun QuestionnaireBuilder(
                                                 runCatching {
                                                     repository.reorderQuestionnaireQuestions(section.id, moveIds(section.questions.map { it.id }, questionIndex, -1))
                                                     onRefresh()
-                                                }.onFailure { onError(it.message ?: "Unable to move question") }
+                                                }.onFailure { onError(it.userMessage("Unable to move question")) }
                                             }
                                         }
                                     ) { Text("Up") }
@@ -20209,7 +20655,7 @@ private fun QuestionnaireBuilder(
                                                 runCatching {
                                                     repository.reorderQuestionnaireQuestions(section.id, moveIds(section.questions.map { it.id }, questionIndex, 1))
                                                     onRefresh()
-                                                }.onFailure { onError(it.message ?: "Unable to move question") }
+                                                }.onFailure { onError(it.userMessage("Unable to move question")) }
                                             }
                                         }
                                     ) { Text("Down") }
@@ -20222,7 +20668,7 @@ private fun QuestionnaireBuilder(
                                                 runCatching {
                                                     repository.updateQuestionnaireQuestion(question.id, QuestionnaireQuestionUpdateRequest(sectionId = sections[sectionIndex - 1].id))
                                                     onRefresh()
-                                                }.onFailure { onError(it.message ?: "Unable to move question") }
+                                                }.onFailure { onError(it.userMessage("Unable to move question")) }
                                             }
                                         },
                                         modifier = Modifier.weight(1f)
@@ -20234,7 +20680,7 @@ private fun QuestionnaireBuilder(
                                                 runCatching {
                                                     repository.updateQuestionnaireQuestion(question.id, QuestionnaireQuestionUpdateRequest(sectionId = sections[sectionIndex + 1].id))
                                                     onRefresh()
-                                                }.onFailure { onError(it.message ?: "Unable to move question") }
+                                                }.onFailure { onError(it.userMessage("Unable to move question")) }
                                             }
                                         },
                                         modifier = Modifier.weight(1f)
@@ -20246,7 +20692,7 @@ private fun QuestionnaireBuilder(
                                             runCatching {
                                                 repository.deleteQuestionnaireQuestion(question.id)
                                                 onRefresh()
-                                            }.onFailure { onError(it.message ?: "Unable to remove question") }
+                                            }.onFailure { onError(it.userMessage("Unable to remove question")) }
                                         }
                                     },
                                     modifier = Modifier.fillMaxWidth()
@@ -20262,7 +20708,7 @@ private fun QuestionnaireBuilder(
                                         repository.createQuestionnaireQuestion(QuestionnaireQuestionCreateRequest(sectionId = section.id, prompt = newPrompt.trim()))
                                         newPrompt = ""
                                         onRefresh()
-                                    }.onFailure { onError(it.message ?: "Unable to add question") }
+                                    }.onFailure { onError(it.userMessage("Unable to add question")) }
                                 }
                             },
                             enabled = newPrompt.isNotBlank(),
@@ -20309,7 +20755,7 @@ private fun UserManagementForm(
             loading = true
             runCatching { repository.users() }
                 .onSuccess { users = it }
-                .onFailure { onError(it.message ?: "Unable to load users") }
+                .onFailure { onError(it.userMessage("Unable to load users")) }
             loading = false
         }
     }
@@ -20368,6 +20814,20 @@ private fun UserManagementForm(
                     }
                 },
                 onDismiss = { issuedLink = null }
+            )
+        }
+        // "Add a person": the account, its admission and its role's own list in one step —
+        // `ui/AddPerson.kt`. Admins and the master admin; roles strictly below the viewer's own.
+        if (actorIsAdmin) {
+            AddPersonCard(
+                repository = repository,
+                actorRole = actor?.role,
+                actorIsMaster = actorIsMaster,
+                onCreated = { refreshUsers() },
+                onOpenExisting = { id ->
+                    expandedUsers = expandedUsers + id
+                    refreshUsers()
+                }
             )
         }
         confirmTwoStepReset?.let { target ->
@@ -20436,6 +20896,8 @@ private fun UserManagementForm(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(appUser.name, display = true, fontWeight = FontWeight.SemiBold)
                             Text("${appUser.email} · ${roleLabel(appUser.role)}", color = Muted, fontSize = 12.sp)
+                            // Nothing unless the server has an Aadhaar method switched on.
+                            AadhaarUserBadge(account = appUser, viewer = repository.cachedUser())
                             Text(
                                 if (isMaster) "All privileges (master admin)"
                                 else "$grantedCount of 4 privileges granted",
@@ -20485,7 +20947,7 @@ private fun UserManagementForm(
                             onToggle = { grant ->
                                 scope.launch {
                                     runCatching { repository.updateUserQuestionnaireAccess(appUser.id, grant); refreshUsers() }
-                                        .onFailure { onError(it.message ?: "Unable to update questionnaire access") }
+                                        .onFailure { onError(it.userMessage("Unable to update questionnaire access")) }
                                 }
                             }
                         )
@@ -20509,7 +20971,7 @@ private fun UserManagementForm(
                             onToggle = { grant ->
                                 scope.launch {
                                     runCatching { repository.updateUserReviewAccess(appUser.id, grant); refreshUsers() }
-                                        .onFailure { onError(it.message ?: "Unable to update review access") }
+                                        .onFailure { onError(it.userMessage("Unable to update review access")) }
                                 }
                             }
                         )
@@ -20521,7 +20983,7 @@ private fun UserManagementForm(
                             onToggle = { grant ->
                                 scope.launch {
                                     runCatching { repository.updateUserProvenanceAccess(appUser.id, grant); refreshUsers() }
-                                        .onFailure { onError(it.message ?: "Unable to update provenance access") }
+                                        .onFailure { onError(it.userMessage("Unable to update provenance access")) }
                                 }
                             }
                         )
@@ -20532,7 +20994,7 @@ private fun UserManagementForm(
                             onToggle = { grant ->
                                 scope.launch {
                                     runCatching { repository.updateUserDatasetAccess(appUser.id, grant); refreshUsers() }
-                                        .onFailure { onError(it.message ?: "Unable to update dataset access") }
+                                        .onFailure { onError(it.userMessage("Unable to update dataset access")) }
                                 }
                             }
                         )
@@ -20609,6 +21071,16 @@ private fun UserManagementForm(
                                 Text("Turn off two-step verification")
                             }
                         }
+                        // E-mail them a link, a temporary password, sign them out of every device —
+                        // `ui/AccountRecovery.kt`. The same gate as the two buttons above.
+                        if (actorIsAdmin && canManageTarget) {
+                            HelpThemBackInActions(
+                                repository = repository,
+                                target = appUser,
+                                onChanged = { refreshUsers() },
+                                onError = onError
+                            )
+                        }
                     }
                 }
             }
@@ -20667,7 +21139,7 @@ private fun SharingForm(
                 tiers = repository.dataAccessTiers()
                 grants = repository.dataAccessGrants()
                 directory = repository.userDirectory().filter { it.id != myId }
-            }.onFailure { onError(it.message ?: "Unable to load sharing data") }
+            }.onFailure { onError(it.userMessage("Unable to load sharing data")) }
             loading = false
         }
     }
@@ -20679,7 +21151,7 @@ private fun SharingForm(
             busy = true
             runCatching { block() }
                 .onSuccess { reload() }
-                .onFailure { onError(it.message ?: "Action failed") }
+                .onFailure { onError(it.userMessage("Action failed")) }
             busy = false
         }
     }
@@ -20915,7 +21387,7 @@ private fun workshopLevelOptions(levels: List<WorkshopAccessLevelDto>): List<Pai
 
 /** "Kutch weaving · 2026-07-12", falling back to the id-only title when the row carries no workshop. */
 private fun assignmentWorkshopLabel(row: WorkshopAssignmentDto): String =
-    row.workshop?.let { workshopOptionLabel(it) } ?: "Workshop ${row.workshopId}"
+    row.workshop?.let { workshopOptionLabel(it) } ?: "A workshop you can no longer see"
 
 /**
  * Admin-only: the roster for ONE workshop, at levels. Only GRANTED researchers may submit entries for
@@ -21710,7 +22182,7 @@ private fun MyTasksScreen(
                 fontSize = 12.sp
             )
         }
-        cachedNote?.takeIf { !loading }?.let { Text(it, color = Coral, fontSize = 12.sp) }
+        cachedNote?.takeIf { !loading }?.let { CachedCopyNote(it) }
         when {
             loading -> Text("Loading tasks…", color = Muted, fontSize = 12.sp)
             // "Nothing is assigned to you" is a claim about what the SERVER holds, so it is only
@@ -21800,12 +22272,25 @@ private fun TaskCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 assigneeTaskStatuses.forEach { value ->
                     val current = task.status == value
-                    OutlinedButton(
-                        enabled = !busy && !current,
-                        onClick = { onStatus(value) },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
-                    ) { Text(if (current) "✓ ${taskStatusLabel(value)}" else taskStatusLabel(value), maxLines = 1, fontSize = 12.sp) }
+                    // The current status is the FILLED button, not a "✓" squeezed into the label that
+                    // clipped "In progress" at 360dp (UX audit 2026-10-16, DA-35).
+                    val label: @Composable () -> Unit = {
+                        Text(taskStatusLabel(value), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
+                    }
+                    if (current) {
+                        Button(
+                            onClick = {},
+                            modifier = Modifier.weight(1f).semantics { selected = true },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
+                        ) { label() }
+                    } else {
+                        OutlinedButton(
+                            enabled = !busy,
+                            onClick = { onStatus(value) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
+                        ) { label() }
+                    }
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -22369,7 +22854,7 @@ private fun MappingStatTile(label: String, value: Int, modifier: Modifier = Modi
             .border(1.dp, MaterialTheme.field.hairline, MaterialTheme.shapes.small)
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
-        Text(label.uppercase(Locale.ROOT), color = MaterialTheme.field.muted, fontSize = 10.sp)
+        Text(label.uppercase(Locale.ROOT), color = MaterialTheme.field.muted, fontSize = 11.sp)
         Text(
             value.toString(),
             display = true,
@@ -22508,7 +22993,8 @@ private fun SaveButton(
             SaveState.SAVED -> {
                 Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Saved ✓")
+                // The icon is the check; the word does not repeat it (DA-34).
+                Text("Saved")
             }
             SaveState.IDLE -> Text(idleLabel)
         }
@@ -22597,6 +23083,7 @@ private fun TextInput(
     // `minLines`, same `keyboardOptions`, no trailing icon and no extra composables — which is what
     // makes this edit additive for the ~200 call sites that ask for nothing.
     RecordProseField(
+        capitalization = if (titleCased) KeyboardCapitalization.Words else null,
         label = label,
         value = value,
         onValueChange = onValueChange,
@@ -22746,6 +23233,7 @@ private fun RequiredInput(
     onValueChange: (String) -> Unit
 ) {
     RecordProseField(
+        capitalization = if (titleCased) KeyboardCapitalization.Words else null,
         // The asterisk stays in the LABEL rather than becoming a parameter of the shared component:
         // it is this function's whole visible contract, and pushing it down would put a
         // required-ness concept into a control that has no idea whether a value is required.
@@ -22779,18 +23267,14 @@ private fun validateRequired(checks: List<RequiredCheck>): Boolean {
     return false
 }
 
+/**
+ * The one permission still asked when the app opens, and only on Android 8 and 9. Camera, microphone
+ * and location are asked at the moment their button is tapped (ui/PermissionGate.kt, UX audit
+ * 2026-10-16 DA-02); every record form used to ask for all of them, plus media, the instant it
+ * opened. Empty on every newer phone, so nothing is asked there at all.
+ */
 private fun requiredAndroidPermissions(): Array<String> {
-    val permissions = mutableListOf(
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.CAMERA,
-        Manifest.permission.RECORD_AUDIO
-    )
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        permissions += Manifest.permission.READ_MEDIA_IMAGES
-        permissions += Manifest.permission.READ_MEDIA_VIDEO
-        permissions += Manifest.permission.READ_MEDIA_AUDIO
-    }
+    val permissions = mutableListOf<String>()
     // API 26-28 only, and asked for HERE rather than at the moment a report is saved, on purpose.
     //
     // Below Q there is no MediaStore.Downloads, so `persistFileToDownloads` falls back to a raw path
@@ -22853,7 +23337,7 @@ private fun saveMediaToDevice(context: Context, url: String?, filename: String, 
         manager.enqueue(request)
         Toast.makeText(context, "Saving \"$safeName\" to Downloads…", Toast.LENGTH_SHORT).show()
     }.onFailure {
-        Toast.makeText(context, "Couldn't save: ${it.message ?: "download failed"}", Toast.LENGTH_LONG).show()
+        Toast.makeText(context, it.userMessage("Couldn't save the download."), Toast.LENGTH_LONG).show()
     }
 }
 
@@ -22920,7 +23404,7 @@ private fun saveTranscriptToDownloads(
             .onFailure {
                 Toast.makeText(
                     context,
-                    "Couldn't save: ${it.message ?: "the file could not be written"}",
+                    it.userMessage("Couldn't save: the file could not be written."),
                     Toast.LENGTH_LONG
                 ).show()
             }

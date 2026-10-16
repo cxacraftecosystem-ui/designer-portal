@@ -470,7 +470,7 @@ export default function MapPage() {
           level !== "DISTRICT" ? (
             <button
               type="button"
-              className="text-xs font-semibold text-purple-700 hover:underline"
+              className="text-xs font-semibold text-purple-700 dark:text-purple-300 hover:underline"
               onClick={() => {
                 setQ("");
                 setFilters(EMPTY_SEARCH_FILTERS);
@@ -518,7 +518,7 @@ export default function MapPage() {
                   </span>
                 ) : null}
               </span>
-              <Link href="/map" className="text-xs font-semibold text-purple-700 hover:underline">
+              <Link href="/map" className="text-xs font-semibold text-purple-700 dark:text-purple-300 hover:underline">
                 Clear
               </Link>
             </div>
@@ -572,7 +572,7 @@ export default function MapPage() {
                     District borders
                   </span>
                 ) : null}
-                <span className="ml-auto inline-flex items-center gap-1.5 text-ink-300">
+                <span className="ml-auto inline-flex items-center gap-1.5 text-ink-500">
                   Outline: international border
                 </span>
               </div>

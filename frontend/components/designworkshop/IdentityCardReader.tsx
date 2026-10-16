@@ -456,7 +456,7 @@ export function IdentityCardReader({
           </p>
 
           {currentValue ? (
-            <p className="text-xs leading-5 text-amber-800">
+            <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
               {targetLabel} already holds “{currentValue}”. Confirming replaces it.
             </p>
           ) : null}
@@ -511,7 +511,7 @@ export function IdentityCardReader({
         const busy = deciding?.mediaId === entry.mediaId ? deciding.choice : null;
         return (
           <div key={entry.mediaId} className="grid gap-2 rounded-md border border-amber-500 bg-amber-100 p-3">
-            <p className="flex items-start gap-2 text-xs font-medium leading-5 text-amber-800">
+            <p className="flex items-start gap-2 text-xs font-medium leading-5 text-amber-800 dark:text-amber-100">
               <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>
                 {/* The filename in every block, because a designer who read three cards is looking
@@ -560,7 +560,7 @@ export function IdentityCardReader({
                 Keep it on this record
               </button>
             </div>
-            <p className="text-xs leading-5 text-amber-800">
+            <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
               {/* Both consequences, stated before the press rather than reported after it.
                   "Deleted" is said in full because this app soft-deletes almost everything and a
                   designer has every reason to assume this is another of those. */}

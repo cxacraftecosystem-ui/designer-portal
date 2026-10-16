@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import EmailStr, Field, model_validator
 
 from app.core.security import MAX_PASSWORD_LENGTH
 from app.schemas.common import APIModel
@@ -121,17 +121,29 @@ class SetPasswordRequest(APIModel):
 class ChangePasswordRequest(APIModel):
     """The signed-in account changing its own password.
 
-    ``currentPassword`` is required even for an account carrying ``mustChangePassword``: that flag
-    means "the password you were given was not chosen by you", not "anybody at this keyboard may
-    replace it". An account with NO password at all (Google-provisioned) cannot use this route —
-    there is nothing to prove — and is told so.
+    ``currentPassword`` is required for every account that HAS a password, even one carrying
+    ``mustChangePassword``: that flag means "the password you were given was not chosen by you", not
+    "anybody at this keyboard may replace it". An account with NO password at all (Google, Microsoft
+    or Yahoo only) sends none and SETS a first password instead — allowed only on a session opened in
+    the last ``auth.PASSWORD_REAUTH_MINUTES`` minutes (see ``routes/auth.change_password``). It is
+    optional on the wire for that reason; an empty one for an account with a password is simply wrong.
 
     Both fields share the one ceiling (``security.MAX_PASSWORD_LENGTH``) the admin forms use, so any
     temporary password an administrator can set is one this form can accept back.
     """
 
-    currentPassword: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
+    currentPassword: str = Field(default="", max_length=MAX_PASSWORD_LENGTH)
     newPassword: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)
+
+
+class ForgotPasswordRequest(APIModel):
+    """``POST /auth/forgot-password``: the address a signed-out person asks a link for.
+
+    A malformed address is the one refusal this door gives about its body (422) — it is about the
+    request, never about an account. The bound is a budget, like ``LoginRequest.email``'s.
+    """
+
+    email: EmailStr = Field(max_length=320)
 
 
 # ── TWO-STEP VERIFICATION ─────────────────────────────────────────────────────────────────────────

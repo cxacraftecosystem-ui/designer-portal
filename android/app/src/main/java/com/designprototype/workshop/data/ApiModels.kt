@@ -121,12 +121,32 @@ data class UserDto(
      */
     val mustChangePassword: Boolean? = null,
     /**
+     * Whether the account holds a password of its own, derived by the server. Null from a server
+     * older than the field — read it through `accountHasPassword`, never raw.
+     */
+    val hasPassword: Boolean? = null,
+    /**
      * ISO-8601, or null. A null BESIDE a Google account means "has never had a password", which is
      * the distinction this column exists to make; see schema.prisma. Read by `passwordLinkOffered`,
      * which decides whether an administrator is offered a set-password link for the account — the
      * provider alone was the wrong proxy, because a Google sign-in keeps a password the account has.
      */
     val passwordSetAt: String? = null,
+    /**
+     * The optional features this deployment has switched on — `auth.serialize_user`'s `features`,
+     * the same answer as `GET /api/features`. Cached with the rest of the account by [TokenStore], so
+     * a handset offline for a fortnight keeps the last answer it was given. NULL — a server older
+     * than the key, or an account cached before it — means every optional feature is HIDDEN. See
+     * `ui/aadhaar/AadhaarVerification.kt`.
+     */
+    val features: FeaturesDto? = null,
+    /** The account's Aadhaar verification, present only while a verification feature is on. */
+    val aadhaarVerifyStatus: String? = null,
+    val aadhaarVerifyMethod: String? = null,
+    val aadhaarVerifiedAt: String? = null,
+    val aadhaarVerifyLast4: String? = null,
+    val aadhaarVerifyName: String? = null,
+    val aadhaarVerifyNameMatch: Boolean? = null,
     /** Two-step verification is on. Drives the "Two-step on" badge and the administrator's reset. */
     val twoFactorEnabled: Boolean = false
 )
@@ -1002,7 +1022,12 @@ data class PendingReviewListDto(
     /** The per-record-type ceiling the server applied. */
     val cap: Int = 0,
     /** True when at least one record type overflowed [cap] and its oldest rows were not sent. */
-    val truncated: Boolean = false
+    val truncated: Boolean = false,
+    /**
+     * Where the next, older page starts: pass it back verbatim as `before`. Null when nothing older
+     * is waiting, and always null from a server that predates paging (UX audit 2026-10-16, DA-09).
+     */
+    val nextBefore: String? = null
 )
 
 /** Optional reviewer notes sent with approve/reject; MANDATORY on "send for revision" (422 without). */
@@ -3730,7 +3755,15 @@ data class AccessRosterCreateBody(
     val fullName: String? = null,
     /** Null means the platform default joining tier — the lowest rung. */
     val role: String? = null,
-    val notes: String? = null
+    val notes: String? = null,
+    /**
+     * Set only when the administrator chose "With a password": the account is created now with this
+     * password instead of at the person's first Google, Microsoft or Yahoo sign-in. Null — and so
+     * absent from the body — otherwise.
+     */
+    val password: String? = null,
+    /** Sent only beside [password]: ask them to choose their own at the first sign-in. */
+    val mustChangePassword: Boolean? = null
 )
 
 /**

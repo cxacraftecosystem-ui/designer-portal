@@ -642,7 +642,7 @@ private fun DwCompareBadge(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         color = Color.White,
-        fontSize = 10.sp,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
         modifier = modifier
             .padding(6.dp)

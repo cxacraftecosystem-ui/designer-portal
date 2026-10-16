@@ -98,7 +98,7 @@ export function FeedbackReportsInbox({ vocabulary }: { vocabulary: FeedbackVocab
           heading is decoration an admin learns to ignore, which is the same rule the /admin hub's
           badge carries.
         */}
-        {openCount ? <p className="text-xs font-medium text-amber-800">{openCount} not yet read</p> : null}
+        {openCount ? <p className="text-xs font-medium text-amber-800 dark:text-amber-100">{openCount} not yet read</p> : null}
       </div>
 
       <div className="panel mb-3 grid gap-3 p-4 sm:grid-cols-2">
@@ -145,7 +145,7 @@ export function FeedbackReportsInbox({ vocabulary }: { vocabulary: FeedbackVocab
       </div>
 
       {error ? (
-        <div className="mb-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{error}</div>
+        <div className="mb-3 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{error}</div>
       ) : null}
 
       {!items ? (

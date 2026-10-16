@@ -99,6 +99,7 @@ PUBLIC_ALLOWLIST: dict[tuple[str, str], str] = {
     ("GET", "/api/auth/set-password"): "a link holder has no session by definition; the token is the credential.",
     ("POST", "/api/auth/set-password/check"): "the GET's question and answer, the token moved off the request line.",
     ("POST", "/api/auth/set-password"): "same: redeeming the link is how the account gets a password at all.",
+    ("POST", "/api/auth/forgot-password"): "a person who forgot their password has no session; one neutral answer for every address.",
     # The machine credential door. Email + password in, a scoped read token out — the second thing in
     # this API that turns a password into a token, and like the first it cannot ask for one.
     ("POST", "/api/datasets/token"): "mints the machine token FROM a password; there is nothing to present.",
@@ -120,6 +121,18 @@ PUBLIC_ALLOWLIST: dict[tuple[str, str], str] = {
     ("GET", "/health"): "CloudFront origin check and the uptime monitor; a 401 here reads as an outage.",
     ("GET", "/health/ready"): "the same, plus the database probe alerting is meant to watch.",
 }
+
+
+@pytest.fixture(autouse=True)
+def _aadhaar_routes_switched_on(monkeypatch):
+    """THE AADHAAR ROUTES ANSWER 404 WHILE THEIR FLAGS ARE OFF, which is the default — and a 404 is
+    not one of this sweep's REFUSALS, rightly. So the sweep runs with both flags ON: switched on, every
+    one of them must still refuse a stranger with a 401, which is the property this module guards.
+    Only the flag is read at request time; nothing here configures or calls UIDAI."""
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "aadhaar_offline_verification_enabled", True)
+    monkeypatch.setattr(get_settings(), "aadhaar_online_auth_enabled", True)
 
 
 @pytest.fixture(scope="module")

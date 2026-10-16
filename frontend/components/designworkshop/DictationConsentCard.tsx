@@ -200,7 +200,7 @@ export function DictationConsentCard({
 
       {/* WHAT IS ON RECORD AND WHAT IT MEANS, in one sentence — "not recorded" on its own tells a
           designer nothing about why the controls on the stage they just left behaved as they did. */}
-      <p className={granted ? "text-sm leading-6 text-ink-700" : "text-sm leading-6 text-amber-800"}>
+      <p className={granted ? "text-sm leading-6 text-ink-700" : "text-sm leading-6 text-amber-800 dark:text-amber-100"}>
         {dictationConsentSentence(consent)}
       </p>
 

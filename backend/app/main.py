@@ -19,7 +19,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.router import api_router
-from app.api.routes.auth import SESSION_TOKEN_HEADER
+from app.api.routes.auth import SESSION_TOKEN_HEADER, SIGN_IN_AGAIN_HEADER
 from app.api.routes.usage import UNRECORDED_TEMPLATES
 from app.core.config import get_settings
 from app.core.db import connect_db, db, disconnect_db
@@ -28,6 +28,7 @@ from app.core.idempotency import IdempotencyMiddleware
 from app.core.security import verify_jwt_configuration
 from app.scale import install_rate_limit
 from app.services import usage
+from app.services.account_provisioning import EXISTING_ACCOUNT_HEADER
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 
@@ -117,6 +118,13 @@ async def _keep_db_connected() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ONLINE AADHAAR REFUSES TO START HALF-CONFIGURED. Settings has already refused a missing value;
+    # this opens the PFX and the UIDAI certificates, and raises (stopping the boot) if any is wrong.
+    # See services/aadhaar/online/config.py and docs/AADHAAR.md.
+    if get_settings().aadhaar_online_auth_enabled:
+        from app.services.aadhaar.online.config import load_online_config
+
+        load_online_config()
     try:
         await connect_db()
     except Exception as exc:  # noqa: BLE001 - never crash-loop on a full pooler; recover in background
@@ -1069,6 +1077,10 @@ def create_app() -> FastAPI:
             "X-Sign-In-Hint",
             PASSWORD_CHANGE_REQUIRED_HEADER,
             SESSION_TOKEN_HEADER,
+            # A first password asked for on a stale session: the client offers "sign in again".
+            SIGN_IN_AGAIN_HEADER,
+            # A duplicate account's 409 names the account that holds the address.
+            EXISTING_ACCOUNT_HEADER,
         ],
     )
     # Added AFTER CORS so it wraps it (Starlette runs the most recently added middleware outermost),

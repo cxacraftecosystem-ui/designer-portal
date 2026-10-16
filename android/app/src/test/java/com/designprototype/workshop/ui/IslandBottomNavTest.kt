@@ -14,6 +14,12 @@ import org.junit.Test
  */
 class IslandBottomNavTest {
 
+    // Every tier the server's ROLE_RANK knows; backend/tests/test_role_ladder_parity.py holds it to the ladder.
+    private val everyRole = listOf(
+        "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "INSPECTOR",
+        "PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"
+    )
+
     // ── splitIsland, on plain values ───────────────────────────────────────────────────────────
 
     @Test
@@ -153,10 +159,7 @@ class IslandBottomNavTest {
     @Test
     fun `role filtering decides what is behind More, never the other way round`() {
         // Every role, both admin-view states: the split is a partition of exactly the visible slots.
-        listOf(
-            "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "INSPECTOR",
-            "PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"
-        ).forEach { role ->
+        everyRole.forEach { role ->
             listOf(true, false).forEach { adminMode ->
                 val slots = slotsFor(role, adminMode)
                 val split = splitIsland(slots)

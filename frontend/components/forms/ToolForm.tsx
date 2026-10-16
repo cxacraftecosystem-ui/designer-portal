@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
+import { statusLabel } from "@/components/StatusBadge";
 import { mergeById } from "@/components/data/cappedList";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { Field, Select, TextInput } from "@/components/FormControls";
@@ -188,7 +189,9 @@ function StatusField({
       <Field label="Status">
         <Select name="status" defaultValue={initialStatus ?? "APPROVED"} onChange={onDirty}>
           {options.map((status) => (
-            <option key={status}>{status}</option>
+            <option key={status} value={status}>
+              {statusLabel(status)}
+            </option>
           ))}
         </Select>
       </Field>

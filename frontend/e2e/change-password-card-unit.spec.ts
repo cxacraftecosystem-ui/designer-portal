@@ -5,12 +5,15 @@ import { expect, test } from "@playwright/test";
 
 import { ApiError } from "@/lib/api";
 import {
+  FIRST_PASSWORD_NOTE,
   PASSWORD_CHANGE_SESSIONS,
+  canSetFirstPassword,
   currentPasswordRefused,
   hasOwnPassword,
-  newPasswordProblem
+  newPasswordProblem,
+  signInAgainRequired
 } from "@/lib/passwordChange";
-import { MAX_PASSWORD_LENGTH } from "@/lib/signIn";
+import { MAX_PASSWORD_LENGTH, SIGN_IN_AGAIN_HEADER } from "@/lib/signIn";
 
 /**
  * "CHANGE PASSWORD" IN SETTINGS — A PASSWORD ACCOUNT ROTATING ITS OWN SECRET, WITHOUT ASKING ANYBODY.
@@ -61,12 +64,39 @@ test("it is offered to an account with a password of its own, and to no other", 
   expect(hasOwnPassword(undefined)).toBe(false);
 });
 
-test("the card draws nothing for anybody else, and decides after its hooks", () => {
-  const gate = CARD.indexOf("if (!user || !hasOwnPassword(user)) return null;");
+test("the card decides between changing and setting a password after its hooks", () => {
+  const gate = CARD.indexOf("if (!user) return null;");
+  const mode = CARD.indexOf("const settingFirst = canSetFirstPassword(user);");
   expect(gate, "the gate was located").toBeGreaterThan(-1);
+  expect(mode, "the mode was located").toBeGreaterThan(gate);
   // Rules of hooks: an early return above a hook would change the hook count between renders.
   expect(gate).toBeGreaterThan(CARD.lastIndexOf("useEffect("));
   expect(gate).toBeGreaterThan(CARD.lastIndexOf("useState("));
+});
+
+test("an account with no password is offered SET a password, and the server's own answer wins", () => {
+  // The derived field the server now sends wins over the stamp, in both directions.
+  expect(hasOwnPassword({ hasPassword: false, passwordSetAt: "2026-10-01T09:30:00.000Z" })).toBe(false);
+  expect(hasOwnPassword({ hasPassword: true, passwordSetAt: null })).toBe(true);
+  expect(canSetFirstPassword({ hasPassword: false })).toBe(true);
+  expect(canSetFirstPassword({ passwordSetAt: null })).toBe(true);
+  expect(canSetFirstPassword({ hasPassword: true })).toBe(false);
+  expect(canSetFirstPassword(null)).toBe(false);
+  expect(CARD).toContain('settingFirst ? "Set a password" : "Change password"');
+  // No current-password box for an account that has none.
+  expect(CARD).toMatch(/\{settingFirst \? null : \(\s*<div>\s*<label htmlFor="settings-current-password"/);
+  expect(SUBMIT).toContain("settingFirst ? await setFirstPassword(next) : await changeOwnPassword(current, next);");
+  expect(FIRST_PASSWORD_NOTE).toMatch(/or the way you sign in now/);
+});
+
+test("a first password from an old session is answered with a way to sign in again, read off the header", () => {
+  const headers = new Headers({ [SIGN_IN_AGAIN_HEADER]: "1" });
+  expect(signInAgainRequired(new ApiError(400, "For your security, sign out and sign in again", null, headers))).toBe(true);
+  expect(signInAgainRequired(new ApiError(400, "For your security, sign out and sign in again", null))).toBe(false);
+  expect(signInAgainRequired(new ApiError(401, "x", null, headers))).toBe(false);
+  expect(SUBMIT).toContain("if (settingFirst && signInAgainRequired(err)) {");
+  expect(CARD).toContain("Sign out and sign in again");
+  expect(CARD).toContain("onClick={() => void logout()}");
 });
 
 test("it sits on the account's own settings hub, with no role gate", () => {
@@ -124,7 +154,7 @@ test("every box stops at the one ceiling and tells a password manager what it is
 test("a refused current password empties that box and keeps the other two", () => {
   expect(currentPasswordRefused(new ApiError(400, "Current password is incorrect", null))).toBe(true);
   expect(currentPasswordRefused(new ApiError(429, "Too many attempts", null))).toBe(false);
-  const refused = /if \(currentPasswordRefused\(err\)\) \{[\s\S]*?\}/.exec(SUBMIT)?.[0] ?? "";
+  const refused = /if \(!settingFirst && currentPasswordRefused\(err\)\) \{[\s\S]*?\}/.exec(SUBMIT)?.[0] ?? "";
   expect(refused, "the refusal arm was located").toContain('setCurrent("")');
   expect(refused).not.toContain("setNext(");
   expect(refused).not.toContain("setConfirm(");
@@ -133,7 +163,7 @@ test("a refused current password empties that box and keeps the other two", () =
 
 test("a success empties all three boxes and says so", () => {
   const succeeded = SUBMIT.slice(SUBMIT.indexOf("await changeOwnPassword(current, next);"), SUBMIT.indexOf("} catch (err) {"));
-  for (const setter of ['setCurrent("")', 'setNext("")', 'setConfirm("")', "setChanged(CHANGED_HERE_ONLY)", "setChanged(CHANGED)"]) {
+  for (const setter of ['setCurrent("")', 'setNext("")', 'setConfirm("")', "PASSWORD_ADDED : CHANGED_HERE_ONLY)", "setChanged(CHANGED)"]) {
     expect(succeeded, setter).toContain(setter);
   }
   expect(CARD).toMatch(/const CHANGED_HERE_ONLY = "Password changed\./);
@@ -164,7 +194,7 @@ test("the session the change answers with is adopted before anything re-reads /m
     account; the other order is a re-read refused with the token the change just retired, and a tab
     signed out by its own success. With no header the card does exactly what it did before.
   */
-  expect(SUBMIT).toContain("const fresh = await changeOwnPassword(current, next);");
+  expect(SUBMIT).toContain("const fresh = settingFirst ? await setFirstPassword(next) : await changeOwnPassword(current, next);");
   const adopted = SUBMIT.slice(SUBMIT.indexOf("if (fresh) {"), SUBMIT.indexOf("} else {"));
   expect(adopted, "the adoption arm was located").toContain("setToken(fresh);");
   expect(adopted.indexOf("setToken(fresh);"), "adopted first").toBeLessThan(adopted.indexOf("void refreshMe();"));
@@ -186,7 +216,7 @@ test("it is drawn with the data-screen recipes, not the auth stack", () => {
   expect(CARD).toMatch(/<button type="submit" className="field-button"/);
   // The rule line under the boxes is the gate's, from the same function and the same constant — which
   // no longer says other devices stay signed in: a change now ends every session but the fresh one.
-  expect(CARD).toContain("passwordRuleLine(PASSWORD_CHANGE_SESSIONS)");
+  expect(CARD).toContain("passwordRuleLine(settingFirst ? FIRST_PASSWORD_NOTE : PASSWORD_CHANGE_SESSIONS)");
   expect(GATE).toContain("passwordRuleLine(PASSWORD_CHANGE_SESSIONS)");
   expect(PASSWORD_CHANGE_SESSIONS).toMatch(/signed out everywhere else/);
   expect(CARD).not.toContain("Other devices stay signed in");

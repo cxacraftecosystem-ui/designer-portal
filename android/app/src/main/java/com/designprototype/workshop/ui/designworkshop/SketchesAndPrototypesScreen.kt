@@ -423,7 +423,7 @@ fun SketchesAndPrototypesScreen(
                 Text("Try again")
             }
         }
-        listCachedNote?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp) }
+        listCachedNote?.let { com.designprototype.workshop.ui.CachedCopyNote(it) }
 
         /*
           THE SELECTOR, WHICH IS THE WHOLE DIFFERENCE BETWEEN THIS SCREEN AND THE LIST IT REPLACED.
@@ -476,9 +476,9 @@ fun SketchesAndPrototypesScreen(
             // RULE 10: EVERY CAP SAYS SO — and only when it bites, so an ordinary designer on four
             // workshops never reads a sentence about a ceiling they cannot reach.
             Text(
-                "$truncated more workshop${if (truncated == 1) "" else "s"} not shown here. " +
-                    "Design workshops lists them all, and their sketch and prototype stages open " +
-                    "from a workshop opened there.",
+                // A pointer to where the rest are, not a sentence about a ceiling (UX audit DA-39).
+                "$truncated more workshop${if (truncated == 1) " is" else "s are"} in Design workshops; " +
+                    "open one there to reach its sketch and prototype stages.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp
@@ -670,8 +670,7 @@ internal const val DW_SKETCH_CHOOSER_NO_WORKSHOPS: String =
  * workshops" and "I could not find out" call for completely different next moves.
  */
 internal const val DW_SKETCH_CHOOSER_OFFLINE: String =
-    "No connection, so your design workshops could not be listed — a list that could not be asked " +
-        "for, not a list with nothing in it."
+    "No connection, so your design workshops couldn't be loaded. Try again."
 
 /** COULD NOT ASK, and the repository said why. The fallback for when it did not. */
 internal const val DW_SKETCH_CHOOSER_REFUSED: String =

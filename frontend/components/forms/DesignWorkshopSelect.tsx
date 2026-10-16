@@ -116,7 +116,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useRecordOffPage } from "@/components/forms/recordPickers";
+import { useRecordOffPageState } from "@/components/forms/recordPickers";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
@@ -394,7 +394,11 @@ export function DesignWorkshopSelect({
    * per render.
    */
   const rows = list.kind === "ok" ? list.rows : NO_ROWS;
-  const stored = useRecordOffPage<DwSummary>("/design-workshops", state.workshopId, rows);
+  const { record: stored, failed: storedUnreadable } = useRecordOffPageState<DwSummary>(
+    "/design-workshops",
+    state.workshopId,
+    rows
+  );
 
   /**
    * `"recover"` AND NOT `"refuse"`, DECIDED HERE BECAUSE ONLY A CALL SITE CAN DECIDE IT.
@@ -456,6 +460,21 @@ export function DesignWorkshopSelect({
        not say how many" under the same list. Two sentences about one cut, in two wordings, is how a
        reader learns that neither is worth reading. The flag arm is for a route that cannot count.
   */
+  /*
+    THE PREFILL NOTE IS PRINTED ONLY WHILE THE BOX CAN SHOW WHAT IT DESCRIBES (UX audit DW-03). It
+    said "Filled in because it is the design workshop you most recently opened" over a trigger still
+    reading "Select", because the prefilled workshop was beyond the first page and not yet resolved.
+    And a prefill this account cannot read at all is withdrawn rather than kept invisible: a value
+    the app chose, that the reader cannot see, is a value they cannot check.
+  */
+  const prefillVisible = set.options.some((option) => option.value === state.workshopId);
+  useEffect(() => {
+    if (note && storedUnreadable && !state.touched) {
+      prefillWorkshopId("");
+      setNote(null);
+    }
+  }, [note, storedUnreadable, state.touched, prefillWorkshopId]);
+
   const searching = term.trim() !== "";
   const notice = list.kind === "ok" && searching ? "" : workshopListNotice(list, voice);
   const cut = workshopCutSentence(set, { term, searchable: true });
@@ -483,7 +502,7 @@ export function DesignWorkshopSelect({
               {notice}
             </p>
           ) : null}
-          {note ? <p className="text-[11px] leading-4 text-ink-500">{note}</p> : null}
+          {note && prefillVisible ? <p className="text-[11px] leading-4 text-ink-500">{note}</p> : null}
           {/*
             SAID ONCE, ON THE CONTROL THAT COULD BE MISREAD AS A PERMISSION. A designer who thinks
             this box narrows who can see the record will use it as one; the server does not, and

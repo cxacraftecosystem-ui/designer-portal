@@ -523,7 +523,7 @@ private fun InspectionValue(
             Text(
                 it,
                 color = MaterialTheme.field.muted,
-                fontSize = 10.sp,
+                fontSize = 11.sp,
                 modifier = Modifier
                     .background(MaterialTheme.field.surface50, RoundedCornerShape(4.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp)

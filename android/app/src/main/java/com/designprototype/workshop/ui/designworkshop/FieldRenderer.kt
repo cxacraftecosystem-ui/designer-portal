@@ -17,6 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -1555,6 +1561,7 @@ private fun ScalarInput(
 ) {
     var buffer by remember(field.key, resetKey) { mutableStateOf(DwValues.text(value)) }
     var localError by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
+    val focusManager = LocalFocusManager.current
     /**
      * The recogniser's running guess, drawn in the box but NOT yet in the store.
      *
@@ -1637,8 +1644,12 @@ private fun ScalarInput(
      * `previous`, and a rule computed from the box re-answers against whatever comes back instead of
      * living only as long as the response that carried it.
      */
-    val formatProblem = remember(field.format, buffer) {
-        buffer.trim().takeIf { it.isNotEmpty() }?.let { DwTextFormats.error(field.format, it) }
+    // Judged once the designer LEAVES the box, not on every keystroke: a phone number used to go red
+    // at its first digit (UX audit 2026-10-16, DA-26). A value that arrived already wrong is shown
+    // as soon as the box is drawn, because nobody typed it here.
+    var leftOnce by remember(field.key, resetKey) { mutableStateOf(buffer.isNotBlank()) }
+    val formatProblem = remember(field.format, buffer, leftOnce) {
+        buffer.trim().takeIf { it.isNotEmpty() && leftOnce }?.let { DwTextFormats.error(field.format, it) }
     }
 
     /** Commit typed or spoken text through exactly one coercion, so both paths validate alike. */
@@ -1681,7 +1692,14 @@ private fun ScalarInput(
             supportingText = derivedHint?.takeIf { buffer.isBlank() }?.let { hint -> { Text(hint) } },
             minLines = minLines,
             singleLine = minLines == 1 && spoken.isBlank(),
-            keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+            // Sentence case for text, and Next on a one-line box moves to the next field rather
+            // than Enter doing nothing (UX audit 2026-10-16, DA-25). Multi-line boxes keep the newline.
+            keyboardOptions = KeyboardOptions(
+                keyboardType = keyboard,
+                capitalization = if (keyboard == KeyboardType.Text) KeyboardCapitalization.Sentences else KeyboardCapitalization.None,
+                imeAction = if (minLines == 1) ImeAction.Next else ImeAction.Default,
+            ),
+            keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
             trailingIcon = if (!canDictate) null else {
                 {
                     DwDictationButton(
@@ -1699,7 +1717,7 @@ private fun ScalarInput(
                     )
                 }
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().onFocusChanged { state -> if (!state.isFocused && buffer.isNotBlank()) leftOnce = true }
         )
         DwDictationHint(listening = spoken.isNotBlank())
         // `canReadCard` already carries the null check, and the compiler propagates that through the

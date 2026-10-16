@@ -139,14 +139,24 @@ export async function fetchPendingAccessCount(): Promise<PendingAccessCount> {
  * there is nobody else for the request to be routed to. A duplicate answers 409 naming the existing
  * row rather than overwriting it, because the row it would overwrite is usually the pending request
  * that records how long the person has been waiting.
+ *
+ * WITH A PASSWORD (`password`, and `mustChangePassword`, default true): the server also creates the
+ * password account — through the same rules as `POST /users`, which admits the address with it — and
+ * answers `accountCreated: true`. The password is sent exactly as typed, never trimmed. Without one,
+ * the address is admitted and the account is made the first time they sign in with Google, Microsoft
+ * or Yahoo. Either way the same address can later sign in both ways.
  */
+export type AccessRosterAddAnswer = AccessRosterEntry & { accountCreated?: boolean };
+
 export async function addToAccessRoster(body: {
   email: string;
   fullName?: string | null;
   role?: UserRole | null;
   notes?: string | null;
-}): Promise<AccessRosterEntry> {
-  return apiFetch<AccessRosterEntry>("/access/roster", {
+  password?: string;
+  mustChangePassword?: boolean;
+}): Promise<AccessRosterAddAnswer> {
+  return apiFetch<AccessRosterAddAnswer>("/access/roster", {
     method: "POST",
     body: JSON.stringify(body)
   });

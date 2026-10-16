@@ -2889,13 +2889,18 @@ class WorkshopRepository(
         email: String,
         fullName: String? = null,
         role: String? = null,
-        notes: String? = null
+        notes: String? = null,
+        /** Null for a Google, Microsoft or Yahoo sign-in; a password creates the account now. Never trimmed. */
+        password: String? = null,
+        mustChangePassword: Boolean = true
     ): AccessRosterDto = api.addToAccessRoster(
         AccessRosterCreateBody(
             email = email.trim().lowercase(),
             fullName = fullName?.trim()?.ifBlank { null },
             role = role?.trim()?.ifBlank { null },
-            notes = notes?.trim()?.ifBlank { null }
+            notes = notes?.trim()?.ifBlank { null },
+            password = password?.takeIf { it.isNotEmpty() },
+            mustChangePassword = if (password.isNullOrEmpty()) null else mustChangePassword
         )
     )
 
@@ -4367,6 +4372,99 @@ class WorkshopRepository(
         tokenStore.clear()
     }
 
+    /* ══════════════════════════════════════════════════════════════════════════════════════════
+     * GETTING BACK IN — see data/AccountRecovery.kt for the routes. Like the five above, every one of
+     * these throws and none is ever queued: a password write replayed later from an outbox would set
+     * a credential its owner had long since replaced.
+     * ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+    private val recoveryApi: AccountRecoveryApi by lazy {
+        ApiClient.retrofit(tokenStore).create(AccountRecoveryApi::class.java)
+    }
+
+    /** "Forgot your password?" — the server's one answer, printed as it is. Works signed out. */
+    suspend fun forgotPassword(email: String): String =
+        recoveryApi.forgotPassword(ForgotPasswordRequest(email = email.trim().lowercase())).message
+
+    /**
+     * Change this account's password — or, for an account with none ([currentPassword] null), set its
+     * first one. The change goes through [changeOwnPassword] untouched. The first password takes the
+     * same answer: the fresh session token from [SESSION_TOKEN_HEADER] is adopted before the profile
+     * is re-read, because the write retires the token this call was made with.
+     *
+     * A 400 carrying [SIGN_IN_AGAIN_HEADER] is thrown as [SignInAgainRequired] with the server's
+     * sentence, so the screen can offer to sign out rather than print a refusal with no way forward.
+     */
+    suspend fun saveOwnPassword(currentPassword: String?, newPassword: String) {
+        if (currentPassword != null) {
+            changeOwnPassword(currentPassword, newPassword)
+            return
+        }
+        val answer = recoveryApi.setFirstPassword(FirstPasswordRequest(newPassword = newPassword))
+        if (!answer.isSuccessful) {
+            val refused = HttpException(answer)
+            if (answer.headers()[SIGN_IN_AGAIN_HEADER] != null) {
+                throw SignInAgainRequired(
+                    refused.apiErrorMessage(
+                        "For your security, sign out and sign in again, then set your password within 15 minutes."
+                    )
+                )
+            }
+            throw refused
+        }
+        answer.headers()[SESSION_TOKEN_HEADER]?.takeIf { it.isNotBlank() }?.let { tokenStore.setToken(it) }
+        val profile = runCatching { refreshUser() }.getOrNull() ?: cachedUser()
+        if (profile != null && profile.hasPassword != true) {
+            tokenStore.setUser(profile.copy(hasPassword = true, mustChangePassword = false))
+        }
+    }
+
+    /** "Email them a password link": queued to the account's own address. The answer has no link. */
+    suspend fun emailPasswordLink(userId: String): IssuedPasswordLinkDto =
+        recoveryApi.issuePasswordLink(PasswordLinkDeliveryRequest(userId = userId, delivery = PASSWORD_LINK_BY_EMAIL))
+
+    /** A temporary password, which the person must replace at their next sign-in. Never trimmed. */
+    suspend fun setTemporaryPassword(userId: String, password: String): UserDto =
+        recoveryApi.setTemporaryPassword(userId, TemporaryPasswordBody(password = password))
+
+    /** Every device that account is signed in on has to sign in again. */
+    suspend fun signOutEverywhere(userId: String): UserDto = recoveryApi.signOutEverywhere(userId)
+
+    /**
+     * Does this deployment send e-mail? Remembered once it has been answered, because it is a fact
+     * about the server and not about the person; a failure is not remembered, and reads as "no" so
+     * the "Email them a link" button is simply not offered.
+     */
+    suspend fun mailAvailable(): Boolean {
+        knownMailAvailable?.let { return it }
+        val answer = runCatching { recoveryApi.mailStatus().available }.getOrNull() ?: return false
+        knownMailAvailable = answer
+        return answer
+    }
+
+    @Volatile
+    private var knownMailAvailable: Boolean? = null
+
+    /**
+     * "Add a person" — `POST /users` with a [PasswordMode]. A 409 for an address that already has an
+     * account is thrown as [AccountAlreadyExists], carrying the server's sentence and the existing
+     * account's id from [EXISTING_ACCOUNT_HEADER] so the screen can open it instead.
+     */
+    suspend fun createAccount(body: CreateAccountBody): CreatedAccountDto {
+        val answer = recoveryApi.createAccount(body.copy(email = body.email.trim().lowercase(), name = body.name.trim()))
+        if (answer.isSuccessful) {
+            return answer.body() ?: throw IllegalStateException("The server's answer could not be read. Try again.")
+        }
+        val refused = HttpException(answer)
+        if (answer.code() == 409) {
+            throw AccountAlreadyExists(
+                refused.apiErrorMessage("That address already has an account."),
+                answer.headers()[EXISTING_ACCOUNT_HEADER]?.trim()?.ifBlank { null }
+            )
+        }
+        throw refused
+    }
+
     suspend fun stats(): DashboardStats = api.dashboardStats()
 
     /**
@@ -4898,7 +4996,8 @@ class WorkshopRepository(
      * six record types reached the screen indistinguishable from a queue that was simply that
      * length, and the rows dropped are the oldest. See [PendingReviewListDto].
      */
-    suspend fun pendingReviews(): PendingReviewListDto = api.pendingReviews()
+    suspend fun pendingReviews(pageSize: Int? = null, before: String? = null): PendingReviewListDto =
+        api.pendingReviews(pageSize = pageSize, before = before)
 
     /** Approve a pending record (admins, or users granted the review permission). */
     suspend fun approveRecord(recordType: String, recordId: String) {
@@ -5260,6 +5359,19 @@ class WorkshopRepository(
      */
     internal suspend fun interviewArtisans(scope: InterviewArtisanScope): List<ArtisanDto> =
         fetchInterviewArtisans(api, scope)
+
+    // ONE PAGE, WITH ITS TOTAL, FOR THE UPDATE-EXISTING PICKER (UX audit 2026-10-16, DA-08). The
+    // list reads above return `.items` alone, so the picker could not tell the 101st artisan from no
+    // artisan at all; these keep the total and pass the route's own `search`, so the box can reach
+    // every record and the screen can say how many there are.
+    suspend fun artisanPage(search: String?) = api.artisans(pageSize = 100, search = search?.blankToNull())
+    suspend fun craftPage(search: String?) = api.crafts(pageSize = 100, search = search?.blankToNull())
+    suspend fun productPage(search: String?) = api.products(pageSize = 100, search = search?.blankToNull())
+    suspend fun toolPage(search: String?) = api.tools(pageSize = 100, search = search?.blankToNull())
+    suspend fun processPage(search: String?) = api.processes(pageSize = 100, search = search?.blankToNull())
+    suspend fun workshopPage(search: String?) = api.workshops(pageSize = 100, search = search?.blankToNull())
+    suspend fun interviewPage(search: String?) = api.interviews(pageSize = 100, search = search?.blankToNull())
+    suspend fun mediaPage(search: String?) = api.media(pageSize = 100, search = search?.blankToNull())
 
     suspend fun crafts(createdBy: String? = null): List<CraftDto> =
         api.crafts(pageSize = 100, createdBy = createdBy?.blankToNull()).items
@@ -6355,6 +6467,17 @@ class WorkshopRepository(
 
     suspend fun interviews(createdBy: String? = null): List<QuestionnaireInterviewDetailDto> =
         api.interviews(pageSize = 100, createdBy = createdBy?.blankToNull()).items
+
+    // The app-wide search panel's three list sources (`ui/AppSearchSources.kt`). Each is the list
+    // route's own `search` filter, so a match means what it means on that list's screen.
+    suspend fun searchCrafts(query: String, pageSize: Int = 10): List<CraftDto> =
+        api.crafts(pageSize = pageSize, search = query.trim()).items
+
+    suspend fun searchProcesses(query: String, pageSize: Int = 10): List<ProcessDetailDto> =
+        api.processes(pageSize = pageSize, search = query.trim()).items
+
+    suspend fun searchInterviews(query: String, pageSize: Int = 10): List<QuestionnaireInterviewDetailDto> =
+        api.interviews(pageSize = pageSize, search = query.trim()).items
 
 
     suspend fun interview(id: String): QuestionnaireInterviewDetailDto = api.interview(id)

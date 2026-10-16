@@ -1468,16 +1468,20 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
                   {/* NOT RECORDED YET IS SAID, never rendered as an empty line: a blank beside a
                       label is indistinguishable from a value that failed to load, and every one of
                       these is legitimately empty until stage 1 has been saved once. */}
-                  <dd className={value ? "text-sm text-ink-900" : "text-sm italic text-ink-500"}>
-                    {typeof value === "string" && value.trim() ? value : "Not recorded yet"}
+                  {/* The explanation lives INSIDE the `dd`: a `<dl>` group may hold only `dt` and `dd`,
+                      and a stray `<p>` made screen readers announce a broken list (UX audit DW-18). */}
+                  <dd>
+                    <span className={value ? "block text-sm text-ink-900" : "block text-sm italic text-ink-500"}>
+                      {typeof value === "string" && value.trim() ? value : "Not recorded yet"}
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-5 text-ink-500">{entry.why}</span>
                   </dd>
-                  <p className="mt-0.5 text-xs leading-5 text-ink-500">{entry.why}</p>
                 </div>
               );
             })}
           </dl>
           <p className="text-xs leading-5 text-ink-500">
-            <Link href={stageOneHref} className="font-medium text-purple-700 underline">
+            <Link href={stageOneHref} className="font-medium text-purple-700 dark:text-purple-300 underline">
               Open stage 1 to change any of these
             </Link>
             .
@@ -1491,12 +1495,12 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
         */}
         <p className="text-xs leading-5 text-ink-500">
           The workshop&apos;s <strong>status</strong> is set on the{" "}
-          <Link href={recordHref} className="font-medium text-purple-700 underline">
+          <Link href={recordHref} className="font-medium text-purple-700 dark:text-purple-300 underline">
             workshop page
           </Link>
           , under Submission — Mark complete, Submit and Reopen each write one status and say what it means. The{" "}
           <strong>designers on this workshop</strong> are granted from &ldquo;Designers on a workshop&rdquo; on the{" "}
-          <Link href="/design-workshops" className="font-medium text-purple-700 underline">
+          <Link href="/design-workshops" className="font-medium text-purple-700 dark:text-purple-300 underline">
             design workshops list
           </Link>
           , which an administrator opens with admin view on.

@@ -138,7 +138,11 @@ interface WorkshopRepositoryApi {
     suspend fun userDirectory(): List<UserDto>
 
     @GET("review/pending")
-    suspend fun pendingReviews(): PendingReviewListDto
+    suspend fun pendingReviews(
+        // Paging, additive: a server that predates it ignores both and answers the capped queue.
+        @Query("pageSize") pageSize: Int? = null,
+        @Query("before") before: String? = null
+    ): PendingReviewListDto
 
     @POST("app/release")
     suspend fun publishAppRelease(@Body body: AppReleasePublishRequest): AppReleaseDto
@@ -298,7 +302,9 @@ interface WorkshopRepositoryApi {
         // Every list route below takes this; MediaFile owns its rows through `uploadedById` and so
         // spells the parameter `uploadedBy`. The query key follows the column on both sides of the
         // wire. Rationale on the server: backend/app/api/routes/artisans.py.
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        // The route's own text filter, used by the update-existing picker's search box (DA-08).
+        @Query("search") search: String? = null
     ): PageResponse<ArtisanDto>
 
     @GET("crafts")
@@ -306,7 +312,9 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
         // Server-side ownership filter — see the note on [artisans].
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        // The route's own text filter (`crafts.py`'s `search`), used by the app-wide search panel.
+        @Query("search") search: String? = null
     ): PageResponse<CraftDto>
 
     @POST("artisans")
@@ -370,7 +378,9 @@ interface WorkshopRepositoryApi {
         @Query("artisanId") artisanId: String? = null,
         @Query("artisanName") artisanName: String? = null,
         // Server-side ownership filter — see the note on [artisans].
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        // The route's own text filter, used by the update-existing picker's search box (DA-08).
+        @Query("search") search: String? = null
     ): PageResponse<ProductDetailDto>
 
     @GET("products/{id}")
@@ -394,7 +404,9 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
         // Server-side ownership filter — see the note on [artisans].
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        // The route's own text filter, used by the update-existing picker's search box (DA-08).
+        @Query("search") search: String? = null
     ): PageResponse<ToolDetailDto>
 
     @GET("tools/{id}")
@@ -453,7 +465,9 @@ interface WorkshopRepositoryApi {
          * already shipped once. See [WorkshopRepository.workshopsIMaySubmitTo] versus
          * [WorkshopRepository.workshopsByOccurrence].
          */
-        @Query("accessibleOnly") accessibleOnly: Boolean? = null
+        @Query("accessibleOnly") accessibleOnly: Boolean? = null,
+        // The route's own text filter, used by the update-existing picker's search box (DA-08).
+        @Query("search") search: String? = null
     ): PageResponse<WorkshopDetailDto>
 
     @GET("workshops/{id}")
@@ -740,7 +754,9 @@ interface WorkshopRepositoryApi {
         @Query("pageSize") pageSize: Int = 100,
         @Query("productId") productId: String? = null,
         // Server-side ownership filter — see the note on [artisans].
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        // The route's own text filter (`processes.py`'s `search`), used by the app-wide search panel.
+        @Query("search") search: String? = null
     ): PageResponse<ProcessDetailDto>
 
     @GET("processes/{id}")
@@ -815,7 +831,9 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
         // Server-side ownership filter — see the note on [artisans].
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        // The route's own text filter (`questionnaire.py`'s `search`), used by the app-wide search.
+        @Query("search") search: String? = null
     ): PageResponse<QuestionnaireInterviewDetailDto>
 
     @GET("questionnaire/interviews/{id}")

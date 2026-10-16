@@ -261,7 +261,7 @@ fun DwProvenanceScreen(
         }
 
         val served = report
-        cachedNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
+        cachedNote?.let { com.designprototype.workshop.ui.CachedCopyNote(it) }
         if (served == null) {
             // THE ONLY RED ON THIS SCREEN, and it is about the REQUEST rather than about the data.
             // A failed read is a failure; a divergence is not, and the two must never share a colour

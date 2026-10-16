@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.userMessage
+
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -693,7 +695,7 @@ internal fun DwMediaCaptureCard(
             recorder = null
             recordingFile = null
             recording = false
-            onError(error.message ?: "This device would not start an audio recording.")
+            onError(error.userMessage("This device would not start an audio recording."))
         }
     }
 

@@ -2217,7 +2217,7 @@ function QuestionnairePageBody() {
           </p>
           {mergeOutcome.questions.length ? (
             <div className="mt-2 grid gap-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+              <div className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-100">
                 Answered differently in both ({mergeOutcome.questions.length})
               </div>
               <ul className="grid gap-1">
@@ -2227,7 +2227,7 @@ function QuestionnairePageBody() {
                   </li>
                 ))}
               </ul>
-              <p className="text-xs text-amber-800">
+              <p className="text-xs text-amber-800 dark:text-amber-100">
                 Open each one, keep the wording that is right, then try the move again.
               </p>
             </div>
@@ -2660,7 +2660,7 @@ function QuestionnairePageBody() {
         */}
         {existingEntry && existingEntry.id !== editingInterview?.id ? (
           <section className="rounded-lg border border-amber-500 bg-amber-100 p-4">
-            <h3 className="font-display font-bold text-lg text-amber-800">A shared entry already exists for this set of artisans</h3>
+            <h3 className="font-display font-bold text-lg text-amber-800 dark:text-amber-100">A shared entry already exists for this set of artisans</h3>
             {/*
               ⚠ THE FORK WAS CLAIMED IN THE COMMENT ABOVE AND MISSING FROM HERE, AND THAT MADE THIS
               PARAGRAPH A LIE ON SCREEN RATHER THAN A WORDING NIT.
@@ -2678,7 +2678,7 @@ function QuestionnairePageBody() {
               actually been refused and only on a confirmation, so what this paragraph promises before
               the press is still "it will be refused", which is the truth.
             */}
-            <p className="mt-1 text-sm text-amber-800">
+            <p className="mt-1 text-sm text-amber-800 dark:text-amber-100">
               {editingInterview ? (
                 <>
                   Another interview — <span className="font-medium">{existingEntry.title}</span> — already covers this
@@ -2699,13 +2699,13 @@ function QuestionnairePageBody() {
               argument: this sentence used to be derived from `responses` alone and therefore called a
               fully recorded audio sitting empty.
             */}
-            <p className="mt-2 text-xs text-amber-800">
+            <p className="mt-2 text-xs text-amber-800 dark:text-amber-100">
               {sharedEntryContents(existingEntry.responses?.length ?? 0, existingEntry.media?.length ?? 0)}
               {existingEntry.responses?.length || existingEntry.media?.length ? null : " You can be the first to fill it in."}
             </p>
             {existingEntry.responses && existingEntry.responses.length > 0 ? (
               <div className="mt-3 grid gap-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-100">
                   Already recorded ({existingEntry.responses.length})
                 </div>
                 {existingEntry.responses.map((response) => (
@@ -2716,7 +2716,7 @@ function QuestionnairePageBody() {
                     </div>
                     <div className="mt-1 whitespace-pre-wrap text-ink-muted">{plainFromStoredRichText(response.answerText)}</div>
                     {response.answeredBy?.name ? (
-                      <div className="mt-1 text-amber-800">Recorded by {response.answeredBy.name}</div>
+                      <div className="mt-1 text-amber-800 dark:text-amber-100">Recorded by {response.answeredBy.name}</div>
                     ) : null}
                   </div>
                 ))}
@@ -3139,7 +3139,7 @@ function QuestionnairePageBody() {
                       </td>
                       <td className="px-4 py-3 text-ink-700">
                         <details>
-                          <summary className="cursor-pointer font-semibold text-field-700">{interview.responses?.length ?? 0} answers</summary>
+                          <summary className="cursor-pointer font-semibold text-field-700 dark:text-purple-300">{interview.responses?.length ?? 0} answers</summary>
                           <div className="mt-2 grid max-w-lg gap-2">
                             {interview.responses?.map((response) => (
                               <div key={response.id} className="rounded-md bg-field-100 p-2 text-xs">
@@ -3409,7 +3409,7 @@ function QuickTranscript({
         <div className="rounded-md border border-amber-500 bg-amber-100 p-3">
           {/* Terse, and it states the one thing a person needs before pressing either button: their
               own words survive whichever they choose. */}
-          <p className="mb-2 text-xs font-semibold text-amber-800">
+          <p className="mb-2 text-xs font-semibold text-amber-800 dark:text-amber-100">
             Another take was transcribed. Your words are kept either way.
           </p>
           <MarkdownDocument text={offered} filenameBase={filenameBase} />
@@ -3477,7 +3477,7 @@ function ClipRecorder({
         {files.length ? (
           <>
             <span className="text-xs text-ink-muted">{countLabel}</span>
-            <button type="button" className="text-xs font-semibold text-red-700" onClick={onClear}>
+            <button type="button" className="text-xs font-semibold text-red-700 dark:text-red-400" onClick={onClear}>
               Clear clips
             </button>
           </>
@@ -3500,7 +3500,7 @@ function ClipRecorder({
                 if (file) downloadLocalMedia(file);
               }}
               action={
-                <button type="button" className="text-xs font-semibold text-red-700" onClick={() => onRemove(index)}>
+                <button type="button" className="text-xs font-semibold text-red-700 dark:text-red-400" onClick={() => onRemove(index)}>
                   Remove
                 </button>
               }
@@ -4140,7 +4140,7 @@ function QuestionnaireAdminEditor({
       expanded={expanded}
       onToggle={onToggle}
       // Outside the toggle, so reading the failure does not also collapse the editor you were in.
-      headerRight={message ? <span className="text-sm text-red-700">{message}</span> : null}
+      headerRight={message ? <span className="text-sm text-red-700 dark:text-red-400">{message}</span> : null}
     >
       <div className="grid gap-4">
         <form onSubmit={addSection} className="grid gap-3 rounded-md border border-line-200 bg-field-100 p-3 md:grid-cols-[160px_1fr_auto]">
@@ -4236,7 +4236,7 @@ function QuestionnaireAdminEditor({
                     <Save className="h-4 w-4" aria-hidden />
                     Save
                   </button>
-                  <button type="button" className="text-sm font-semibold text-red-700" onClick={() => removeSection(section)}>
+                  <button type="button" className="text-sm font-semibold text-red-700 dark:text-red-400" onClick={() => removeSection(section)}>
                     <Trash2 className="inline h-4 w-4" aria-hidden /> Remove
                   </button>
                 </div>
@@ -4292,7 +4292,7 @@ function QuestionnaireAdminEditor({
                       // arbitrary hex does not invert, so this drop target kept a warm light-mode
                       // rule under `data-theme="dark"` while every other dashed border on the page
                       // turned. Non-negotiable 2 — every neutral goes through the token ladder.
-                      dragActive ? "border-field-600 bg-field-100 text-field-700" : "border-line-200 text-ink-muted"
+                      dragActive ? "border-field-600 bg-field-100 text-field-700 dark:text-purple-300" : "border-line-200 text-ink-muted"
                     }`}
                   >
                     {dragActive ? `Drop a question here to move it into ${section.code}` : "No questions yet — add one below."}
@@ -4529,7 +4529,7 @@ function QuestionTile({
                   </span>
                 </label>
               ) : null}
-              <button type="button" className="text-sm font-semibold text-red-700" onClick={onRemove} disabled={disabled}>
+              <button type="button" className="text-sm font-semibold text-red-700 dark:text-red-400" onClick={onRemove} disabled={disabled}>
                 Remove
               </button>
             </>

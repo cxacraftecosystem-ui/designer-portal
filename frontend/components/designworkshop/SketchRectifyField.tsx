@@ -394,7 +394,7 @@ export function SketchRectifyField({
         </p>
         {done ? (
           <p className="mt-2 flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs text-ink-700">
-            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-purple-700" aria-hidden />
+            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden />
             <span>{done}</span>
           </p>
         ) : null}

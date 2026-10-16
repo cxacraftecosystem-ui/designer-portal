@@ -313,11 +313,9 @@ fun QuestionnaireListScreen(
                     }
                 )
                 Text(
-                    "Send it to a computer to type your questions into — a spreadsheet with forty " +
-                        "rows is not a thing a phone is good at. Then bring the filled-in file back " +
-                        "and upload it here, or upload it from the website.",
+                    "Prefer a spreadsheet? Download the pro-forma, fill it in, then upload it here.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    fontSize = 12.sp
                 )
 
                 HorizontalDivider(color = MaterialTheme.field.hairline)
@@ -389,7 +387,7 @@ fun QuestionnaireListScreen(
             // phone cannot reach the server" look identical on screen and mean opposite things — one
             // of them sends a designer off to build a form they have already built.
             cachedNote != null && rows.isNotEmpty() -> {
-                Text(cachedNote.orEmpty(), color = MaterialTheme.field.warning, fontSize = 12.sp)
+                com.designprototype.workshop.ui.CachedCopyNote(cachedNote.orEmpty())
                 rows.forEach { row -> QuestionnaireRow(row = row, onOpen = { onOpen(row.id) }) }
             }
 

@@ -35,6 +35,7 @@ local, exactly as ``test_questionnaire_forms`` does.
     cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
 """
 
+import html
 import os
 import uuid
 import zipfile
@@ -101,10 +102,15 @@ def _every_string_in(payload: bytes) -> str:
     A test that searched the compressed bytes would pass on a file that leaks, which is the one
     outcome worse than no test at all. Cell text lives in ``xl/sharedStrings.xml`` rather than in the
     sheet, so the whole archive is read.
+
+    CHARACTER REFERENCES ARE RESOLVED, because the bytes on disk depend on the XML writer, not on
+    the content: with lxml installed (a backend dependency since 2026-10-16, for Aadhaar XMLDSig)
+    openpyxl writes "—" as ``&#8212;``, which is the same character to every reader of the file.
     """
     with zipfile.ZipFile(BytesIO(payload)) as archive:
         return "\n".join(
-            archive.read(name).decode("utf-8", "replace") for name in archive.namelist()
+            html.unescape(archive.read(name).decode("utf-8", "replace"))
+            for name in archive.namelist()
         )
 
 

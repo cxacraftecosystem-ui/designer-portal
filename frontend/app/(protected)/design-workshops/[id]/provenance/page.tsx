@@ -79,7 +79,7 @@ function DivergenceCard({
                 {/* The stamp under the field name, in the same words the stage form uses. An admin
                     comparing two columns needs to know WHICH record the left one came out of, and
                     that is exactly what the reference stamp says. */}
-                <span className="block text-[0.6875rem] leading-4 text-ink-300">
+                <span className="block text-[0.6875rem] leading-4 text-ink-500">
                   {fieldProvenanceLine(entry.fields?.[fieldKey])}
                 </span>
               </td>

@@ -122,6 +122,7 @@ import {
 } from "@/lib/accessRoster";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { assignableRoles, canManageAccessRoster, roleLabel } from "@/lib/permissions";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, passwordRuleLine } from "@/lib/signIn";
 import type { UserRole } from "@/lib/types";
 // The other end of the pre-filled link to Manage users: one module spells the query string for both.
 import { passwordAccountHref } from "@/app/(protected)/users/accountAdmin";
@@ -391,7 +392,16 @@ function PlatformAccessScreen() {
     const fullName = String(form.get("fullName") ?? "").trim();
     const notes = String(form.get("notes") ?? "").trim();
     const role = String(form.get("role") ?? "").trim();
+    // How they will sign in — only on the add form. The password is read exactly as typed: a password
+    // stored trimmed while its owner pastes the untrimmed original is refused at sign-in for ever.
+    const withPassword = !editing && form.get("signInWith") === "PASSWORD";
+    const password = withPassword ? String(form.get("password") ?? "") : "";
+    const mustChange = form.get("mustChangePassword") === "on";
     if (!email) return;
+    if (withPassword && !fullName) {
+      setError("Enter their full name. It becomes the name on the account.");
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -421,8 +431,22 @@ function PlatformAccessScreen() {
         email,
         fullName: fullName || null,
         role: (role || null) as UserRole | null,
-        notes: notes || null
+        notes: notes || null,
+        ...(withPassword ? { password, mustChangePassword: mustChange } : {})
       });
+      if (withPassword) {
+        // The account exists now, with the password just typed. Nothing else to make, so no link to
+        // the users form; hand the password over the way you would any other secret.
+        setNotice(
+          `${created.email} may sign in with the password you set${
+            mustChange ? ", and will choose a new one the first time they do" : ""
+          }. They can also sign in with Google, Microsoft or Yahoo on the same address.`
+        );
+        setPasswordAccount(null);
+        formElement.reset();
+        await reloadAll();
+        return;
+      }
       /*
         "MAY SIGN IN" WAS TRUE OF ONE CREDENTIAL ONLY, and said of both. Only Google sign-in creates
         an account by itself; the password path needs an account that already has a password, and
@@ -691,7 +715,7 @@ function PlatformAccessScreen() {
       */}
       <p className="mb-4 text-sm leading-6 text-ink-500">
         This list decides who may sign in at all. Who the institution recognises as a designer is on the{" "}
-        <Link href="/admin/designers" className="font-medium text-purple-700 hover:underline">
+        <Link href="/admin/designers" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
           designer roster
         </Link>
         . The master admin can always sign in, so somebody can always let people back in.
@@ -716,7 +740,7 @@ function PlatformAccessScreen() {
           {passwordAccount && passwordAccount.notice === notice ? (
             <>
               {" "}Will they sign in with a password instead? Adding them here does not create a password account —{" "}
-              <Link href={passwordAccount.href} className="font-medium text-purple-700 hover:underline">
+              <Link href={passwordAccount.href} className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
                 create their password account on Manage users
               </Link>
               {/* Two sentences, because the link carries a tier only when one was chosen here. An
@@ -820,14 +844,13 @@ function PlatformAccessScreen() {
               "The name, role and note are your own record of whom you admitted and why. Changing them does not change whether this person may sign in — use Approve, Refuse, Suspend or Restore for that."
             ) : (
               <>
-                For somebody who signs in with Google, no account is needed: the account is created the first time
-                they sign in with Google. Somebody who will sign in with a
-                password needs an account made for them on{" "}
-                <Link href="/users" className="font-medium text-purple-700 hover:underline">
+                Choose how they will sign in. With Google, Microsoft or Yahoo, no account is needed yet: it is created
+                the first time they sign in. With a password, the account is made now with the password you type —
+                you can also do this on{" "}
+                <Link href="/users" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
                   Manage users
                 </Link>
-                , which adds the address here as well. Adding somebody here approves them, so they never appear in the
-                queue above.
+                . Adding somebody here approves them, so they never appear in the queue above.
               </>
             )}
           </p>
@@ -876,6 +899,7 @@ function PlatformAccessScreen() {
             <AdmitTierField grantable={grantable} initial={editing?.admitRole ?? ""} />
           </Field>
         </div>
+        {editing ? null : <SignInMethodField />}
         <Field label="Note">
           <TextArea
             name="notes"
@@ -1167,6 +1191,69 @@ function PlatformAccessScreen() {
  * from the enclosing `Field` through context, so nothing here passes `ariaLabel` — see
  * `ui/fieldLabel.tsx` for why that composition matters.
  */
+/**
+ * "How will they sign in?" — only on the add form. Its state lives inside the form's keyed subtree, so
+ * the remount on `key` puts it back to the provider choice, and it is read back through FormData
+ * (`signInWith`, `password`, `mustChangePassword`) like every other box.
+ */
+function SignInMethodField() {
+  const [method, setMethod] = useState<"PROVIDER" | "PASSWORD">("PROVIDER");
+  const [showPassword, setShowPassword] = useState(false);
+  return (
+    <fieldset className="grid gap-2">
+      <legend className="field-label mb-1">How will they sign in?</legend>
+      <label className="flex items-center gap-2 text-sm text-ink-700">
+        <input
+          type="radio"
+          name="signInWith"
+          value="PROVIDER"
+          checked={method === "PROVIDER"}
+          onChange={() => setMethod("PROVIDER")}
+        />
+        With Google, Microsoft or Yahoo
+      </label>
+      <label className="flex items-center gap-2 text-sm text-ink-700">
+        <input
+          type="radio"
+          name="signInWith"
+          value="PASSWORD"
+          checked={method === "PASSWORD"}
+          onChange={() => setMethod("PASSWORD")}
+        />
+        With a password
+      </label>
+      {method === "PASSWORD" ? (
+        <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3 md:max-w-md">
+          <label htmlFor="access-password" className="field-label">
+            Password
+          </label>
+          <input
+            id="access-password"
+            name="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete="new-password"
+            required
+            minLength={MIN_PASSWORD_LENGTH}
+            maxLength={MAX_PASSWORD_LENGTH}
+            className="field-input"
+          />
+          <label className="flex items-center gap-2 text-sm text-ink-700">
+            <input type="checkbox" checked={showPassword} onChange={(event) => setShowPassword(event.target.checked)} />
+            Show the password
+          </label>
+          <label className="flex items-center gap-2 text-sm text-ink-700">
+            <input type="checkbox" name="mustChangePassword" defaultChecked />
+            Ask them to choose a new one at first sign-in
+          </label>
+          <p className="text-xs leading-5 text-ink-500">
+            {passwordRuleLine("Fill in their full name too — it becomes the name on the account.")}
+          </p>
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
 function AdmitTierField({ grantable, initial }: { grantable: UserRole[]; initial: UserRole | "" }) {
   const [role, setRole] = useState<UserRole | "">(initial);
   return (

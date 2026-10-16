@@ -181,8 +181,9 @@ data class ConsolidatedQuestionnaireDto(
  * Screen
  * ---------------------------------------------------------------------------------------------- */
 
-private val AmberSurface = Color(0x1FCD9200)
-private val AmberInk = Color(0xFF8A5600)
+// Themed (UX audit 2026-10-16, DA-21): a fixed dark amber ink on a translucent wash was unreadable on the dark card.
+private val AmberSurface: Color get() = legacyWarningContainer()
+private val AmberInk: Color get() = legacyOnWarningContainer()
 
 /** dd MMM yyyy from the API's ISO-8601, without pulling in a formatter for four fields. */
 private fun shortDate(value: String?): String {
@@ -306,7 +307,7 @@ private fun ConsolidatedIndex(
     }
 
     ConsolidatedCard(title = "Consolidated questionnaire", icon = Icons.Filled.Layers) {
-        cachedNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
+        cachedNote?.let { CachedCopyNote(it) }
         Text(
             "An interview is stored once per exact set of artisans, so most artisans' answers are " +
                 "spread across several entries. Pick an artisan to read everything they contributed " +
@@ -503,7 +504,7 @@ private fun ConsolidatedDocument(
         if (subtitle.isNotBlank()) {
             Text(subtitle, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
-        cachedNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
+        cachedNote?.let { CachedCopyNote(it) }
         if (current != null) {
             val count = current.summary.interviewCount
             val plural = if (count == 1) "" else "s"

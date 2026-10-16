@@ -519,7 +519,7 @@ internal class DwAsrRuntimeController(
                     cleanUp(container, target)
                     failed(
                         artifact,
-                        installed.failure ?: "The engine was fetched but the files written to this " +
+                        installed.failure ?: "The speech pack was downloaded but the files written to this " +
                             "phone did not match what this app expects, so they have been deleted " +
                             "and nothing was installed. Try again on a better connection.",
                     )
@@ -543,7 +543,7 @@ internal class DwAsrRuntimeController(
             runCatching { cleanUp(container, target) }
             failed(
                 artifact,
-                "The engine could not be fetched: ${error.message ?: "the connection failed"}. " +
+                "The speech pack could not be downloaded: ${(error as? IllegalStateException)?.message ?: "the connection dropped"}. " +
                     "Nothing has been installed and nothing has been kept. Check the connection and " +
                     "try again.",
             )
@@ -566,7 +566,7 @@ internal class DwAsrRuntimeController(
         val request = Request.Builder().url(artifact.url).get().build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IllegalStateException("the server answered HTTP ${response.code}")
+                throw IllegalStateException(speechPackRefusalClause(response.code))
             }
             val body = response.body ?: throw IllegalStateException("the server sent no file")
             var written = 0L
@@ -580,8 +580,7 @@ internal class DwAsrRuntimeController(
                         written += read
                         if (written > artifact.downloadBytes) {
                             throw IllegalStateException(
-                                "the server sent more than the ${artifact.downloadBytes} bytes this " +
-                                    "app expects, which means it is not serving the file this app pins"
+                                "what arrived was not the expected file"
                             )
                         }
                         output.write(buffer, 0, read)
@@ -602,7 +601,7 @@ internal class DwAsrRuntimeController(
             }
             if (written != artifact.downloadBytes) {
                 throw IllegalStateException(
-                    "the download stopped after $written of ${artifact.downloadBytes} bytes"
+                    "the connection closed before the whole file arrived"
                 )
             }
         }
@@ -707,3 +706,15 @@ internal fun rememberDwAsrRuntime(active: Boolean): DwAsrRuntimeController {
 // that a designer might want — that the engine ships signed with the app — now appears where it is
 // actionable, on the model row, as part of the verdict.
 // ---------------------------------------------------------------------------------------------
+
+/**
+ * Why the speech pack download was refused, as a clause a designer can act on (UX audit DA-11).
+ * The status code decides the next move: a refusal of THIS ACCOUNT will not change by waiting, a
+ * missing or failing server will.
+ */
+internal fun speechPackRefusalClause(code: Int): String = when (code) {
+    401, 403 -> "this account is not allowed to download it"
+    404 -> "it is not available right now, so try again later"
+    in 500..599 -> "the server could not send it just now, so try again later"
+    else -> "the server would not send it"
+}

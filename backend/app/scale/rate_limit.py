@@ -274,6 +274,33 @@ def account_credential_refund(account_id: str) -> None:
     _account_buckets.refund(f"acct:{account_id}")
 
 
+#: "FORGOT YOUR PASSWORD?" PER CLIENT: five requests per fifteen minutes per network address.
+#:
+#: The route is anonymous and every request it accepts can end in an e-mail, so the general allowance
+#: (120 a minute, and only when the scale flag is on) is no limit at all for it. Like the account
+#: budget it is NOT gated on ``SCALE_RATE_LIMIT_ENABLED``: it guards an inbox, not a small box. Keyed
+#: by ADDRESS ONLY (``_identity(..., ignore_bearer=True)``) for ``_CREDENTIAL_PREFIXES``' reason — a
+#: random Authorization header per request would otherwise mint a fresh bucket each time. The
+#: per-ADDRESS limit is a different thing and lives in ``services/password_reset``, silently.
+FORGOT_PASSWORD_REQUESTS = 5
+FORGOT_PASSWORD_WINDOW_SECONDS = 900.0
+
+_forgot_password_buckets = _TokenBuckets(
+    capacity=FORGOT_PASSWORD_REQUESTS,
+    refill_per_second=FORGOT_PASSWORD_REQUESTS / FORGOT_PASSWORD_WINDOW_SECONDS,
+)
+
+
+def client_address(scope: Scope) -> str:
+    """The network address a request came from, as the limiter keys it (never a bearer digest)."""
+    return _identity(scope, ignore_bearer=True)
+
+
+def forgot_password_attempt(scope: Scope) -> tuple[bool, float]:
+    """Spend one "Forgot your password?" request from this client. ``(allowed, retry_after_seconds)``."""
+    return _forgot_password_buckets.take(f"forgot:{client_address(scope)}")
+
+
 def reset_account_credential_budget() -> None:
     """Forget every account bucket.
 
@@ -284,6 +311,7 @@ def reset_account_credential_budget() -> None:
     suite instead of by the argument above it. ``tests/conftest.py`` calls this between tests.
     """
     _account_buckets._buckets.clear()  # noqa: SLF001 - the module owns this object
+    _forgot_password_buckets._buckets.clear()  # noqa: SLF001 - and this one
 
 
 class RateLimitMiddleware:
