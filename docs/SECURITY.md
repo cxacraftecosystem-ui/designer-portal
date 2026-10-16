@@ -935,7 +935,7 @@ before the "first seen" stamps. The mechanism is `backend/app/services/two_facto
 | Property | What it is |
 |---|---|
 | Algorithm | RFC 6238 TOTP: HMAC-SHA-1, 6 digits, 30-second steps, ±1 step accepted. Standard library only (`hmac`, `hashlib`, `secrets`); `backend/tests/test_two_factor.py` checks RFC 6238 Appendix B's SHA-1 vectors |
-| Secret | 160 random bits, 32 base32 characters. **Encrypted at rest** with AES-256-GCM (`cryptography`), key = scrypt(`JWT_SECRET`, fixed label, N=2^14), stored as `v1.<iv>.<tag>.<ciphertext>` in `User.twoFactorSecret` (or `twoFactorPendingSecret` between setup and confirmation). No response ever carries either column; `serialize_user` and `records._SENSITIVE_KEYS` strip them |
+| Secret | 160 random bits, 32 base32 characters. **Encrypted at rest** with AES-256-GCM (`cryptography`) under `TWO_FACTOR_ENCRYPTION_KEY` (32 random bytes, its own key since 2026-10-17), stored as `v2:<kid>.<iv>.<tag>.<ciphertext>` — `kid` names the key, and the `v2:<kid>` label is the GCM associated data — in `User.twoFactorSecret` (or `twoFactorPendingSecret` between setup and confirmation). Values written earlier, or while the key is unset, are the legacy `v1.<iv>.<tag>.<ciphertext>` under scrypt(`JWT_SECRET`, fixed label, N=2^14) and still open. No response ever carries either column; `serialize_user` and `records._SENSITIVE_KEYS` strip them |
 | Replay | A code is accepted only for a time step **strictly above** `User.twoFactorLastStep`, written by one conditional UPDATE — so a code works once, and two concurrent submissions of it cannot both win. The code that switches it on is recorded too |
 | Recovery codes | Ten, `xxxx-xxxx` from an alphabet without look-alikes, stored as bcrypt hashes (`security.hash_password`). Shown once at enable time and once at "Make new recovery codes" (which needs a current authenticator code). Each is spent by a conditional UPDATE on the whole array, so it works once |
 | The challenge | After the first factor, `POST /api/auth/login` answers 200 `{"two_factor_required": true, "challenge_token": …}` and **no session**. The token is a JWT (`purpose: "2fa"`, `sub`, `jti`, five minutes) signed with a key **derived** from `JWT_SECRET` under its own label, so it can never verify as a bearer token. `POST /api/auth/two-factor/verify` `{challenge_token, code}` re-runs the admission gates and answers exactly what a sign-in answers |
@@ -943,15 +943,52 @@ before the "first seen" stamps. The mechanism is `backend/app/services/two_facto
 | Turning it off | The owner, with an authenticator code or a recovery code. Or an account provisioner, for an account it manages and never its own — the password-reset rule exactly (`assert_may_reset_credentials`) — which also **ends every session of that account** (`sessionsValidFrom`), since the usual reason is a lost phone that may still be signed in. The secret and every recovery code go with it |
 | Audit | Log lines naming account ids: switched on, switched off (and with which kind of code), new recovery codes, a sign-in with a recovery code, and an administrator's reset with the number of recovery codes it destroyed |
 | Every door that turns a password into a credential | `POST /api/auth/login` (all four first factors) answers a challenge; `POST /api/datasets/token` — a thirty-day read token — asks for `twoFactorCode` in its body and answers 401 without it. `change-password` needs a session already (opened through the second step), and a password link's redemption mints no session. Nothing else mints a token |
+| A FIRST password on a provider-only account (2026-10-17) | Needs a **fresh provider proof** for this account — a Google ID token (verified as at sign-in: signature, issuer, expiry, audience = our client id; `iat` within five minutes; the verified address is this account's mailbox) or a Microsoft/Yahoo authorization code redeemed and verified exactly as at sign-in, with the same five-minute rule and the literal address — refused 400 with `X-Confirm-Provider: <PROVIDER>` otherwise, nothing written. The account stores no provider `sub`, so the verified mailbox is the identity, as at sign-in. With two-step on it needs the code too, checked against its **own** budget (`rate_limit.first_password_code_attempt`: five per fifteen minutes per account, refunded on a right code) and never the sign-in budgets above — so a stolen session cannot lock the owner's two-step through this door (finding N3). The "A password was added" e-mail still goes to the owner |
 | What it does not change | Existing sessions carry on when it is switched on. Android asks only at an online sign-in; a session already cached on a handset keeps working offline |
 
 The QR square is drawn **on the server** (`segno`, finished SVG geometry: one white square and one
 black path), so neither client carries a QR library and the `otpauth://` URI — which contains the
 secret — is never sent to a third-party image service. Android draws the same path with Compose's own
 path parser and also offers "Open in authenticator app" and "Copy key", because the phone is usually
-the device the authenticator is on. No new environment variable: the keys derive from `JWT_SECRET`,
-so **rotating `JWT_SECRET` makes every stored secret undecryptable** — those accounts then get in with
-a recovery code or an administrator's reset, and enrol again.
+the device the authenticator is on.
+
+#### The two-step encryption key, and rotating it (2026-10-17)
+
+Until 2026-10-17 the at-rest key derived from `JWT_SECRET`, so rotating `JWT_SECRET` — the
+break-glass response to a leaked signing key — also made every stored TOTP secret unreadable and
+locked every two-step account out of its authenticator. The key is now its own setting,
+`TWO_FACTOR_ENCRYPTION_KEY`, and every stored value names the key it is under.
+
+- **Reads** open a `v2:<kid>` value with the configured key of that id (current or one of
+  `TWO_FACTOR_PREVIOUS_KEYS`), and a legacy `v1.` value with the `JWT_SECRET`-derived key.
+- **Writes** use the current key. A value under any other key is rewritten under the current one
+  the next time its owner types a right code, and `backend/scripts/reencrypt_two_factor_secrets.py`
+  rewrites the rest (dry run by default, `--apply` to write, counts only, idempotent: every write
+  is conditional on the column still holding what was read).
+- **Boot**: a malformed key stops the API. With the key unset the legacy key is used and a WARNING
+  says how many two-step accounts depend on `JWT_SECRET` — deploying the code before the secret
+  exists locks nobody out. With `TWO_FACTOR_KEY_REQUIRED=true` (the deploy sets it together with
+  the key) a missing key and any two-step account **refuse to boot**. Values no configured key
+  opens are counted at ERROR; those accounts need a recovery code or an administrator's reset.
+
+**First introduction** (once): generate a key —
+`python -c "import base64, secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())"` —
+store it as the GitHub secret `TWO_FACTOR_ENCRYPTION_KEY` (`gh secret set TWO_FACTOR_ENCRYPTION_KEY`),
+deploy, then on the box run `python -m scripts.reencrypt_two_factor_secrets` (read the counts) and
+`--apply`. From then on `JWT_SECRET` can be rotated without touching two-step verification.
+
+**Rotation runbook:**
+
+1. Put the CURRENT value into `TWO_FACTOR_PREVIOUS_KEYS` (comma-separated if there are several).
+2. Generate a new key and set it as `TWO_FACTOR_ENCRYPTION_KEY`. Deploy both together — the deploy
+   writes both lines to the box `.env`.
+3. On the box: `python -m scripts.reencrypt_two_factor_secrets` (dry run), then `--apply`. Run it
+   again until it reports `moved 0` and `unreadable 0`.
+4. Only then remove the old key from `TWO_FACTOR_PREVIOUS_KEYS` and deploy. Dropping it before step
+   3 finishes leaves those accounts' authenticators unreadable (a recovery code still works).
+
+Never lose the current key: unlike `JWT_SECRET`, it cannot be replaced by a fresh random value
+without every two-step account enrolling again.
 
 ---
 
@@ -1569,6 +1606,10 @@ shell on this box. Verify with `aws ec2 describe-instances --instance-ids i-0e09
 | `AUTH_USER_CACHE_TTL_SECONDS` | `5.0` | How long a demoted or deleted account can keep working after a write **this process cannot see** (psql, the seed script, another worker). In-process writes invalidate explicitly and have no window. |
 | `AUTH_USER_CACHE_MAX_ENTRIES` | `512` | LRU ceiling, so worst-case memory is a number chosen here rather than one decided by how many people log in. |
 | `SECRETS_ENCRYPTION_KEY` | derived from `JWT_SECRET` | Fernet key for `ManagedSecret`. **Set it explicitly before you ever rotate `JWT_SECRET`** — otherwise rotation makes every stored provider key undecryptable and each must be re-entered. |
+| `TWO_FACTOR_ENCRYPTION_KEY` | unset → legacy key derived from `JWT_SECRET`, with a boot WARNING | 32 random bytes, base64. Encrypts every stored TOTP secret; rotation runbook in §3.7. |
+| `TWO_FACTOR_PREVIOUS_KEYS` | unset | Comma-separated earlier values of the key, still readable until the backfill has moved everything. |
+| `TWO_FACTOR_KEY_REQUIRED` | `false` | `true`: refuse to boot when the key is unset and any account has two-step on. The deploy sets it with the key. |
+| `FORWARDED_CLIENT_HOPS` | `2` | Which `X-Forwarded-For` entry, from the right, is the client. 2 = CloudFront → nginx, valid because the origin is locked to CloudFront; set 1 for a box serving without CloudFront. |
 
 ---
 

@@ -50,6 +50,14 @@ export const OIDC_CALLBACK_PATH = "/login/callback";
 export const WEB_STATE_PREFIX = "web.";
 /** A `state` the Android app minted: the callback route hands the code to the app. */
 export const APP_STATE_PREFIX = "app.";
+/**
+ * A `state` this prefix starts was minted by Settings to CONFIRM it's you before a first password
+ * is set (2026-10-17), not to sign in: `/login/callback` sends it back to `/settings`, where the
+ * card hands the code to `POST /auth/change-password` as the provider proof.
+ */
+export const CONFIRM_STATE_PREFIX = "pw.";
+/** Where a confirmation comes back to, with the answer in the fragment like a sign-in's. */
+export const CONFIRM_RETURN_PATH = "/settings";
 
 /** The Android app's own scheme for the handover, as `android/app/build.gradle.kts` registers it. */
 export const ANDROID_SIGN_IN_SCHEME = "com.designprototype.workshop.signin";
@@ -173,11 +181,13 @@ export async function beginSignIn(
   provider: OidcProvider,
   origin: string,
   agreedAt: string | null,
-  storage: Pick<Storage, "setItem"> = window.sessionStorage
+  storage: Pick<Storage, "setItem"> = window.sessionStorage,
+  purpose: "sign-in" | "confirm" = "sign-in"
 ): Promise<string> {
+  const prefix = purpose === "confirm" ? CONFIRM_STATE_PREFIX : WEB_STATE_PREFIX;
   const pending: PendingSignIn = {
     provider: provider.id,
-    state: `${WEB_STATE_PREFIX}${randomToken()}`,
+    state: `${prefix}${randomToken()}`,
     codeVerifier: randomToken(48),
     rawNonce: randomToken(),
     redirectUri: `${origin}${OIDC_CALLBACK_PATH}`,
@@ -250,6 +260,7 @@ export function callbackTarget(query: URLSearchParams, appScheme: string = ANDRO
   }
   const state = kept.get("state") ?? "";
   if (state.startsWith(APP_STATE_PREFIX)) return `${appScheme}://oidc/callback?${kept.toString()}`;
+  if (state.startsWith(CONFIRM_STATE_PREFIX)) return `${CONFIRM_RETURN_PATH}#oidc=${encodeURIComponent(kept.toString())}`;
   return `/login#oidc=${encodeURIComponent(kept.toString())}`;
 }
 

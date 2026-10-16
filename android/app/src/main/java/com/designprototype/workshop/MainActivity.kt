@@ -4110,8 +4110,7 @@ private fun HomeScreen(
 
                     is Screen.AccountPassword -> AccountPasswordScreen(
                         repository = repository,
-                        onBack = { attemptExit { goBack() } },
-                        onSignOut = onLogout
+                        onBack = { attemptExit { goBack() } }
                     )
 
                     else -> {

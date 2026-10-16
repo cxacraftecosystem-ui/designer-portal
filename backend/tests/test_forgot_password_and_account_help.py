@@ -236,7 +236,18 @@ def test_the_audit_row_records_the_client(world, client):
 # ==================================================================================================
 
 
-def test_a_provider_only_account_sets_a_first_password_on_a_fresh_session(world, client):
+def _fresh_google(monkeypatch, email: str, *, age_seconds: int = 0) -> dict[str, str]:
+    """A Google ID token, as ``verify_google_token`` would answer for one issued ``age_seconds`` ago."""
+    from app.api.routes import auth as auth_routes
+
+    claims = {"email": email, "email_verified": True, "iat": int(time.time()) - age_seconds}
+    monkeypatch.setattr(auth_routes, "verify_google_token", lambda _token: claims)
+    return {"googleIdToken": "a-google-id-token"}
+
+
+def test_a_provider_only_account_sets_a_first_password_with_a_fresh_provider_sign_in(
+    world, client, monkeypatch
+):
     person = world["people"]["googler"]
     old = create_access_token(subject=person.id, credential=password_credential(person))
     me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {old}"})
@@ -244,7 +255,7 @@ def test_a_provider_only_account_sets_a_first_password_on_a_fresh_session(world,
 
     answer = client.post(
         "/api/auth/change-password",
-        json={"newPassword": "a-first-password-1"},
+        json={"newPassword": "a-first-password-1", **_fresh_google(monkeypatch, world["address"]("googler"))},
         headers={"Authorization": f"Bearer {old}"},
     )
     assert answer.status_code == 200, answer.text
@@ -263,7 +274,9 @@ def test_a_provider_only_account_sets_a_first_password_on_a_fresh_session(world,
     assert signed_in.status_code == 200, signed_in.text
 
 
-def test_a_stale_session_is_asked_to_sign_in_again(world, client):
+def test_without_a_fresh_provider_sign_in_it_is_asked_to_confirm(world, client, monkeypatch):
+    """A session is not proof any more (2026-10-17): an hour-old one and a brand-new one alike are
+    asked for the provider's own proof, and a stale proof is refused the same way."""
     person = world["people"]["staleGoogler"]
     settings = get_settings()
     now = int(time.time())
@@ -278,7 +291,17 @@ def test_a_stale_session_is_asked_to_sign_in_again(world, client):
         headers={"Authorization": f"Bearer {stale}"},
     )
     assert refused.status_code == 400
-    assert refused.headers.get("x-sign-in-again") == "1"
+    assert refused.headers.get("x-confirm-provider") == "GOOGLE"
+    stale_proof = client.post(
+        "/api/auth/change-password",
+        json={
+            "newPassword": "a-first-password-2",
+            **_fresh_google(monkeypatch, world["address"]("staleGoogler"), age_seconds=600),
+        },
+        headers={"Authorization": f"Bearer {stale}"},
+    )
+    assert stale_proof.status_code == 400
+    assert stale_proof.headers.get("x-confirm-provider") == "GOOGLE"
     row = _read(client, db.user.find_unique, where={"id": person.id})
     assert row.passwordHash is None
 

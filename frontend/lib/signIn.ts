@@ -247,10 +247,11 @@ export async function changeOwnPassword(currentPassword: string, newPassword: st
 
 /**
  * The header `POST /auth/change-password` sets, with a 400, when an account with no password asks to
- * set its first one from a session older than the server's re-sign-in window (15 minutes). Its value
- * is "1". Read off the header and never off the sentence, which is prose and will be reworded.
+ * set its first one without a fresh provider sign-in, or with one that is stale or for another
+ * mailbox (2026-10-17). Its value names the provider to confirm with — `GOOGLE`, `MICROSOFT` or
+ * `YAHOO`. Read off the header and never off the sentence, which is prose and will be reworded.
  */
-export const SIGN_IN_AGAIN_HEADER = "x-sign-in-again";
+export const CONFIRM_PROVIDER_HEADER = "x-confirm-provider";
 
 /**
  * The header a first-password request is refused with when the account has two-step verification on
@@ -259,19 +260,37 @@ export const SIGN_IN_AGAIN_HEADER = "x-sign-in-again";
 export const TWO_FACTOR_REQUIRED_HEADER = "x-two-factor-required";
 
 /**
+ * The proof a first password travels with: the provider's own answer to a sign-in run again just now —
+ * a Google ID token, or a Microsoft or Yahoo code with what proves this tab started the flow
+ * (`oidcSignIn.loginBody`). The same shapes `POST /auth/login` takes.
+ */
+export type ProviderProof =
+  | { googleIdToken: string }
+  | {
+      oidcProvider: "MICROSOFT" | "YAHOO";
+      oidcCode: string;
+      oidcCodeVerifier: string;
+      oidcRedirectUri: string;
+      oidcNonce: string;
+    };
+
+/**
  * An account that signs in with Google, Microsoft or Yahoo choosing a password as well — the same
  * route as a change, with no current password because there is none to prove. The server accepts it
- * only from a session opened in the last few minutes and otherwise answers 400 with
- * {@link SIGN_IN_AGAIN_HEADER}. Returns the fresh session exactly as {@link changeOwnPassword} does:
- * the new password changes the fingerprint every session carries.
+ * only with a {@link ProviderProof} made in the last few minutes for this account, and otherwise
+ * answers 400 with {@link CONFIRM_PROVIDER_HEADER}. Returns the fresh session exactly as
+ * {@link changeOwnPassword} does: the new password changes the fingerprint every session carries.
  */
-export async function setFirstPassword(newPassword: string, twoFactorCode?: string): Promise<string | null> {
+export async function setFirstPassword(
+  newPassword: string,
+  proof: ProviderProof,
+  twoFactorCode?: string
+): Promise<string | null> {
   const code = twoFactorCode?.trim();
   const { headers } = await apiFetchWithHeaders<unknown>("/auth/change-password", {
     method: "POST",
-    // The code goes only when there is one: an account without two-step verification sends exactly
-    // the body it always did.
-    body: JSON.stringify(code ? { newPassword, twoFactorCode: code } : { newPassword })
+    // The code goes only when there is one: an account without two-step verification sends none.
+    body: JSON.stringify(code ? { newPassword, ...proof, twoFactorCode: code } : { newPassword, ...proof })
   });
   const token = headers.get(SESSION_TOKEN_HEADER)?.trim();
   return token ? token : null;

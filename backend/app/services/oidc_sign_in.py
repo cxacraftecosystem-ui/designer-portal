@@ -485,6 +485,9 @@ class ProvedIdentity:
     provider: str
     email: str
     name: str | None
+    #: The ID token's ``iat``, when it carries one. Read by the first-password door, which accepts
+    #: only a sign-in made in the last few minutes (``routes/auth._require_fresh_provider_proof``).
+    issued_at: float | None = None
 
 
 async def prove(
@@ -496,4 +499,9 @@ async def prove(
         raise SignInRefused("not-configured")
     token = await redeem_code(p, code=code, code_verifier=code_verifier, redirect_uri=redirect_uri)
     claims = await verify_id_token(p, token, raw_nonce=raw_nonce)
-    return ProvedIdentity(provider=p.name, email=verified_email(p, claims), name=display_name(claims))
+    return ProvedIdentity(
+        provider=p.name,
+        email=verified_email(p, claims),
+        name=display_name(claims),
+        issued_at=_number(claims.get("iat")),
+    )

@@ -231,8 +231,8 @@ async def test_the_owner_changing_their_own_password_is_charged_nothing(world, c
 async def test_an_account_with_no_password_is_told_so_and_charged_nothing(world, client):
     """THE 400 IS NOT A GUESS. There is nothing stored to compare against, so nothing was tried.
 
-    Since 2026-10-17 an account with no password SETS its first one here — but only on a session
-    opened in the last fifteen minutes. On an older one it is told to sign in again, and charging that
+    Since 2026-10-17 an account with no password SETS its first one here — but only with a fresh
+    provider sign-in. Without one it is asked to confirm with its provider, and charging that
     would let somebody spend a Google-provisioned account's budget by asking a question that cannot be
     answered — and the owner would then find the SIGN-IN door refusing them as well.
     """
@@ -255,9 +255,9 @@ async def test_an_account_with_no_password_is_told_so_and_charged_nothing(world,
         headers=stale,
     )
     assert told.json()["detail"] == (
-        "For your security, sign out and sign in again, then set your password within 15 minutes."
+        "To add a password, first confirm it's you by signing in with Google again."
     )
-    assert told.headers.get("x-sign-in-again") == "1"
+    assert told.headers.get("x-confirm-provider") == "GOOGLE"
 
 
 async def test_the_budget_here_is_the_same_one_the_sign_in_door_spends(world, client):

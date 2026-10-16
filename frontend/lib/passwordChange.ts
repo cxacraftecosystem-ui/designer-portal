@@ -15,7 +15,7 @@
  */
 
 import { ApiError } from "@/lib/api";
-import { SIGN_IN_AGAIN_HEADER, TWO_FACTOR_REQUIRED_HEADER } from "@/lib/signIn";
+import { CONFIRM_PROVIDER_HEADER, TWO_FACTOR_REQUIRED_HEADER } from "@/lib/signIn";
 import type { User } from "@/lib/types";
 
 /**
@@ -47,13 +47,37 @@ export function canSetFirstPassword(user: Pick<User, "passwordSetAt" | "hasPassw
 export const FIRST_PASSWORD_NOTE =
   "After this you can sign in with your email address and this password, or the way you sign in now.";
 
+/** The providers a first password can be confirmed with. */
+export type ConfirmProvider = "GOOGLE" | "MICROSOFT" | "YAHOO";
+
 /**
- * Did `POST /auth/change-password` refuse a first password because the session is too old? The server
- * says so with a 400 carrying `X-Sign-In-Again: 1` — read off the header, never off the sentence.
+ * Did `POST /auth/change-password` refuse a first password for want of a fresh provider sign-in
+ * (missing, stale, or for another mailbox)? The server answers 400 with `X-Confirm-Provider` naming
+ * the provider; this returns that name, or null. Read off the header, never off the sentence.
  */
-export function signInAgainRequired(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 400 && error.headers?.get(SIGN_IN_AGAIN_HEADER) === "1";
+export function providerConfirmationRequired(error: unknown): ConfirmProvider | null {
+  if (!(error instanceof ApiError) || error.status !== 400) return null;
+  const named = error.headers?.get(CONFIRM_PROVIDER_HEADER)?.trim().toUpperCase();
+  return named === "GOOGLE" || named === "MICROSOFT" || named === "YAHOO" ? named : null;
 }
+
+/**
+ * Which provider an account confirms with before setting a first password: the one it signs in
+ * with (`authProvider`), or Google for an account that names none — the server's own fallback.
+ */
+export function confirmProviderFor(user: { authProvider?: string } | null | undefined): ConfirmProvider {
+  const named = (user?.authProvider ?? "").toUpperCase();
+  return named === "MICROSOFT" || named === "YAHOO" ? named : "GOOGLE";
+}
+
+/** The sentence above the confirm button. Plain words: what to do, and why it is asked. */
+export function confirmPrompt(provider: ConfirmProvider): string {
+  const label = provider === "GOOGLE" ? "Google" : provider === "MICROSOFT" ? "Microsoft" : "Yahoo";
+  return `To add a password, first confirm it's you by signing in with ${label} again.`;
+}
+
+/** After a confirmation: how long the person has to finish. Matches the server's window. */
+export const CONFIRMED_NOTE = "Confirmed. Set your password within the next few minutes.";
 
 /**
  * Was a first password refused for want of the two-step code (missing or wrong)? The server answers 400

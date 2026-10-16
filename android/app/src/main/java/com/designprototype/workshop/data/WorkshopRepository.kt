@@ -4139,27 +4139,30 @@ class WorkshopRepository(
      * same answer: the fresh session token from [SESSION_TOKEN_HEADER] is adopted before the profile
      * is re-read, because the write retires the token this call was made with.
      *
-     * A 400 carrying [SIGN_IN_AGAIN_HEADER] is thrown as [SignInAgainRequired] with the server's
-     * sentence, so the screen can offer to sign out rather than print a refusal with no way forward.
+     * A first password carries [proof] — a provider sign-in run again just now. A 400 carrying
+     * [CONFIRM_PROVIDER_HEADER] (missing, stale or another mailbox) is thrown as
+     * [ProviderConfirmationRequired], so the screen asks the person to confirm again.
      */
-    suspend fun saveOwnPassword(currentPassword: String?, newPassword: String, twoFactorCode: String? = null) {
+    suspend fun saveOwnPassword(
+        currentPassword: String?,
+        newPassword: String,
+        twoFactorCode: String? = null,
+        proof: FirstPasswordProof? = null,
+    ) {
         if (currentPassword != null) {
             changeOwnPassword(currentPassword, newPassword)
             return
         }
-        val answer = recoveryApi.setFirstPassword(
-            FirstPasswordRequest(newPassword = newPassword, twoFactorCode = twoFactorCode?.trim()?.takeIf { it.isNotEmpty() })
-        )
+        val answer = recoveryApi.setFirstPassword(firstPasswordRequest(newPassword, twoFactorCode, proof))
         if (!answer.isSuccessful) {
             val refused = HttpException(answer)
             if (answer.headers()[TWO_FACTOR_REQUIRED_HEADER] != null) {
                 throw TwoFactorCodeRequired(refused.apiErrorMessage(FIRST_PASSWORD_CODE_MISSING))
             }
-            if (answer.headers()[SIGN_IN_AGAIN_HEADER] != null) {
-                throw SignInAgainRequired(
-                    refused.apiErrorMessage(
-                        "For your security, sign out and sign in again, then set your password within 15 minutes."
-                    )
+            answer.headers()[CONFIRM_PROVIDER_HEADER]?.let { provider ->
+                throw ProviderConfirmationRequired(
+                    refused.apiErrorMessage(firstPasswordConfirmPrompt(provider)),
+                    provider.trim().uppercase(),
                 )
             }
             throw refused

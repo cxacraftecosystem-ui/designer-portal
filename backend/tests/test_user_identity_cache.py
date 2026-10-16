@@ -318,6 +318,8 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         # Two-step verification (2026-10-16): the secret, the recovery codes, the last step and the
         # failure budgets. Every budget write invalidates; the routes invalidate after the rest.
         "app/services/two_factor.py",
+        # A verified Aadhaar result is stamped on the account (aadhaar/records.py), and invalidates.
+        "app/services/aadhaar/records.py",
         "scripts/seed_admin.py",
         "scripts/seed_test_accounts.py",
         # The sessionsValidFrom backfill (2026-09-03) writes User rows from OUTSIDE any serving
@@ -327,5 +329,9 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         # this sweep wants from a writer that structurally cannot invalidate: an acknowledgement,
         # not a ritual call.
         "scripts/backfill_sessions_valid_from.py",
+        # The two-step key backfill (2026-10-17), out of process for the same reason. It rewrites only a
+        # ciphertext under another key; a cached row holding the old one still opens while that key is
+        # configured, and the write site says so and names the bound.
+        "scripts/reencrypt_two_factor_secrets.py",
     }
     assert all(writers.values()), f"user writes with no cache invalidation: {writers}"

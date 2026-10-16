@@ -12,8 +12,11 @@ second finds the column already at that step.
 
 ── WHAT IS STORED, AND WHAT NEVER LEAVES THE SERVER ─────────────────────────────────────────────────
 
-* The shared secret is ENCRYPTED AT REST (AES-256-GCM, key derived from ``JWT_SECRET`` by scrypt with
-  a fixed context label — cxa-cms's derivation, label renamed). A plaintext TOTP secret in the
+* The shared secret is ENCRYPTED AT REST (AES-256-GCM) under ``TWO_FACTOR_ENCRYPTION_KEY`` — its own
+  key, independent of ``JWT_SECRET`` since 2026-10-17, versioned by a key id in the stored value so
+  it can be rotated (see "Encryption at rest" below and ``docs/SECURITY.md``). Values written before
+  that, or while the key is unset, use the legacy key derived from ``JWT_SECRET`` by scrypt with a
+  fixed context label — cxa-cms's derivation, label renamed. A plaintext TOTP secret in the
   database makes one database read a complete second-factor bypass, the one thing the feature is
   bought to prevent. The encrypted value is returned by no route, and neither is the pending one:
   :data:`SECRET_USER_FIELDS` is stripped by both ``serialize_user`` functions and by
@@ -282,8 +285,35 @@ def qr_svg(text: str) -> str:
 # ==================================================================================================
 
 
+#
+# TWO FORMATS, ONE READER (2026-10-17).
+#
+#   v1.<iv>.<tag>.<ciphertext>          LEGACY. Key = scrypt(JWT_SECRET). Rotating JWT_SECRET used to
+#                                       make every one of these unreadable — every account with two-step
+#                                       on was locked out of its authenticator at once.
+#   v2:<kid>.<iv>.<tag>.<ciphertext>    Key = TWO_FACTOR_ENCRYPTION_KEY (32 random bytes, base64), or
+#                                       one of TWO_FACTOR_PREVIOUS_KEYS. ``kid`` names which, so a read
+#                                       never has to guess. The ``v2:<kid>`` prefix is also the AES-GCM
+#                                       associated data: a value cannot be relabelled to another key.
+#
+# A WRITE uses the current key when one is set, and the legacy key (with a WARNING at boot) when it
+# is not — so deploying this code before the secret exists locks nobody out. A READ opens either
+# format with whichever configured key the value names. A value under anything but the current key
+# is rewritten under it the next time it is used successfully (:func:`refresh_encryption`), and
+# ``scripts/reencrypt_two_factor_secrets.py`` rewrites the rest in one pass. The rotation runbook is
+# ``docs/SECURITY.md`` §"Rotating the two-step encryption key".
+
+LEGACY_PREFIX = "v1"
+VERSIONED_PREFIX = "v2:"
+KEY_BYTES = 32
+#: HMAC label for a key's id. The id is derived FROM the key, so nothing has to be configured twice
+#: and two operators cannot give one key two names; it is a keyed digest, so it says nothing about the
+#: key to somebody holding only the database.
+_KEY_ID_CONTEXT = b"designer-portal-totp-key-id-v2"
+
+
 @lru_cache(maxsize=4)
-def _encryption_key(jwt_secret: str) -> bytes:
+def _legacy_key(jwt_secret: str) -> bytes:
     """scrypt (N=2^14, r=8, p=1 — Node's ``scryptSync`` defaults, as cxa-cms uses them) rather than a
     fast hash: the key derives from ``JWT_SECRET``, and a fast KDF would let somebody holding the
     database brute-force a weak secret offline at hashing speed. Cached per secret, because scrypt
@@ -301,29 +331,228 @@ def _unb64(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
-def encrypt_secret(plain: str) -> str:
-    """``v1.<iv>.<tag>.<ciphertext>``, all base64url — cxa-cms's format, so either can read it."""
+class KeyConfigurationError(ValueError):
+    """A configured two-step key is not 32 bytes of base64. Raised at boot, never at sign-in."""
+
+
+def parse_key(text: str, *, name: str = "TWO_FACTOR_ENCRYPTION_KEY") -> bytes:
+    """32 bytes from standard or URL-safe base64, padding optional. Anything else is refused LOUDLY:
+    a truncated paste would otherwise become a valid, different key and every value written under it
+    would be readable by nobody once the typo is fixed."""
+    cleaned = re.sub(r"\s", "", text or "")
+    try:
+        raw = base64.b64decode(
+            cleaned.replace("-", "+").replace("_", "/") + "=" * (-len(cleaned) % 4), validate=True
+        )
+    except ValueError as exc:
+        raise KeyConfigurationError(f"{name} is not base64") from exc
+    if len(raw) != KEY_BYTES:
+        raise KeyConfigurationError(f"{name} must be {KEY_BYTES} random bytes, base64-encoded")
+    return raw
+
+
+def key_id(key: bytes) -> str:
+    """Eight base64url characters naming ``key``."""
+    return _b64(hmac.new(key, _KEY_ID_CONTEXT, hashlib.sha256).digest()[:6])
+
+
+@dataclass(frozen=True)
+class Keyring:
+    #: (kid, key) for TWO_FACTOR_ENCRYPTION_KEY, or None while it is unset (the transition).
+    current: tuple[str, bytes] | None
+    #: kid -> key, for the current key AND every previous one.
+    readable: dict[str, bytes]
+
+
+@lru_cache(maxsize=8)
+def _keyring(current: str | None, previous: str | None) -> Keyring:
+    readable: dict[str, bytes] = {}
+    head: tuple[str, bytes] | None = None
+    if current and current.strip():
+        key = parse_key(current)
+        head = (key_id(key), key)
+        readable[head[0]] = key
+    for index, text in enumerate(part for part in (previous or "").split(",") if part.strip()):
+        key = parse_key(text, name=f"TWO_FACTOR_PREVIOUS_KEYS[{index}]")
+        readable.setdefault(key_id(key), key)
+    return Keyring(current=head, readable=readable)
+
+
+def keyring() -> Keyring:
+    """The configured keys. Cached on the two settings' text, so a test that changes them sees it."""
+    settings = get_settings()
+    return _keyring(
+        getattr(settings, "two_factor_encryption_key", None),
+        getattr(settings, "two_factor_previous_keys", None),
+    )
+
+
+def _seal(key: bytes, plain: str, aad: bytes | None) -> tuple[str, str, str]:
     iv = secrets.token_bytes(12)
-    sealed = AESGCM(_encryption_key(get_settings().jwt_secret)).encrypt(iv, plain.encode("utf-8"), None)
-    ciphertext, tag = sealed[:-16], sealed[-16:]
-    return ".".join(("v1", _b64(iv), _b64(tag), _b64(ciphertext)))
+    sealed = AESGCM(key).encrypt(iv, plain.encode("utf-8"), aad)
+    return _b64(iv), _b64(sealed[-16:]), _b64(sealed[:-16])
 
 
-def decrypt_secret(stored: str | None) -> str | None:
-    """None rather than an exception: an undecryptable secret (a rotated ``JWT_SECRET``, a hand-edited
-    row) means the authenticator no longer works for that account, and the way back is a recovery
-    code or an administrator's reset — never a 500 on the sign-in screen."""
+def encrypt_secret(plain: str) -> str:
+    """``v2:<kid>.<iv>.<tag>.<ciphertext>`` under the current key; while none is configured, the
+    legacy ``v1.<iv>.<tag>.<ciphertext>`` (cxa-cms's format) under the ``JWT_SECRET``-derived key."""
+    ring = keyring()
+    if ring.current is None:
+        return ".".join((LEGACY_PREFIX, *_seal(_legacy_key(get_settings().jwt_secret), plain, None)))
+    kid, key = ring.current
+    label = f"{VERSIONED_PREFIX}{kid}"
+    return ".".join((label, *_seal(key, plain, label.encode("ascii"))))
+
+
+def _opened(stored: str | None) -> tuple[str, str | None] | None:
+    """``(plain, kid)`` — kid None for a legacy value — or None when nothing configured opens it."""
     if not stored:
         return None
     parts = stored.split(".")
-    if len(parts) != 4 or parts[0] != "v1":
+    if len(parts) != 4:
+        return None
+    label = parts[0]
+    kid: str | None
+    aad: bytes | None
+    if label == LEGACY_PREFIX:
+        kid, aad, key = None, None, _legacy_key(get_settings().jwt_secret)
+    elif label.startswith(VERSIONED_PREFIX):
+        kid = label[len(VERSIONED_PREFIX) :]
+        found = keyring().readable.get(kid)
+        if found is None:
+            return None
+        key, aad = found, label.encode("ascii")
+    else:
         return None
     try:
         iv, tag, ciphertext = _unb64(parts[1]), _unb64(parts[2]), _unb64(parts[3])
-        plain = AESGCM(_encryption_key(get_settings().jwt_secret)).decrypt(iv, ciphertext + tag, None)
+        plain = AESGCM(key).decrypt(iv, ciphertext + tag, aad)
     except (InvalidTag, ValueError):
         return None
-    return plain.decode("utf-8")
+    return plain.decode("utf-8"), kid
+
+
+def decrypt_secret(stored: str | None) -> str | None:
+    """None rather than an exception: an undecryptable secret (a key dropped from
+    ``TWO_FACTOR_PREVIOUS_KEYS`` too early, a hand-edited row) means the authenticator no longer works
+    for that account, and the way back is a recovery code or an administrator's reset — never a 500
+    on the sign-in screen."""
+    opened = _opened(stored)
+    return opened[0] if opened else None
+
+
+def is_current(stored: str | None) -> bool:
+    """Is ``stored`` already under the current key? True while no key is configured: then there is
+    nothing better to move it to."""
+    ring = keyring()
+    if ring.current is None or not stored:
+        return True
+    return stored.startswith(f"{VERSIONED_PREFIX}{ring.current[0]}.")
+
+
+def reencrypted(stored: str | None) -> str | None:
+    """``stored`` sealed again under the current key, or None when it already is or cannot be read."""
+    if is_current(stored):
+        return None
+    opened = _opened(stored)
+    return encrypt_secret(opened[0]) if opened else None
+
+
+async def refresh_encryption(user_id: str, column: str, stored: str | None) -> bool:
+    """Rewrite one column under the current key after a successful use. Conditional on the column
+    still holding what was read, so it can never overwrite a newer setup or a switch-off. Never
+    raises: the code was right and the person is signed in whatever this write does."""
+    fresh = reencrypted(stored)
+    if fresh is None:
+        return False
+    try:
+        written = await db.user.update_many(
+            where={"id": user_id, column: stored}, data={column: fresh}
+        )
+    except Exception:  # see the docstring
+        logger.exception("two-factor: could not move a secret to the current key for %s", user_id)
+        return False
+    invalidate_cached_user(user_id)
+    return written == 1
+
+
+def verify_key_configuration() -> None:
+    """Called from ``create_app``: a malformed key stops the boot, with the setting's name."""
+    try:
+        keyring()
+    except KeyConfigurationError as exc:
+        raise RuntimeError(
+            f"{exc}. Generate one with "
+            '`python -c "import base64, secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())"`.'
+        ) from exc
+
+
+@dataclass(frozen=True)
+class EncryptionCensus:
+    enabled: int
+    current: int
+    previous: int
+    legacy: int
+    unreadable: int
+
+
+async def encryption_census() -> EncryptionCensus:
+    """Counts only — which key every stored secret (live and pending) is under."""
+    rows = await db.user.find_many(
+        where={"OR": [{"twoFactorSecret": {"not": None}}, {"twoFactorPendingSecret": {"not": None}}]}
+    )
+    counts = {"current": 0, "previous": 0, "legacy": 0, "unreadable": 0}
+    enabled = 0
+    for row in rows:
+        enabled += 1 if getattr(row, "twoFactorEnabled", False) else 0
+        for stored in (row.twoFactorSecret, row.twoFactorPendingSecret):
+            if not stored:
+                continue
+            opened = _opened(stored)
+            if opened is None:
+                counts["unreadable"] += 1
+            elif opened[1] is None:
+                counts["legacy"] += 1
+            elif is_current(stored):
+                counts["current"] += 1
+            else:
+                counts["previous"] += 1
+    return EncryptionCensus(enabled=enabled, **counts)
+
+
+async def check_keys_at_boot() -> None:
+    """After the database connects. RAISES (the boot fails) only when ``TWO_FACTOR_KEY_REQUIRED`` is
+    on, the key is unset, and somebody has two-step verification on. Otherwise every finding is a log
+    line: during the transition the legacy key is used and a WARNING says so, so deploying the code
+    before the secret is set never locks anybody out."""
+    settings = get_settings()
+    census = await encryption_census()
+    if keyring().current is None:
+        if census.enabled and getattr(settings, "two_factor_key_required", False):
+            raise RuntimeError(
+                f"TWO_FACTOR_ENCRYPTION_KEY is not set and {census.enabled} account(s) have two-step "
+                "verification on (TWO_FACTOR_KEY_REQUIRED is on). Restore the key; see docs/SECURITY.md."
+            )
+        if census.enabled or census.legacy:
+            logger.warning(
+                "two-factor: TWO_FACTOR_ENCRYPTION_KEY is not set; %d account(s) with two-step on are "
+                "using the legacy key derived from JWT_SECRET, so rotating JWT_SECRET would lock them "
+                "out. Set the key (docs/SECURITY.md).",
+                census.enabled,
+            )
+    elif census.legacy or census.previous:
+        logger.warning(
+            "two-factor: %d stored secret(s) are under the legacy key and %d under a previous key; "
+            "run scripts/reencrypt_two_factor_secrets.py --apply before dropping either.",
+            census.legacy,
+            census.previous,
+        )
+    if census.unreadable:
+        logger.error(
+            "two-factor: %d stored secret(s) cannot be opened with any configured key; those accounts "
+            "must use a recovery code or an administrator's reset.",
+            census.unreadable,
+        )
 
 
 # ==================================================================================================
@@ -444,6 +673,8 @@ async def verify_second_factor(user: Any, code: str, *, allow_recovery: bool = T
         step = match_totp_step(secret, code)
         if step is None or not await consume_totp_step(user.id, step):
             return None
+        # A right code proves the stored value opened: move it to the current key while we hold it.
+        await refresh_encryption(user.id, "twoFactorSecret", getattr(user, "twoFactorSecret", None))
         return TOTP
     if kind == RECOVERY and allow_recovery:
         return RECOVERY if await consume_recovery_code(user, code) else None
@@ -835,7 +1066,8 @@ async def enable(user: Any, code: str) -> list[str]:
         where={"id": user.id, "twoFactorEnabled": False, "twoFactorPendingSecret": pending},
         data={
             "twoFactorEnabled": True,
-            "twoFactorSecret": pending,
+            # Sealed again if the key changed between setup and this confirmation.
+            "twoFactorSecret": reencrypted(pending) or pending,
             "twoFactorPendingSecret": None,
             "twoFactorRecoveryCodes": {"set": hashes},
             "twoFactorLastStep": step,

@@ -347,6 +347,31 @@ def forgot_password_attempt(scope: Scope) -> tuple[bool, float]:
     return _forgot_password_global.take("forgot:all")
 
 
+#: THE FIRST-PASSWORD CODE BUDGET (2026-10-17, finding N3): five second-step codes per fifteen
+#: minutes per account, on its OWN counter. A first password on an account with two-step on asks for
+#: a code, and that check used to spend the account's sign-in budget (``two_factor.CODE_BUDGET``),
+#: whose lock also shuts the sign-in door — so a stolen session could type five wrong codes here and
+#: lock the owner's own two-step. This bucket locks only this door, and only for this account.
+#: Charged before the code is checked and refunded when it is right, like the account budget above.
+FIRST_PASSWORD_CODE_ATTEMPTS = 5
+FIRST_PASSWORD_CODE_WINDOW_SECONDS = 900.0
+
+_first_password_code_buckets = _TokenBuckets(
+    capacity=FIRST_PASSWORD_CODE_ATTEMPTS,
+    refill_per_second=FIRST_PASSWORD_CODE_ATTEMPTS / FIRST_PASSWORD_CODE_WINDOW_SECONDS,
+)
+
+
+def first_password_code_attempt(account_id: str) -> tuple[bool, float]:
+    """Spend one first-password code check for ``account_id``. ``(allowed, retry_after_seconds)``."""
+    return _first_password_code_buckets.take(f"first-password:{account_id}")
+
+
+def first_password_code_refund(account_id: str) -> None:
+    """Give the check back — only after the code was right."""
+    _first_password_code_buckets.refund(f"first-password:{account_id}")
+
+
 def reset_account_credential_budget() -> None:
     """Forget every account bucket.
 
@@ -359,6 +384,7 @@ def reset_account_credential_budget() -> None:
     _account_buckets._buckets.clear()  # noqa: SLF001 - the module owns this object
     _forgot_password_buckets._buckets.clear()  # noqa: SLF001 - and this one
     _forgot_password_global._buckets.clear()  # noqa: SLF001 - and the process-wide one
+    _first_password_code_buckets._buckets.clear()  # noqa: SLF001 - and the first-password one
 
 
 class RateLimitMiddleware:

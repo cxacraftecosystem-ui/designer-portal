@@ -54,18 +54,8 @@ import { isTwoFactorChallenge } from "@/lib/twoFactor";
 import type { User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (config: { client_id: string; callback: (response: { credential: string }) => void }) => void;
-          renderButton: (element: HTMLElement, options: Record<string, string | boolean | number>) => void;
-        };
-      };
-    };
-  }
-}
+// `window.google` is declared once, in `lib/googleIdentity.ts`, which the Settings card shares.
+import "@/lib/googleIdentity";
 
 /** Official provider marks (inline SVG — no external requests). */
 function GoogleMark({ className }: { className?: string }) {

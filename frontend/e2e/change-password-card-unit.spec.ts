@@ -11,9 +11,9 @@ import {
   currentPasswordRefused,
   hasOwnPassword,
   newPasswordProblem,
-  signInAgainRequired
+  providerConfirmationRequired
 } from "@/lib/passwordChange";
-import { MAX_PASSWORD_LENGTH, SIGN_IN_AGAIN_HEADER } from "@/lib/signIn";
+import { CONFIRM_PROVIDER_HEADER, MAX_PASSWORD_LENGTH } from "@/lib/signIn";
 
 /**
  * "CHANGE PASSWORD" IN SETTINGS — A PASSWORD ACCOUNT ROTATING ITS OWN SECRET, WITHOUT ASKING ANYBODY.
@@ -70,8 +70,10 @@ test("the card decides between changing and setting a password after its hooks",
   expect(gate, "the gate was located").toBeGreaterThan(-1);
   expect(mode, "the mode was located").toBeGreaterThan(gate);
   // Rules of hooks: an early return above a hook would change the hook count between renders.
-  expect(gate).toBeGreaterThan(CARD.lastIndexOf("useEffect("));
-  expect(gate).toBeGreaterThan(CARD.lastIndexOf("useState("));
+  // The card's own hooks: `ConfirmItsYou`, below it, is a component of its own with its own hooks.
+  const card = CARD.slice(0, CARD.indexOf("function ConfirmItsYou("));
+  expect(gate).toBeGreaterThan(card.lastIndexOf("useEffect("));
+  expect(gate).toBeGreaterThan(card.lastIndexOf("useState("));
 });
 
 test("an account with no password is offered SET a password, and the server's own answer wins", () => {
@@ -85,18 +87,24 @@ test("an account with no password is offered SET a password, and the server's ow
   expect(CARD).toContain('settingFirst ? "Set a password" : "Change password"');
   // No current-password box for an account that has none.
   expect(CARD).toMatch(/\{settingFirst \? null : \(\s*<div>\s*<label htmlFor="settings-current-password"/);
-  expect(SUBMIT).toContain("settingFirst ? await setFirstPassword(next, askCode ? code : undefined) : await changeOwnPassword(current, next);");
+  expect(SUBMIT).toContain("settingFirst && proof ? await setFirstPassword(next, proof, askCode ? code : undefined) : await changeOwnPassword(current, next);");
   expect(FIRST_PASSWORD_NOTE).toMatch(/or the way you sign in now/);
 });
 
-test("a first password from an old session is answered with a way to sign in again, read off the header", () => {
-  const headers = new Headers({ [SIGN_IN_AGAIN_HEADER]: "1" });
-  expect(signInAgainRequired(new ApiError(400, "For your security, sign out and sign in again", null, headers))).toBe(true);
-  expect(signInAgainRequired(new ApiError(400, "For your security, sign out and sign in again", null))).toBe(false);
-  expect(signInAgainRequired(new ApiError(401, "x", null, headers))).toBe(false);
-  expect(SUBMIT).toContain("if (settingFirst && signInAgainRequired(err)) {");
-  expect(CARD).toContain("Sign out and sign in again");
-  expect(CARD).toContain("onClick={() => void logout()}");
+test("a first password needs a fresh provider sign-in, and a refused one is asked for again", () => {
+  // The server names the provider to confirm with on the header; the sentence is never parsed.
+  const named = new Headers({ [CONFIRM_PROVIDER_HEADER]: "MICROSOFT" });
+  expect(providerConfirmationRequired(new ApiError(400, "Confirm it's you", null, named))).toBe("MICROSOFT");
+  expect(providerConfirmationRequired(new ApiError(400, "Confirm it's you", null))).toBe(null);
+  expect(providerConfirmationRequired(new ApiError(401, "x", null, named))).toBe(null);
+  expect(providerConfirmationRequired(new ApiError(400, "x", null, new Headers({ [CONFIRM_PROVIDER_HEADER]: "ELSEWHERE" })))).toBe(null);
+  // Nothing is sent without a proof, the boxes wait for it, and a refused proof is dropped.
+  expect(SUBMIT).toContain("if (settingFirst && !proof) {");
+  expect(CARD).toContain("{settingFirst && !proof ? (");
+  expect(SUBMIT).toContain("const confirmAgain = settingFirst ? providerConfirmationRequired(err) : null;");
+  expect(SUBMIT).toMatch(/if \(confirmAgain\) \{\s*\/\/[^\n]*\n\s*setProof\(null\);/);
+  // The old "sign out and sign in again" offer is gone: a session is no longer the proof.
+  expect(CARD).not.toContain("Sign out and sign in again");
 });
 
 test("it sits on the account's own settings hub, with no role gate", () => {
@@ -194,7 +202,7 @@ test("the session the change answers with is adopted before anything re-reads /m
     account; the other order is a re-read refused with the token the change just retired, and a tab
     signed out by its own success. With no header the card does exactly what it did before.
   */
-  expect(SUBMIT).toContain("const fresh = settingFirst ? await setFirstPassword(next, askCode ? code : undefined) : await changeOwnPassword(current, next);");
+  expect(SUBMIT).toContain("settingFirst && proof ? await setFirstPassword(next, proof, askCode ? code : undefined) : await changeOwnPassword(current, next);");
   const adopted = SUBMIT.slice(SUBMIT.indexOf("if (fresh) {"), SUBMIT.indexOf("} else {"));
   expect(adopted, "the adoption arm was located").toContain("setToken(fresh);");
   expect(adopted.indexOf("setToken(fresh);"), "adopted first").toBeLessThan(adopted.indexOf("void refreshMe();"));
@@ -211,7 +219,7 @@ test("the session the change answers with is adopted before anything re-reads /m
 test("it is drawn with the data-screen recipes, not the auth stack", () => {
   // §11.2 of the frontend reference: a data screen is never standardised onto the auth `Button`.
   expect(CARD).not.toMatch(/from "@\/components\/ui\/button"/);
-  expect(CARD).toContain('<section className="panel p-5">');
+  expect(CARD).toContain('<section ref={section} className="panel scroll-mt-28 p-5">');
   // Four boxes: current, new, repeat — and the two-step code, drawn only for a first password on an
   // account with two-step verification on.
   expect((CARD.match(/className="field-input/g) ?? []).length).toBe(4);

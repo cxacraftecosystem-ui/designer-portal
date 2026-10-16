@@ -191,6 +191,17 @@ test("an app state is handed to the Android app over its own scheme", () => {
   );
 });
 
+test("a confirmation before a first password goes back to Settings, not to the sign-in page", async () => {
+  const target = callbackTarget(new URLSearchParams("code=abc&state=pw.s4&session_state=zzz"));
+  expect(target.startsWith("/settings#oidc=")).toBe(true);
+  expect(parseCallbackFragment(target.slice("/settings".length))).toEqual({ code: "abc", state: "pw.s4", error: null });
+  const stored = new Map<string, string>();
+  const storage = { setItem: (key: string, value: string) => void stored.set(key, value) };
+  const yahoo = configuredOidcProviders({ yahooClientId: "y" })[0];
+  const url = new URL(await beginSignIn(yahoo, "https://x", null, storage, "confirm"));
+  expect(url.searchParams.get("state")?.startsWith("pw.")).toBe(true);
+});
+
 test("the route never caches the code and never leaks it in a Referer", () => {
   expect(CALLBACK_ROUTE).toContain('"Cache-Control", "no-store"');
   expect(CALLBACK_ROUTE).toContain('"Referrer-Policy", "no-referrer"');
