@@ -16,7 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -560,7 +559,7 @@ fun RosterLoadingRow(label: String) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        CircularProgressIndicator(modifier = Modifier.size(18.dp))
+        FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
         Text(label, color = MaterialTheme.field.muted, fontSize = 13.sp)
     }
 }

@@ -42,6 +42,7 @@
  *   so before the act, not after it.
  */
 
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { BadgeCheck, DraftingCompass, FileClock, FileText, Images, Layers, ListChecks, ListPlus, Loader2, QrCode, Send, SquarePen, Undo2, GitCompareArrows} from "lucide-react";
@@ -113,12 +114,7 @@ function StageProgress({ score }: { score: DwStageCompleteness | undefined }) {
   const complete = score?.isComplete ?? false;
   return (
     <div className="flex min-w-0 flex-1 items-center gap-3">
-      <div className="h-1.5 w-full max-w-40 overflow-hidden rounded-full bg-field-200">
-        <div
-          className={complete ? "h-full rounded-full bg-success-600" : "h-full rounded-full bg-purple-700"}
-          style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
-        />
-      </div>
+      <ProgressBar percent={percent} tone={complete ? "done" : "brand"} className="max-w-40" />
       <span className="shrink-0 text-xs text-ink-500">
         {complete
           ? "Complete"
@@ -1770,21 +1766,17 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
                   : null}
               </span>
             </div>
-            <div
-              className="mt-1.5 h-2 overflow-hidden rounded-full bg-field-200"
+            <ProgressBar
+              percent={
+                readiness && readiness.stagesTotal ? Math.round((100 * readiness.stagesComplete) / readiness.stagesTotal) : 0
+              }
+              className="mt-1.5 h-2"
               role="progressbar"
               aria-label="Stages complete"
               aria-valuemin={0}
               aria-valuemax={readiness?.stagesTotal ?? 0}
               aria-valuenow={readiness?.stagesComplete ?? 0}
-            >
-              <div
-                className="h-full rounded-full bg-purple-700"
-                style={{
-                  width: `${readiness && readiness.stagesTotal ? Math.round((100 * readiness.stagesComplete) / readiness.stagesTotal) : 0}%`
-                }}
-              />
-            </div>
+            />
           </div>
           {/* The two things that go stale silently, both stated rather than assumed. */}
           <p className="text-xs leading-5 text-ink-500">

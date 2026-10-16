@@ -22,7 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -204,7 +204,7 @@ internal fun DwModelViewer(
                     Icon(Icons.Filled.ViewInAr, contentDescription = null, modifier = Modifier.size(16.dp))
                     Text("Show in 3D · ${dwModelFormatLabel(format)}", modifier = Modifier.padding(start = 6.dp))
                 }
-                is ModelPhase.Fetching -> CircularProgressIndicator(modifier = Modifier.size(22.dp))
+                is ModelPhase.Fetching -> FieldCircularProgressIndicator(modifier = Modifier.size(22.dp))
                 is ModelPhase.Failed -> Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -227,7 +227,7 @@ internal fun DwModelViewer(
                         },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 320.dp).fillMaxSize(),
                     )
-                    if (pageState == "loading") CircularProgressIndicator(modifier = Modifier.size(22.dp))
+                    if (pageState == "loading") FieldCircularProgressIndicator(modifier = Modifier.size(22.dp))
                 }
             }
         }

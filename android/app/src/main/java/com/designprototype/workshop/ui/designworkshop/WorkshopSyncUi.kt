@@ -18,7 +18,7 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -287,7 +287,7 @@ internal fun DeviceSyncBanner(
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
         if (busy) {
-            CircularProgressIndicator(
+            FieldCircularProgressIndicator(
                 modifier = Modifier.size(15.dp),
                 color = MaterialTheme.field.onWarningContainer,
                 strokeWidth = 2.dp
