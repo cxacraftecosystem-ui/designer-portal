@@ -1481,7 +1481,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
    * Since 2026-10-09 an admin may be appointed a workshop's inspector, Assistant Director or Regional
    * Director, and the server then refuses them every write to it, through the admin arm too. Asked of
    * the route's id, which the hook resolves to the repository's (a workshop only this device holds has
-   * no posts and asks nothing). It switches off exactly the controls that write — Edit details, the
+   * no posts and asks nothing). It switches off exactly the controls that write — Update details, the
    * status buttons and the consent row here, and the forms on the screens below this one, which ask
    * the same question — and says why above them. See `HeldPostNotice`.
    */
@@ -1592,7 +1592,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
             {canRunDesignWorkshops(user) && !neverSent && postRefusal === null && frozenReason === null ? (
               <Link href={`/design-workshops/${id}/edit`} className="field-button-secondary">
                 <SquarePen className="h-4 w-4" aria-hidden />
-                Edit details
+                Update details
               </Link>
             ) : null}
             {/* Tags are printed once, early, for the whole workshop, so the control belongs to the

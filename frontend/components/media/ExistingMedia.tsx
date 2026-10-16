@@ -20,6 +20,7 @@ import { TranscriptBlock } from "@/components/media/TranscriptBlock";
 import { MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { ApiError, apiFetch, listResource } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { downloadMediaUrl } from "@/lib/localMediaDownload";
 import type { MediaFile } from "@/lib/types";
 import { useConfirm } from "@/components/dialogs";
 
@@ -92,7 +93,8 @@ export function ExistingMedia({
   linkedRecordType,
   linkedRecordId,
   recordHold,
-  title = "Previously uploaded media"
+  title = "Previously uploaded media",
+  readOnly = false
 }: {
   linkedRecordType: string;
   linkedRecordId: string;
@@ -106,6 +108,13 @@ export function ExistingMedia({
    */
   recordHold: HeldPostRefusal;
   title?: string;
+  /**
+   * A record's READ-ONLY page (owner ruling, 2026-10-16: a record opens to be read, and changing it
+   * is the separate "Update"). The files are still previewed, played and transcribed, and each one
+   * gains a Download button; the ✕ is not drawn at all — removing a file is a change to the record
+   * and belongs to the Update form, where this same panel draws it.
+   */
+  readOnly?: boolean;
 }) {
   const [items, setItems] = useState<MediaFile[] | null>(null);
   /**
@@ -335,7 +344,8 @@ export function ExistingMedia({
             panel has asked for so far. Those two numbers were the same thing right up until a
             record carried more than one page, which is precisely when the sentence mattered. */}
         <p className="mt-1 text-sm text-ink-muted">
-          {total} file{total === 1 ? "" : "s"} already attached. Audio transcripts appear once processing finishes. Use the ✕ on a file to remove it.
+          {total} file{total === 1 ? "" : "s"} already attached. Audio transcripts appear once processing finishes.
+          {readOnly ? " Open a file to preview it, or download it." : " Use the ✕ on a file to remove it."}
         </p>
         {hidden > 0 ? (
           <p className="mt-1 text-sm text-ink-muted">
@@ -450,11 +460,16 @@ export function ExistingMedia({
               <MediaPreviewTile
                 item={preview}
                 onOpen={() => setActive(preview)}
-                onRemove={removingId === media.id ? undefined : () => removeMedia(media)}
+                onRemove={readOnly || removingId === media.id ? undefined : () => removeMedia(media)}
                 removeLabel="Remove"
                 removeHeld={writesHeld(hold)}
                 removeDescribedBy={typeof hold === "string" ? heldNoticeId : undefined}
                 statusLabel={typeof hold === "string" ? MEDIA_HELD_LABEL : null}
+                onDownload={
+                  readOnly && media.url
+                    ? () => void downloadMediaUrl(media.url as string, media.originalFilename, media.mimeType)
+                    : undefined
+                }
               />
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium text-ink" title={media.originalFilename}>

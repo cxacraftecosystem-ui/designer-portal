@@ -56,6 +56,7 @@ import com.designprototype.workshop.data.dwRefId
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.ui.DwQrLiveScanControl
 import com.designprototype.workshop.ui.DwQrScanControl
+import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectCreateAction
@@ -863,7 +864,7 @@ internal fun DwReferenceSelectField(
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(Modifier.size(6.dp))
-                Text("Edit this $noun", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                Text("${RecordOpen.UPDATE_LABEL} this $noun", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             }
         }
 

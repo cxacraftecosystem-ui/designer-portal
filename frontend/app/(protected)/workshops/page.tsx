@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { MapPinned } from "lucide-react";
 
 import { CollabDialog } from "@/components/CollabDialog";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -16,6 +17,7 @@ import { DateRangeField } from "@/components/forms/DateRangeField";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { useEditDeepLink } from "@/components/hooks/useEditDeepLink";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { UploadTray } from "@/components/media/UploadTray";
@@ -34,6 +36,7 @@ import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/format";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { locationFromForm, requiredText, textValue } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { uploadMediaBatch, type BatchProgress } from "@/lib/media";
@@ -266,10 +269,17 @@ function WorkshopsPageBody() {
     }
   }
 
+  /**
+   * Search, page and scroll, so Back from a workshop's read-only page lands on the same rows. Recalled
+   * once before the first fetch — `placeRestored` holds that fetch until it has been.
+   */
+  const memory = useListMemory("workshops", { query, applied, page }, data !== null);
+  const [placeRestored, setPlaceRestored] = useState(false);
   useEffect(() => {
+    if (!placeRestored) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, applied]);
+  }, [page, applied, placeRestored]);
 
   // The linked-artisan / craft pickers only need loading once.
   useEffect(() => {
@@ -309,6 +319,22 @@ function WorkshopsPageBody() {
     }, 350);
     return () => clearTimeout(timer);
   }, [query]);
+
+  // AFTER the debounce effect on purpose: effects run in declaration order, so the debounce's own
+  // first run has already spent `skipFirstDebounce`, and the flag raised here is the one that stops
+  // the restored query being debounced into a page-1 reset.
+  useEffect(() => {
+    const remembered = memory.recall();
+    if (remembered) {
+      if ((remembered.query ?? "") !== "") skipFirstDebounce.current = true;
+      setQuery(remembered.query ?? "");
+      setApplied(remembered.applied ?? "");
+      setPage(remembered.page ?? 1);
+    }
+    setPlaceRestored(true);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Warn on hard navigation (close tab / reload) while the workshop form has unsaved edits.
   useEffect(() => {
@@ -898,9 +924,10 @@ function WorkshopsPageBody() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {rows.map((workshop) => (
-                  <tr key={workshop.id}>
+                  // The whole row opens the workshop read-only; Update loads it into the form above.
+                  <OpenableRow key={workshop.id} href={RECORD_VIEW_HREF.workshop(workshop.id)}>
                     <td className="px-4 py-3">
-                      <div className="font-medium text-ink-900">{workshop.title}</div>
+                      <OpenableRowLink href={RECORD_VIEW_HREF.workshop(workshop.id)}>{workshop.title?.trim() || "Untitled workshop"}</OpenableRowLink>
                       <div className="text-xs text-ink-500">{workshop.description ?? "-"}</div>
                     </td>
                     <td className="px-4 py-3 text-ink-700">
@@ -917,7 +944,7 @@ function WorkshopsPageBody() {
                       <RowActions>
                         {allowManage ? (
                           <button className={rowAction("edit")} onClick={() => guard(() => resetForm(workshop))}>
-                            Edit
+                            Update
                           </button>
                         ) : null}
                         <button className={rowAction("neutral")} onClick={() => setCollabId(workshop.id)}>
@@ -935,7 +962,7 @@ function WorkshopsPageBody() {
                         ) : null}
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                 ))}
               </tbody>
             </table>

@@ -51,6 +51,7 @@ import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.DesignerStandingChips
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.InstitutionVocabulary
+import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.RosterEmptyState
 import com.designprototype.workshop.ui.RosterFilterButton
 import com.designprototype.workshop.ui.RosterFilterSheet
@@ -802,7 +803,7 @@ private fun RosterCard(
                 OutlinedButton(onClick = onEdit, enabled = !busy, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Edit")
+                    Text(RecordOpen.UPDATE_LABEL)
                 }
                 OutlinedButton(onClick = onToggleAccess, enabled = !busy, modifier = Modifier.weight(1f)) {
                     Icon(

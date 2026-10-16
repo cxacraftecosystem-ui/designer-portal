@@ -98,6 +98,7 @@ import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { DateRangePicker, toIsoDate } from "@/components/forms/DateTimeField";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { PageHeader } from "@/components/PageHeader";
 import { RecordCodeCard } from "@/components/RecordCode";
 import { Pagination } from "@/components/Pagination";
@@ -1961,11 +1962,12 @@ function DesignWorkshopsPageBody() {
               <tbody className="divide-y divide-line-200">
                 {rows.map((workshop) => (
                   <Fragment key={workshop.id}>
-                  <tr>
+                  {/* The whole row opens the workshop's own page — its read-only overview, where
+                      "Update details" is the way to the form. Open, Report, Show code, Move and
+                      Delete keep their own clicks (`OpenableRow`). */}
+                  <OpenableRow href={`/design-workshops/${workshop.id}`}>
                     <td className="px-4 py-3">
-                      <Link href={`/design-workshops/${workshop.id}`} className="font-medium text-ink-900 underline-offset-2 hover:underline">
-                        {workshop.title}
-                      </Link>
+                      <OpenableRowLink href={`/design-workshops/${workshop.id}`}>{workshop.title}</OpenableRowLink>
                       {/* The code is denormalised from stage 1 and is null until that stage has
                           been saved — so its absence means "stage 1 is not done", not "missing". */}
                       <div className="text-xs text-ink-500">{workshop.workshopCode ?? "No workshop code yet"}</div>
@@ -2064,7 +2066,7 @@ function DesignWorkshopsPageBody() {
                         ) : null}
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                   {codeFor?.id === workshop.id ? (
                     /*
                       THE WORKSHOP'S OWN CODE, and the whole of what "join by QR" can honestly be.

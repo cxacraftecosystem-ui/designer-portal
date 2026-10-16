@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { GitBranch, MessageSquare, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { CollabDialog } from "@/components/CollabDialog";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { EMPTY_FUNNEL, FunnelFilters, type FunnelValue, type FunnelWorkshop } from "@/components/FunnelFilters";
@@ -19,9 +20,11 @@ import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { ProcessForm, type ProcessRecord } from "@/components/forms/ProcessForm";
 import { useEditDeepLink } from "@/components/hooks/useEditDeepLink";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { canCreateRecords } from "@/lib/permissions";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { PageResult } from "@/lib/types";
 
 function ProcessesPageInner() {
@@ -84,6 +87,8 @@ function ProcessesPageInner() {
    * refresh from overwriting the fresher one the user's next click asked for.
    */
   const currentLoad = useRef(0);
+  /** Search, page, funnel and scroll, so Back from a process's page lands on the same rows. */
+  const memory = useListMemory("processes", { query, applied, page, funnel }, data !== null);
 
   async function load(pageToLoad = page) {
     const generation = (currentLoad.current += 1);
@@ -126,6 +131,18 @@ function ProcessesPageInner() {
   }, [query]);
 
   function onFunnelChange(next: FunnelValue, _workshop: FunnelWorkshop | null) {
+    // The funnel's FIRST answer is when this page learns its defaults — and so when a remembered
+    // place (Back from a record's page) replaces them. See `useListMemory`.
+    const remembered = funnelReady ? null : memory.recall();
+    if (remembered) {
+      if ((remembered.query ?? "") !== query) skipFirstDebounce.current = true;
+      setQuery(remembered.query ?? "");
+      setApplied(remembered.applied ?? "");
+      setFunnel(remembered.funnel ?? next);
+      setPage(remembered.page ?? 1);
+      setFunnelReady(true);
+      return;
+    }
     setFunnel(next);
     setPage(1);
     setFunnelReady(true);
@@ -161,7 +178,7 @@ function ProcessesPageInner() {
     onEdit: setEditing,
     onError: setError,
     // PATCH /processes/{id} is gated by `get_current_user` and decides field by field inside
-    // `guard_record_edit`, exactly like the row Edit button below, which is offered to everyone.
+    // `guard_record_edit`, exactly like the row Update button below, which is offered to everyone.
     allowed: true,
     errorMessage: "Unable to load this process"
   });
@@ -228,7 +245,7 @@ function ProcessesPageInner() {
     return (
       <>
         <PageHeader
-          title="Edit process"
+          title="Update process"
           description="Update the process record; existing step media is preserved unless you remove it."
           icon={<GitBranch className="h-5 w-5" aria-hidden />}
         />
@@ -310,9 +327,10 @@ function ProcessesPageInner() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((process) => (
-                  <tr key={process.id}>
+                  // The whole row opens the process read-only; Update loads it into the form here.
+                  <OpenableRow key={process.id} href={RECORD_VIEW_HREF.process(process.id)}>
                     <td className="px-4 py-3">
-                      <div className="font-medium text-ink-900">{process.name}</div>
+                      <OpenableRowLink href={RECORD_VIEW_HREF.process(process.id)}>{process.name}</OpenableRowLink>
                       {process.notes ? <div className="max-w-xs truncate text-xs text-ink-500">{process.notes}</div> : null}
                     </td>
                     <td className="px-4 py-3 text-ink-700">{process.product?.productName ?? "-"}</td>
@@ -331,7 +349,7 @@ function ProcessesPageInner() {
                           type="button"
                         >
                           <Pencil className="h-3.5 w-3.5" aria-hidden />
-                          {editLoadingId === process.id ? "Loading..." : "Edit"}
+                          {editLoadingId === process.id ? "Loading..." : "Update"}
                         </button>
                         <button className={rowAction("neutral")} onClick={() => setCollabId(process.id)} type="button">
                           <MessageSquare className="h-3.5 w-3.5" aria-hidden />
@@ -345,7 +363,7 @@ function ProcessesPageInner() {
                         ) : null}
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                 ))}
               </tbody>
             </table>

@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react
 import { AudioLines, Images, Loader2, QrCode, Upload } from "lucide-react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import {
   HELD_POST_PENDING_FILES,
   HeldPostNotice,
@@ -45,6 +46,7 @@ import { bytes, formatDateTime } from "@/lib/format";
 import { locationFromForm, textValue } from "@/lib/forms";
 import { inferMediaType, transcribeMediaNow, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { isAdmin } from "@/lib/permissions";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
 import { WORKSHOP_OPTION_PAGE_SIZE, fieldWorkshopOptions } from "@/lib/workshopOptions";
 import type {
@@ -851,7 +853,10 @@ function MediaPageBody() {
                   const hold = holdOf(item);
                   return (
                     <Fragment key={item.id}>
-                      <tr>
+                      {/* The whole row opens the file's own read-only page — preview, transcript,
+                          Download. The preview tile, the transcript disclosure and every button keep
+                          their own clicks (`OpenableRow`). */}
+                      <OpenableRow href={RECORD_VIEW_HREF.media(item.id)}>
                         <td className="px-4 py-3">
                           {item.url ? (
                             <div className="w-36">
@@ -888,7 +893,9 @@ function MediaPageBody() {
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <div className="font-medium text-ink-900">{item.originalFilename}</div>
+                          <OpenableRowLink href={RECORD_VIEW_HREF.media(item.id)} className="break-all">
+                            {item.originalFilename}
+                          </OpenableRowLink>
                           {item.caption ? <div className="max-w-xs truncate text-xs text-ink-500">{item.caption}</div> : null}
                         </td>
                         <td className="px-4 py-3 text-ink-700">{item.mediaType}</td>
@@ -898,7 +905,8 @@ function MediaPageBody() {
                         </td>
                         <td className="px-4 py-3 text-ink-700">
                           {item.transcriptText ? (
-                            <details>
+                            // `data-row-ignore`: reading the open transcript is not a press on the row.
+                            <details data-row-ignore="">
                               <summary className="cursor-pointer font-semibold text-field-700">View transcript</summary>
                               <div className="mt-2 max-h-64 min-w-64 overflow-auto rounded-md bg-field-100 p-3">
                                 <Markdown text={item.transcriptText} />
@@ -978,13 +986,13 @@ function MediaPageBody() {
                             ) : null}
                           </RowActions>
                         </td>
-                      </tr>
+                      </OpenableRow>
                       {codeFor === item.id ? (
-                        /* An expanded row and not a route, because a media file has no per-record page
-                           on the web — `lib/workshopCodeLookup.ts` says so in as many words and lands a
+                        /* An expanded row, kept beside the file's own read-only page (/media/[id],
+                           2026-10-16) because the code is what a designer prints for a row they are
+                           already looking at in the list. `lib/workshopCodeLookup.ts` still lands a
                            scanned M code on the stored object or, when the caller is not entitled to the
-                           bytes, on this list. This row is the closest thing a designer opens for ONE
-                           file, so it is where the code for one file belongs. Android shows the same
+                           bytes, on this list. Android shows the same
                            card on its own media detail (`RecordCodeSection(..., MEDIA, ...)` in
                            MainActivity); until now the web showed none, and two clients disagreeing
                            about which records have a code is a defect in itself.

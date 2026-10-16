@@ -43,6 +43,7 @@ import { UploadTray } from "@/components/media/UploadTray";
 import { RecordingStrip } from "@/components/media/Waveform";
 import { MegaCard } from "@/components/dashboard/MegaCard";
 import { useMegaCards } from "@/components/dashboard/useMegaCards";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { PageHeader } from "@/components/PageHeader";
 import { InstrumentPicker, SHARED_INSTRUMENT } from "@/components/questionnaire/InstrumentPicker";
 import { Pagination } from "@/components/Pagination";
@@ -74,6 +75,7 @@ import {
 } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { cappedListNotice } from "@/components/data/cappedList";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { canManageQuestionnaire, canRunDesignWorkshops, hasRank, isAdmin } from "@/lib/permissions";
 import { UploadsProvider, useEagerStaging, useUploads } from "@/lib/uploads";
 import type { Artisan, MediaFile, PageResult, QuestionnaireInterview, QuestionnaireQuestion, QuestionnaireSection } from "@/lib/types";
@@ -3129,16 +3131,21 @@ function QuestionnairePageBody() {
               <tbody className="divide-y divide-line-200">
                 {data.items.map((interview) => (
                   <Fragment key={interview.id}>
-                    <tr>
+                    {/* The whole row opens the sitting read-only; Update, Code, Delete and the
+                        answers disclosure keep their own clicks (`OpenableRow`). */}
+                    <OpenableRow href={RECORD_VIEW_HREF.interview(interview.id)}>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-ink-900">{interview.title}</div>
+                        <OpenableRowLink href={RECORD_VIEW_HREF.interview(interview.id)}>
+                          {interview.title?.trim() || "Untitled interview"}
+                        </OpenableRowLink>
                         <div className="text-xs text-ink-500">{interview.place ?? "-"}</div>
                       </td>
                       <td className="px-4 py-3 text-ink-700">
                         {interview.artisans?.map((link) => link.artisan.name).join(", ") || "-"}
                       </td>
                       <td className="px-4 py-3 text-ink-700">
-                        <details>
+                        {/* `data-row-ignore`: reading the open answers is not a press on the row. */}
+                        <details data-row-ignore="">
                           <summary className="cursor-pointer font-semibold text-field-700">{interview.responses?.length ?? 0} answers</summary>
                           <div className="mt-2 grid max-w-lg gap-2">
                             {interview.responses?.map((response) => (
@@ -3190,7 +3197,7 @@ function QuestionnairePageBody() {
                           */}
                           <Link className={rowAction()} href={`/questionnaire?edit=${interview.id}`}>
                             <Pencil className="h-3.5 w-3.5" aria-hidden />
-                            Edit
+                            Update
                           </Link>
                           {adminMode ? (
                             <button className={rowAction("danger")} onClick={() => remove(interview.id)}>
@@ -3199,7 +3206,7 @@ function QuestionnairePageBody() {
                           ) : null}
                         </RowActions>
                       </td>
-                    </tr>
+                    </OpenableRow>
                     {codeFor === interview.id ? (
                       /* An expanded row and not a route, because an interview has no per-record page
                          on the web — `lib/workshopCodeLookup.ts` says so in as many words and lands a
@@ -4502,7 +4509,7 @@ function QuestionTile({
             <>
               <button type="button" className="field-button-secondary" onClick={() => setEditing(true)} disabled={disabled}>
                 <Pencil className="h-4 w-4" aria-hidden />
-                Edit
+                Update
               </button>
               {otherSections.length ? (
                 <label className="flex items-center gap-1.5 text-xs text-ink-muted">

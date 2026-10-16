@@ -893,7 +893,7 @@ private fun AccessCard(
                 OutlinedButton(onClick = onEdit, enabled = !busy, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Edit")
+                    Text(RecordOpen.UPDATE_LABEL)
                 }
                 if (row.status == AccessStatus.ACTIVE) {
                     // Never labelled "Remove". The verb has to say what happens, and what happens is

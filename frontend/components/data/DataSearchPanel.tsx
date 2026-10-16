@@ -32,9 +32,11 @@ import {
   type SearchRecordType
 } from "@/components/search/SearchFilters";
 import { useAuth } from "@/components/AuthProvider";
+import { OpenableCard } from "@/components/data/OpenableRow";
 import { apiFetch, buildQuery } from "@/lib/api";
 import type { DwSummary } from "@/lib/designWorkshops";
 import { canRunDesignWorkshops, canViewDesignWorkshopData } from "@/lib/permissions";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { Artisan, MediaFile, ProductDocumentation, ToolDocumentation, Workshop } from "@/lib/types";
 
 type SearchResult = {
@@ -111,7 +113,7 @@ function rowsFrom(
       kind: "Artisan",
       title: a.name,
       subtitle: [a.craft?.name, a.place].filter(Boolean).join(" · "),
-      href: `/artisans/${a.id}/edit`,
+      href: RECORD_VIEW_HREF.artisan(a.id),
       locate: { type: "artisan", id: a.id }
     });
   }
@@ -121,7 +123,7 @@ function rowsFrom(
       kind: "Product",
       title: p.productName,
       subtitle: p.artisanName ?? "",
-      href: `/products/${p.id}/edit`,
+      href: RECORD_VIEW_HREF.product(p.id),
       locate: { type: "product", id: p.id }
     });
   }
@@ -131,7 +133,7 @@ function rowsFrom(
       kind: "Tool",
       title: t.toolkitName,
       subtitle: t.artisanName ?? "",
-      href: `/tools/${t.id}/edit`,
+      href: RECORD_VIEW_HREF.tool(t.id),
       locate: { type: "tool", id: t.id }
     });
   }
@@ -141,10 +143,8 @@ function rowsFrom(
       kind: "Workshop",
       title: w.title,
       subtitle: [w.place, w.date ? new Date(w.date).toLocaleDateString() : ""].filter(Boolean).join(" · "),
-      // The id has to travel: a workshop is edited inline on its list page, so `?edit=` is its
-      // equivalent of the `/[id]/edit` route the other record types have. A bare "/workshops" here
-      // opened the blank create form, even though `locate` on the next line proves the id was known.
-      href: `/workshops?edit=${w.id}`,
+      // The record's read-only page, like every other row here (`lib/recordView.ts`).
+      href: RECORD_VIEW_HREF.workshop(w.id),
       locate: { type: "workshop", id: w.id }
     });
   }
@@ -154,8 +154,7 @@ function rowsFrom(
       kind: "Media",
       title: m.caption || m.originalFilename,
       subtitle: [m.mediaType, m.uploadedBy?.name].filter(Boolean).join(" · "),
-      href: m.url ?? null,
-      external: true,
+      href: RECORD_VIEW_HREF.media(m.id),
       locate: { type: "media", id: m.id }
     });
   }
@@ -412,8 +411,12 @@ export function DataSearchPanel({ onReveal }: { onReveal: (path: string) => void
         <>
           <ul className="grid gap-1.5">
             {rows.map((row) => (
-              <li
+              // The whole row opens the record; "Show in folders" and "Open" keep their own clicks.
+              <OpenableCard
+                as="li"
                 key={row.key}
+                href={row.href}
+                external={row.external}
                 className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2"
               >
                 <div className="flex min-w-0 items-center gap-2">
@@ -451,7 +454,7 @@ export function DataSearchPanel({ onReveal }: { onReveal: (path: string) => void
                     )
                   ) : null}
                 </div>
-              </li>
+              </OpenableCard>
             ))}
           </ul>
           {total > rows.length ? (

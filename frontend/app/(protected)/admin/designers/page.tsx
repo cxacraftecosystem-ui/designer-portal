@@ -802,7 +802,7 @@ function DesignerRosterPageInner() {
                       <td className="px-4 py-3 text-right">
                         <RowActions>
                           <button type="button" className={rowAction("edit")} onClick={() => startEdit(entry)}>
-                            Edit
+                            Update
                           </button>
                           {accountId ? (
                             <Link className={rowAction("neutral")} href={`/designers/${accountId}/profile`}>

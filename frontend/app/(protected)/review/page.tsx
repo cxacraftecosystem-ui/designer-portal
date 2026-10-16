@@ -478,7 +478,7 @@ export default function ReviewPage() {
                                 onClick={() => toggleAction(item, "edit")}
                                 disabled={submitting}
                               >
-                                {activeAction === "edit" ? "Close editor" : "Edit"}
+                                {activeAction === "edit" ? "Close editor" : "Update"}
                               </button>
                             )}
                             <button

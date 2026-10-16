@@ -114,20 +114,20 @@ test("PageSelvedge names the island's real rung", () => {
  * 2. The artisan row has a real control
  * ──────────────────────────────────────────────────────────────────────────── */
 
-test("the Name cell offers the row's action as a focusable button", () => {
+/*
+  SINCE 2026-10-16 THE ROW OPENS THE ARTISAN, and the launchers moved to the artisan's own page
+  (owner ruling: a record opens read-only from anywhere on its card). The keyboard half of the fix
+  this section pinned is kept, in its new form: the Name cell is a real link to the same place the
+  row goes, so Tab lands on it and Enter follows it. `e2e/record-view-unit.spec.ts` holds the rest.
+*/
+test("the Name cell offers the row's action as a focusable link", () => {
   const page = read(ARTISANS);
-  expect(page).toContain('<button\n                          type="button"');
-  expect(page).toContain("aria-expanded={selectedArtisan?.id === artisan.id}");
-  expect(page).toContain("aria-controls={selectedArtisan?.id === artisan.id ? LAUNCH_PANEL_ID : undefined}");
-  expect(page).toContain("<section id={LAUNCH_PANEL_ID}");
+  expect(page).toContain("<OpenableRow key={artisan.id} href={RECORD_VIEW_HREF.artisan(artisan.id)}>");
+  expect(page).toContain("<OpenableRowLink href={RECORD_VIEW_HREF.artisan(artisan.id)}>{artisan.name}</OpenableRowLink>");
 });
 
-test("the Name button really toggles, so aria-expanded is not a promise it cannot keep", () => {
-  // Nothing else in the page clears `selectedArtisan`; a select-only button would announce
-  // "expanded" for the rest of the session and then do nothing when pressed.
-  expect(read(ARTISANS)).toContain(
-    "setSelectedArtisan((current) => (current?.id === artisan.id ? null : artisan));"
-  );
+test("the row no longer selects, so there is no aria-expanded left to keep", () => {
+  expect(read(ARTISANS)).not.toContain("selectedArtisan");
 });
 
 test("the row keeps its implicit row role", () => {
@@ -137,8 +137,9 @@ test("the row keeps its implicit row role", () => {
 
 test("the three carry-forward launchers are already links, and stay links", () => {
   // Reported as pointer-only in the audit; they are <Link>s, which render focusable anchors. Pinned
-  // so a later refactor to a <div onClick> is caught here rather than re-reported as a finding.
-  expect(read(ARTISANS)).toContain("<Link key={item.href} href={item.href}");
+  // so a later refactor to a <div onClick> is caught here rather than re-reported as a finding. They
+  // live on the artisan's own page now.
+  expect(read("app/(protected)/artisans/[id]/page.tsx")).toContain("<Link key={item.href} href={item.href}");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

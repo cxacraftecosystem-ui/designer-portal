@@ -29,6 +29,7 @@ import { Field, TextInput } from "@/components/FormControls";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { cappedListNotice, cutOf } from "@/components/data/cappedList";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
@@ -707,14 +708,10 @@ export default function QuestionnairesPage() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((row) => (
-                  <tr key={row.id}>
+                  // The whole row opens the questionnaire; every action button keeps its own click.
+                  <OpenableRow key={row.id} href={`/questionnaires/${row.id}`}>
                     <td className="px-4 py-3">
-                      <Link
-                        href={`/questionnaires/${row.id}`}
-                        className="font-medium text-ink-900 underline-offset-2 hover:underline"
-                      >
-                        {row.title}
-                      </Link>
+                      <OpenableRowLink href={`/questionnaires/${row.id}`}>{row.title}</OpenableRowLink>
                       <div className="text-xs text-ink-500">
                         {/* The source file name is null for a questionnaire built in the app, which
                             is a fact worth showing rather than a blank: it tells a designer whether
@@ -827,7 +824,7 @@ export default function QuestionnairesPage() {
                         </button>
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                 ))}
               </tbody>
             </table>

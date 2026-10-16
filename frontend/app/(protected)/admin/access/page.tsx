@@ -1133,7 +1133,7 @@ function PlatformAccessScreen() {
                     <td className="px-4 py-3 text-right">
                       <RowActions>
                         <button type="button" className={rowAction("edit")} onClick={() => startEdit(entry)}>
-                          Edit
+                          Update
                         </button>
                         {entry.status === "ACTIVE" ? (
                           // Never labelled "Delete". The verb has to say what happens, and what

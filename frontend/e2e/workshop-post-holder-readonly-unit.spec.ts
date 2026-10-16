@@ -229,7 +229,7 @@ test("the notice is said into a live region that exists before the answer arrive
  */
 const SCREENS: ReadonlyArray<{ screen: string; path: string[]; must: string[]; mustNot?: string[] }> = [
   {
-    screen: "the stage index — Edit details, the status buttons and the consent row",
+    screen: "the stage index — Update details, the status buttons and the consent row",
     path: ["app", "(protected)", "design-workshops", "[id]", "page.tsx"],
     must: [
       "const postRefusal = useHeldPostRefusal(id);",

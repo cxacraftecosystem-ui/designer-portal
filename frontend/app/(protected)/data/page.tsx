@@ -41,6 +41,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { ComboBox, Dropdown } from "@/components/ui/Dropdown";
 import { DataSearchPanel } from "@/components/data/DataSearchPanel";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { API_BASE, apiFetch, buildQuery, getToken, listResource } from "@/lib/api";
 import { bytes, formatDateTime } from "@/lib/format";
 import {
@@ -48,6 +49,7 @@ import {
   canExportDesignWorkshopData,
   canViewDesignWorkshopData
 } from "@/lib/permissions";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import type {
   Artisan,
   Craft,
@@ -677,6 +679,11 @@ type BrowseTypeDef = {
   /** linkedRecordType value used by /media for this record type. */
   linkedType: string;
   editHref: (id: string) => string;
+  /**
+   * The record's READ-ONLY page — where a click on its row goes (owner ruling, 2026-10-16). Null for
+   * a type with no such page yet, whose row then offers only Update.
+   */
+  viewHref: ((id: string) => string) | null;
   load: (page: number) => Promise<BrowsePage>;
 };
 
@@ -702,6 +709,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Artisans",
     linkedType: "artisan",
     editHref: (id) => `/artisans/${id}/edit`,
+    viewHref: RECORD_VIEW_HREF.artisan,
     load: async (page) =>
       browsePage(await listResource<Artisan>("/artisans", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
@@ -714,6 +722,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Products",
     linkedType: "product",
     editHref: (id) => `/products/${id}/edit`,
+    viewHref: RECORD_VIEW_HREF.product,
     load: async (page) =>
       browsePage(await listResource<ProductDocumentation>("/products", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
@@ -726,6 +735,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Tools",
     linkedType: "tool",
     editHref: (id) => `/tools/${id}/edit`,
+    viewHref: RECORD_VIEW_HREF.tool,
     load: async (page) =>
       browsePage(await listResource<ToolDocumentation>("/tools", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
@@ -743,6 +753,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     // bare list route, which rendered the CREATE form: "Edit record" on a record the researcher had
     // already drilled into showed them an empty form, and filling it in made a second record.
     editHref: (id) => `/workshops?edit=${id}`,
+    viewHref: RECORD_VIEW_HREF.workshop,
     load: async (page) =>
       browsePage(await listResource<Workshop>("/workshops", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
@@ -755,6 +766,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Crafts",
     linkedType: "craft",
     editHref: (id) => `/crafts?edit=${id}`,
+    viewHref: RECORD_VIEW_HREF.craft,
     load: async (page) =>
       browsePage(await listResource<Craft & WithCreator>("/crafts", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
@@ -782,6 +794,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
       worse than the bug it replaced.
     */
     editHref: (id) => `/questionnaire?edit=${id}`,
+    viewHref: RECORD_VIEW_HREF.interview,
     load: async (page) =>
       browsePage(
         await listResource<QuestionnaireInterview>("/questionnaire/interviews", { page, pageSize: LIST_PAGE_CEILING }),
@@ -797,6 +810,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Processes",
     linkedType: "process",
     editHref: (id) => `/processes?edit=${id}`,
+    viewHref: RECORD_VIEW_HREF.process,
     load: async (page) =>
       browsePage(
         await listResource<{ id: string; name: string; createdAt?: string } & WithCreator>("/processes", {
@@ -815,6 +829,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Media",
     linkedType: "media",
     editHref: () => "/media",
+    viewHref: RECORD_VIEW_HREF.media,
     load: async (page) =>
       browsePage(await listResource<MediaFile>("/media", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
@@ -1122,26 +1137,42 @@ function BrowseByTypePanel() {
                   <th className="px-4 py-2.5">Name</th>
                   <th className="px-4 py-2.5">Creator</th>
                   <th className="px-4 py-2.5">Date</th>
-                  <th className="px-4 py-2.5 text-right">Open</th>
+                  <th className="px-4 py-2.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-200">
-                {(rows ?? []).map((row) => (
-                  <tr key={row.id}>
-                    <td className="px-4 py-2.5 font-medium text-ink-900">{row.name}</td>
-                    <td className="px-4 py-2.5 text-ink-700">{row.creator}</td>
-                    <td className="px-4 py-2.5 text-ink-700">{formatDateTime(row.createdAt)}</td>
-                    <td className="px-4 py-2.5 text-right">
-                      <Link
-                        href={def?.editHref(row.id) ?? "#"}
-                        className="inline-flex items-center gap-1 text-sm font-semibold text-purple-700 hover:underline"
-                      >
-                        <Pencil className="h-3.5 w-3.5" aria-hidden />
-                        Edit
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                {(rows ?? []).map((row) => {
+                  const viewHref = def?.viewHref ? def.viewHref(row.id) : null;
+                  const cells = (
+                    <>
+                      <td className="px-4 py-2.5 font-medium text-ink-900">
+                        {viewHref ? <OpenableRowLink href={viewHref}>{row.name}</OpenableRowLink> : row.name}
+                      </td>
+                      <td className="px-4 py-2.5 text-ink-700">{row.creator}</td>
+                      <td className="px-4 py-2.5 text-ink-700">{formatDateTime(row.createdAt)}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        {/* Media has no form, so its row offers no Update — the row itself opens it. */}
+                        {def && typeKey !== "media" ? (
+                          <Link
+                            href={def.editHref(row.id)}
+                            className="inline-flex items-center gap-1 text-sm font-semibold text-purple-700 hover:underline"
+                          >
+                            <Pencil className="h-3.5 w-3.5" aria-hidden />
+                            Update
+                          </Link>
+                        ) : null}
+                      </td>
+                    </>
+                  );
+                  // The whole row opens the record read-only where it has such a page.
+                  return viewHref ? (
+                    <OpenableRow key={row.id} href={viewHref}>
+                      {cells}
+                    </OpenableRow>
+                  ) : (
+                    <tr key={row.id}>{cells}</tr>
+                  );
+                })}
               </tbody>
             </table>
             </div>
@@ -1169,13 +1200,23 @@ function BrowseByTypePanel() {
                 {formatDateTime(selected.createdAt)}
               </div>
             </div>
-            <Link
-              href={def?.editHref(recordId) ?? "#"}
-              className="inline-flex items-center gap-1 text-sm font-semibold text-purple-700 hover:underline"
-            >
-              <Pencil className="h-3.5 w-3.5" aria-hidden />
-              Edit record
-            </Link>
+            {def?.viewHref ? (
+              <Link
+                href={def.viewHref(recordId)}
+                className="inline-flex items-center gap-1 text-sm font-semibold text-purple-700 hover:underline"
+              >
+                Open record
+              </Link>
+            ) : null}
+            {def && typeKey !== "media" ? (
+              <Link
+                href={def.editHref(recordId)}
+                className="inline-flex items-center gap-1 text-sm font-semibold text-purple-700 hover:underline"
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden />
+                Update
+              </Link>
+            ) : null}
           </div>
           {mediaLoading ? (
             <div className="flex items-center gap-2 text-sm text-ink-500">

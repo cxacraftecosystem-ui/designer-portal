@@ -351,11 +351,11 @@ test("every record type that has a screen shows its code there, and every mount 
   //     designers to scan onto the workshop, and the list is where the person holding the phone
   //     finds it. A row whose workshop exists only on that device renders the encoder's `dwlocal-`
   //     refusal instead of a symbol, which is the intended answer and not a missing card.
-  //   - `questionnaire` and `media` — neither record type has a per-record web route at all.
-  //     `workshopCodeLookup`'s OPEN_HREF says so in as many words, and lands an interview scan on
-  //     `/questionnaire` and a media scan on the stored object or, when the caller is not entitled
-  //     to the bytes, on `/media`. So the card is mounted on the expanded row of each of those two
-  //     lists, which is the closest thing anybody opens for ONE of them. Android has shown a code
+  //   - `questionnaire` and `media` — the card is mounted on the expanded row of each of those two
+  //     lists. An interview has no per-record web route (`workshopCodeLookup`'s OPEN_HREF lands its
+  //     scan on `/questionnaire`); a media file has had a read-only page since 2026-10-16, and a
+  //     media scan lands on the stored object or, when the caller is not entitled to the bytes, on
+  //     that page. The code stays on the list row, where a designer prints it. Android has shown a code
   //     for both all along; this is where the web stopped disagreeing with it.
   expect(files.sort()).toEqual(
     [

@@ -51,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -1268,7 +1269,11 @@ internal fun SearchResultRow(row: SearchRow, onOpen: () -> Unit, openable: Boole
             .fillMaxWidth()
             .background(MaterialTheme.field.surface50, MaterialTheme.shapes.medium)
             .border(1.dp, MaterialTheme.field.hairline, MaterialTheme.shapes.medium)
-            .then(if (openable) Modifier.clickable(onClick = onOpen) else Modifier)
+            // The whole card opens the record's read-only page (RecordOpen); announced as "Open …".
+            .then(
+                if (openable) Modifier.clickable(onClickLabel = RecordOpen.openClickLabel(row.title), role = Role.Button, onClick = onOpen)
+                else Modifier
+            )
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {

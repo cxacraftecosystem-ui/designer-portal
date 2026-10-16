@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { Boxes, ClipboardList, Hammer, Plus, Users } from "lucide-react";
+import { Plus, Users } from "lucide-react";
 
 import { CollabDialog } from "@/components/CollabDialog";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { EMPTY_FUNNEL, FunnelFilters, type FunnelValue, type FunnelWorkshop } from "@/components/FunnelFilters";
@@ -17,17 +18,11 @@ import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useAdminView } from "@/components/AdminViewProvider";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
+import { RECORD_UPDATE_HREF, RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { Artisan, PageResult } from "@/lib/types";
-
-/**
- * The block of launch cards a selected artisan reveals, named so the control that reveals it can
- * declare what it controls. Rendered only while something is selected, which is why every
- * `aria-controls` below is conditional — pointing at an id that is not in the document is worse
- * than pointing at nothing.
- */
-const LAUNCH_PANEL_ID = "artisan-entry-launchers";
 
 export default function ArtisansPage() {
   const { adminMode } = useAdminView();
@@ -39,7 +34,6 @@ export default function ArtisansPage() {
   const [page, setPage] = useState(1);
   const [funnel, setFunnel] = useState<FunnelValue>(EMPTY_FUNNEL);
   const [funnelReady, setFunnelReady] = useState(false);
-  const [selectedArtisan, setSelectedArtisan] = useState<Artisan | null>(null);
   const [collabId, setCollabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const skipFirstDebounce = useRef(true);
@@ -51,6 +45,12 @@ export default function ArtisansPage() {
    * ignoring a late answer is the part that matters.
    */
   const currentLoad = useRef(0);
+  /**
+   * Where the reader was — search, page, funnel, scroll — so Back from an artisan's page lands on
+   * the same rows. Applied at the funnel's first answer, the one moment this page learns its own
+   * defaults; see `useListMemory`.
+   */
+  const memory = useListMemory("artisans", { query, applied, page, funnel }, data !== null);
 
   async function load() {
     const generation = (currentLoad.current += 1);
@@ -116,6 +116,20 @@ export default function ArtisansPage() {
   // genuinely need the workshop's own fields, and reading its `artisans` to narrow the table here is
   // the defect described at the request above.
   function onFunnelChange(next: FunnelValue, _workshop: FunnelWorkshop | null) {
+    if (!funnelReady) {
+      const remembered = memory.recall();
+      if (remembered) {
+        setFunnel(remembered.funnel ?? next);
+        setQuery(remembered.query ?? "");
+        setApplied(remembered.applied ?? "");
+        setPage(remembered.page ?? 1);
+        // The restored query must not be re-debounced into a page-1 reset. Only when it CHANGES the
+        // box: an unchanged value runs no effect, and a flag left up would eat the next keystroke.
+        if ((remembered.query ?? "") !== query) skipFirstDebounce.current = true;
+        setFunnelReady(true);
+        return;
+      }
+    }
     setFunnel(next);
     setPage(1);
     setFunnelReady(true);
@@ -136,17 +150,6 @@ export default function ArtisansPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to delete artisan");
     }
-  }
-
-  function artisanEntryHref(path: string, artisan: Artisan) {
-    const params = new URLSearchParams({
-      artisanId: artisan.id,
-      artisanName: artisan.name,
-      place: artisan.place
-    });
-    if (artisan.craftId) params.set("craftId", artisan.craftId);
-    if (artisan.craft?.name) params.set("craftName", artisan.craft.name);
-    return `${path}?${params.toString()}`;
   }
 
   // The rows ARE the answer. Every filter on this screen is in the request above, so nothing is
@@ -187,26 +190,6 @@ export default function ArtisansPage() {
       </div>
       <FunnelFilters value={funnel} onChange={onFunnelChange} />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
-      {selectedArtisan ? (
-        <section id={LAUNCH_PANEL_ID} className="mb-5 grid gap-3 md:grid-cols-3">
-          {[
-            { href: artisanEntryHref("/tools/new", selectedArtisan), title: "Make a tool entry", body: "Document a tool used by this artisan.", icon: Hammer },
-            { href: artisanEntryHref("/products/new", selectedArtisan), title: "Make a product entry", body: "Record an object, product or sample.", icon: Boxes },
-            { href: artisanEntryHref("/questionnaire", selectedArtisan), title: "Start questionnaire", body: "Open the interview with this artisan filled in.", icon: ClipboardList }
-          ].map((item) => (
-            <Link key={item.href} href={item.href} className="panel group flex min-h-32 items-start gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-panel">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-field-200 text-field-700">
-                <item.icon className="h-5 w-5" aria-hidden />
-              </span>
-              <span>
-                <span className="block font-display font-bold text-xl text-ink">{item.title}</span>
-                <span className="mt-1 block text-sm leading-6 text-ink-muted">{item.body}</span>
-                <span className="mt-3 block text-xs font-semibold uppercase text-field-700">{selectedArtisan.name}</span>
-              </span>
-            </Link>
-          ))}
-        </section>
-      ) : null}
       <section className="panel overflow-hidden">
         {!data ? (
           <div className="p-4 text-sm text-ink-700">Loading...</div>
@@ -230,43 +213,14 @@ export default function ArtisansPage() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {rows.map((artisan) => (
-                  <tr key={artisan.id} className="cursor-pointer hover:bg-field-100" onClick={() => setSelectedArtisan(artisan)}>
+                  // The whole row opens the artisan, read-only; the name is the same act as a real
+                  // link for the keyboard. Update, Discuss and Delete keep their own clicks — see
+                  // `OpenableRow`. The launch cards that a row click used to reveal above this table
+                  // now sit on the artisan's own page.
+                  <OpenableRow key={artisan.id} href={RECORD_VIEW_HREF.artisan(artisan.id)}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        {/*
-                          A REAL BUTTON, because the row's own `onClick` is the only clickable table
-                          row in this frontend and a keyboard could not reach it. The row carries no
-                          `tabIndex`, no key handler and — deliberately — no `role="button"`: that
-                          role would destroy the implicit `row` role and orphan all seven cells for a
-                          screen reader, which is a bigger loss than the one it fixes. The pointer
-                          affordance on the row stays exactly as it was; this is the same action
-                          offered again as something the Tab key can land on and Enter or Space can
-                          press. `stopPropagation` so a mouse click here does not also run the row's
-                          handler — every other control in this row already does the same.
-
-                          `aria-expanded` is what tells a reader the press DID something: the launch
-                          cards it reveals are rendered above the table, well out of earshot of the
-                          row that summoned them. Which is also why this button TOGGLES while the
-                          row's own handler stays select-only. `aria-expanded="true"` is a promise
-                          that pressing again collapses the region; nothing else in this file ever
-                          clears `selectedArtisan`, so without the toggle the attribute would say
-                          "expanded" for the rest of the session and the press would do nothing —
-                          worse for the reader who trusts it than the pointer-only row it replaced.
-                          A mouse user loses nothing: clicking anywhere else on the row still
-                          selects, and only this control closes.
-                        */}
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedArtisan((current) => (current?.id === artisan.id ? null : artisan));
-                          }}
-                          aria-expanded={selectedArtisan?.id === artisan.id}
-                          aria-controls={selectedArtisan?.id === artisan.id ? LAUNCH_PANEL_ID : undefined}
-                          className="rounded-sm text-left font-medium text-ink-900 underline-offset-2 hover:underline"
-                        >
-                          {artisan.name}
-                        </button>
+                        <OpenableRowLink href={RECORD_VIEW_HREF.artisan(artisan.id)}>{artisan.name}</OpenableRowLink>
                         {/* Identity numbers are regulated data and never printed in a list: the chip
                             only answers "is this artisan's card on file?", which is what a
                             researcher scanning for gaps actually needs to know. */}
@@ -290,36 +244,20 @@ export default function ArtisansPage() {
                     <td className="px-4 py-3 text-ink-700">{formatDate(artisan.createdAt)}</td>
                     <td className="px-4 py-3 text-right">
                       <RowActions>
-                        <Link
-                          className={rowAction("edit")}
-                          href={`/artisans/${artisan.id}/edit`}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          Edit
+                        <Link className={rowAction("edit")} href={RECORD_UPDATE_HREF.artisan(artisan.id)}>
+                          Update
                         </Link>
-                        <button
-                          className={rowAction("neutral")}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setCollabId(artisan.id);
-                          }}
-                        >
+                        <button className={rowAction("neutral")} onClick={() => setCollabId(artisan.id)}>
                           Discuss
                         </button>
                         {adminMode ? (
-                          <button
-                            className={rowAction("danger")}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              remove(artisan.id);
-                            }}
-                          >
+                          <button className={rowAction("danger")} onClick={() => remove(artisan.id)}>
                             Delete
                           </button>
                         ) : null}
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                 ))}
               </tbody>
             </table>

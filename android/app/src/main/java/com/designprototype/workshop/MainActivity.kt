@@ -48,6 +48,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -371,6 +372,7 @@ import com.designprototype.workshop.ui.NO_DESIGN_WORKSHOP
 import com.designprototype.workshop.ui.workshopCapLine
 import com.designprototype.workshop.ui.RecordCodeLookupPanel
 import com.designprototype.workshop.ui.RecordCodeSection
+import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.RecordEditHistorySection
 // The shared prose box behind every record form: an optional on-device microphone and an optional
 // rich-text editor, both defaulting to off. See `ui/RecordProseField.kt` and `ui/RecordProseText.kt`.
@@ -1001,6 +1003,12 @@ private sealed interface Screen {
         val searchFocus: String? = null
     ) : Screen
     data class Browse(val mode: EntryMode) : Screen
+    /**
+     * One record, READ-ONLY — where a tap anywhere on a record's card lands (owner ruling,
+     * 2026-10-16; [com.designprototype.workshop.ui.RecordOpen]). [Edit] is reached from here, and
+     * only here, through the "Update" button.
+     */
+    data class View(val mode: EntryMode, val recordId: String) : Screen
     data class Edit(val mode: EntryMode, val recordId: String) : Screen
     // Hamburger-only screens (not on the dashboard).
     data object MyActivity : Screen
@@ -3350,7 +3358,7 @@ private fun HomeScreen(
                 showMessage(unroutableRecordLine(recordType))
             } else {
                 message = null
-                screen = Screen.Edit(mode, recordId)
+                screen = Screen.View(mode, recordId)
             }
         }
     }
@@ -3569,7 +3577,10 @@ private fun HomeScreen(
     fun goBack() {
         message = null
         screen = when (val s = screen) {
-            is Screen.Edit -> Screen.Browse(s.mode)
+            // The form is opened from the record's page, so Back from it returns there; the page
+            // in turn returns to the list it was opened from.
+            is Screen.Edit -> Screen.View(s.mode, s.recordId)
+            is Screen.View -> Screen.Browse(s.mode)
             is Screen.Browse -> Screen.Dashboard
             is Screen.Create -> Screen.Dashboard
             is Screen.MyActivity -> Screen.Dashboard
@@ -3667,7 +3678,8 @@ private fun HomeScreen(
         is Screen.Browse -> "Update ${s.mode.label.lowercase()}"
         // A media file has no edit form (the web opens the object itself), so "Edit …" would be a lie
         // for the one non-editable type search can land on.
-        is Screen.Edit -> if (s.mode.editable) "Edit ${s.mode.label.lowercase()}" else s.mode.label
+        is Screen.View -> s.mode.label
+        is Screen.Edit -> if (s.mode.editable) "${RecordOpen.UPDATE_LABEL} ${s.mode.label.lowercase()}" else s.mode.label
         is Screen.MyActivity -> "My Activity"
         is Screen.ToolAssign -> "Assign tools to artisans"
         is Screen.Feedback -> "App feedback"
@@ -3821,7 +3833,7 @@ private fun HomeScreen(
         // Lighting it while an admin edits somebody else's would say "you are on your own profile"
         // on the one screen where getting that wrong means editing the wrong person's report cover.
         is Screen.DesignerProfile -> if (s.userId == null) NavDestination.DESIGNER_PROFILE else null
-        is Screen.Browse, is Screen.Edit -> null
+        is Screen.Browse, is Screen.View, is Screen.Edit -> null
         is Screen.Create -> when (s.mode) {
             EntryMode.ARTISAN -> NavDestination.RECORD_ARTISAN
             EntryMode.PRODUCT -> NavDestination.RECORD_PRODUCT
@@ -4200,15 +4212,28 @@ private fun HomeScreen(
                     // Every "Your contribution" figure counts this account's own rows, and My Activity
                     // asks the API for exactly those — so the number and the list behind it agree.
                     onOpenMyActivity = { message = null; screen = Screen.MyActivity },
-                    onOpenRecord = { mode, recordId -> message = null; screen = Screen.Edit(mode, recordId) },
-                    onOpenArtisan = { artisanId -> message = null; screen = Screen.Edit(EntryMode.ARTISAN, artisanId) }
+                    onOpenRecord = { mode, recordId -> message = null; screen = Screen.View(mode, recordId) },
+                    onOpenArtisan = { artisanId -> message = null; screen = Screen.View(EntryMode.ARTISAN, artisanId) }
                 )
             }
 
             is Screen.Browse -> RecordPickerScreen(
                 repository = repository,
                 mode = s.mode,
-                onPick = { recordId -> screen = Screen.Edit(s.mode, recordId) },
+                canUpdate = RecordOpen.mayUpdate(s.mode.name, user),
+                onOpen = { recordId -> message = null; screen = Screen.View(s.mode, recordId) },
+                onUpdate = { recordId -> message = null; screen = Screen.Edit(s.mode, recordId) },
+                onError = { showMessage(it) }
+            )
+
+            is Screen.View -> RecordViewScreen(
+                repository = repository,
+                mode = s.mode,
+                recordId = s.recordId,
+                canUpdate = RecordOpen.mayUpdate(s.mode.name, user),
+                canOverrideCompletion = isAdmin && adminChrome,
+                showProvenance = canViewProvenance,
+                onUpdate = { message = null; screen = Screen.Edit(s.mode, s.recordId) },
                 onError = { showMessage(it) }
             )
 
@@ -4490,7 +4515,7 @@ private fun HomeScreen(
             is Screen.MyActivity -> MyActivityScreen(
                 repository = repository,
                 userId = user.id,
-                onOpen = { mode, recordId -> message = null; screen = Screen.Edit(mode, recordId) },
+                onOpen = { mode, recordId -> message = null; screen = Screen.View(mode, recordId) },
                 onError = { showMessage(it) }
             )
 
@@ -6896,8 +6921,8 @@ private fun RecentSubmissionRow(
     val typeLabel = item.type.replaceFirstChar { it.uppercase() }
     val title = item.title?.takeIf { it.isNotBlank() }
         ?: "Untitled ${item.type.ifBlank { "record" }}"
-    // The row a researcher recognises is the one they want to correct, so the title is the way in —
-    // straight into the edit view for that record type, exactly as the web links it.
+    // The whole row is the way in, to the record's READ-ONLY page — exactly as the web opens it
+    // (owner ruling, 2026-10-16); Update on that page is the way to the form.
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -9807,12 +9832,18 @@ private fun LoadingCard(mode: EntryMode) {
     }
 }
 
-/** Dropdown-driven picker for choosing an existing record to edit. */
+/**
+ * The existing records of one kind, each a card that opens the record READ-ONLY when tapped anywhere
+ * (owner ruling, 2026-10-16). The card's own "Update" button — drawn only where [canUpdate] — goes
+ * straight to the form, and consumes its own tap so the card underneath does not also open.
+ */
 @Composable
 private fun RecordPickerScreen(
     repository: WorkshopRepository,
     mode: EntryMode,
-    onPick: (String) -> Unit,
+    canUpdate: Boolean,
+    onOpen: (String) -> Unit,
+    onUpdate: (String) -> Unit,
     onError: (String) -> Unit
 ) {
     var loading by remember(mode) { mutableStateOf(true) }
@@ -9852,8 +9883,12 @@ private fun RecordPickerScreen(
         loading = false
     }
 
-    RecordCard(title = "Update existing ${mode.label.lowercase()}") {
-        Text("Pick a record from the dropdown to open and edit it. Edits are attributed to you per field.", color = Muted, fontSize = 12.sp)
+    RecordCard(title = "Existing ${mode.label.lowercase()} records") {
+        Text(
+            "Tap a record to read it. ${RecordOpen.UPDATE_LABEL} opens its form; changes are attributed to you per field.",
+            color = Muted,
+            fontSize = 12.sp
+        )
         when {
             loading -> Text("Loading ${mode.label.lowercase()} records…", color = Muted)
             options.isEmpty() -> Text("No ${mode.label.lowercase()} records found yet.", color = Muted)
@@ -9867,29 +9902,84 @@ private fun RecordPickerScreen(
                     onSelect = { selected = it }
                 )
                 Button(
-                    onClick = { if (selected.isNotBlank()) onPick(selected) },
+                    onClick = { if (selected.isNotBlank()) onOpen(selected) },
                     enabled = selected.isNotBlank(),
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Open for editing") }
+                ) { Text(RecordOpen.OPEN_LABEL) }
                 Text("Or tap a recent record", color = Muted, fontSize = 12.sp)
                 options.take(12).forEach { (id, label) ->
                     ElevatedCard(
                         colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onPick(id) }
+                            .heightIn(min = 48.dp)
+                            // The WHOLE card is the target, announced as "Open <record>" — never a
+                            // small link at its edge. The Update button below sits inside it and
+                            // consumes its own tap.
+                            .clickable(onClickLabel = RecordOpen.openClickLabel(label), role = Role.Button) { onOpen(id) }
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(label, color = Body, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("Edit ›", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(label, color = Body, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                            if (canUpdate) {
+                                TextButton(onClick = { onUpdate(id) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                                    Text(RecordOpen.UPDATE_LABEL, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * One record, READ-ONLY — what a tap on its card opens (owner ruling, 2026-10-16). Every field the
+ * View Data detail prints, the media with their players and Download, the record's code, comments
+ * and history; nothing on it is a control that changes the record. "Update" at the top, drawn only
+ * where [canUpdate], opens the existing form.
+ *
+ * It renders [ViewDataDetail] rather than a second copy of it: View Data has been the handset's
+ * read-only record view all along, reached through two dropdowns. This screen is the same view
+ * reached by a tap, so the two cannot drift into two descriptions of one record — and the Aadhaar
+ * stays masked here exactly as it is there.
+ */
+@Composable
+private fun RecordViewScreen(
+    repository: WorkshopRepository,
+    mode: EntryMode,
+    recordId: String,
+    canUpdate: Boolean,
+    canOverrideCompletion: Boolean,
+    showProvenance: Boolean,
+    onUpdate: () -> Unit,
+    onError: (String) -> Unit
+) {
+    if (canUpdate) {
+        Button(
+            onClick = onUpdate,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+        ) {
+            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("${RecordOpen.UPDATE_LABEL} this ${mode.label.lowercase()}")
+        }
+    }
+    ViewDataDetail(
+        repository = repository,
+        mode = mode,
+        recordId = recordId,
+        canOverrideCompletion = canOverrideCompletion,
+        showProvenance = showProvenance,
+        onError = onError
+    )
+    // The record's own code, as the form beside it has always drawn it — printing a tag is reading,
+    // not changing, so it belongs on the read-only page too.
+    DwWorkshopRecordType.entries.firstOrNull { it.name == mode.name }?.let { type ->
+        RecordCodeSection(repository, type, recordId)
     }
 }
 
@@ -13716,7 +13806,8 @@ private fun MyActivityScreen(
                         // "no MEDIA branch" — it has one now (EntryMode.MEDIA -> ViewDataDetail plus
                         // its record code), reached from Search and from this list. The flag outlived
                         // its reason and was left asserting the opposite of the code beside it.
-                        .clickable { onOpen(item.mode, item.id) }
+                        // Read-only first: the record's page, where Update leads to the form.
+                        .clickable(onClickLabel = RecordOpen.openClickLabel(item.title), role = Role.Button) { onOpen(item.mode, item.id) }
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(item.title, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
@@ -15858,7 +15949,7 @@ private fun PendingReviewRow(
                 ) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (panel == "edit") "Close" else "Edit", maxLines = 1, fontSize = 13.sp)
+                    Text(if (panel == "edit") "Close" else RecordOpen.UPDATE_LABEL, maxLines = 1, fontSize = 13.sp)
                 }
                 OutlinedButton(
                     onClick = { panel = if (panel == "revise") null else "revise" },

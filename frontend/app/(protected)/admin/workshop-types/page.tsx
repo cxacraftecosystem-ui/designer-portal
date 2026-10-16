@@ -577,7 +577,7 @@ export default function WorkshopTypesPage() {
                           onClick={() => openEdit(type)}
                           disabled={busy}
                         >
-                          Edit
+                          Update
                         </button>
                         <button
                           type="button"
