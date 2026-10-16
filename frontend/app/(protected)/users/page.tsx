@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ShieldCheck, UserPlus } from "lucide-react";
 
+import { AadhaarUserBadge } from "@/components/aadhaar/AadhaarUserBadge";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, Select, TextInput } from "@/components/FormControls";
@@ -885,7 +886,11 @@ function UsersScreen() {
                   const offers = rowOffers(currentUser, user, { provision, admin });
                   return (
                   <tr key={user.id}>
-                    <td className="px-4 py-3 font-medium text-ink-900">{user.name}</td>
+                    <td className="px-4 py-3 font-medium text-ink-900">
+                      {user.name}
+                      {/* Draws nothing unless the server has Aadhaar verification switched on. */}
+                      <AadhaarUserBadge account={user} viewer={currentUser} onDecided={() => void load()} />
+                    </td>
                     <td className="px-4 py-3 text-ink-700">{user.email}</td>
                     <td className="px-4 py-3">
                       {/* A native <select>, and no filter box: `assignableRoles` is the role ladder

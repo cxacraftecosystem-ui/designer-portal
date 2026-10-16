@@ -413,6 +413,42 @@ The names, so this file remains a complete index of what `config.py` reads:
   `SCALE_APPROX_COUNT_THRESHOLD`
 - `DATABASE_READ_REPLICA_URL` — unset by default; a replica connection string for read-only queries.
 
+### Aadhaar verification — two flags, both shipped OFF
+
+Everything Aadhaar sits behind the two flags below. **Off means absent**: every `/api/aadhaar` route
+answers `404`, the verification columns are withheld from every payload, and neither client draws a
+single element. The method, the compliance choices and the operator runbook are in
+[AADHAAR.md](AADHAAR.md).
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `AADHAAR_OFFLINE_VERIFICATION_ENABLED` | No | **`false`** | No | The Secure QR and the Paperless Offline e-KYC ZIP. Needs no licence; the UIDAI signing certificates are pinned in `backend/app/data/uidai/`. |
+| `AADHAAR_OFFLINE_XML_MAX_AGE_DAYS` | No | `3` | No | Refuse an offline e-KYC file UIDAI generated longer ago than this. `0` = no limit. UIDAI publishes no maximum; 3 days is the RBI KYC Master Direction's rule, adopted here. |
+| `AADHAAR_SECURE_QR_MAX_AGE_DAYS` | No | `0` | No | The same for a Secure QR. `0` (the default) accepts any age — a QR is printed on a card that does not expire — and records its date. |
+| `AADHAAR_EXTRA_TRUSTED_CERTS` | No | empty | No | Comma-separated PEM/DER paths trusted for the offline signature IN ADDITION to the pinned set: how an operator rotates in UIDAI's next certificate without a deploy. |
+| `AADHAAR_ONLINE_AUTH_ENABLED` | No | **`false`** | No | OTP authentication (and e-KYC) as an AUA through an ASA. Needs the Ministry's AUA licence. **With it on, the server refuses to start** unless every required value below is set and the PFX and certificates open. |
+| `AADHAAR_ENV` | With online on | `preprod` | No | `preprod` or `prod`; picks the pinned UIDAI encryption and response-signing certificates. |
+| `AADHAAR_AUA_CODE` | With online on | — | No | The AUA code UIDAI issued (`ac`). |
+| `AADHAAR_SUB_AUA_CODE` | With online on | — | No | `sa`; the AUA code again when there is no sub-AUA. |
+| `AADHAAR_AUA_LICENSE_KEY` | With online on | — | **Yes** | `lk`. |
+| `AADHAAR_ASA_LICENSE_KEY` | With online on | — | **Yes** | `asalk`, the last segment of every request URL. |
+| `AADHAAR_ASA_OTP_URL` | With online on | — | No | The ASA's OTP endpoint up to the version, e.g. `https://<asa>/otp/2.5`. The client appends `/<ac>/<uid[0]>/<uid[1]>/<asalk>`. |
+| `AADHAAR_ASA_AUTH_URL` | With online on | — | No | The same for Auth. |
+| `AADHAAR_ASA_KYC_URL` | With e-KYC on | — | No | The same for e-KYC. |
+| `AADHAAR_AUA_SIGNING_PFX_PATH` | With online on | — | No (the file is) | PKCS#12 holding the AUA's signing key and its Class II/III certificate. On the box, outside the repository, readable only by the service user. |
+| `AADHAAR_AUA_SIGNING_PFX_PASSWORD` | With online on | — | **Yes** | |
+| `AADHAAR_THROTTLE_SALT` | With online on | — | **Yes** | HMAC key the OTP throttle hashes numbers under, and the OTP-step token is signed with. A long random value; never `JWT_SECRET`. |
+| `AADHAAR_UIDAI_ENCRYPTION_CERT_PATH` | No | pinned for `AADHAAR_ENV` | No | Override the pinned UIDAI encryption certificate (when UIDAI rotates it). |
+| `AADHAAR_UIDAI_SIGNATURE_CERT_PATH` | No | pinned for `AADHAAR_ENV` | No | An extra UIDAI response-signing certificate. **The pinned 2026 ones expired in April/May 2026 with no published successor** — obtain the current one through the ASA before the smoke test. |
+| `AADHAAR_ONLINE_NAME_CHECK` | No | `true` | No | Send the record's name for UIDAI's exact name match with the OTP. |
+| `AADHAAR_OTP_CHANNEL` | No | `00` | No | `00` SMS and e-mail, `01` SMS, `02` e-mail. |
+| `AADHAAR_ASA_TIMEOUT_SECONDS` | No | `20` | No | |
+| `AADHAAR_OTP_LIMIT_PER_USER` | No | `5` | No | OTP requests one account may make per window. |
+| `AADHAAR_OTP_LIMIT_PER_UID` | No | `3` | No | OTP requests per Aadhaar number / VID (by salted hash) per window. |
+| `AADHAAR_OTP_WINDOW_MINUTES` | No | `60` | No | |
+| `AADHAAR_EKYC_ENABLED` | No | `false` | No | Use e-KYC (UIDAI returns the name, year of birth and gender) instead of a yes/no authentication. Needs a KUA licence and the ASA to decrypt the response. |
+| `AADHAAR_KUA_LICENSE_KEY` | With e-KYC on | — | **Yes** | |
+
 ### Not read by `config.py`
 
 | Variable | Read by | Required | Default | Secret | Notes |

@@ -116,6 +116,13 @@ async def _keep_db_connected() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ONLINE AADHAAR REFUSES TO START HALF-CONFIGURED. Settings has already refused a missing value;
+    # this opens the PFX and the UIDAI certificates, and raises (stopping the boot) if any is wrong.
+    # See services/aadhaar/online/config.py and docs/AADHAAR.md.
+    if get_settings().aadhaar_online_auth_enabled:
+        from app.services.aadhaar.online.config import load_online_config
+
+        load_online_config()
     try:
         await connect_db()
     except Exception as exc:  # noqa: BLE001 - never crash-loop on a full pooler; recover in background

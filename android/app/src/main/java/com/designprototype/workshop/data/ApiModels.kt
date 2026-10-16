@@ -127,6 +127,21 @@ data class UserDto(
      * provider alone was the wrong proxy, because a Google sign-in keeps a password the account has.
      */
     val passwordSetAt: String? = null,
+    /**
+     * The optional features this deployment has switched on — `auth.serialize_user`'s `features`,
+     * the same answer as `GET /api/features`. Cached with the rest of the account by [TokenStore], so
+     * a handset offline for a fortnight keeps the last answer it was given. NULL — a server older
+     * than the key, or an account cached before it — means every optional feature is HIDDEN. See
+     * `ui/aadhaar/AadhaarVerification.kt`.
+     */
+    val features: FeaturesDto? = null,
+    /** The account's Aadhaar verification, present only while a verification feature is on. */
+    val aadhaarVerifyStatus: String? = null,
+    val aadhaarVerifyMethod: String? = null,
+    val aadhaarVerifiedAt: String? = null,
+    val aadhaarVerifyLast4: String? = null,
+    val aadhaarVerifyName: String? = null,
+    val aadhaarVerifyNameMatch: Boolean? = null,
     /** Two-step verification is on. Drives the "Two-step on" badge and the administrator's reset. */
     val twoFactorEnabled: Boolean = false
 )

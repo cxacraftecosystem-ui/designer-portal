@@ -1,0 +1,126 @@
+{
+  "_comment": "UIDAI certificates pinned for Aadhaar verification. Downloaded 2026-10-16 from the URLs below (linked from https://uidai.gov.in/en/data-and-download). sha256 is over the DER encoding. services/aadhaar/certs.py refuses any file whose fingerprint differs. See docs/AADHAAR.md before adding or removing one.",
+  "downloaded": "2026-10-16",
+  "certificates": [
+    {
+      "file": "uidai_offline_publickey_2026.pem",
+      "purpose": "offline-signature",
+      "description": "Offline e-KYC and Secure QR signing certificate, current (2026-2029)",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_offline_publickey_2026.cer",
+      "subject": "CN=DS Unique Identification Authority of India 06,2.5.4.51=4TH FLOOR UIDAI HEADQUARTERS,STREET=BANGLA SAHIB ROAD BEHIND KALI MANDIR GOLE MARKET NEW DELHI,ST=Delhi,2.5.4.17=110001,O=UNIQUE IDENTIFICATION AUTHORITY OF INDIA,C=IN",
+      "not_before": "2026-02-03",
+      "not_after": "2029-02-03",
+      "sha256": "e0304b9e61ee3640ecddae2db4b617f2e2678f57dbc2826c2f86ac5c04f277df"
+    },
+    {
+      "file": "uidai_offline_publickey_17022026.pem",
+      "purpose": "offline-signature",
+      "description": "Offline e-KYC and Secure QR signing certificate, 2024-2026",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_offline_publickey_17022026.cer",
+      "subject": "CN=DS Unique Identification Authority of India 05,2.5.4.51=Aadhaar Headquarters,STREET=Bangla Sahib Road Behind Kali Mandir GoleMarket,ST=Delhi,2.5.4.17=110001,O=UNIQUE IDENTIFICATION AUTHORITY OF INDIA,C=IN",
+      "not_before": "2024-02-21",
+      "not_after": "2026-02-16",
+      "sha256": "00573c692cf04fbee113ae5fd52f2a654d361bf8ee4d06c46008906b36df8169"
+    },
+    {
+      "file": "uidai_offline_publickey_26022021.pem",
+      "purpose": "offline-signature",
+      "description": "Offline e-KYC and Secure QR signing certificate, 2021-2024 (UIDAI's QR reader ships it as UIDAI1.cer)",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_offline_publickey_26022021.cer",
+      "subject": "CN=DS UNIQUE IDENTIFICATION AUTHORITY OF INDIA 05,2.5.4.51=AADHAR HQ BANGLA SAHIB ROAD,STREET=BEHIND KALI MANDIR,ST=Delhi,2.5.4.17=110001,O=UNIQUE IDENTIFICATION AUTHORITY OF INDIA,C=IN",
+      "not_before": "2021-02-26",
+      "not_after": "2024-02-27",
+      "sha256": "e0f0f869d32efc7e80fae2223717a56dcf8b616f820b542a49e5bd5abf1c0f7d"
+    },
+    {
+      "file": "uidai_offline_publickey_29032019.pem",
+      "purpose": "offline-signature",
+      "description": "Offline e-KYC signing certificate, 2019-2021",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_offline_publickey_29032019.cer",
+      "subject": "CN=DS UNIQUE IDENTIFICATION AUTHORITY OF INDIA 04,2.5.4.51=6th FLOOR BANGLA SAHIB ROAD,STREET=BEHIND KALI MANDIR GOLE MARKET,ST=Delhi,2.5.4.17=110001,O=UNIQUE IDENTIFICATION AUTHORITY OF INDIA,C=IN",
+      "not_before": "2019-03-15",
+      "not_after": "2021-02-28",
+      "sha256": "e0f5596d2c48e19f9cc184bccde7129e2d8987f905c73b87d1851c35c622d852"
+    },
+    {
+      "file": "uidai_offline_publickey_26022019.pem",
+      "purpose": "offline-signature",
+      "description": "Offline e-KYC signing certificate, 2017-2019",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_offline_publickey_26022019.cer",
+      "subject": "CN=DS UNIQUE IDENTIFICATION AUTHORITY OF INDIA 03,2.5.4.51=9TH FLOOR TOWER 1 JEEVAN BHARTI BUILDING,STREET=CONNAUGHT CIRCUS,ST=DELHI,2.5.4.17=110001,O=UNIQUE IDENTIFICATION AUTHORITY OF INDIA,C=IN",
+      "not_before": "2017-04-27",
+      "not_after": "2019-04-09",
+      "sha256": "35575c63c72106e803511004f94bfda54952b2cf2184c3ce1aad61f1964c58d0"
+    },
+    {
+      "file": "uidai_prod_cdup.pem",
+      "purpose": "offline-signature",
+      "description": "Secure QR signing certificate listed on UIDAI's Secure QR page, 2017-2020",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_prod_cdup.cer",
+      "subject": "CN=DS UNIQUE IDENTIFICATION AUTHORITY OF INDIA 4,2.5.4.51=Aadhaar Complex Nti Layout Tata Nagar Kodigehalli,STREET=Bangalore,ST=Karnataka,2.5.4.17=560092,OU=Technology Centre,O=UIDAI,C=IN",
+      "not_before": "2017-06-08",
+      "not_after": "2020-06-07",
+      "sha256": "fcf31a3f89211615ebd5d449ac33d8d381f654d2e2d15037d5cc8d4aeb72f836"
+    },
+    {
+      "file": "uidai_12_06_18_cer.pem",
+      "purpose": "offline-signature",
+      "description": "Secure QR signing certificate listed on UIDAI's Secure QR page, 2018-2021",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_12_06_18_cer.cer",
+      "subject": "CN=DS UNIQUE IDENTIFICATION AUTHORITY OF INDIA 7,2.5.4.51=Aadhaar Complex NTI Layout Tatanagar Kodigehalli,STREET=Bangalore,ST=Karnataka,2.5.4.17=560092,OU=TECHNOLOGY CENTER,O=UNIQUE IDENTIFICATION AUTHORITY OF INDIA,C=IN",
+      "not_before": "2018-06-08",
+      "not_after": "2021-06-07",
+      "sha256": "49e298532243ce28e2633a7e4f403d9ca78cbfda8b3bbde70324837273ba4d31"
+    },
+    {
+      "file": "uidai_auth_sign_prod_2023.pem",
+      "purpose": "offline-signature",
+      "description": "UIDAI signing certificate that signed offline e-KYC XML around 2020",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_auth_sign_prod_2023.cer",
+      "subject": "CN=DS UIDAI 01,2.5.4.5=b19a87fae7ae9ef55ff166b5cc625700e28d82da76bd53f09836eeaeab3fe385,2.5.4.51=UIDAI Tech Centre\\, Aadhar Complex\\, NTI Layout\\, Tat,STREET=bangalore,ST=Karnataka,2.5.4.17=560092,OU=Technology Centre,O=UIDAI,C=IN",
+      "not_before": "2020-05-27",
+      "not_after": "2023-05-27",
+      "sha256": "7f7217582a4d7d711c4ca4168eb222573bdf084a7aded8f8d0c85c47a545923b"
+    },
+    {
+      "file": "uidai_auth_prod.pem",
+      "purpose": "auth-encryption-prod",
+      "description": "Production PID encryption certificate (expires 2028-08-13)",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-06/uidai_auth_prod.cer",
+      "subject": "CN=UIDAI,O=UIDAI,OU=TECHNOLOGY CENTER,ST=KARNATAKA,C=IN",
+      "not_before": "2025-08-14",
+      "not_after": "2028-08-13",
+      "sha256": "ddba7ac9273ee3550b7a08e2fa792f95237f7182b1ef95bc4ebab510a2f2198c"
+    },
+    {
+      "file": "UIDAI_Pre-Prod_Encryption_20280825.pem",
+      "purpose": "auth-encryption-preprod",
+      "description": "Pre-production PID encryption certificate, leaf only (expires 2028-08-25)",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/UIDAI_Pre-Prod_Encryption_20280825.cer",
+      "subject": "CN=AD_Auth,O=UIDAI,OU=UIDAI,ST=Delhi,C=IN",
+      "not_before": "2025-08-26",
+      "not_after": "2028-08-25",
+      "sha256": "cf753afe3c6e6f2dbb820aaaa13a653751932d320f6c891bfb519293747e9f04"
+    },
+    {
+      "file": "uidai_auth_sign_Prod_2026.pem",
+      "purpose": "auth-signature-prod",
+      "description": "Production response-signing certificate (EXPIRED 2026-04-28; no successor published)",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_auth_sign_Prod_2026.cer",
+      "subject": "1.2.840.113549.1.9.1=adauth.tc@uidai.net.in,L=Bangalore,CN=UIDAI,O=UIDAI,OU=Technology Centre,ST=Karnataka,C=IN",
+      "not_before": "2023-04-28",
+      "not_after": "2026-04-28",
+      "sha256": "be774abf3de06e5cfba682d3e06d000d95ff6cc3ce72b39c18a19fe57dc817fd"
+    },
+    {
+      "file": "uidai_auth_sign_Pre-Prod_2026.pem",
+      "purpose": "auth-signature-preprod",
+      "description": "Pre-production response-signing certificate (EXPIRED 2026-05-03; no successor published)",
+      "source_url": "https://backend.uidai.gov.in/get/files/media/document/2026-07/uidai_auth_sign_Pre-Prod_2026.cer",
+      "subject": "1.2.840.113549.1.9.1=adauth.tc@uidai.net.in,L=Bangalore,CN=UIDAI,O=UIDAI,OU=Technology Centre,ST=Karnataka,C=IN",
+      "not_before": "2023-05-03",
+      "not_after": "2026-05-03",
+      "sha256": "a4e459f8a3b5209714424f68b3d9b0884d626d94d5675970f9a540beab98a910"
+    }
+  ]
+}
