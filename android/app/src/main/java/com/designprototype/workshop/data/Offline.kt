@@ -67,7 +67,15 @@ data class PendingMedia(
      * [PendingEntry]'s replay-progress block is defaulted, and it matters for the same reason: the
      * queue on a device that has been offline for a fortnight predates the build that reads it.
      */
-    val purpose: String? = null
+    val purpose: String? = null,
+    /**
+     * The design workshop a loose ("Miscellaneous Media") upload is filed under, and the GPS fix taken
+     * with it — the two things the media screen's ONLINE upload sends that no record form's file
+     * carries. Added for that screen's offline path (2026-10-16); defaulted, so every queue file
+     * written before them decodes unchanged and replays a body byte-identical to before.
+     */
+    val designWorkshopId: String? = null,
+    val location: LocationRequest? = null,
 )
 
 /** One queued create: the record type, its serialized create request, and the media to attach after. */
@@ -359,6 +367,38 @@ data class PendingEntry(
      * earlier build decodes with null, sends no key, and replays exactly as it always did.
      */
     val clientKey: String? = null,
+    /**
+     * Sent as the `Idempotency-Key` HEADER on the create this entry replays (2026-10-16), so a create
+     * that reached the server but whose answer was lost is answered from the first record instead of
+     * making a second (backend `app/core/idempotency.py`, kept 24 hours per account). Unlike
+     * [clientKey] it is a header, so it reaches EVERY create route — artisan and craft included —
+     * without touching a request schema. Minted at queue time, carried over from an online attempt
+     * that already sent it, or minted before the first send for an entry an older build queued.
+     * Null on a correction: a PATCH is guarded by [baseUpdatedAt] instead.
+     */
+    val idempotencyKey: String? = null,
+    /**
+     * A CORRECTION'S CHANGED FIELDS (2026-10-16): the request keys whose values differ from the record
+     * as it was when the form opened. The replay sends ONLY these, so a correction to a phone number
+     * cannot carry a stale copy of every other column with it. Null — every entry from an earlier
+     * build — sends the whole body as before.
+     */
+    val changedKeys: Set<String>? = null,
+    /**
+     * The record's `updatedAt` when the correction was composed, sent as `expectedUpdatedAt`. The
+     * server refuses (409 `record_changed`) when somebody changed the record since, and the entry is
+     * then marked [staleCorrection] rather than overwriting their work.
+     */
+    val baseUpdatedAt: String? = null,
+    /** The server refused this correction because the record changed since — see [baseUpdatedAt]. */
+    val staleCorrection: Boolean = false,
+    /** The record's `updatedAt` as the server reported it in that refusal, for "Review changes". */
+    val currentUpdatedAt: String? = null,
+    /**
+     * The temporary id a queued questionnaire is known by on this phone until it uploads, so its
+     * sections and questions can be queued under it. See `data/QuestionnaireAuthoring.kt`.
+     */
+    val tempId: String? = null,
 ) {
     /**
      * The link columns this entry's author DELIBERATELY emptied, and which a replay must therefore
@@ -543,7 +583,11 @@ data class OfflineMediaSpec(
     val linkedType: String? = null,
     val stepIndex: Int? = null,
     /** See [PendingMedia.purpose]; a form builds this from its `MediaCaptureState.purposes` map. */
-    val purpose: String? = null
+    val purpose: String? = null,
+    /** See [PendingMedia.designWorkshopId]. */
+    val designWorkshopId: String? = null,
+    /** See [PendingMedia.location]. */
+    val location: LocationRequest? = null,
 )
 
 /**
@@ -1264,6 +1308,8 @@ object OfflineOutbox {
 
     suspend fun enqueue(context: Context, entry: PendingEntry) = withContext(Dispatchers.IO) {
         mutex.withLock { write(context, read(context) + entry) }
+        // Sent the moment there is a network, even if the app is closed first. See [BackgroundSync].
+        BackgroundSync.requestSoon(context)
     }
 
     /**
@@ -1311,6 +1357,8 @@ object OfflineOutbox {
         skewRun: String? = null,
         conflict: Boolean = false,
         danglingField: String? = null,
+        stale: Boolean = false,
+        currentUpdatedAt: String? = null,
     ) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = read(context)
@@ -1325,6 +1373,8 @@ object OfflineOutbox {
                                 skewRun = skewRun,
                                 conflict = conflict,
                                 danglingField = danglingField,
+                                staleCorrection = stale,
+                                currentUpdatedAt = currentUpdatedAt,
                             )
                         } else {
                             it
@@ -1394,6 +1444,7 @@ object OfflineOutbox {
                             skewRun = null,
                             conflict = false,
                             danglingField = null,
+                            staleCorrection = false,
                         )
                     } else {
                         it
@@ -1405,6 +1456,43 @@ object OfflineOutbox {
     }
 
     /** Every entry the server has refused, for a surface that wants to show or discard them. */
+    /**
+     * "SEND MINE" on a correction the record moved under: the same changes, now composed against the
+     * version the server holds, with the refusal cleared so the next pass sends it. Only this
+     * correction's own changed fields go — everything else the other person wrote stays theirs.
+     */
+    suspend fun rebaseCorrection(context: Context, entryId: String, currentUpdatedAt: String?): Boolean =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val current = read(context)
+                if (current.none { it.id == entryId && it.staleCorrection }) return@withLock false
+                write(
+                    context,
+                    current.map {
+                        if (it.id != entryId) it else it.copy(
+                            baseUpdatedAt = currentUpdatedAt ?: it.currentUpdatedAt ?: it.baseUpdatedAt,
+                            failure = null,
+                            failedAt = null,
+                            conflict = false,
+                            staleCorrection = false,
+                            currentUpdatedAt = null,
+                        )
+                    }
+                )
+                true
+            }
+        }
+
+    /** Give a just-queued entry its temporary id (see [PendingEntry.tempId]). */
+    suspend fun setTempId(context: Context, entryId: String, tempId: String) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = read(context)
+            if (current.any { it.id == entryId }) {
+                write(context, current.map { if (it.id == entryId) it.copy(tempId = tempId) else it })
+            }
+        }
+    }
+
     suspend fun failed(context: Context): List<PendingEntry> =
         withContext(Dispatchers.IO) { mutex.withLock { read(context).filter { it.failure != null } } }
 
@@ -1472,6 +1560,7 @@ object OfflineOutbox {
                             skewRun = null,
                             conflict = false,
                             danglingField = null,
+                            staleCorrection = false,
                         )
                     } else {
                         it
@@ -1523,6 +1612,7 @@ object OfflineOutbox {
                             skewRun = null,
                             conflict = false,
                             danglingField = null,
+                            staleCorrection = false,
                         )
                     }
                 }
@@ -1680,3 +1770,124 @@ object OfflineOutbox {
         else -> "DOCUMENT"
     }
 }
+
+
+// ── Idempotency keys and correction bases (2026-10-16) ─────────────────────────────────────────
+
+/** The create types whose replay sends an `Idempotency-Key` header. Every create; never a correction. */
+private val IDEMPOTENT_CREATE_TYPES = setOf(
+    "artisan", "craft", "product", "tool", "workshop", "process", "questionnaire",
+    "customQuestionnaire", "feedbackReport",
+)
+
+/** Should an entry of this shape carry [PendingEntry.idempotencyKey]? Pinned by `OfflineEverywhereTest`. */
+fun outboxCarriesIdempotencyKey(type: String, targetId: String?): Boolean =
+    targetId == null && type in IDEMPOTENT_CREATE_TYPES
+
+/**
+ * Is this 409 the server saying "the first send of this same key is still running"? That is not a
+ * refusal and must be retried, never parked in the tray (backend `app/core/idempotency.py`).
+ */
+fun isIdempotencyInProgress(error: retrofit2.HttpException): Boolean =
+    error.code() == 409 &&
+        error.response()?.headers()?.get("Idempotency-Status")?.equals("in-progress", ignoreCase = true) == true
+
+/** What a correction needs to replay as a PATCH of only its changes, guarded by the base version. */
+data class CorrectionBase(val changedKeys: Set<String>, val baseUpdatedAt: String?)
+
+/**
+ * The request keys whose values differ from the record the form was opened on.
+ *
+ * Compared as JSON: a key the record does not echo (a request-only field) counts as changed, which
+ * only ever sends a value the person's form holds — never a stale one, because the precondition
+ * ([PendingEntry.baseUpdatedAt]) refuses the whole PATCH if the record moved. An empty string and an
+ * absent or null value are the same answer. Pinned by `OfflineEverywhereTest`.
+ */
+fun correctionChangedKeys(request: JsonObject, record: JsonObject): Set<String> =
+    request.keys.filterTo(LinkedHashSet()) { key ->
+        val mine = request[key]
+        if (key !in record) return@filterTo !isBlankJson(mine)
+        !sameJson(mine, record[key])
+    }
+
+private fun isBlankJson(value: kotlinx.serialization.json.JsonElement?): Boolean = when (value) {
+    null, kotlinx.serialization.json.JsonNull -> true
+    is JsonPrimitive -> value.isString && value.content.isBlank()
+    is kotlinx.serialization.json.JsonArray -> value.isEmpty()
+    else -> false
+}
+
+private fun sameJson(a: kotlinx.serialization.json.JsonElement?, b: kotlinx.serialization.json.JsonElement?): Boolean {
+    if (isBlankJson(a) && isBlankJson(b)) return true
+    if (a is JsonPrimitive && b is JsonPrimitive) {
+        if (a.isString != b.isString) {
+            // A number the form keeps as text ("12.5") against the record's 12.5.
+            return a.content.toDoubleOrNull()?.let { it == b.content.toDoubleOrNull() } ?: (a.content == b.content)
+        }
+        if (!a.isString) return a.content.toDoubleOrNull()?.let { it == b.content.toDoubleOrNull() } ?: (a.content == b.content)
+        return a.content == b.content
+    }
+    return a == b
+}
+
+/**
+ * The PATCH body a correction actually sends: only [changed] keys (plus any explicit clearances the
+ * repository added for them), and the precondition. Null [changed] — an entry from an earlier build —
+ * is the whole body, as it always was. Pinned by `OfflineEverywhereTest`.
+ */
+fun restrictCorrectionBody(body: JsonObject, changed: Set<String>?, expectedUpdatedAt: String?): JsonObject {
+    val kept = if (changed == null) body else JsonObject(body.filterKeys { it in changed })
+    if (expectedUpdatedAt.isNullOrBlank()) return kept
+    return JsonObject(kept + ("expectedUpdatedAt" to JsonPrimitive(expectedUpdatedAt)))
+}
+
+/**
+ * Is this refusal the server's "the record changed since this edit was composed" (409
+ * `record_changed`, `records.assert_expected_updated_at`)? Returns the record's current `updatedAt`
+ * when it is, so the tray can offer "Review changes"; null for any other answer.
+ */
+fun staleCorrectionCurrentVersion(code: Int, body: String?): String? {
+    if (code != 409 || body.isNullOrBlank()) return null
+    val root = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+    val detail = root["detail"] as? JsonObject ?: return null
+    if ((detail["code"] as? JsonPrimitive)?.content != "record_changed") return null
+    return (detail["currentUpdatedAt"] as? JsonPrimitive)?.content ?: ""
+}
+
+/** One field of a correction the record moved under: the phone's value and the server's value now. */
+data class StaleCorrectionField(val key: String, val mine: String, val theirs: String)
+
+/** What "Review changes" shows. [fields] is only the keys this correction changes. */
+data class StaleCorrectionReview(val fields: List<StaleCorrectionField>, val currentUpdatedAt: String?)
+
+/**
+ * Build the review: for each key this correction changes, the phone's value against the record's
+ * value now, as readable text. Keys the two already agree on are left out — nobody needs to choose
+ * there. Pinned by `OfflineEverywhereTest`.
+ */
+fun staleCorrectionReview(mine: JsonObject, record: JsonObject, changedKeys: Set<String>?): StaleCorrectionReview {
+    val keys = changedKeys ?: mine.keys
+    val fields = keys.mapNotNull { key ->
+        val a = mine[key]
+        val b = record[key]
+        if (sameJsonForReview(a, b)) null else StaleCorrectionField(key, readableJson(a), readableJson(b))
+    }
+    val now = (record["updatedAt"] as? JsonPrimitive)?.content
+    return StaleCorrectionReview(fields, now)
+}
+
+private fun sameJsonForReview(a: kotlinx.serialization.json.JsonElement?, b: kotlinx.serialization.json.JsonElement?): Boolean =
+    readableJson(a) == readableJson(b)
+
+private fun readableJson(value: kotlinx.serialization.json.JsonElement?): String = when (value) {
+    null, kotlinx.serialization.json.JsonNull -> ""
+    is JsonPrimitive -> value.content
+    else -> value.toString()
+}
+
+/** The error body of [error] without consuming it, so the classification after it still reads it. */
+fun peekErrorBody(error: retrofit2.HttpException): String? = runCatching {
+    val source = error.response()?.errorBody()?.source() ?: return@runCatching null
+    source.request(Long.MAX_VALUE)
+    source.buffer.clone().readUtf8()
+}.getOrNull()

@@ -264,6 +264,8 @@ def test_the_recorder_sits_inside_cors_and_outside_the_router(
         "CORSMiddleware",
         "UsageEventMiddleware",
         "UnhandledErrorMiddleware",
+        # Innermost: it must see the route's own answer (app/core/idempotency.py).
+        "IdempotencyMiddleware",
     ]
 
 

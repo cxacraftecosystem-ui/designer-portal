@@ -318,6 +318,11 @@ data class OutboxFailureRow(
      */
     val otherAccount: Boolean = false,
     /**
+     * A correction the record moved under (409 `record_changed`, 2026-10-16). The tray offers
+     * "Review changes" — compare, then send mine or keep theirs — instead of a blind retry.
+     */
+    val stale: Boolean = false,
+    /**
      * The files queued with this entry, as this phone holds them, so the tray can offer Download on
      * each before anything is sent. Paths and names only — never the record body, for the reason
      * the rest of this projection gives.
@@ -348,6 +353,10 @@ fun outboxKindLabel(type: String, isUpdate: Boolean): String {
         // colleague's piece. "Rating" alone would sit in a tray beside six record types and read as
         // one more of them.
         OFFLINE_DESIGN_RATING -> "Design review rating"
+        OFFLINE_APP_FEEDBACK -> "App feedback"
+        OFFLINE_QFORM_OP -> "Questionnaire change"
+        OFFLINE_FEEDBACK_REPORT -> "Problem or suggestion report"
+        OFFLINE_DESIGNER_PROFILE -> "Designer profile"
         else -> type
     }
     return if (isUpdate) "$noun — a correction" else noun
@@ -523,5 +532,6 @@ fun outboxFailureRows(
                 // entry the pass had already decided to skip — which is precisely the state this
                 // flag was added to end. See [OutboxFailureRow.otherAccount]. (2026-09-03)
                 otherAccount = dwDraftIsForAnotherAccount(entry.ownerUserId, signedInUserId),
+                stale = entry.staleCorrection,
             )
         }

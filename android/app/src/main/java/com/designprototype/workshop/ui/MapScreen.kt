@@ -82,6 +82,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.ReadCache
+import com.designprototype.workshop.data.readCacheNotice
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.MapCountsDto
 import com.designprototype.workshop.data.MapPointChildDto
@@ -409,6 +411,8 @@ fun MapScreen(
     var error by remember { mutableStateOf<String?>(null) }
     // Bumped by Try again on the error card, which re-runs the load below (UX audit DA-43).
     var retryKey by remember { mutableStateOf(0) }
+    /** Set when the places on screen are this phone's saved copy — see [ReadCache]. */
+    var cachedNote by remember { mutableStateOf<String?>(null) }
     var selectedKey by remember { mutableStateOf<String?>(null) }
 
     /**
@@ -494,12 +498,20 @@ fun MapScreen(
         // reads as the retry not having happened.
         error = null
         runCatching {
-            repository.mapPoints(
-                workshopIds = workshopScope.workshopIds,
-                level = level,
-                focusType = activeFocusType,
-                focusId = activeFocusId
-            )
+            // The last map this phone read for the same scope, level and focus is shown when there is
+            // no connection — see [ReadCache].
+            ReadCache.read(
+                context.applicationContext,
+                "map:$level:${workshopScope.requestKey}:${activeFocusType.orEmpty()}:${activeFocusId.orEmpty()}",
+                MapPointsDto.serializer(),
+            ) {
+                repository.mapPoints(
+                    workshopIds = workshopScope.workshopIds,
+                    level = level,
+                    focusType = activeFocusType,
+                    focusId = activeFocusId
+                )
+            }.also { read -> cachedNote = if (read.fromCache) readCacheNotice(read.cachedAt) else null }.value
         }
             .onSuccess { result ->
                 data = result
@@ -597,6 +609,7 @@ fun MapScreen(
             )
         }
 
+        cachedNote?.takeIf { error == null }?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
         when {
             error != null -> MapCard(title = "The map could not be loaded") {
                 LoadFailedCard(message = error.orEmpty(), onRetry = { retryKey++ })

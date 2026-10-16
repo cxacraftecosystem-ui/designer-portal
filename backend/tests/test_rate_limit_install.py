@@ -103,6 +103,8 @@ def test_the_limiter_is_mounted_inside_cors_and_outside_the_error_handler(
         "UsageEventMiddleware",
         "RateLimitMiddleware",
         "UnhandledErrorMiddleware",
+        # Innermost: it must see the route's own answer (app/core/idempotency.py).
+        "IdempotencyMiddleware",
     ]
 
 
@@ -123,6 +125,8 @@ def test_a_fresh_clone_has_no_rate_limit_middleware_at_all(unlimited_app: FastAP
         "CORSMiddleware",
         "UsageEventMiddleware",
         "UnhandledErrorMiddleware",
+        # Innermost: it must see the route's own answer (app/core/idempotency.py).
+        "IdempotencyMiddleware",
     ]
 
 

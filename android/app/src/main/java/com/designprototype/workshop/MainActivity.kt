@@ -80,6 +80,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Timeline
+import com.designprototype.workshop.ui.FormDraftRestoredNote
+import com.designprototype.workshop.ui.draftDate
+import com.designprototype.workshop.ui.draftList
+import com.designprototype.workshop.ui.parseDraftList
+import com.designprototype.workshop.ui.rememberFormDraft
 import com.designprototype.workshop.ui.FieldDateField
 import com.designprototype.workshop.ui.parseFieldDate
 // The handset's ports of `records.derive_age` and `records.derive_experience_years` — the two
@@ -198,6 +203,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.designprototype.workshop.data.ApiClient
 import com.designprototype.workshop.data.OfflineQueueResult
+import com.designprototype.workshop.data.ReadCache
+import com.designprototype.workshop.data.readCacheNotice
 import com.designprototype.workshop.data.unfiledLinkReason
 import com.designprototype.workshop.data.UNFILED_BY_CHOICE
 import com.designprototype.workshop.data.workshopUnfiledReasons
@@ -1870,7 +1877,7 @@ private fun RepositoryApp(
     val latestPreferences by rememberUpdatedState(preferences)
     LaunchedEffect(user?.id, passwordHeld) {
         if (user == null || passwordHeld) return@LaunchedEffect
-        onPreferencesChanged(syncAppPreferences(repository, latestPreferences))
+        onPreferencesChanged(syncAppPreferences(repository, latestPreferences, AppPreferencesStore(appContext)))
     }
 
     // Offline outbox auto-sync: drain queued entries on login/start, whenever the network returns, and
@@ -4540,8 +4547,8 @@ private fun HomeScreen(
                             .onFailure { showError(it.userMessage("Couldn't load the questionnaire sections.")) }
                         loadLookups()
                     },
-                    onSubmit = { body ->
-                        val created = repository.createQuestionnaireInterview(body)
+                    onSubmit = { body, key ->
+                        val created = repository.createQuestionnaireInterview(body, key)
                         refresh()
                         created.id
                     },
@@ -7472,6 +7479,35 @@ private class MediaCaptureState {
 private fun rememberMediaCaptureState(): MediaCaptureState = remember { MediaCaptureState() }
 
 /**
+ * This attachment set as on-disk draft fields (see `ui/FormDraftPersistence.kt`): the Uris, what each
+ * is for, and the captured GPS fix. [slot] tells two sets on one form apart (a tool's photographs and
+ * its stage captures).
+ */
+private fun MediaCaptureState.draftFields(slot: String): Map<String, String> = mapOf(
+    "${com.designprototype.workshop.data.URI_FIELD_PREFIX}$slot" to uris.joinToString("\n"),
+    "purposes:$slot" to purposes.entries.joinToString("\n") { "${it.key}\t${it.value}" },
+    "location:$slot" to (location?.let { offlineFormJson.encodeToString(it) } ?: ""),
+)
+
+/** The inverse of [draftFields]; absent keys leave the set as it is. */
+private fun MediaCaptureState.restoreDraft(slot: String, values: Map<String, String>) {
+    values["${com.designprototype.workshop.data.URI_FIELD_PREFIX}$slot"]?.let { text ->
+        uris = com.designprototype.workshop.data.formDraftUriList(text).map(Uri::parse)
+    }
+    values["purposes:$slot"]?.let { text ->
+        purposes = text.split('\n').mapNotNull { line ->
+            val parts = line.split('\t')
+            if (parts.size == 2) Uri.parse(parts[0]) to parts[1] else null
+        }.filter { it.first in uris }.toMap()
+    }
+    values["location:$slot"]?.let { text ->
+        location = text.takeIf { it.isNotBlank() }?.let {
+            runCatching { offlineFormJson.decodeFromString<LocationRequest>(it) }.getOrNull()
+        }
+    }
+}
+
+/**
  * Start (or restart) the eager pre-upload of ONE attachment to object storage, keeping the shared
  * [MediaCaptureState] progress/staged/failed bookkeeping in sync. This is the single source of truth
  * for "stream a captured file as soon as it is attached" — used both by the capture effects (for every
@@ -10045,13 +10081,21 @@ private fun RecordPickerScreen(
     var total by remember(mode) { mutableStateOf(0) }
     var selected by remember(mode) { mutableStateOf("") }
 
+    val pickerContext = LocalContext.current.applicationContext
     LaunchedEffect(mode, query, attempt) {
         // Typing settles before the server is asked, so one name is one request rather than six.
         if (query.isNotBlank()) delay(350)
         loading = true
         loadError = null
         val search = query.trim().ifBlank { null }
+        // The last list read for this search is offered with no signal, so a record can be opened
+        // for a correction (see [cachedRecordForCorrection]). The notice says it is a copy.
         runCatching {
+          ReadCache.read(
+            pickerContext,
+            "picker:${mode.name}:${search.orEmpty()}",
+            kotlinx.serialization.serializer<Pair<Int, List<Pair<String, String>>>>(),
+          ) {
             when (mode) {
                 EntryMode.ARTISAN -> repository.artisanPage(search).let { p -> p.total to p.items.map { it.id to "${it.name} · ${it.place}" } }
                 EntryMode.CRAFT -> repository.craftPage(search).let { p -> p.total to p.items.map { it.id to (it.name + (it.place?.let { pl -> " · $pl" } ?: "")) } }
@@ -10078,10 +10122,13 @@ private fun RecordPickerScreen(
                 }
                 else -> 0 to emptyList()
             }
-        }.onSuccess { (count, rows) ->
+          }
+        }.onSuccess { read ->
             // The server answers newest first; that order is what "Recently added" means below.
+            val (count, rows) = read.value
             options = rows
             total = count
+            if (read.fromCache) onError(readCacheNotice(read.cachedAt))
         }.onFailure {
             if (it is kotlinx.coroutines.CancellationException) throw it
             loadError = it.userMessage("Couldn't load the ${mode.label.lowercase()} records.")
@@ -10523,6 +10570,31 @@ private fun DwInlineRecordDialog(
     }
 }
 
+/**
+ * A RECORD TO CORRECT, FROM THE SERVER OR — WITH NO SIGNAL — FROM THE COPY THIS PHONE LAST READ
+ * (2026-10-16). Safe because a correction made on a copy is queued as a PATCH of only the fields the
+ * person changed, carrying the copy's `updatedAt`: if anybody changed the record since, the server
+ * refuses it and the outbox tray offers "Review changes" instead of overwriting their work. Says so
+ * when it serves the copy.
+ */
+private suspend fun <T> cachedRecordForCorrection(
+    context: Context,
+    kind: String,
+    id: String,
+    serializer: kotlinx.serialization.KSerializer<T>,
+    onNotice: (String) -> Unit,
+    fetch: suspend () -> T,
+): T {
+    val read = ReadCache.read(context, "record:$kind:$id", serializer, fetch)
+    if (read.fromCache) {
+        onNotice(
+            readCacheNotice(read.cachedAt) + " A correction saved now is checked against the latest " +
+                "version when it is sent, and nothing anybody else changed is overwritten."
+        )
+    }
+    return read.value
+}
+
 @Composable
 private fun EditScreen(
     repository: WorkshopRepository,
@@ -10540,6 +10612,8 @@ private fun EditScreen(
     var loadFailed by remember(recordId) { mutableStateOf<String?>(null) }
     var loadAttempt by remember(recordId) { mutableStateOf(0) }
     var loaded by remember(recordId) { mutableStateOf(false) }
+    // For [cachedRecordForCorrection]: a record opened before can be corrected with no signal.
+    val editContext = LocalContext.current.applicationContext
     when (mode) {
         EntryMode.ARTISAN -> {
             var detail by remember(recordId) { mutableStateOf<ArtisanDetailDto?>(null) }
@@ -10547,7 +10621,7 @@ private fun EditScreen(
             var answersLoading by remember(recordId) { mutableStateOf(true) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { repository.artisan(recordId) }
+                runCatching { cachedRecordForCorrection(editContext, "artisan", recordId, ArtisanDetailDto.serializer(), onError) { repository.artisan(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load artisan") }
                 runCatching { repository.artisanQuestionnaire(recordId) }
@@ -10577,7 +10651,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<ProductDetailDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { repository.product(recordId) }
+                runCatching { cachedRecordForCorrection(editContext, "product", recordId, ProductDetailDto.serializer(), onError) { repository.product(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load product") }
             }
@@ -10601,7 +10675,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<ProcessDetailDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { repository.process(recordId) }
+                runCatching { cachedRecordForCorrection(editContext, "process", recordId, ProcessDetailDto.serializer(), onError) { repository.process(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load process") }
             }
@@ -10623,7 +10697,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<ToolDetailDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { repository.tool(recordId) }
+                runCatching { cachedRecordForCorrection(editContext, "tool", recordId, ToolDetailDto.serializer(), onError) { repository.tool(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load tool") }
             }
@@ -10647,7 +10721,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<WorkshopDetailDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { repository.workshop(recordId) }
+                runCatching { cachedRecordForCorrection(editContext, "workshop", recordId, WorkshopDetailDto.serializer(), onError) { repository.workshop(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load workshop") }
             }
@@ -10670,7 +10744,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<CraftDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { repository.craft(recordId) }
+                runCatching { cachedRecordForCorrection(editContext, "craft", recordId, CraftDto.serializer(), onError) { repository.craft(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load craft") }
             }
@@ -10778,7 +10852,7 @@ private fun InterviewEditLoader(
             // be passed. A crash here is the correct outcome: it can only happen if the routing above has
             // been changed, and it names what went wrong at the place that decides it. The web half of this
             // change carries the same rule as `method: editingId ? "PATCH" : "POST"`.
-            onSubmit = { error("An open edit must PATCH the interview, never create a second one.") },
+            onSubmit = { _, _ -> error("An open edit must PATCH the interview, never create a second one.") },
             onError = onError,
             onSaved = onDone
         )
@@ -10810,15 +10884,37 @@ private fun CraftForm(
     var saving by remember { mutableStateOf(false) }
     var nameError by remember { mutableStateOf<String?>(null) }
     val nameFocus = remember { FocusRequester() }
+    // Kept on disk until saved, so a killed app gives the typing and the photographs back.
+    val draft = rememberFormDraft(
+        key = if (isEdit) "craft:edit:${editing!!.id}" else "craft:new",
+        snapshot = {
+            mapOf(
+                "name" to name, "localName" to localName, "category" to category, "place" to place,
+                "description" to description,
+            ) + media.draftFields("media")
+        },
+        restore = { v ->
+            name = v["name"] ?: name
+            localName = v["localName"] ?: localName
+            category = v["category"] ?: category
+            place = v["place"] ?: place
+            description = v["description"] ?: description
+            media.restoreDraft("media", v)
+        },
+    )
 
-    fun submit() {
+    // ONE KEY PER CRAFT BEING TYPED (2026-10-16): sent as `Idempotency-Key` on the online create and
+    // carried into the outbox if that create loses its answer, so the server writes it once.
+    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
+    fun submit(forceOffline: Boolean = false) {
         if (!validateRequired(listOf(
                 RequiredCheck(name.isBlank(), { nameError = it }, nameFocus)
             ))) { onError("Please fill the required field highlighted above."); return }
         scope.launch {
             // Late-submission gate: if the chosen workshop has ended, say what that means and save
             // only if the researcher confirms. Returns true immediately when there is nothing to say.
-            if (!workshop.confirmSubmission()) return@launch
+            // Not asked twice: a forced re-run follows an online attempt that already asked.
+            if (!forceOffline && !workshop.confirmSubmission()) return@launch
             saving = true
             val body = CraftCreateRequest(
                 name = name.trim(),
@@ -10837,26 +10933,48 @@ private fun CraftForm(
                 trySaveOffline(repository, context, isEdit, "craft", offlineFormJson.encodeToString(body),
                     name.trim(), media, name.trim(), "Field media for ${name.trim()}",
                     editingId = editing?.id,
-                    unfiled = workshopUnfiledReasons(workshop = workshop.unfiledReason()))
+                    unfiled = workshopUnfiledReasons(workshop = workshop.unfiledReason()),
+                    force = forceOffline,
+                    idempotencyKey = createKey,
+                    base = recordBaseJson(CraftDto.serializer(), editing))
             }.getOrNull()
             if (queuedOffline != null) {
+                draft.discard()
                 media.reset()
                 onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
                 onDone()
                 saving = false
                 return@launch
             }
+            if (forceOffline) {
+                // The queue itself could not be written (a full disk): say so, keep the form.
+                onError("This craft could not be saved or kept on this device. It is still in the form.")
+                saving = false
+                return@launch
+            }
+            var landed = false
             runCatching {
                 val craftId = if (isEdit) {
                     repository.updateCraft(editing!!.id, body).id
                 } else {
-                    repository.createCraft(body).id
+                    repository.createCraft(body, createKey).id
                 }
+                landed = true
                 uploadAttachments(repository, context, media, "craft", craftId, name, "Field media for ${name.trim()}")
             }.onSuccess {
+                draft.discard()
                 media.reset()
                 onDone()
-            }.onFailure { onError(it.userMessage("Unable to save craft")) }
+            }.onFailure {
+                // THE CONNECTION WENT MID-REQUEST: into the outbox under the same key, rather than an
+                // error over a form the designer then has to remember to save again.
+                if (!landed && repository.isTransient(it)) {
+                    saving = false
+                    submit(forceOffline = true)
+                    return@launch
+                }
+                onError(it.userMessage("Unable to save craft"))
+            }
             saving = false
         }
     }
@@ -10868,6 +10986,7 @@ private fun CraftForm(
 
     RecordCard(title = if (isEdit) "Update craft" else "Add craft") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
+        FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
@@ -11122,6 +11241,45 @@ private fun ArtisanForm(
     var pehchanError by remember { mutableStateOf<String?>(null) }
     // Non-blocking: an artisan already recorded with the Aadhaar number being typed.
     var aadhaarDuplicate by remember(editing) { mutableStateOf<String?>(null) }
+    // Kept on disk until saved, so a killed app gives the typing and the photographs back.
+    val draft = rememberFormDraft(
+        key = if (isEdit) "artisan:edit:${editing!!.id}" else "artisan:new:${prefill?.craftId.orEmpty()}",
+        snapshot = {
+            mapOf(
+                "name" to name, "localName" to localName, "gender" to gender, "phone" to phone,
+                "email" to email, "place" to place, "address" to address, "notes" to notes,
+                "aadhaar" to aadhaar, "pehchanAvailable" to pehchanAvailable.toString(),
+                "pehchanNumber" to pehchanNumber, "dateOfBirth" to (dateOfBirth?.toString() ?: ""),
+                "craftStartDate" to (craftStartDate?.toString() ?: ""),
+                "experienceYears" to experienceYears, "experienceMonths" to experienceMonths,
+                "dos" to draftList(dosItems), "donts" to draftList(dontsItems), "craftId" to craftId,
+                "newCraftName" to newCraftName, "status" to status,
+            ) + media.draftFields("media")
+        },
+        restore = { v ->
+            name = v["name"] ?: name
+            localName = v["localName"] ?: localName
+            gender = v["gender"] ?: gender
+            phone = v["phone"] ?: phone
+            email = v["email"] ?: email
+            place = v["place"] ?: place
+            address = v["address"] ?: address
+            notes = v["notes"] ?: notes
+            aadhaar = v["aadhaar"] ?: aadhaar
+            pehchanAvailable = v["pehchanAvailable"]?.toBooleanStrictOrNull() ?: pehchanAvailable
+            pehchanNumber = v["pehchanNumber"] ?: pehchanNumber
+            v["dateOfBirth"]?.let { dateOfBirth = draftDate(it) }
+            v["craftStartDate"]?.let { craftStartDate = draftDate(it) }
+            experienceYears = v["experienceYears"] ?: experienceYears
+            experienceMonths = v["experienceMonths"] ?: experienceMonths
+            v["dos"]?.let { dosItems = parseDraftList(it).ifEmpty { listOf("") } }
+            v["donts"]?.let { dontsItems = parseDraftList(it).ifEmpty { listOf("") } }
+            craftId = v["craftId"] ?: craftId
+            newCraftName = v["newCraftName"] ?: newCraftName
+            status = v["status"] ?: status
+            media.restoreDraft("media", v)
+        },
+    )
     /*
      * Aadhaar is what stops one artisan becoming two records, so a NEW artisan must come with one —
      * `POST /artisans` answers 422 without it, and the form would simply be broken if it let the
@@ -11173,7 +11331,9 @@ private fun ArtisanForm(
         }
     }
 
-    fun submit() {
+    // ONE KEY PER ARTISAN BEING TYPED (2026-10-16) — see the identical note on the craft form.
+    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
+    fun submit(forceOffline: Boolean = false) {
         val dosText = joinNumbered(dosItems)
         val dontsText = joinNumbered(dontsItems)
         if (!validateRequired(listOf(
@@ -11226,7 +11386,7 @@ private fun ArtisanForm(
         // helpers reach. See newRecordLocationError for why an edit is never asked.
         newRecordLocationError(isEdit, media.location)?.let { onError(it); return }
         scope.launch {
-            if (!link.confirmSubmission()) return@launch
+            if (!forceOffline && !link.confirmSubmission()) return@launch
             saving = true
             val body = ArtisanCreateRequest(
                 name = name.trim(),
@@ -11275,26 +11435,36 @@ private fun ArtisanForm(
                 trySaveOffline(repository, context, isEdit, "artisan", offlineFormJson.encodeToString(body),
                     name.trim(), media, name.trim(), "Field media for ${name.trim()}",
                     editingId = editing?.id,
-                    unfiled = link.unfiledReasons())
+                    unfiled = link.unfiledReasons(),
+                    force = forceOffline,
+                    idempotencyKey = createKey,
+                    base = recordBaseJson(ArtisanDetailDto.serializer(), editing))
             }.getOrNull()
             if (queuedOffline != null) {
-                media.reset()
+                draft.discard(); media.reset()
                 onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
                 onDone()
                 saving = false
                 return@launch
             }
+            if (forceOffline) {
+                onError("This artisan could not be saved or kept on this device. It is still in the form.")
+                saving = false
+                return@launch
+            }
+            var landed = false
             runCatching {
                 val artisanId = if (isEdit) {
                     repository.updateArtisan(editing!!.id, body).id
                 } else {
-                    repository.createArtisan(body).id
+                    repository.createArtisan(body, createKey).id
                 }
+                landed = true
                 uploadAttachments(repository, context, media, "artisan", artisanId, name, "Field media for ${name.trim()}")
                 artisanId
             }.onSuccess { artisanId ->
                 if (isEdit) {
-                    media.reset()
+                    draft.discard(); media.reset()
                     onDone()
                 } else {
                     val resolvedCraftName = crafts.firstOrNull { it.id == craftId }?.name ?: newCraftName.blankToNull()
@@ -11305,10 +11475,16 @@ private fun ArtisanForm(
                         craftId = craftId.ifBlank { null },
                         craftName = resolvedCraftName
                     )
-                    media.reset()
+                    draft.discard(); media.reset()
                     onArtisanCreated(prefillOut)
                 }
             }.onFailure {
+                // The connection went mid-request: into the outbox under the same key.
+                if (!landed && repository.isTransient(it)) {
+                    saving = false
+                    submit(forceOffline = true)
+                    return@launch
+                }
                 // A duplicate Aadhaar/Pehchan number comes back as a structured 409 whose message
                 // names the artisan already holding it — far more use than "HTTP 409 Conflict", which
                 // is all the exception itself says.
@@ -11335,6 +11511,7 @@ private fun ArtisanForm(
 
     RecordCard(title = if (isEdit) "Update artisan" else "Add artisan") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
+        FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
@@ -11720,6 +11897,32 @@ private fun WorkshopForm(
     var placeError by remember { mutableStateOf<String?>(null) }
     val titleFocus = remember { FocusRequester() }
     val placeFocus = remember { FocusRequester() }
+    // Kept on disk until saved, so a killed app gives the typing and the photographs back.
+    val draft = rememberFormDraft(
+        key = if (isEdit) "workshop:edit:${editing!!.id}" else "workshop:new:${prefill?.artisanId.orEmpty()}",
+        snapshot = {
+            mapOf(
+                "workshopType" to workshopType, "title" to title, "place" to place,
+                "description" to description, "notes" to notes,
+                "startDate" to (startDate?.toString() ?: ""), "endDate" to (endDate?.toString() ?: ""),
+                "status" to status, "artisans" to draftList(selectedArtisans.sorted()),
+                "crafts" to draftList(selectedCrafts.sorted()),
+            ) + media.draftFields("media")
+        },
+        restore = { v ->
+            workshopType = v["workshopType"] ?: workshopType
+            title = v["title"] ?: title
+            place = v["place"] ?: place
+            description = v["description"] ?: description
+            notes = v["notes"] ?: notes
+            v["startDate"]?.let { startDate = draftDate(it) }
+            v["endDate"]?.let { endDate = draftDate(it) }
+            status = v["status"] ?: status
+            v["artisans"]?.let { selectedArtisans = parseDraftList(it).toSet() }
+            v["crafts"]?.let { selectedCrafts = parseDraftList(it).toSet() }
+            media.restoreDraft("media", v)
+        },
+    )
 
     LaunchedEffect(editing) {
         val existing = editing?.location
@@ -11732,7 +11935,9 @@ private fun WorkshopForm(
         loadCraftRegister(context, repository) { crafts = it }
     }
 
-    fun submit() {
+    // ONE KEY PER WORKSHOP BEING TYPED (2026-10-16) — see the identical note on the craft form.
+    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
+    fun submit(forceOffline: Boolean = false) {
         if (!validateRequired(listOf(
                 RequiredCheck(title.isBlank(), { titleError = it }, titleFocus),
                 RequiredCheck(place.isBlank(), { placeError = it }, placeFocus)
@@ -11765,26 +11970,43 @@ private fun WorkshopForm(
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "workshop", offlineFormJson.encodeToString(body),
                     title.trim(), media, title.trim(), "Field media for ${title.trim()}",
-                    editingId = editing?.id)
+                    editingId = editing?.id,
+                    force = forceOffline,
+                    idempotencyKey = createKey,
+                    base = recordBaseJson(WorkshopDetailDto.serializer(), editing))
             }.getOrNull()
             if (queuedOffline != null) {
-                media.reset()
+                draft.discard(); media.reset()
                 onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
                 onDone()
                 saving = false
                 return@launch
             }
+            if (forceOffline) {
+                onError("This workshop could not be saved or kept on this device. It is still in the form.")
+                saving = false
+                return@launch
+            }
+            var landed = false
             runCatching {
                 val workshopId = if (isEdit) {
                     repository.updateWorkshop(editing!!.id, body).id
                 } else {
-                    repository.createWorkshop(body).id
+                    repository.createWorkshop(body, createKey).id
                 }
+                landed = true
                 uploadAttachments(repository, context, media, "workshop", workshopId, title, "Field media for ${title.trim()}")
             }.onSuccess {
-                media.reset()
+                draft.discard(); media.reset()
                 onDone()
-            }.onFailure { onError(it.userMessage("Unable to save workshop")) }
+            }.onFailure {
+                if (!landed && repository.isTransient(it)) {
+                    saving = false
+                    submit(forceOffline = true)
+                    return@launch
+                }
+                onError(it.userMessage("Unable to save workshop"))
+            }
             saving = false
         }
     }
@@ -11808,6 +12030,7 @@ private fun WorkshopForm(
 
     RecordCard(title = if (isEdit) "Update workshop" else "Add workshop") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
+        FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
@@ -11991,13 +12214,55 @@ private fun ProductForm(
     val craftNameFocus = remember { FocusRequester() }
     val artisanNameFocus = remember { FocusRequester() }
     val placeFocus = remember { FocusRequester() }
+    // Kept on disk until saved, so a killed app gives the typing and the photographs back.
+    val draft = rememberFormDraft(
+        key = if (isEdit) "product:edit:${editing!!.id}" else "product:new:${prefill?.artisanId.orEmpty()}",
+        snapshot = {
+            mapOf(
+                "productName" to productName, "localName" to localName, "craftName" to craftName,
+                "artisanName" to artisanName, "place" to place, "craftId" to craftId,
+                "artisanId" to artisanId, "productType" to productType, "marketDemand" to marketDemand,
+                "timeTaken" to timeTaken, "size" to size, "length" to length, "breadth" to breadth,
+                "height" to height, "costOfMaking" to costOfMaking, "sellingPrice" to sellingPrice,
+                "rawMaterials" to rawMaterials, "mainTools" to mainTools, "functionUse" to functionUse,
+                "remarks" to remarks, "status" to status, "markers" to markers.toDraft(),
+            ) + media.draftFields("media")
+        },
+        restore = { v ->
+            productName = v["productName"] ?: productName
+            localName = v["localName"] ?: localName
+            craftName = v["craftName"] ?: craftName
+            artisanName = v["artisanName"] ?: artisanName
+            place = v["place"] ?: place
+            craftId = v["craftId"] ?: craftId
+            artisanId = v["artisanId"] ?: artisanId
+            productType = v["productType"] ?: productType
+            marketDemand = v["marketDemand"] ?: marketDemand
+            timeTaken = v["timeTaken"] ?: timeTaken
+            size = v["size"] ?: size
+            length = v["length"] ?: length
+            breadth = v["breadth"] ?: breadth
+            height = v["height"] ?: height
+            costOfMaking = v["costOfMaking"] ?: costOfMaking
+            sellingPrice = v["sellingPrice"] ?: sellingPrice
+            rawMaterials = v["rawMaterials"] ?: rawMaterials
+            mainTools = v["mainTools"] ?: mainTools
+            functionUse = v["functionUse"] ?: functionUse
+            remarks = v["remarks"] ?: remarks
+            status = v["status"] ?: status
+            v["markers"]?.let { markers.restoreDraft(it) }
+            media.restoreDraft("media", v)
+        },
+    )
 
     LaunchedEffect(editing) {
         val existing = editing?.location
         if (existing != null && media.location == null) media.location = existing.toRequest()
     }
 
-    fun submit() {
+    // ONE KEY PER PRODUCT BEING TYPED (2026-10-16) — see the identical note on the craft form.
+    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
+    fun submit(forceOffline: Boolean = false) {
         if (!validateRequired(listOf(
                 RequiredCheck(productName.isBlank(), { productNameError = it }, productNameFocus),
                 RequiredCheck(craftName.isBlank(), { craftNameError = it }, craftNameFocus),
@@ -12006,7 +12271,7 @@ private fun ProductForm(
             ))) { onError("Please fill the required field highlighted above."); return }
         newRecordLocationError(isEdit, media.location)?.let { onError(it); return }
         scope.launch {
-            if (!link.confirmSubmission()) return@launch
+            if (!forceOffline && !link.confirmSubmission()) return@launch
             saving = true
             val body = ProductCreateRequest(
                 productName = productName.trim(),
@@ -12069,7 +12334,10 @@ private fun ProductForm(
                 trySaveOffline(repository, context, isEdit, "product", offlineFormJson.encodeToString(body),
                     productName.trim(), media, productName.trim(), "Field media for ${productName.trim()}",
                     editingId = editing?.id,
-                    unfiled = link.unfiledReasons())
+                    unfiled = link.unfiledReasons(),
+                    force = forceOffline,
+                    idempotencyKey = createKey,
+                    base = recordBaseJson(ProductDetailDto.serializer(), editing))
             }.getOrNull()
             if (queuedOffline != null) {
                 // Offline is the normal case, but a queued NEW product has no id yet, so no process
@@ -12083,31 +12351,45 @@ private fun ProductForm(
                 // they were about to record about it.
                 if (!isEdit) carry.prune(CarryNode.PRODUCT)
                 carry.remember(sitting)
-                media.reset()
+                draft.discard(); media.reset()
                 onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
                 onDone()
                 saving = false
                 return@launch
             }
+            if (forceOffline) {
+                onError("This product could not be saved or kept on this device. It is still in the form.")
+                saving = false
+                return@launch
+            }
+            var landed = false
             runCatching {
                 val productId = if (isEdit) {
                     repository.updateProduct(editing!!.id, body).id
                 } else {
-                    repository.createProduct(body).id
+                    repository.createProduct(body, createKey).id
                 }
+                landed = true
                 uploadAttachments(repository, context, media, "product", productId, productName, "Field media for ${productName.trim()}")
                 productId
             }.onSuccess { productId ->
                 // The product itself now joins the bag: a process is documented against a product, so
                 // the process form should be offering this one rather than making them find it again.
                 carry.remember(sitting.copy(productId = productId, productName = productName.trim()))
-                media.reset()
+                draft.discard(); media.reset()
                 // The place is the hint, not the craft: two products called "Chadar" in one register
                 // are told apart by where they were made, which is the same second line the server
                 // puts on a product's reference option.
                 if (!isEdit && onCreated != null) onCreated(productId, productName.trim(), place.trim())
                 else onDone()
-            }.onFailure { onError(it.userMessage("Unable to save product")) }
+            }.onFailure {
+                if (!landed && repository.isTransient(it)) {
+                    saving = false
+                    submit(forceOffline = true)
+                    return@launch
+                }
+                onError(it.userMessage("Unable to save product"))
+            }
             saving = false
         }
     }
@@ -12129,6 +12411,7 @@ private fun ProductForm(
 
     RecordCard(title = if (isEdit) "Update product" else "Add product") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
+        FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
@@ -12652,13 +12935,64 @@ private fun ToolForm(
     val craftNameFocus = remember { FocusRequester() }
     val artisanNameFocus = remember { FocusRequester() }
     val placeFocus = remember { FocusRequester() }
+    // Kept on disk until saved, so a killed app gives the typing and the photographs back.
+    val draft = rememberFormDraft(
+        key = if (isEdit) "tool:edit:${editing!!.id}" else "tool:new:${prefill?.artisanId.orEmpty()}",
+        snapshot = {
+            mapOf(
+                "toolkitName" to toolkitName, "localName" to localName, "englishName" to englishName,
+                "craftName" to craftName, "artisanName" to artisanName, "place" to place,
+                "mirrorArmed" to mirrorArmed.toString(), "craftIds" to draftList(craftIds),
+                "artisanIds" to draftList(artisanIds), "processUsedIn" to processUsedIn,
+                "material" to material, "yearsInUse" to yearsInUse, "height" to height, "width" to width,
+                "length" to length, "breadth" to breadth, "heightInches" to heightInches,
+                "thickness" to thickness, "weight" to weight, "radius" to radius, "maker" to maker,
+                "traditionType" to traditionType, "replacementCost" to replacementCost,
+                "suggestions" to suggestions, "remarks" to remarks, "status" to status,
+                "markers" to markers.toDraft(),
+            ) + media.draftFields("media") + stages.draftFields("stages")
+        },
+        restore = { v ->
+            toolkitName = v["toolkitName"] ?: toolkitName
+            localName = v["localName"] ?: localName
+            englishName = v["englishName"] ?: englishName
+            craftName = v["craftName"] ?: craftName
+            artisanName = v["artisanName"] ?: artisanName
+            place = v["place"] ?: place
+            mirrorArmed = v["mirrorArmed"]?.toBooleanStrictOrNull() ?: mirrorArmed
+            v["craftIds"]?.let { craftIds = parseDraftList(it) }
+            v["artisanIds"]?.let { artisanIds = parseDraftList(it) }
+            processUsedIn = v["processUsedIn"] ?: processUsedIn
+            material = v["material"] ?: material
+            yearsInUse = v["yearsInUse"] ?: yearsInUse
+            height = v["height"] ?: height
+            width = v["width"] ?: width
+            length = v["length"] ?: length
+            breadth = v["breadth"] ?: breadth
+            heightInches = v["heightInches"] ?: heightInches
+            thickness = v["thickness"] ?: thickness
+            weight = v["weight"] ?: weight
+            radius = v["radius"] ?: radius
+            maker = v["maker"] ?: maker
+            traditionType = v["traditionType"] ?: traditionType
+            replacementCost = v["replacementCost"] ?: replacementCost
+            suggestions = v["suggestions"] ?: suggestions
+            remarks = v["remarks"] ?: remarks
+            status = v["status"] ?: status
+            v["markers"]?.let { markers.restoreDraft(it) }
+            media.restoreDraft("media", v)
+            stages.restoreDraft("stages", v)
+        },
+    )
 
     LaunchedEffect(editing) {
         val existing = editing?.location
         if (existing != null && media.location == null) media.location = existing.toRequest()
     }
 
-    fun submit() {
+    // ONE KEY PER TOOL BEING TYPED (2026-10-16) — see the identical note on the craft form.
+    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
+    fun submit(forceOffline: Boolean = false) {
         if (!validateRequired(listOf(
                 RequiredCheck(toolkitName.isBlank(), { toolkitNameError = it }, toolkitNameFocus),
                 RequiredCheck(craftName.isBlank(), { craftNameError = it }, craftNameFocus),
@@ -12667,7 +13001,7 @@ private fun ToolForm(
             ))) { onError("Please fill the required field highlighted above."); return }
         newRecordLocationError(isEdit, media.location)?.let { onError(it); return }
         scope.launch {
-            if (!link.confirmSubmission()) return@launch
+            if (!forceOffline && !link.confirmSubmission()) return@launch
             saving = true
             val body = ToolCreateRequest(
                 toolkitName = toolkitName.trim(),
@@ -12749,7 +13083,7 @@ private fun ToolForm(
             // AN EDIT TAKES THIS DOOR TOO now — see `trySaveOffline`, which the four simpler forms
             // reach the same conclusion through. `editing?.id` is what makes it a correction rather
             // than a duplicate toolkit, so the branch is entered only when there is one to name.
-            if ((!isEdit || editing?.id != null) && !repository.isOnline(context)) {
+            if ((!isEdit || editing?.id != null) && (forceOffline || !repository.isOnline(context))) {
                 val queued = runCatching {
                     val items = media.uris.mapIndexed { i, uri ->
                         // `purpose` CARRIES THE GRID MARKER INTO THE OUTBOX. This form has a
@@ -12776,6 +13110,10 @@ private fun ToolForm(
                         // the picker never had anything to offer, and `patchBodyWithClearances` would
                         // have nothing to tell the two apart with.
                         unfiled = link.unfiledReasons(),
+                        idempotencyKey = if (isEdit) null else createKey,
+                        correctionBase = if (isEdit) {
+                            correctionBaseFor(offlineFormJson.encodeToString(body), recordBaseJson(ToolDetailDto.serializer(), editing))
+                        } else null,
                     )
                 }.getOrNull()
                 if (queued != null) {
@@ -12786,7 +13124,7 @@ private fun ToolForm(
                     // in the bag.
                     if (!isEdit) carry.prune(CarryNode.TOOL)
                     carry.remember(sitting)
-                    media.reset(); stages.reset()
+                    draft.discard(); media.reset(); stages.reset()
                     onError(offlineSavedMessage(queued, isCorrection = isEdit))
                     onDone(); saving = false; return@launch
                 } else {
@@ -12801,12 +13139,14 @@ private fun ToolForm(
                 }
                 saving = false; return@launch
             }
+            var landed = false
             runCatching {
                 val toolId = if (isEdit) {
                     repository.updateTool(editing!!.id, body).id
                 } else {
-                    repository.createTool(body).id
+                    repository.createTool(body, createKey).id
                 }
+                landed = true
                 uploadAttachments(repository, context, media, "tool", toolId, toolkitName, "Field media for ${toolkitName.trim()}")
                 // Each stage capture is uploaded as a numbered process step (STAGE_STEP_n).
                 stages.uris.forEachIndexed { index, uri ->
@@ -12827,11 +13167,20 @@ private fun ToolForm(
                 // The tool itself now joins the bag, so assigning it to another artisan opens with
                 // the tool already picked instead of hunting it out of a dropdown of seventy.
                 carry.remember(sitting.copy(toolId = toolId, toolName = toolkitName.trim()))
+                draft.discard()
                 media.reset()
                 stages.reset()
                 if (!isEdit && onCreated != null) onCreated(toolId, toolkitName.trim(), place.trim())
                 else onDone()
-            }.onFailure { onError(it.userMessage("Unable to save tool")) }
+            }.onFailure {
+                // The connection went mid-request: into the outbox under the same key.
+                if (!landed && repository.isTransient(it)) {
+                    saving = false
+                    submit(forceOffline = true)
+                    return@launch
+                }
+                onError(it.userMessage("Unable to save tool"))
+            }
             saving = false
         }
     }
@@ -12862,6 +13211,7 @@ private fun ToolForm(
 
     RecordCard(title = if (isEdit) "Update tool" else "Add tool") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
+        FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
@@ -13306,6 +13656,62 @@ private fun ProcessForm(
      */
     val carriedProduct = remember { mutableStateOf<String?>(null) }
 
+    // Kept on disk until saved, so a killed app gives the typing, the steps and the photographs back.
+    val draft = rememberFormDraft(
+        key = if (isEdit) "process:edit:${editing!!.id}" else "process:new",
+        snapshot = {
+            val stepMeta = kotlinx.serialization.json.buildJsonArray {
+                steps.forEach { step ->
+                    add(kotlinx.serialization.json.buildJsonObject {
+                        put("serverId", kotlinx.serialization.json.JsonPrimitive(step.serverId))
+                        put("name", kotlinx.serialization.json.JsonPrimitive(step.name))
+                        put("stepType", kotlinx.serialization.json.JsonPrimitive(step.stepType))
+                        put("notes", kotlinx.serialization.json.JsonPrimitive(step.notes))
+                        put("recordAdditional", kotlinx.serialization.json.JsonPrimitive(step.recordAdditional))
+                    })
+                }
+            }
+            mapOf(
+                "name" to name, "artisanId" to artisanId, "productId" to productId,
+                "preProcessAvailable" to preProcessAvailable.toString(), "notes" to notes,
+                "status" to status, "steps" to stepMeta.toString(),
+            ) + preMedia.draftFields("pre") +
+                steps.withIndex().fold(emptyMap()) { acc, (i, step) -> acc + step.media.draftFields("step$i") }
+        },
+        restore = { v ->
+            name = v["name"] ?: name
+            artisanId = v["artisanId"] ?: artisanId
+            productId = v["productId"] ?: productId
+            preProcessAvailable = v["preProcessAvailable"]?.toBooleanStrictOrNull() ?: preProcessAvailable
+            notes = v["notes"] ?: notes
+            status = v["status"] ?: status
+            preMedia.restoreDraft("pre", v)
+            v["steps"]?.let { text ->
+                val restored = runCatching {
+                    kotlinx.serialization.json.Json.parseToJsonElement(text) as kotlinx.serialization.json.JsonArray
+                }.getOrNull()
+                if (restored != null) {
+                    fun kotlinx.serialization.json.JsonObject.str(k: String): String? =
+                        (this[k] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+                    val rebuilt = restored.mapIndexedNotNull { i, element ->
+                        val o = element as? kotlinx.serialization.json.JsonObject ?: return@mapIndexedNotNull null
+                        val serverId = o.str("serverId")
+                        val existing = editing?.steps?.firstOrNull { it.id == serverId }
+                        ProcessStepUi(
+                            java.util.UUID.randomUUID().toString(), serverId, o.str("name").orEmpty(),
+                            o.str("stepType") ?: "SEQUENTIAL", existing?.media ?: emptyList(), o.str("notes"),
+                        ).also { step ->
+                            step.recordAdditional = o.str("recordAdditional")?.toBooleanStrictOrNull() ?: step.recordAdditional
+                            step.media.restoreDraft("step$i", v)
+                        }
+                    }
+                    steps.clear()
+                    steps.addAll(rebuilt)
+                }
+            }
+        },
+    )
+
     // Offer the sitting this researcher was last working in: the artisan, the workshop, and the
     // product they documented last, which is what this record is about.
     val carry = rememberFormCarry(
@@ -13378,7 +13784,9 @@ private fun ProcessForm(
         }
     }
 
-    fun submit() {
+    // ONE KEY PER PROCESS BEING TYPED (2026-10-16) — see the identical note on the craft form.
+    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
+    fun submit(forceOffline: Boolean = false) {
         nameError = null; productError = null; stepsError = null; preMediaError = null; artisanError = null
         var firstInvalid = false
         if (name.isBlank()) { nameError = "This field cannot be empty"; if (!firstInvalid) { firstInvalid = true; runCatching { nameFocus.requestFocus() } } }
@@ -13407,7 +13815,7 @@ private fun ProcessForm(
         if (blocked) { onError("Please fill the required fields highlighted above."); return }
 
         scope.launch {
-            if (!link.confirmSubmission()) return@launch
+            if (!forceOffline && !link.confirmSubmission()) return@launch
             saving = true
             val stepRequests = steps.mapIndexed { i, s ->
                 ProcessStepRequest(
@@ -13453,7 +13861,7 @@ private fun ProcessForm(
             // A CORRECTION TAKES THIS DOOR TOO, on `trySaveOffline`'s reasoning. `updateProcess`
             // answers with the step ids exactly as `createProcess` does, which is what lets a queued
             // correction still carry per-step captures — see the "process" arm of `writeFromEntry`.
-            if ((!isEdit || editing?.id != null) && !repository.isOnline(context)) {
+            if ((!isEdit || editing?.id != null) && (forceOffline || !repository.isOnline(context))) {
                 val queued = runCatching {
                     val items = mutableListOf<com.designprototype.workshop.data.OfflineMediaSpec>()
                     if (preProcessAvailable) {
@@ -13484,11 +13892,15 @@ private fun ProcessForm(
                         // own answer to "why was this empty" carried into the outbox, not just the
                         // three forms that happen to route through `trySaveOffline`.
                         unfiled = link.unfiledReasons(),
+                        idempotencyKey = if (isEdit) null else createKey,
+                        correctionBase = if (isEdit) {
+                            correctionBaseFor(offlineFormJson.encodeToString(body), recordBaseJson(ProcessDetailDto.serializer(), editing))
+                        } else null,
                     )
                 }.getOrNull()
                 if (queued != null) {
                     carry.remember(sitting)
-                    preMedia.reset(); steps.forEach { it.media.reset() }
+                    draft.discard(); preMedia.reset(); steps.forEach { it.media.reset() }
                     onError(offlineSavedMessage(queued, isCorrection = isEdit))
                     onDone()
                 } else {
@@ -13500,8 +13912,10 @@ private fun ProcessForm(
                 saving = false
                 return@launch
             }
+            var landed = false
             runCatching {
-                val detail = if (isEdit) repository.updateProcess(editing!!.id, body) else repository.createProcess(body)
+                val detail = if (isEdit) repository.updateProcess(editing!!.id, body) else repository.createProcess(body, createKey)
+                landed = true
                 if (preProcessAvailable) {
                     uploadAttachments(repository, context, preMedia, "process", detail.id, name, "Pre-process media for ${name.trim()}", customSegment = "PRE")
                 }
@@ -13542,6 +13956,7 @@ private fun ProcessForm(
                 detail.id
             }.onSuccess { processId ->
                 carry.remember(sitting)
+                draft.discard()
                 preMedia.reset()
                 steps.forEach { it.media.reset() }
                 // The product is the hint: a process is documented AGAINST a product, and two
@@ -13555,7 +13970,15 @@ private fun ProcessForm(
                 } else {
                     onDone()
                 }
-            }.onFailure { onError(it.userMessage("Unable to save process")) }
+            }.onFailure {
+                // The connection went mid-request: into the outbox under the same key.
+                if (!landed && repository.isTransient(it)) {
+                    saving = false
+                    submit(forceOffline = true)
+                    return@launch
+                }
+                onError(it.userMessage("Unable to save process"))
+            }
             saving = false
         }
     }
@@ -13576,6 +13999,7 @@ private fun ProcessForm(
 
     RecordCard(title = if (isEdit) "Update process" else "Document process") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
+        FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
@@ -13870,6 +14294,30 @@ private fun interviewGroupKey(iv: QuestionnaireInterviewDetailDto): String {
 private fun representativeInterview(group: List<QuestionnaireInterviewDetailDto>): QuestionnaireInterviewDetailDto =
     group.maxByOrNull { it.createdAt ?: "" } ?: group.first()
 
+/**
+ * [loadViewEntries], with the last list this phone read served when nothing reaches the server
+ * (2026-10-16, see [ReadCache]). [onCached] is told when the copy is what came back.
+ */
+private suspend fun loadViewEntriesCached(
+    context: Context,
+    repository: WorkshopRepository,
+    mode: EntryMode,
+    onCached: (String) -> Unit = {},
+): List<Pair<String, String>> {
+    val read = ReadCache.read(
+        context.applicationContext,
+        "view-entries:${mode.name}",
+        kotlinx.serialization.builtins.ListSerializer(
+            kotlinx.serialization.builtins.PairSerializer(
+                kotlinx.serialization.serializer<String>(),
+                kotlinx.serialization.serializer<String>(),
+            )
+        ),
+    ) { loadViewEntries(repository, mode) }
+    if (read.fromCache) onCached(readCacheNotice(read.cachedAt))
+    return read.value
+}
+
 private suspend fun loadViewEntries(repository: WorkshopRepository, mode: EntryMode): List<Pair<String, String>> = when (mode) {
     // Every list is ordered most-recent-first (createdAt desc; ISO timestamps sort lexically).
     EntryMode.ARTISAN -> repository.artisans().sortedByDescending { it.createdAt ?: "" }.map { it.id to "${it.name} · ${it.place}" }
@@ -13889,6 +14337,16 @@ private suspend fun loadViewEntries(repository: WorkshopRepository, mode: EntryM
 // ===========================================================================
 // My Activity — every record the current user created, most recent first
 // ===========================================================================
+
+/** One My-activity row as kept on the phone for an offline open (see [ReadCache]). */
+@kotlinx.serialization.Serializable
+private data class CachedActivityRow(
+    val mode: String,
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val createdAt: String? = null,
+)
 
 private data class ActivityItem(
     val mode: EntryMode,
@@ -13993,8 +14451,40 @@ private fun MyActivityScreen(
     onError: (String) -> Unit
 ) {
     var loaded by remember { mutableStateOf<MyActivityResult?>(null) }
+    val activityContext = LocalContext.current.applicationContext
+    /** Set when the rows are this phone's saved copy — see [ReadCache]. */
+    var cachedNote by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
-        runCatching { loadMyActivity(repository, userId) }
+        runCatching {
+            // THE LAST LIST THIS PHONE READ, WHEN NOTHING ANSWERS (2026-10-16). A pass where every
+            // list failed is offered to the cache as "no connection"; any pass where at least one
+            // answered is the truth and is kept.
+            var partial: MyActivityResult? = null
+            val read = ReadCache.read(
+                activityContext,
+                "my-activity:$userId",
+                kotlinx.serialization.builtins.ListSerializer(CachedActivityRow.serializer()),
+            ) {
+                val result = loadMyActivity(repository, userId)
+                if (result.allFailed) throw java.io.IOException("No list answered")
+                partial = result
+                result.items.map { CachedActivityRow(it.mode.name, it.id, it.title, it.subtitle, it.createdAt) }
+            }
+            if (read.fromCache) {
+                cachedNote = readCacheNotice(read.cachedAt)
+                MyActivityResult(
+                    read.value.mapNotNull { row ->
+                        EntryMode.entries.firstOrNull { it.name == row.mode }?.let {
+                            ActivityItem(it, row.id, row.title, row.subtitle, row.createdAt)
+                        }
+                    },
+                    failedLists = 0,
+                    totalLists = 1,
+                )
+            } else {
+                partial ?: loadMyActivity(repository, userId)
+            }
+        }
             .onSuccess { loaded = it }
             .onFailure {
                 // LEAVING THE SCREEN IS NOT A FAILURE. `runCatching` catches Throwable, so walking
@@ -14013,11 +14503,11 @@ private fun MyActivityScreen(
         Text(
             // Says out loud that this screen needs a connection, in the WorkshopCodesScreen manner —
             // the alternative is a designer reading an empty list as lost work.
-            "Everything you've recorded, most recent first. Tap an entry to open it. This list needs " +
-                "a connection.",
+            "Everything you've recorded, most recent first. Tap an entry to open it.",
             color = Muted,
             fontSize = 13.sp
         )
+        cachedNote?.let { Text(it, color = Coral, fontSize = 12.sp) }
         val current = loaded
         // SOME answered and some did not. The rows below are real but the list is short by an unknown
         // amount, so it is captioned rather than presented as the whole of someone's work — the same
@@ -14911,20 +15401,41 @@ private fun FeedbackReportSection(repository: WorkshopRepository, onError: (Stri
             .onFailure { if (it !is kotlinx.coroutines.CancellationException) mine = mine ?: emptyList() }
     }
 
+    // Kept on disk until sent, so a killed app gives the report back. Only once something has been
+    // written in it: the kind the form opens on is the server's default, not anybody's choice.
+    val draft = rememberFormDraft(
+        key = "feedback-report",
+        snapshot = {
+            if (subject.isBlank() && details.isBlank()) emptyMap()
+            else mapOf("kind" to kind, "severity" to severity, "area" to area, "subject" to subject, "details" to details)
+        },
+        restore = { v ->
+            kind = v["kind"] ?: kind
+            severity = v["severity"] ?: severity
+            area = v["area"] ?: area
+            subject = v["subject"] ?: subject
+            details = v["details"] ?: details
+        },
+    )
+    val reportContext = LocalContext.current.applicationContext
     LaunchedEffect(Unit) {
-        runCatching { repository.feedbackVocabulary() }
+        // The choices this phone last read, offline (2026-10-16), so a report can be written and
+        // queued with no signal.
+        runCatching { repository.feedbackVocabularyCached(reportContext).value }
             .onSuccess { served ->
                 vocabulary = served
                 // The form opens on the FIRST served kind, which the server orders deliberately
                 // (SUGGESTION, not BUG — a form that opens on "Bug" invites every remark to be filed
                 // as a defect). Nothing here decides that; the order of the served list does.
-                kind = served.kind.firstOrNull()?.value.orEmpty()
+                // Unless a restored draft already chose one — see `draft` below.
+                if (kind.isBlank()) kind = served.kind.firstOrNull()?.value.orEmpty()
             }
             .onFailure { if (it !is kotlinx.coroutines.CancellationException) onError(it.userMessage("Could not load the feedback options")) }
         reloadMine()
     }
 
     RecordCard(title = "Report something") {
+        FormDraftRestoredNote(draft)
         Text(
             "A grievance, a suggestion, a recommendation or a bug. Each one is kept separately and " +
                 "you can see who reads it.",
@@ -14979,7 +15490,8 @@ private fun FeedbackReportSection(repository: WorkshopRepository, onError: (Stri
                     scope.launch {
                         sending = true
                         runCatching {
-                            repository.createFeedbackReport(
+                            repository.fileFeedbackReportOrQueue(
+                                reportContext,
                                 FeedbackReportCreateRequest(
                                     kind = kind,
                                     // blankToNull on both: an untouched dropdown submits "", and the
@@ -15000,7 +15512,14 @@ private fun FeedbackReportSection(repository: WorkshopRepository, onError: (Stri
                                 )
                             )
                         }
-                            .onSuccess {
+                            .onSuccess { filed ->
+                                draft.discard()
+                                if (filed == null) {
+                                    onError(
+                                        "No connection, so your report has been kept on this phone. It " +
+                                            "is filed by itself as soon as there is signal."
+                                    )
+                                }
                                 status = ActionStatus.SUCCESS
                                 // Cleared only on SUCCESS. A failed send keeps every word in the
                                 // boxes, because the one thing worse than a report that did not
@@ -15093,6 +15612,38 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
     var existing by remember { mutableStateOf<FeedbackDto?>(null) }
     var status by remember { mutableStateOf(ActionStatus.IDLE) }
     AutoResetStatus(status) { status = ActionStatus.IDLE }
+    val context = LocalContext.current
+
+    // Kept on disk until saved. Keyed only once the stored rating has loaded, so the restore lands on
+    // top of it rather than being overwritten by it.
+    val draft = rememberFormDraft(
+        key = if (loading) null else "app-feedback",
+        snapshot = {
+            mapOf(
+                "rating" to rating.toString(), "easeOfUse" to easeOfUse.toString(),
+                "reliability" to reliability.toString(), "performance" to performance.toString(),
+                "design" to design.toString(), "features" to features.toString(),
+                "recommend" to recommend.toString(), "role" to role, "comment" to comment,
+                "likeMost" to likeMost, "improve" to improve, "bugs" to bugs,
+                "featureRequests" to featureRequests,
+            )
+        },
+        restore = { v ->
+            rating = v["rating"]?.toIntOrNull() ?: rating
+            easeOfUse = v["easeOfUse"]?.toIntOrNull() ?: easeOfUse
+            reliability = v["reliability"]?.toIntOrNull() ?: reliability
+            performance = v["performance"]?.toIntOrNull() ?: performance
+            design = v["design"]?.toIntOrNull() ?: design
+            features = v["features"]?.toIntOrNull() ?: features
+            recommend = v["recommend"]?.toIntOrNull() ?: recommend
+            role = v["role"] ?: role
+            comment = v["comment"] ?: comment
+            likeMost = v["likeMost"] ?: likeMost
+            improve = v["improve"] ?: improve
+            bugs = v["bugs"] ?: bugs
+            featureRequests = v["featureRequests"] ?: featureRequests
+        },
+    )
 
     LaunchedEffect(Unit) {
         loading = true
@@ -15142,6 +15693,7 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
         if (loading) {
             Text("Loading your feedback…", color = Muted, fontSize = 12.sp)
         } else {
+            FormDraftRestoredNote(draft)
             // ---- Quantitative ----
             Text("Ratings", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
             Text("Overall rating", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
@@ -15197,7 +15749,8 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
                     scope.launch {
                         saving = true
                         runCatching {
-                            repository.upsertMyFeedback(
+                            repository.saveMyFeedback(
+                                context,
                                 FeedbackUpsertRequest(
                                     rating = rating.takeIf { it > 0 },
                                     easeOfUse = easeOfUse.takeIf { it > 0 },
@@ -15215,7 +15768,18 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
                                 )
                             )
                         }
-                            .onSuccess { existing = it; status = ActionStatus.SUCCESS }
+                            .onSuccess { saved ->
+                                draft.discard()
+                                status = ActionStatus.SUCCESS
+                                if (saved != null) {
+                                    existing = saved
+                                } else {
+                                    onError(
+                                        "No connection, so your feedback has been kept on this device. It is " +
+                                            "sent by itself as soon as there is signal."
+                                    )
+                                }
+                            }
                             .onFailure {
                                 if (it !is kotlinx.coroutines.CancellationException) {
                                     status = ActionStatus.ERROR
@@ -15764,14 +16328,29 @@ private fun ViewDataScreen(
         }
     }
 
+    val viewContext = LocalContext.current.applicationContext
     LaunchedEffect(mode) {
         loadingList = true
         selectedId = ""
         selectedArtisanIds = emptySet()
         if (mode == EntryMode.QUESTIONNAIRE) {
             runCatching {
-                val interviews = repository.interviews()
-                val arts = repository.artisans()
+                // The last lists this phone read, when nothing reaches the server (2026-10-16).
+                val interviewsRead = ReadCache.read(
+                    viewContext,
+                    "view-interviews",
+                    kotlinx.serialization.builtins.ListSerializer(QuestionnaireInterviewDetailDto.serializer()),
+                ) { repository.interviews() }
+                val artisansRead = ReadCache.read(
+                    viewContext,
+                    "view-artisans",
+                    kotlinx.serialization.builtins.ListSerializer(ArtisanDto.serializer()),
+                ) { repository.artisans() }
+                if (interviewsRead.fromCache || artisansRead.fromCache) {
+                    onError(readCacheNotice(interviewsRead.cachedAt ?: artisansRead.cachedAt))
+                }
+                val interviews = interviewsRead.value
+                val arts = artisansRead.value
                 // Sections power the "A1"-style section+question codes in the dropdown label; a failure
                 // here must not block the list, so it's fetched leniently and defaults to empty.
                 questionnaireSections = runCatching { repository.questionnaireSections() }.getOrDefault(emptyList())
@@ -15788,7 +16367,7 @@ private fun ViewDataScreen(
                 artisanFilterList = involved.values.sortedBy { it.name.lowercase() }
             }.onFailure { onError(it.userMessage("Unable to load questionnaires")) }
         } else {
-            runCatching { loadViewEntries(repository, mode) }
+            runCatching { loadViewEntriesCached(viewContext, repository, mode, onCached = onError) }
                 .onSuccess { options = it }
                 .onFailure { onError(it.userMessage("Unable to load list")) }
         }
@@ -17263,6 +17842,64 @@ private fun AndroidMediaForm(
     // Bumped after a batch lands so the jobs card below re-reads: an audio upload enqueues its
     // transcription job during /media/complete, so the row exists the moment the upload returns.
     var jobsReload by remember { mutableStateOf(0) }
+    // The record a restored draft was linked to, applied once that record type's list has loaded
+    // (choosing a type clears the record, so setting both at once would lose it).
+    var restoredEntryId by remember { mutableStateOf<String?>(null) }
+    // Kept on disk until uploaded or queued, so a killed app gives the chosen files back.
+    val draft = rememberFormDraft(
+        key = "media:new",
+        snapshot = {
+            mapOf(
+                "${com.designprototype.workshop.data.URI_FIELD_PREFIX}selected" to selectedUris.joinToString("\n"),
+                "title" to mediaTitle, "caption" to caption, "linkedMode" to (linkedMode?.name ?: ""),
+                "linkedEntryId" to linkedEntryId,
+                "location" to (location?.let { offlineFormJson.encodeToString(it) } ?: ""),
+            )
+        },
+        restore = { v ->
+            v["${com.designprototype.workshop.data.URI_FIELD_PREFIX}selected"]?.let {
+                selectedUris = com.designprototype.workshop.data.formDraftUriList(it).map(Uri::parse)
+            }
+            mediaTitle = v["title"] ?: mediaTitle
+            caption = v["caption"] ?: caption
+            v["linkedMode"]?.let { name -> EntryMode.entries.firstOrNull { it.name == name }?.let { linkedMode = it } }
+            restoredEntryId = v["linkedEntryId"]?.takeIf { it.isNotBlank() }
+            v["location"]?.let { text ->
+                location = text.takeIf { it.isNotBlank() }?.let {
+                    runCatching { offlineFormJson.decodeFromString<LocationRequest>(it) }.getOrNull()
+                }
+            }
+        },
+    )
+
+    /**
+     * NO CONNECTION: put the files in the outbox rather than fail them. They are copied into app
+     * storage now and sent by the outbox — in the background if the app is closed by then — linked
+     * exactly as the online upload would have linked them. [items] pairs each file with its position
+     * in the batch, which is part of its name.
+     */
+    suspend fun queueForLater(items: List<Pair<Int, Uri>>): Boolean {
+        val result = runCatching {
+            repository.queueLooseMedia(
+                context = context,
+                linkedRecordType = linkedMode?.linkedRecordType() ?: "",
+                linkedRecordId = linkedEntryId,
+                designWorkshopId = designWorkshop.value(),
+                caption = caption,
+                location = location,
+                titleHint = mediaTitle.ifBlank { caption },
+                items = items,
+            )
+        }
+        result.onSuccess { queued ->
+            val message = offlineSavedMessage(queued, isCorrection = false)
+            localMessage = message
+            onError(message)
+        }.onFailure { error ->
+            onError("These files could not be kept on this device: ${error.message ?: "unknown error"}. They are still selected.")
+        }
+        return result.isSuccess
+    }
     AutoResetStatus(uploadStatus) { uploadStatus = ActionStatus.IDLE }
 
     fun refreshMedia() {
@@ -17295,17 +17932,19 @@ private fun AndroidMediaForm(
     }
     // When the linked record type changes, load that type's entries for the second dropdown.
     LaunchedEffect(linkedMode) {
-        linkedEntryId = ""
+        linkedEntryId = restoredEntryId ?: ""
+        restoredEntryId = null
         entryOptions = emptyList()
         val mode = linkedMode ?: return@LaunchedEffect
         loadingEntries = true
-        runCatching { loadViewEntries(repository, mode) }
+        runCatching { loadViewEntriesCached(context, repository, mode, onCached = onError) }
             .onSuccess { entryOptions = it }
             .onFailure { error -> onError(error.userMessage("Unable to load ${mode.label} entries")) }
         loadingEntries = false
     }
 
     RecordCard(title = "Capture media") {
+        FormDraftRestoredNote(draft)
         // "transcription", not "Whisper transcription": the backend now runs a provider chain
         // (ElevenLabs → Deepgram → Whisper), so naming one of them tells the researcher something
         // that is only sometimes true. The web misc-media screen already says it this way.
@@ -17481,6 +18120,18 @@ private fun AndroidMediaForm(
                     uploadFraction = 0f
                     uploadProgressText = null
                     val uris = selectedUris
+                    if (!repository.isOnline(context)) {
+                        val kept = queueForLater(uris.mapIndexed { index, uri -> (index + 1) to uri })
+                        uploading = false
+                        if (kept) {
+                            draft.discard()
+                            selectedUris = emptyList()
+                            mediaTitle = ""
+                            caption = ""
+                            uploadStatus = ActionStatus.SUCCESS
+                        }
+                        return@launch
+                    }
                     // Sizes drive the overall %/ETA across the whole batch (cheap metadata reads).
                     val sizes = uris.map { queryMediaSize(context, it) }
                     val totalBytes = sizes.sum().coerceAtLeast(1L)
@@ -17532,6 +18183,7 @@ private fun AndroidMediaForm(
                     when {
                         cancelled -> Unit
                         failedUris.isEmpty() -> {
+                            draft.discard()
                             selectedUris = emptyList()
                             mediaTitle = ""
                             caption = ""
@@ -17540,6 +18192,21 @@ private fun AndroidMediaForm(
                             refreshMedia()
                             jobsReload += 1
                             onUploaded(success)
+                        }
+                        // THE CONNECTION WENT PART-WAY THROUGH: the files that did not go are queued
+                        // for the outbox rather than left in a picker that dies with this screen.
+                        !repository.isOnline(context) && queueForLater(
+                            failedUris.map { uri -> (uris.indexOf(uri) + 1) to uri }
+                        ) -> {
+                            draft.discard()
+                            selectedUris = emptyList()
+                            mediaTitle = ""
+                            caption = ""
+                            uploadStatus = ActionStatus.SUCCESS
+                            if (success > 0) {
+                                refreshMedia()
+                                jobsReload += 1
+                            }
                         }
                         else -> {
                             // Keep only the failed files staged so the user can retry just those.
@@ -18111,7 +18778,8 @@ private fun QuestionnaireForm(
     adminView: Boolean = false,
     onRefreshSections: suspend () -> Unit,
     onSync: suspend () -> Unit = onRefreshSections,
-    onSubmit: suspend (QuestionnaireInterviewCreateRequest) -> String,
+    /** The create, with the `Idempotency-Key` to send — see [createKey] below. */
+    onSubmit: suspend (QuestionnaireInterviewCreateRequest, String) -> String,
     onError: (String) -> Unit,
     onSaved: () -> Unit
 ) {
@@ -18422,6 +19090,57 @@ private fun QuestionnaireForm(
     var offeredTranscript by remember(editing) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var transcribing by remember(editing) { mutableStateOf<Set<String>>(emptySet()) }
     var quickProblem by remember(editing) { mutableStateOf<Map<String, String>>(emptyMap()) }
+
+    // ONE KEY PER INTERVIEW BEING TYPED (2026-10-16) — see the identical note on the craft form.
+    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
+    // Kept on disk until saved: the answers, the clips and the transcripts' own words (without
+    // which a restored transcript would read as typed by hand), so a killed app loses none of it.
+    val draft = rememberFormDraft(
+        key = if (isEdit) "interview:edit:${editing!!.id}" else "interview:new:${prefill?.artisanId.orEmpty()}",
+        snapshot = {
+            mapOf(
+                "title" to title, "artisans" to draftList(selectedArtisans.sorted()), "place" to place,
+                "language" to language, "notes" to notes, "status" to status,
+                "location" to (capturedLocation?.let { offlineFormJson.encodeToString(it) } ?: ""),
+                "machineText" to kotlinx.serialization.json.JsonObject(
+                    machineText.mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) }
+                ).toString(),
+                "audioKeys" to draftList(questionAudio.keys.sorted()),
+            ) + answers.map { (id, state) -> "a:$id" to state.value } +
+                questionAudio.map { (k, uris) -> "${com.designprototype.workshop.data.URI_FIELD_PREFIX}audio:$k" to uris.joinToString("\n") } +
+                media.draftFields("media")
+        },
+        restore = { v ->
+            title = v["title"] ?: title
+            v["artisans"]?.let { selectedArtisans = parseDraftList(it).toSet() }
+            place = v["place"] ?: place
+            language = v["language"] ?: language
+            notes = v["notes"] ?: notes
+            status = v["status"] ?: status
+            v["location"]?.let { text ->
+                capturedLocation = text.takeIf { it.isNotBlank() }?.let {
+                    runCatching { offlineFormJson.decodeFromString<LocationRequest>(it) }.getOrNull()
+                }
+            }
+            v["machineText"]?.let { text ->
+                runCatching { kotlinx.serialization.json.Json.parseToJsonElement(text) as kotlinx.serialization.json.JsonObject }
+                    .getOrNull()?.let { o ->
+                        machineText = o.mapNotNull { (k, e) -> (e as? kotlinx.serialization.json.JsonPrimitive)?.content?.let { k to it } }.toMap()
+                    }
+            }
+            answers.forEach { (id, state) -> v["a:$id"]?.let { state.value = it } }
+            v["audioKeys"]?.let { keys ->
+                val restoredAudio = parseDraftList(keys).associateWith { k ->
+                    com.designprototype.workshop.data.formDraftUriList(
+                        v["${com.designprototype.workshop.data.URI_FIELD_PREFIX}audio:$k"]
+                    ).map(Uri::parse)
+                }.filterValues { it.isNotEmpty() }
+                questionAudio = restoredAudio
+                qMedia.uris = restoredAudio.values.flatten()
+            }
+            media.restoreDraft("media", v)
+        },
+    )
 
     /**
      * Post one just-recorded clip for an immediate transcript and put the words in the box.
@@ -19506,7 +20225,7 @@ private fun QuestionnaireForm(
             )
         }
 
-        fun submit() {
+        fun submit(forceOffline: Boolean = false) {
             if (!validateRequired(listOf(
                     RequiredCheck(title.isBlank(), { titleError = it }, titleFocus)
                 ))) { onError("Please fill the required field highlighted above."); return }
@@ -19517,7 +20236,7 @@ private fun QuestionnaireForm(
                 scope.launch {
                     // Late-submission gate first, so the save button does not sit in "Saving…" while
                     // the confirmation is on screen.
-                    if (!link.confirmSubmission()) return@launch
+                    if (!forceOffline && !link.confirmSubmission()) return@launch
                     saveState = SaveState.SAVING
                     val now = Instant.now().toString()
                     // Only send answers this interviewer actually added or changed; untouched answers
@@ -19559,7 +20278,7 @@ private fun QuestionnaireForm(
                         )
                         return@launch
                     }
-                    if (!isEdit && !repository.isOnline(context)) {
+                    if (!isEdit && (forceOffline || !repository.isOnline(context))) {
                         val queued = runCatching {
                             val request = QuestionnaireInterviewCreateRequest(
                                 title = title.trim(),
@@ -19619,10 +20338,11 @@ private fun QuestionnaireForm(
                                 // this form mounts both [workshop] and [designWorkshop], so a cleared
                                 // box needs to reach the outbox as a real clearance rather than
                                 // vanishing into the same silence as a picker that never had options.
-                                unfiled = link.unfiledReasons())
+                                unfiled = link.unfiledReasons(),
+                                idempotencyKey = createKey)
                         }.getOrNull()
                         if (queued != null) {
-                            media.reset(); qMedia.reset(); questionAudio = emptyMap()
+                            draft.discard(); media.reset(); qMedia.reset(); questionAudio = emptyMap()
                             // The machine's own words go with the clips they came from — see
                             // `clearQuickTranscripts`. Left standing, they would flag the NEXT
                             // interview's empty boxes as edited.
@@ -19655,6 +20375,7 @@ private fun QuestionnaireForm(
                         }
                         return@launch
                     }
+                    var createLanded = false
                     runCatching {
                         val interviewId = if (isEdit) {
                             val original = editing!!
@@ -19690,12 +20411,19 @@ private fun QuestionnaireForm(
                                     location = capturedLocation,
                                     responses = responsesToSend,
                                     recordedAt = now
-                                )
-                            )
+                                ),
+                                createKey,
+                            ).also { createLanded = true }
                         }
                         persistCapturedMedia(interviewId)
                     }.onFailure { failure ->
                         saveState = SaveState.IDLE
+                        // THE CONNECTION WENT MID-CREATE (2026-10-16): into the outbox under the same
+                        // key, so the server writes this sitting once however many times it is sent.
+                        if (!isEdit && !createLanded && repository.isTransient(failure)) {
+                            submit(forceOffline = true)
+                            return@launch
+                        }
                         /*
                          * ── THIS ARM PRINTED "HTTP 409 CONFLICT" AT A RESEARCHER ────────────────
                          *
@@ -19741,7 +20469,7 @@ private fun QuestionnaireForm(
                     }
                     // Clear the staged-media bookkeeping so leaving the form doesn't delete the objects
                     // we just linked (the dispose cleanup only runs when uris are still pending).
-                    media.reset()
+                    draft.discard(); media.reset()
                     // The recorded clips are now persisted on the interview — clear the eager-upload
                     // bookkeeping (so leaving doesn't delete the just-linked objects) and the keyed map
                     // (so a second save can't re-upload them).
@@ -19799,6 +20527,7 @@ private fun QuestionnaireForm(
         // interview "dirty" so an accidental Back offers to save it (including in-progress recordings).
         val dirty = qSig() != initialSig || link.isDirty() || qMedia.uris.isNotEmpty() || media.uris.isNotEmpty()
         RegisterUnsavedGuard(dirty = dirty) { submit() }
+        FormDraftRestoredNote(draft)
         SaveButton(
             state = saveState,
             idleLabel = if (isEdit) "Update interview" else "Save questionnaire"
@@ -19845,7 +20574,7 @@ private fun QuestionnaireForm(
                                     // The same bookkeeping a save does, and for the same reason:
                                     // leaving the form must not delete objects that are now linked,
                                     // and the keyed map must not re-upload them.
-                                    media.reset()
+                                    draft.discard(); media.reset()
                                     qMedia.reset()
                                     questionAudio = emptyMap()
                                     clearQuickTranscripts()
@@ -21497,6 +22226,9 @@ private fun MyTasksScreen(
 ) {
     val scope = rememberCoroutineScope()
     val myId = remember { repository.cachedUser()?.id }
+    val appContext = LocalContext.current.applicationContext
+    /** Set when the rows on screen are this phone's saved copy rather than a live read. */
+    var cachedNote by remember { mutableStateOf<String?>(null) }
     var view by remember { mutableStateOf("assigned") }
     // Flipping admin view off while "Assigned by me" is showing must not strand the user on a view
     // they can no longer switch away from.
@@ -21550,7 +22282,14 @@ private fun MyTasksScreen(
         val seq = loadSeq.incrementAndGet()
         scope.launch {
             loading = true
-            val outcome = runCatching { repository.tasks(view = forView, status = forStatus.ifBlank { null }) }
+            // The last list this phone read is shown when there is no connection — see [ReadCache].
+            val outcome = runCatching {
+                ReadCache.read(
+                    appContext,
+                    "tasks:$forView:$forStatus",
+                    kotlinx.serialization.builtins.ListSerializer(TaskDto.serializer()),
+                ) { repository.tasks(view = forView, status = forStatus.ifBlank { null }) }
+            }
             // Leaving the screen cancels the scope and arrives here as a Throwable like any other.
             // Reported, it would raise "Unable to load your tasks" over the screen the designer moved
             // on to (ui/ConsolidatedQuestionnaireScreen.kt:276).
@@ -21559,7 +22298,12 @@ private fun MyTasksScreen(
             // `loading`, which the pass that replaced this one already owns.
             if (seq != loadSeq.get()) return@launch
             outcome
-                .onSuccess { tasks = it; loadFailed = false; shownQuery = forView to forStatus }
+                .onSuccess { read ->
+                    tasks = read.value
+                    loadFailed = false
+                    shownQuery = forView to forStatus
+                    cachedNote = if (read.fromCache) readCacheNotice(read.cachedAt) else null
+                }
                 .onFailure {
                     loadFailed = true
                     onError(it.apiErrorMessage("Unable to load your tasks"))
@@ -21668,6 +22412,7 @@ private fun MyTasksScreen(
                 fontSize = 12.sp
             )
         }
+        cachedNote?.takeIf { !loading }?.let { Text(it, color = Coral, fontSize = 12.sp) }
         when {
             loading -> Text("Loading tasks…", color = Muted, fontSize = 12.sp)
             // "Nothing is assigned to you" is a claim about what the SERVER holds, so it is only
@@ -22402,8 +23147,20 @@ private suspend fun trySaveOffline(
      * decodes and replays exactly as an entry queued before this parameter existed.
      */
     unfiled: Map<String, String> = emptyMap(),
+    /**
+     * TRUE WHEN AN ONLINE ATTEMPT HAS JUST FAILED FOR WANT OF A CONNECTION (2026-10-16): queue even
+     * though the phone reports one, so the work goes to the outbox instead of sitting in the form.
+     */
+    force: Boolean = false,
+    /** The `Idempotency-Key` the online attempt sent, so its replay is the same create. */
+    idempotencyKey: String? = null,
+    /**
+     * The record as it was when the form opened, for a correction — so only the changed fields are
+     * sent, guarded by its `updatedAt`. See [com.designprototype.workshop.data.correctionChangedKeys].
+     */
+    base: JsonObject? = null,
 ): OfflineQueueResult? {
-    if (repository.isOnline(context)) return null
+    if (!force && repository.isOnline(context)) return null
     // An edit with no id is a create, and a create of something that already exists is a duplicate.
     // Refused here rather than queued wrongly: the form falls through to the online path and reports
     // a network error, which is a bad afternoon rather than a corrupted register.
@@ -22413,8 +23170,27 @@ private suspend fun trySaveOffline(
         purposes = media.purposes,
         targetId = if (isEdit) editingId else null,
         unfiled = unfiled,
+        idempotencyKey = if (isEdit) null else idempotencyKey,
+        correctionBase = if (isEdit) correctionBaseFor(payloadJson, base) else null,
     )
 }
+
+/**
+ * What a queued correction needs to send only its changes, guarded by the record's version. Null
+ * when the form had no record to compare with — the whole body is then sent, as before.
+ */
+internal fun correctionBaseFor(payloadJson: String, base: JsonObject?): com.designprototype.workshop.data.CorrectionBase? {
+    if (base == null) return null
+    val request = runCatching { offlineFormJson.parseToJsonElement(payloadJson) as JsonObject }.getOrNull() ?: return null
+    return com.designprototype.workshop.data.CorrectionBase(
+        changedKeys = com.designprototype.workshop.data.correctionChangedKeys(request, base),
+        baseUpdatedAt = (base["updatedAt"] as? kotlinx.serialization.json.JsonPrimitive)?.content,
+    )
+}
+
+/** A record DTO as JSON, to compare a correction against. */
+internal fun <T> recordBaseJson(serializer: kotlinx.serialization.KSerializer<T>, record: T?): JsonObject? =
+    record?.let { runCatching { offlineFormJson.encodeToJsonElement(serializer, it) as JsonObject }.getOrNull() }
 
 /** Save-button lifecycle: idle, in-flight (spinner + "Saving…"), then a brief "Saved ✓" confirmation. */
 private enum class SaveState { IDLE, SAVING, SAVED }
@@ -22749,7 +23525,12 @@ private fun requiredAndroidPermissions(): Array<String> {
 }
 
 private fun createAppFile(context: Context, prefix: String, suffix: String): File {
-    val directory = File(context.cacheDir, "field-captures").apply { mkdirs() }
+    // filesDir, NOT cacheDir (2026-10-16). Android reclaims cacheDir under storage pressure without
+    // warning, so a photograph taken into a form and not yet saved could vanish before Save — and a
+    // form's on-disk draft (`ui/FormDraftPersistence.kt`) now promises it back after the app is
+    // killed. Captures nothing refers to any more are reclaimed after two weeks by
+    // `FormDraftStore.sweepUnreferencedMedia`. The FileProvider already serves all of filesDir.
+    val directory = com.designprototype.workshop.data.FormDraftStore.capturesDir(context)
     return File.createTempFile(prefix, suffix, directory)
 }
 

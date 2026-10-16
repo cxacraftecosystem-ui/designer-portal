@@ -24,6 +24,7 @@ from app.api.routes.usage import UNRECORDED_TEMPLATES
 from app.core.config import get_settings
 from app.core.db import connect_db, db, disconnect_db
 from app.core.deps import PASSWORD_CHANGE_REQUIRED_HEADER
+from app.core.idempotency import IdempotencyMiddleware
 from app.core.security import verify_jwt_configuration
 from app.scale import install_rate_limit
 from app.services import usage
@@ -970,6 +971,10 @@ def create_app() -> FastAPI:
     # Added BEFORE CORS, which makes it the INNERMOST of the two — load-bearing, see the class
     # docstring. An unhandled error must become a normal response *below* CORS so the CORS layer can
     # still stamp `access-control-allow-origin` on the way out.
+    # Added FIRST, so it is the innermost user middleware: it sees the route's own answer (before CORS,
+    # the rate limiter or security headers are stamped on it) and exceptions on their way to the
+    # handler below. See app/core/idempotency.py for the contract.
+    app.add_middleware(IdempotencyMiddleware)
     app.add_middleware(UnhandledErrorMiddleware)
     # THE RATE LIMITER, AND ITS POSITION IS THE SAME ARGUMENT THE LINE ABOVE MAKES.
     #

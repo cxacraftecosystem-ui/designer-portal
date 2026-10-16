@@ -51,6 +51,8 @@ import coil3.compose.AsyncImage
 // The app-level unsaved-work guard, which owns the Save / Discard / Keep editing prompt and is wired
 // into the system back gesture, the header arrow and every menu row. Reused rather than reinvented:
 // a second prompt with its own wording is two answers to one question.
+import com.designprototype.workshop.ui.FormDraftRestoredNote
+import com.designprototype.workshop.ui.rememberFormDraft
 import com.designprototype.workshop.RegisterUnsavedGuard
 import com.designprototype.workshop.data.AddressReferenceDto
 import com.designprototype.workshop.data.DesignerProfileDto
@@ -822,6 +824,49 @@ fun DesignerProfileScreen(
         remotePreview = resolved
     }
 
+    // THE TYPING, KEPT ON DISK UNTIL IT IS SAVED (2026-10-16). The biography is the longest box in the
+    // app and a save needs a connection; this is what makes "save when you have signal" true across
+    // an app kill. Keyed once the stored profile has loaded, so a restore lands on top of it, and a
+    // draft equal to what the server holds is simply dropped. The TEXT fields only: a media id is
+    // written by an upload that has already happened, and the location has its own capture flow.
+    val profileDraft = rememberFormDraft(
+        key = if (!loading && !loadFailed && canEdit) "designer-profile:$targetUserId" else null,
+        snapshot = {
+            mapOf(
+                "displayName" to form.displayName, "localName" to form.localName,
+                "designation" to form.designation, "institution" to form.institution,
+                "department" to form.department, "qualification" to form.qualification,
+                "specialisation" to form.specialisation, "experienceYears" to form.experienceYears,
+                "experienceMonths" to form.experienceMonths, "biography" to form.biography,
+                "phone" to form.phone, "email" to form.email, "website" to form.website,
+                "addressLine" to form.addressLine, "city" to form.city, "state" to form.state,
+                "pincode" to form.pincode, "empanelmentNo" to form.empanelmentNo,
+            )
+        },
+        restore = { v ->
+            form = form.copy(
+                displayName = v["displayName"] ?: form.displayName,
+                localName = v["localName"] ?: form.localName,
+                designation = v["designation"] ?: form.designation,
+                institution = v["institution"] ?: form.institution,
+                department = v["department"] ?: form.department,
+                qualification = v["qualification"] ?: form.qualification,
+                specialisation = v["specialisation"] ?: form.specialisation,
+                experienceYears = v["experienceYears"] ?: form.experienceYears,
+                experienceMonths = v["experienceMonths"] ?: form.experienceMonths,
+                biography = v["biography"] ?: form.biography,
+                phone = v["phone"] ?: form.phone,
+                email = v["email"] ?: form.email,
+                website = v["website"] ?: form.website,
+                addressLine = v["addressLine"] ?: form.addressLine,
+                city = v["city"] ?: form.city,
+                state = v["state"] ?: form.state,
+                pincode = v["pincode"] ?: form.pincode,
+                empanelmentNo = v["empanelmentNo"] ?: form.empanelmentNo,
+            )
+        },
+    )
+
     fun saveProfile() {
         // RE-DERIVED AT THE MOMENT OF THE TAP, from the cached account rather than from the captured
         // `canEdit`. The disabled button above is a courtesy; this is the rule.
@@ -940,9 +985,22 @@ fun DesignerProfileScreen(
             // `saved` is the snapshot the server last confirmed, and it is passed so the location is
             // sent ONLY when it has actually moved — see [ProfileForm.toBody].
             runCatching {
-                repository.saveDesignerProfile(targetUserId, form.toBody(saved, storedAddressLine))
+                // NO SIGNAL, OR IT WENT MID-REQUEST: the same whole-object body is kept in the outbox
+                // and sent when there is signal (2026-10-16). Null is that answer.
+                repository.saveDesignerProfileOrQueue(appContext, targetUserId, form.toBody(saved, storedAddressLine))
             }
                 .onSuccess { stored ->
+                    if (stored == null) {
+                        // What was typed is now the outbox's to send; the form stays as typed, and
+                        // `saved` moves with it so leaving does not ask to save what is already kept.
+                        saved = form
+                        profileDraft.discard()
+                        onMessage(
+                            "No connection, so your profile has been kept on this phone. It is sent by " +
+                                "itself as soon as there is signal."
+                        )
+                        return@onSuccess
+                    }
                     // Re-seeded from the SERVER's answer rather than left as typed, so any
                     // normalisation it applied (a trimmed website, a lower-cased email) is what the
                     // designer is looking at when they walk away — and so the unsaved-work
@@ -956,6 +1014,7 @@ fun DesignerProfileScreen(
                     // old formatting or, on the round after that, decide an untouched box had been
                     // edited. It is one fact and it is re-read from the same response.
                     storedAddressLine = stored.addressLine.orEmpty()
+                    profileDraft.discard()
                     onMessage("Designer profile saved.")
                 }
                 .onFailure { error ->
@@ -1164,6 +1223,7 @@ fun DesignerProfileScreen(
                 if (!canEdit) {
                     ReadOnlyNotice(viewer)
                 }
+                FormDraftRestoredNote(profileDraft)
 
                 // ── THE EMPANELMENT GRACE BANNER, THE WEB'S TWIN ──────────────────────────
                 //

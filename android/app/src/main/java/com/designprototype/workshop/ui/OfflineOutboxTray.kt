@@ -39,6 +39,7 @@ import com.designprototype.workshop.data.REFERENCE_FIELD_NOUNS
 import com.designprototype.workshop.data.OutboxFailureRow
 import com.designprototype.workshop.data.OutboxQueuedFile
 import com.designprototype.workshop.data.RepickChoices
+import com.designprototype.workshop.data.StaleCorrectionReview
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.outboxDiscardConfirmation
 import com.designprototype.workshop.data.outboxFailureRows
@@ -121,6 +122,8 @@ fun OfflineOutboxTray(
     // three values carried separately are three values that can be carried from different rows.
     var repicking by remember { mutableStateOf<OutboxFailureRow?>(null) }
     var reload by remember { mutableIntStateOf(0) }
+    // The stale correction being reviewed, or null. See [StaleCorrectionDialog].
+    var reviewing by remember { mutableStateOf<OutboxFailureRow?>(null) }
 
     LaunchedEffect(reload) {
         loading = true
@@ -164,6 +167,30 @@ fun OfflineOutboxTray(
                 }
             busy = false
         }
+    }
+
+    reviewing?.let { row ->
+        StaleCorrectionDialog(
+            repository = repository,
+            row = row,
+            busy = busy,
+            onDismiss = { reviewing = null },
+            onSendMine = { currentUpdatedAt ->
+                reviewing = null
+                act {
+                    repository.keepMyCorrection(appContext, row.entryId, currentUpdatedAt)
+                    "Your changes to “${row.label}” will be sent over the newer version. Only the " +
+                        "fields you changed are sent; everything else stays as the other person left it."
+                }
+            },
+            onKeepTheirs = {
+                reviewing = null
+                act {
+                    repository.discardOutboxEntry(appContext, row.entryId)
+                    "Kept the version on the server. Your copy of “${row.label}” was deleted from this device."
+                }
+            },
+        )
     }
 
     confirmDiscard?.let { row ->
@@ -299,6 +326,7 @@ fun OfflineOutboxTray(
                                 }
                             },
                             onDiscard = { confirmDiscard = row },
+                            onReview = { reviewing = row },
                         )
                     }
                 }
@@ -346,6 +374,7 @@ private fun OutboxFailureCard(
     onRepick: () -> Unit,
     onRetry: () -> Unit,
     onDiscard: () -> Unit,
+    onReview: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -383,6 +412,16 @@ private fun OutboxFailureCard(
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 lineHeight = 14.sp,
+            )
+        }
+        if (row.stale) {
+            // A CORRECTION THE RECORD MOVED UNDER (2026-10-16). Not a clash and not the designer's
+            // mistake: somebody else edited the same record first. Nothing was overwritten.
+            Text(
+                "CHANGED ON THE SERVER SINCE YOU EDITED IT",
+                color = MaterialTheme.field.warning,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
             )
         }
         if (row.conflict) {
@@ -451,6 +490,13 @@ private fun OutboxFailureCard(
         // was lost. The remedy is on the line above and it is the only one there is.
         if (!row.otherAccount) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (row.stale) {
+                    // FIRST, for the reason Re-pick is first below: it is the one that can resolve
+                    // this row. A bare Try again would fetch the identical refusal.
+                    OutlinedButton(onClick = onReview, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("Review changes", fontSize = 12.sp)
+                    }
+                }
                 if (row.repickKeys.isNotEmpty()) {
                     // FIRST, AND BEFORE Try again, because it is the only one of the three that can
                     // work on this row. Button order is an instruction on a screen somebody reads in
@@ -605,6 +651,80 @@ private fun RepickDialog(
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Not now", fontSize = 13.sp) } },
+    )
+}
+
+/**
+ * "REVIEW CHANGES": the fields this correction changes, the phone's value against the record's value
+ * now, and the two honest choices — send mine over theirs (only my changed fields), or keep theirs and
+ * delete my copy. Reads the record from the server, so it needs a connection and says so if it fails.
+ */
+@Composable
+private fun StaleCorrectionDialog(
+    repository: WorkshopRepository,
+    row: OutboxFailureRow,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onSendMine: (String?) -> Unit,
+    onKeepTheirs: () -> Unit,
+) {
+    val appContext = LocalContext.current.applicationContext
+    var review by remember(row.entryId) { mutableStateOf<StaleCorrectionReview?>(null) }
+    var problem by remember(row.entryId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(row.entryId) {
+        runCatching { repository.reviewStaleCorrection(appContext, row.entryId) }
+            .onSuccess { review = it; if (it == null) problem = "This entry can no longer be compared." }
+            .onFailure { error ->
+                if (error is CancellationException) throw error
+                problem = "The current version could not be read. Review it again when you have a signal — " +
+                    "nothing has been sent or deleted."
+            }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Review changes to “${row.label}”", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                val loaded = review
+                when {
+                    problem != null -> Text(problem.orEmpty(), color = MaterialTheme.field.warning, fontSize = 12.sp)
+                    loaded == null -> CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                    loaded.fields.isEmpty() -> Text(
+                        "The other person's version already holds what you changed. Sending yours changes nothing.",
+                        color = MaterialTheme.field.muted,
+                        fontSize = 12.sp,
+                    )
+                    else -> loaded.fields.forEach { field ->
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(field.key, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Yours: ${field.mine.ifBlank { "(empty)" }}", fontSize = 12.sp)
+                            Text(
+                                "On the server now: ${field.theirs.ifBlank { "(empty)" }}",
+                                color = MaterialTheme.field.muted,
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSendMine(review?.currentUpdatedAt) },
+                enabled = !busy && review != null,
+            ) { Text("Send mine", fontSize = 13.sp) }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onKeepTheirs, enabled = !busy) {
+                    Text("Keep theirs", color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                }
+                TextButton(onClick = onDismiss) { Text("Not now", fontSize = 13.sp) }
+            }
+        },
     )
 }
 
