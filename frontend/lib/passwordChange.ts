@@ -15,7 +15,7 @@
  */
 
 import { ApiError } from "@/lib/api";
-import { SIGN_IN_AGAIN_HEADER } from "@/lib/signIn";
+import { SIGN_IN_AGAIN_HEADER, TWO_FACTOR_REQUIRED_HEADER } from "@/lib/signIn";
 import type { User } from "@/lib/types";
 
 /**
@@ -53,6 +53,19 @@ export const FIRST_PASSWORD_NOTE =
  */
 export function signInAgainRequired(error: unknown): boolean {
   return error instanceof ApiError && error.status === 400 && error.headers?.get(SIGN_IN_AGAIN_HEADER) === "1";
+}
+
+/**
+ * Was a first password refused for want of the two-step code (missing or wrong)? The server answers 400
+ * with `X-Two-Factor-Required: 1` and its own sentence; the form keeps the passwords and asks again.
+ */
+export function twoFactorCodeRequired(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 400 && error.headers?.get(TWO_FACTOR_REQUIRED_HEADER) === "1";
+}
+
+/** Does setting a first password on this account need the code from its authenticator app? */
+export function firstPasswordNeedsCode(user: Pick<User, "twoFactorEnabled"> | null | undefined): boolean {
+  return Boolean(user?.twoFactorEnabled);
 }
 
 /**

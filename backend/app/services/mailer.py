@@ -49,7 +49,16 @@ REVIEW_SENT_BACK = "REVIEW_SENT_BACK"
 #: Somebody got past the password and then entered too many wrong verification codes. A security
 #: notice: always sent (no opt-out), carries no code and no address, only when the pause ends.
 SECOND_FACTOR_LOCKED = "SECOND_FACTOR_LOCKED"
-KINDS = frozenset({PASSWORD_LINK, REVIEW_SUGGESTION, REVIEW_SENT_BACK, SECOND_FACTOR_LOCKED})
+#: Security notices about the account's password (2026-10-17). Always sent (no opt-out), to the
+#: account's own address; they carry no password and no link, only what happened and when.
+#: PASSWORD_ADDED: a provider-only account chose its first password. PASSWORD_CHANGED: the password
+#: was changed, set through a link, or replaced by an administrator's temporary one.
+PASSWORD_ADDED = "PASSWORD_ADDED"
+PASSWORD_CHANGED = "PASSWORD_CHANGED"
+PASSWORD_NOTICES = frozenset({PASSWORD_ADDED, PASSWORD_CHANGED})
+KINDS = frozenset(
+    {PASSWORD_LINK, REVIEW_SUGGESTION, REVIEW_SENT_BACK, SECOND_FACTOR_LOCKED, *PASSWORD_NOTICES}
+)
 
 PRODUCT_NAME = "Design Prototype Workshop"
 
@@ -239,6 +248,10 @@ def subject_for(kind: str, params: dict[str, Any]) -> str:
         return f"“{title}” has been sent back for corrections"
     if kind == SECOND_FACTOR_LOCKED:
         return f"Someone used your {PRODUCT_NAME} password"
+    if kind == PASSWORD_ADDED:
+        return f"A password was added to your {PRODUCT_NAME} account"
+    if kind == PASSWORD_CHANGED:
+        return f"Your {PRODUCT_NAME} password was changed"
     raise ValueError(f"Unknown e-mail kind {kind!r}")
 
 
@@ -304,6 +317,30 @@ def render(
             subject,
             text,
             _html([_e(greeting), _e(lead), _e(act), *(_e(line) for line in later)], button=("Open the sign-in page", _e(link))),
+        )
+
+    if kind in PASSWORD_NOTICES:
+        when = format_moment(params.get("at"))
+        if kind == PASSWORD_ADDED:
+            lead = (
+                f"A password was added to your {PRODUCT_NAME} account on {when}. You can now sign in "
+                "with your e-mail address and that password, as well as the way you signed in before."
+            )
+        elif params.get("by") == "administrator":
+            lead = (
+                f"An administrator set a temporary password on your {PRODUCT_NAME} account on {when}. "
+                "You will be asked to choose your own when you next sign in."
+            )
+        else:
+            lead = f"The password of your {PRODUCT_NAME} account was changed on {when}."
+        act = (
+            "If this wasn't you, ask an administrator to sign you out everywhere and reset your "
+            "password."
+        )
+        link = app_url("/login", settings)
+        text = "\n\n".join([greeting, lead, act, sign_off]) + "\n"
+        return Rendered(
+            subject, text, _html([_e(greeting), _e(lead), _e(act)], button=("Open the sign-in page", _e(link)))
         )
 
     if kind in (REVIEW_SUGGESTION, REVIEW_SENT_BACK):

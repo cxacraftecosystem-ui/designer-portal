@@ -85,7 +85,7 @@ test("an account with no password is offered SET a password, and the server's ow
   expect(CARD).toContain('settingFirst ? "Set a password" : "Change password"');
   // No current-password box for an account that has none.
   expect(CARD).toMatch(/\{settingFirst \? null : \(\s*<div>\s*<label htmlFor="settings-current-password"/);
-  expect(SUBMIT).toContain("settingFirst ? await setFirstPassword(next) : await changeOwnPassword(current, next);");
+  expect(SUBMIT).toContain("settingFirst ? await setFirstPassword(next, askCode ? code : undefined) : await changeOwnPassword(current, next);");
   expect(FIRST_PASSWORD_NOTE).toMatch(/or the way you sign in now/);
 });
 
@@ -194,7 +194,7 @@ test("the session the change answers with is adopted before anything re-reads /m
     account; the other order is a re-read refused with the token the change just retired, and a tab
     signed out by its own success. With no header the card does exactly what it did before.
   */
-  expect(SUBMIT).toContain("const fresh = settingFirst ? await setFirstPassword(next) : await changeOwnPassword(current, next);");
+  expect(SUBMIT).toContain("const fresh = settingFirst ? await setFirstPassword(next, askCode ? code : undefined) : await changeOwnPassword(current, next);");
   const adopted = SUBMIT.slice(SUBMIT.indexOf("if (fresh) {"), SUBMIT.indexOf("} else {"));
   expect(adopted, "the adoption arm was located").toContain("setToken(fresh);");
   expect(adopted.indexOf("setToken(fresh);"), "adopted first").toBeLessThan(adopted.indexOf("void refreshMe();"));
@@ -212,7 +212,9 @@ test("it is drawn with the data-screen recipes, not the auth stack", () => {
   // §11.2 of the frontend reference: a data screen is never standardised onto the auth `Button`.
   expect(CARD).not.toMatch(/from "@\/components\/ui\/button"/);
   expect(CARD).toContain('<section className="panel p-5">');
-  expect((CARD.match(/className="field-input/g) ?? []).length).toBe(3);
+  // Four boxes: current, new, repeat — and the two-step code, drawn only for a first password on an
+  // account with two-step verification on.
+  expect((CARD.match(/className="field-input/g) ?? []).length).toBe(4);
   expect(CARD).toMatch(/<button type="submit" className="field-button"/);
   // The rule line under the boxes is the gate's, from the same function and the same constant — which
   // no longer says other devices stay signed in: a change now ends every session but the fresh one.

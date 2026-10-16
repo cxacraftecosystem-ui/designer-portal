@@ -23,7 +23,7 @@ from app.core.deps import (
 from app.core.security import hash_password
 from app.core.user_fields import HAS_PASSWORD_KEY, SECRET_USER_FIELDS
 from app.schemas.users import UserCreate, UserUpdate
-from app.services import access_roster, credential_links, two_factor
+from app.services import access_roster, credential_links, email_outbox, mailer, two_factor
 from app.services.aadhaar import flags as aadhaar_flags
 
 # THE RULES OF WHO MAY DO WHAT TO WHOSE ACCOUNT, imported rather than defined here. ``assert_role``
@@ -86,6 +86,11 @@ AUDITED_FIELDS: tuple[str, ...] = (
 )
 
 #: The refusal a professor or a directorate officer reads for a name, an address or a password.
+#: Your own address is changed by somebody else (2026-10-17, security review). The address is where
+#: "Forgot your password?" and every password notice goes, so a stolen session that could move it
+#: would also move the account's way back in to the thief's inbox.
+OWN_EMAIL_DETAIL = "Ask another administrator to change your email address."
+
 IDENTITY_NEEDS_PROVISIONER_DETAIL = (
     "Correcting a person's name, email address or password requires Ministry Admin access or "
     "above. Professors and the directorate change roles only."
@@ -288,6 +293,9 @@ async def update_user(
     data = clean_data(payload.model_dump(exclude_unset=True))
     sent = set(data)
     is_self = user_id == current_user.id
+    if is_self and "email" in sent:
+        # Before the credential refusal, so the sentence names the field actually sent.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=OWN_EMAIL_DETAIL)
     if is_self and sent & CREDENTIAL_FIELDS:
         # Before anything is loaded, and before the tier test, so that everybody who tries this —
         # professor or master admin — reads the one sentence that tells them where the right door is.
@@ -459,6 +467,11 @@ async def update_user(
         ends_sessions,
         "".join(f"; {note}" for note in notes if note),
     )
+    if "passwordHash" in data:
+        # The owner hears that a password they did not choose is now on their account (2026-10-17).
+        # To the address the account holds AFTER this write: an address changed in the same request
+        # is the corrected one.
+        await email_outbox.notify_password_event(updated, mailer.PASSWORD_CHANGED, by="administrator")
     return serialize_user(updated)
 
 

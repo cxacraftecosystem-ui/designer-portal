@@ -19,7 +19,11 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.router import api_router
-from app.api.routes.auth import SESSION_TOKEN_HEADER, SIGN_IN_AGAIN_HEADER
+from app.api.routes.auth import (
+    SESSION_TOKEN_HEADER,
+    SIGN_IN_AGAIN_HEADER,
+    TWO_FACTOR_REQUIRED_HEADER,
+)
 from app.api.routes.usage import UNRECORDED_TEMPLATES
 from app.core.config import get_settings
 from app.core.db import connect_db, db, disconnect_db
@@ -1074,6 +1078,8 @@ def create_app() -> FastAPI:
             SESSION_TOKEN_HEADER,
             # A first password asked for on a stale session: the client offers "sign in again".
             SIGN_IN_AGAIN_HEADER,
+            # ...and on an account with two-step on, the code box (2026-10-17).
+            TWO_FACTOR_REQUIRED_HEADER,
             # A duplicate account's 409 names the account that holds the address.
             EXISTING_ACCOUNT_HEADER,
         ],

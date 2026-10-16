@@ -489,8 +489,17 @@ async def issue_link(
             raise DeliveryUnavailable()
     now = datetime.now(UTC)
     since = now - timedelta(hours=ISSUE_WINDOW_HOURS)
+    # TWO BUDGETS THAT NEVER SPEND EACH OTHER (2026-10-17). An administrator's links are counted
+    # against administrators' links only, and "Forgot your password?" links (issued by nobody)
+    # against their own kind only — so a stranger typing somebody's address four times an hour
+    # cannot leave an administrator unable to make that person a link, and a busy administrator
+    # cannot silence the person's own request. The self-service door also has its own, smaller,
+    # silent cap in ``services/password_reset``.
+    issued_kind: dict[str, Any] = (
+        {"NOT": [{"issuedById": None}]} if issued_by_id is not None else {"issuedById": None}
+    )
     recent = await db.passwordresettoken.count(
-        where={"userId": user.id, "createdAt": {"gte": since}}
+        where={"userId": user.id, "createdAt": {"gte": since}, **issued_kind}
     )
     if recent >= ISSUE_BUDGET:
         raise IssueThrottled(retry_after_minutes=ISSUE_WINDOW_HOURS * 60)
@@ -620,7 +629,8 @@ async def self_service_links_since(user_id: str, since: datetime) -> int:
     The self-service door's own, SILENT, per-address cap (``services/password_reset``) reads this: a
     link nobody issued (``issuedById`` NULL) is a link the account's own address asked for. Links an
     administrator made are not counted, so a flood of strangers' requests can never use up an
-    administrator's ability to help — :data:`ISSUE_BUDGET` still bounds the two together.
+    administrator's ability to help; since 2026-10-17 :data:`ISSUE_BUDGET` counts each kind
+    separately too (see :func:`issue_link`), so neither door can spend the other's allowance.
     """
     return await db.passwordresettoken.count(
         where={"userId": user_id, "issuedById": None, "createdAt": {"gte": since}}
