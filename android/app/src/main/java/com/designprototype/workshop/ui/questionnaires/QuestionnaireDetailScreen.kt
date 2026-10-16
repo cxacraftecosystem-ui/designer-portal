@@ -46,6 +46,7 @@ import com.designprototype.workshop.data.QFormChangeReportDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.cachedQuestionnaireNotice
 import com.designprototype.workshop.data.apiErrorMessage
+import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.designWorkshopLabel
@@ -1288,7 +1289,7 @@ private fun QuestionRow(
         // only be a way to hit the ON DELETE RESTRICT on its answers.
         if (mayEdit && question.isActive) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onEdit, enabled = !busy) { Text("Edit", fontSize = 12.sp) }
+                TextButton(onClick = onEdit, enabled = !busy) { Text(RecordOpen.UPDATE_LABEL, fontSize = 12.sp) }
                 TextButton(onClick = onRemove, enabled = !busy) {
                     Text(if (question.hasAnswers) "Retire" else "Delete", fontSize = 12.sp)
                 }

@@ -9,30 +9,15 @@
  * there was `RECORD_HREF` / `editHref` — one table per surface — and this is the same table for the
  * types this report deals in, which are not the same six.
  *
- * THREE SHAPES, NOT TWO. §13.0 names two (a real `/{type}/{id}/edit` route, or an inline form on the
- * list page reached with `?edit={id}`). This report also covers two types that have NEITHER, and
- * pretending otherwise is exactly the failure above wearing a politer face: `?edit=` on a page with
- * no reader for it is a query parameter that lands on a blank create form just the same. So a
- * destination says which shape it is, and a card whose record cannot be opened SAYS SO rather than
- * offering a button that goes somewhere else.
- *
- * THE TWO THAT HAVE NO PER-RECORD SURFACE, re-checked 2026-08-28 rather than asserted:
- *
- *   $ ls "frontend/app/(protected)/questionnaire"      → consolidated/  page.tsx
- *   $ grep -n "useEditDeepLink\|searchParams.get" "frontend/app/(protected)/questionnaire/page.tsx"
- *       102:  const searchParams = useSearchParams();
- *       108:  ... searchParams.get("artisanId") ...        ← the ONLY parameter it reads
- *   $ ls "frontend/app/(protected)/media"              → page.tsx
- *   $ grep -n "useSearchParams\|useEditDeepLink" "frontend/app/(protected)/media/page.tsx"
- *       (no matches)
- *
- * `components/map/types.ts` reached the same conclusion about media independently — "Media genuinely
- * has no per-record route, so it alone still lands on its list page" — and `/data`'s `editHref` maps
- * `questionnaire` to a bare `/questionnaire` for the same reason. Re-run the two greps before
- * "fixing" either entry below: the day one of those pages grows a deep link, this table is one line.
+ * A RECORD OPENS ON ITS READ-ONLY PAGE (owner ruling, 2026-10-16) — `lib/recordView.ts` is the
+ * table every surface now shares, so a button here and a row on the record's list go to one place.
+ * Media and interviews gained such a page that day; until then this report could only send either
+ * to its list, and `opensTheRecord: false` + `note` remain for the next type that has none — a card
+ * whose record cannot be opened SAYS SO rather than offering a button that goes somewhere else.
  */
 
 import { apiFetch } from "@/lib/api";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 
 /** One record type's opening destination, and how honest a destination it is. */
 export type UnfiledDestination = {
@@ -54,28 +39,14 @@ export type UnfiledDestination = {
  * the nouns are the server's to word and it sends them alongside.
  */
 export const UNFILED_DESTINATIONS: Record<string, UnfiledDestination> = {
-  // The three types with a real edit route (§13.0, first shape).
-  artisans: { href: (id) => `/artisans/${id}/edit`, opensTheRecord: true, label: "Open this artisan" },
-  products: { href: (id) => `/products/${id}/edit`, opensTheRecord: true, label: "Open this product record" },
-  tools: { href: (id) => `/tools/${id}/edit`, opensTheRecord: true, label: "Open this tool record" },
-  // Inline form on the list page (§13.0, second shape) — the id travels as `?edit=`, read by
-  // `useEditDeepLink` in `app/(protected)/processes/page.tsx:158`. A bare `/processes` here would be
-  // the blank-create-form bug.
-  processes: { href: (id) => `/processes?edit=${id}`, opensTheRecord: true, label: "Open this process record" },
-  // The two with no per-record surface. `id` is deliberately unused — carrying it in the URL would
-  // suggest the page reads it, and neither does.
-  interviews: {
-    href: () => "/questionnaire",
-    opensTheRecord: false,
-    label: "Open the Questionnaire list",
-    note: "This opens the interview list. Find it there by its title."
-  },
-  media: {
-    href: () => "/media",
-    opensTheRecord: false,
-    label: "Open the Media list",
-    note: "This opens the media list. Find it there by its filename."
-  }
+  // The record's READ-ONLY page (`lib/recordView.ts`, owner ruling 2026-10-16), whose Update button
+  // keeps the id on its way to the form.
+  artisans: { href: RECORD_VIEW_HREF.artisan, opensTheRecord: true, label: "Open this artisan" },
+  products: { href: RECORD_VIEW_HREF.product, opensTheRecord: true, label: "Open this product record" },
+  tools: { href: RECORD_VIEW_HREF.tool, opensTheRecord: true, label: "Open this tool record" },
+  processes: { href: RECORD_VIEW_HREF.process, opensTheRecord: true, label: "Open this process record" },
+  media: { href: RECORD_VIEW_HREF.media, opensTheRecord: true, label: "Open this file" },
+  interviews: { href: RECORD_VIEW_HREF.interview, opensTheRecord: true, label: "Open this interview" }
 };
 
 /** The destination for a bucket, or null when the server sent one this client has never heard of. */

@@ -1379,6 +1379,20 @@ LADDER_SHAPED = 5
 #: reason has to be "this does not purport to enumerate the ladder" — never "this failure was
 #: inconvenient". Anything that DOES enumerate belongs in ``MIRRORS``, not here.
 KNOWN_NON_MIRRORS: dict[str, str] = {
+    "android/app/src/test/java/com/designprototype/workshop/ui/RecordOpenTest.kt": (
+        "Tiers named in individual assertions, and NOT an enumeration -- no tuple, map or loop over "
+        "roles. It pins `RecordOpen.mayUpdate` (who is offered 'Update' on a read-only record) at its "
+        "edges: a craft or workshop is refused to RESEARCHER and DESIGNER and offered to PROFESSOR and "
+        "ADMIN (the manager gates), a field record keeps its plain sign-in gate (asked as a "
+        "CROWDSOURCE_VOLUNTEER), and a stored file is never updatable, not even by the MASTER_ADMIN. "
+        "The rank those gates walk is the `ranked` mirror above."
+    ),
+    "frontend/e2e/record-view-unit.spec.ts": (
+        "Tiers named in individual assertions, and NOT an enumeration. It pins `canUpdateRecord` in "
+        "`lib/recordView.ts` -- the web twin of Android's `RecordOpen.mayUpdate` -- at the same edges; "
+        "the ladder `canManageCrafts` / `canManageWorkshops` walk is `lib/permissions.ts::ROLE_RANK`, "
+        "already a `ranked` mirror above."
+    ),
     "android/app/src/test/java/com/designprototype/workshop/ui/AddPersonCopyTest.kt": (
         "Tiers named in individual assertions, and NOT an enumeration -- no tuple, map or loop. It pins "
         "`creatableRoles` at its edges: an ADMIN tops out at MINISTRY_ADMIN, a MASTER_ADMIN is offered "

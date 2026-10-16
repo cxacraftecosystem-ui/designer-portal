@@ -8,6 +8,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -2280,16 +2282,22 @@ private fun PointRecordRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.field.surface50, MaterialTheme.shapes.small)
+            // Clipped first, so the ripple stops at the rounded corner instead of flashing a square.
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.field.surface50)
             // Only clickable when the host gave us somewhere to go. A row that looks tappable and is
-            // not is worse than a row that does not.
+            // not is worse than a row that does not. It opens the record's read-only page, and says
+            // so to TalkBack.
             .let { base ->
                 if (onOpenRecord == null) base
-                else base.clickable {
+                else base.clickable(
+                    onClickLabel = RecordOpen.openClickLabel(row.title.ifBlank { "Untitled" }),
+                    role = Role.Button
+                ) {
                     onOpenRecord?.invoke(singularRecordType(row.type), row.id)
                 }
             }
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         Text(

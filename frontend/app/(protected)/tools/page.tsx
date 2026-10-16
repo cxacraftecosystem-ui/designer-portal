@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Hammer, Plus } from "lucide-react";
 
 import { CollabDialog } from "@/components/CollabDialog";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { DownloadCsvButton } from "@/components/DownloadCsvButton";
 import { useAuth } from "@/components/AuthProvider";
@@ -20,8 +21,10 @@ import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ToolAssignmentSection } from "@/components/forms/ToolAssignmentSection";
 import { useAdminView } from "@/components/AdminViewProvider";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
+import { RECORD_UPDATE_HREF, RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { PageResult, ToolDocumentation } from "@/lib/types";
 
 export default function ToolsPage() {
@@ -67,6 +70,8 @@ export default function ToolsPage() {
    * in front of it — one unguarded write brings the dead pager back.
    */
   const currentLoad = useRef(0);
+  /** Search, page, funnel and scroll, so Back from a tool's page lands on the same rows. */
+  const memory = useListMemory("tools", { query, applied, page, funnel }, data !== null);
 
   async function load() {
     const generation = (currentLoad.current += 1);
@@ -110,6 +115,18 @@ export default function ToolsPage() {
   }, [query]);
 
   function onFunnelChange(next: FunnelValue, _workshop: FunnelWorkshop | null) {
+    // The funnel's FIRST answer is when this page learns its defaults — and so when a remembered
+    // place (Back from a record's page) replaces them. See `useListMemory`.
+    const remembered = funnelReady ? null : memory.recall();
+    if (remembered) {
+      if ((remembered.query ?? "") !== query) skipFirstDebounce.current = true;
+      setQuery(remembered.query ?? "");
+      setApplied(remembered.applied ?? "");
+      setFunnel(remembered.funnel ?? next);
+      setPage(remembered.page ?? 1);
+      setFunnelReady(true);
+      return;
+    }
     setFunnel(next);
     setPage(1);
     setFunnelReady(true);
@@ -191,9 +208,11 @@ export default function ToolsPage() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((tool) => (
-                  <tr key={tool.id}>
+                  // The whole row opens the record read-only; its name is the same act as a real link.
+                  // Update, Discuss, Delete and the preview tiles keep their own clicks (`OpenableRow`).
+                  <OpenableRow key={tool.id} href={RECORD_VIEW_HREF.tool(tool.id)}>
                     <td className="px-4 py-3">
-                      <div className="font-medium text-ink-900">{tool.toolkitName}</div>
+                      <OpenableRowLink href={RECORD_VIEW_HREF.tool(tool.id)}>{tool.toolkitName}</OpenableRowLink>
                       <div className="text-xs text-ink-500">{tool.englishName ?? tool.localName ?? tool.traditionType}</div>
                     </td>
                     <td className="px-4 py-3 text-ink-700">{tool.craftName}</td>
@@ -231,8 +250,8 @@ export default function ToolsPage() {
                     <td className="px-4 py-3 text-ink-700">{formatDate(tool.createdAt)}</td>
                     <td className="px-4 py-3 text-right">
                       <RowActions>
-                        <Link className={rowAction("edit")} href={`/tools/${tool.id}/edit`}>
-                          Edit
+                        <Link className={rowAction("edit")} href={RECORD_UPDATE_HREF.tool(tool.id)}>
+                          Update
                         </Link>
                         <button className={rowAction("neutral")} onClick={() => setCollabId(tool.id)}>
                           Discuss
@@ -244,7 +263,7 @@ export default function ToolsPage() {
                         ) : null}
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                 ))}
               </tbody>
             </table>

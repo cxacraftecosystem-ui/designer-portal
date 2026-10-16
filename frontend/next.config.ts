@@ -133,6 +133,13 @@ const nextConfig: NextConfig = {
         headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }]
       },
       {
+        // The Digital Asset Links file that verifies the handset's /set-password App Link. Google's
+        // verifier wants exactly `application/json`, a 200 and no redirect; a static file under
+        // public/ gets all three, and the type is pinned here so a hosting default cannot change it.
+        source: "/.well-known/assetlinks.json",
+        headers: [{ key: "Content-Type", value: "application/json" }]
+      },
+      {
         source: "/:path*",
         headers: [
           ...securityHeaders,

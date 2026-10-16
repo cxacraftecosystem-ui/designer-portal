@@ -34,6 +34,7 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { getDesignWorkshop } from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import type {
   Artisan,
   Craft,
@@ -65,24 +66,21 @@ export type WorkshopCodeLookup = { ok: true; hit: WorkshopCodeHit } | { ok: fals
 /**
  * Where a record of each type is OPENED — the same destinations `/search` and the map use.
  *
- * Crafts, workshops and processes have no `/[id]/edit` route: they are edited inline on their list
- * page, so the id travels as `?edit=`, which `useEditDeepLink` reads on arrival. Linking to the bare
- * list instead discards the id and opens a blank CREATE form, which is the bug
- * `components/map/types.ts` records having shipped in six places.
+ * A record opens on its READ-ONLY page (`lib/recordView.ts`, owner ruling 2026-10-16); the page's
+ * "Update" button is the way to the form, and it keeps the id the way §13.0 of the frontend
+ * contract requires (crafts, workshops and processes travel as `?edit=` to their list's inline form).
  *
- * An interview and a media file genuinely have no per-record web route, so they land on their list —
- * stated here rather than papered over, because a caller that assumed every href is a detail view
- * would present a list as though it were the record.
+ * An interview opens its own sitting's page (`/questionnaire/interviews/[id]`), like the rest.
  */
 const OPEN_HREF: Record<WorkshopRecordType, (id: string) => string> = {
-  artisan: (id) => `/artisans/${id}/edit`,
-  craft: (id) => `/crafts?edit=${id}`,
-  workshop: (id) => `/workshops?edit=${id}`,
-  product: (id) => `/products/${id}/edit`,
-  process: (id) => `/processes?edit=${id}`,
-  tool: (id) => `/tools/${id}/edit`,
-  questionnaire: () => "/questionnaire",
-  media: () => "/media",
+  artisan: RECORD_VIEW_HREF.artisan,
+  craft: RECORD_VIEW_HREF.craft,
+  workshop: RECORD_VIEW_HREF.workshop,
+  product: RECORD_VIEW_HREF.product,
+  process: RECORD_VIEW_HREF.process,
+  tool: RECORD_VIEW_HREF.tool,
+  questionnaire: RECORD_VIEW_HREF.interview,
+  media: RECORD_VIEW_HREF.media,
   // The workshop's own page, which is a real route (`/design-workshops/[id]`) and takes the id
   // directly — unlike `workshop` two lines up, which is a DIFFERENT record on a list page and travels
   // as `?edit=`. Landing here is what "joining" looks like once the grant exists; until it does the
@@ -163,8 +161,8 @@ async function fetchHit(ref: WorkshopCodeRef): Promise<WorkshopCodeHit> {
         label: record.caption?.trim() || record.originalFilename,
         detail: line(record.mediaType, record.mimeType),
         // `url` is gated server-side at the encoder, so a caller not entitled to the bytes gets no
-        // link to them and lands on the media list instead — the entitlement is the API's to decide
-        // and this must not guess at it.
+        // link to them and lands on the file's read-only page instead — the entitlement is the API's
+        // to decide and this must not guess at it.
         href: record.url ?? href,
         external: Boolean(record.url)
       };

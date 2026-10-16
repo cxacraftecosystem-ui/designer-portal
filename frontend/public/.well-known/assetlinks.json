@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.designprototype.workshop",
+      "sha256_cert_fingerprints": [
+        "C3:72:B4:B6:27:5A:A2:AC:CB:CB:09:8A:F1:98:BA:E3:02:7E:CA:9A:90:C0:8C:5D:F5:4A:41:43:34:3B:FB:49"
+      ]
+    }
+  }
+]

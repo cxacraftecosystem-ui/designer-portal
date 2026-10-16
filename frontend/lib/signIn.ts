@@ -253,16 +253,25 @@ export async function changeOwnPassword(currentPassword: string, newPassword: st
 export const SIGN_IN_AGAIN_HEADER = "x-sign-in-again";
 
 /**
+ * The header a first-password request is refused with when the account has two-step verification on
+ * and the code was missing or wrong (400). The server's sentence says which; the form keeps every box.
+ */
+export const TWO_FACTOR_REQUIRED_HEADER = "x-two-factor-required";
+
+/**
  * An account that signs in with Google, Microsoft or Yahoo choosing a password as well — the same
  * route as a change, with no current password because there is none to prove. The server accepts it
  * only from a session opened in the last few minutes and otherwise answers 400 with
  * {@link SIGN_IN_AGAIN_HEADER}. Returns the fresh session exactly as {@link changeOwnPassword} does:
  * the new password changes the fingerprint every session carries.
  */
-export async function setFirstPassword(newPassword: string): Promise<string | null> {
+export async function setFirstPassword(newPassword: string, twoFactorCode?: string): Promise<string | null> {
+  const code = twoFactorCode?.trim();
   const { headers } = await apiFetchWithHeaders<unknown>("/auth/change-password", {
     method: "POST",
-    body: JSON.stringify({ newPassword })
+    // The code goes only when there is one: an account without two-step verification sends exactly
+    // the body it always did.
+    body: JSON.stringify(code ? { newPassword, twoFactorCode: code } : { newPassword })
   });
   const token = headers.get(SESSION_TOKEN_HEADER)?.trim();
   return token ? token : null;

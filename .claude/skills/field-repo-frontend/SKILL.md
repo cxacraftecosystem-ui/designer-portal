@@ -1639,8 +1639,39 @@ only) → `MediaCaptureField` → `SaveButton`. Status is a locked `StatusBadge`
 ## 13. Screen patterns
 
 **Page frame:** `PageHeader` → banners → `panel`. A list screen is a panel-wrapped table using
-`ResizableTh`, `StatusBadge` and `Pagination`; a selected row reveals an action strip of
+`ResizableTh`, `StatusBadge` and `Pagination`; each row ends in an action strip of
 `rowAction(tone)` entries in `RowActions`.
+
+### 13.00 A record opens READ-ONLY; "Update" is the way to the form
+
+Owner ruling, 2026-10-16, on both clients: a click **anywhere** on a record's row or card opens that
+record's read-only page; editing is a separate, explicit **"Update"** button (never "Edit").
+
+- **Where it opens** is `RECORD_VIEW_HREF` in `lib/recordView.ts` (`/artisans/[id]`, `/products/[id]`,
+  `/tools/[id]`, `/processes/[id]`, `/crafts/[id]`, `/workshops/[id]`, `/questionnaire/interviews/[id]`,
+  `/media/[id]`); **where Update goes** is `RECORD_UPDATE_HREF` beside it, in the two §13.0 shapes. A
+  new surface that links to a record reads these tables — it does not write a third.
+- **A table row** is `OpenableRow` (`components/data/OpenableRow.tsx`) with the record's name as an
+  `OpenableRowLink` in the first cell — the keyboard and screen-reader route. Never `role="button"` on
+  a `<tr>` (it orphans every cell). **A card** is `OpenableCard`. Both decide through the pure
+  `rowClickIntent`: a press on the row's own controls (`ROW_OWN_CLICK_SELECTOR`, plus
+  `data-row-ignore` for a disclosure whose contents are read in place) stays theirs with no
+  `stopPropagation`, a text selection opens nothing, and a middle or modified click opens a new tab.
+- **The read-only page** is `RecordViewPage` + `RecordFieldList` (`components/records/`), fields built
+  by the pure `recordFields.ts` — which prints an identity number only as "On file", because the list
+  hides the digits. Media is `ExistingMedia readOnly` (preview, play, Download; no ✕) and
+  `TranscriptBlock readOnly` — a transcript re-run REPLACES the transcript, so it is an update and
+  is never drawn on a read-only page, admin or not.
+- **A record whose whole record is its row** (an account, an allow-list or roster entry, a sanction
+  order) opens `RecordDetailsDialog` (`components/records/`) through `OpenableRow`/`OpenableCard`'s
+  `onOpen`, with the name as a real `<button>`; its Update is passed only where the row's own is drawn.
+- **Update is drawn only behind `canUpdateRecord`**, the server's PATCH gate restated. Never a wider one.
+- **Back keeps the reader's place**: every list that opens a record page — the six record lists,
+  media, the interview list, design workshops and questionnaires — remembers search, page, filters
+  and scroll through `useListMemory` (session storage, recalled in a handler or effect, never during
+  render; a page's other filters go in its `filters` bag, strings only).
+- `e2e/record-view-unit.spec.ts` holds all of it; Android's twin is `ui/RecordOpen.kt` +
+  `Screen.View` (`RecordOpenTest`).
 
 ### 13.0 The two shapes of "edit a record", and the link each one needs
 

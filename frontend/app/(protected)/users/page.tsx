@@ -7,6 +7,7 @@ import { ShieldCheck, UserPlus } from "lucide-react";
 
 import { AadhaarUserBadge } from "@/components/aadhaar/AadhaarUserBadge";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
+import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
@@ -18,6 +19,7 @@ import { PasswordRevealButton } from "@/components/ui/PasswordReveal";
 import { adminChromeVisible, useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { LIST_PAGE_CEILING } from "@/components/data/cappedList";
+import { OpenableRow } from "@/components/data/OpenableRow";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { fetchNotificationPreferences } from "@/lib/notifications";
@@ -251,6 +253,13 @@ function UsersScreen() {
   const [temporary, setTemporary] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
   const [requiring, setRequiring] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
   const [details, setDetails] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
+  /**
+   * The account a click on its row opened, READ-ONLY (owner ruling, 2026-10-16: a record opens to be
+   * read; changing it is the separate "Update"). A dialog and not a route, because an account's
+   * whole record is the row's own columns — what the dialog adds is the room to read them without
+   * a role picker and two grant toggles under the pointer.
+   */
+  const [viewing, setViewing] = useState<User | null>(null);
   const [data, setData] = useState<PageResult<User> | null>(null);
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
@@ -1071,13 +1080,23 @@ function UsersScreen() {
                   // ONE DECISION PER ROW, made in ./accountAdmin where a test can reach it.
                   const offers = rowOffers(currentUser, user, { provision, admin });
                   return (
-                  <tr
+                  // The whole row opens the account read-only; the role picker, the grant toggles and
+                  // every action button keep their own clicks (`OpenableRow`). The name is a real
+                  // button — the same act for the keyboard.
+                  <OpenableRow
                     key={user.id}
+                    onOpen={() => setViewing(user)}
                     data-flash={focusId === user.id ? "true" : undefined}
                     className="fr-flash-row"
                   >
                     <td className="px-4 py-3 font-medium text-ink-900">
-                      {user.name}
+                      <button
+                        type="button"
+                        onClick={() => setViewing(user)}
+                        className="rounded-sm text-left font-medium text-ink-900 underline-offset-2 hover:underline"
+                      >
+                        {user.name}
+                      </button>
                       {/* Draws nothing unless the server has Aadhaar verification switched on. */}
                       <AadhaarUserBadge account={user} viewer={currentUser} onDecided={() => void load()} />
                     </td>
@@ -1145,7 +1164,7 @@ function UsersScreen() {
                               className={rowAction("edit")}
                               onClick={() => setDetails({ open: true, user })}
                             >
-                              Edit
+                              Update
                             </button>
                           ) : null}
                           {/* Keyed on HAVING A PASSWORD (`passwordSetAt`), no longer on
@@ -1219,7 +1238,7 @@ function UsersScreen() {
                         <span className="text-xs text-ink-500">Role only</span>
                       )}
                     </td>
-                  </tr>
+                  </OpenableRow>
                   );
                 })}
               </tbody>
@@ -1325,6 +1344,53 @@ function UsersScreen() {
           if (withLink) void issueLink(updated);
         }}
       />
+      <FieldDialog
+        open={viewing !== null}
+        onClose={() => setViewing(null)}
+        title={viewing?.name ?? "Account"}
+        description={viewing?.email}
+        footer={
+          viewing ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" className="field-button-secondary" onClick={() => setViewing(null)}>
+                Close
+              </button>
+              {/* The same decision the row's own Update makes — never a wider one. */}
+              {rowOffers(currentUser, viewing, { provision, admin }).editDetails ? (
+                <button
+                  type="button"
+                  className="field-button"
+                  onClick={() => {
+                    const target = viewing;
+                    setViewing(null);
+                    setDetails({ open: true, user: target });
+                  }}
+                >
+                  Update
+                </button>
+              ) : null}
+            </div>
+          ) : null
+        }
+      >
+        {viewing ? (
+          <dl className="mt-4 grid gap-2 text-sm">
+            {[
+              ["Role", roleLabel(viewing.role)],
+              ["May manage the questionnaire", hasRank(viewing, "PROFESSOR") || viewing.canManageQuestionnaire ? "Yes" : "No"],
+              ["May download the dataset", hasRank(viewing, "PROFESSOR") || viewing.canDownloadDataset ? "Yes" : "No"],
+              ["Sign-in", ACCOUNT_STATUS_LABEL[accountStatus(viewing)]],
+              ["First signed in", viewing.firstLoginAt ? formatDate(viewing.firstLoginAt) : "Not yet"],
+              ["Two-step verification", viewing.twoFactorEnabled ? "On" : "Off"]
+            ].map(([label, value]) => (
+              <div key={label} className="grid gap-0.5 sm:grid-cols-[13rem_minmax(0,1fr)] sm:gap-3">
+                <dt className="font-semibold text-ink-900">{label}</dt>
+                <dd className="text-ink-700">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+      </FieldDialog>
       <AccountDetailsDialog
         open={details.open}
         target={details.user}

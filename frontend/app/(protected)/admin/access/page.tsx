@@ -87,11 +87,13 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { BadgeCheck, Clock, MailPlus, ShieldCheck, UserCheck, UserX } from "lucide-react";
 
+import { OpenableRow } from "@/components/data/OpenableRow";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { FieldLabelProvider } from "@/components/ui/fieldLabel";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordDetailsDialog } from "@/components/records/RecordDetailsDialog";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RestrictedPanel } from "@/components/settings/RestrictedPanel";
@@ -250,6 +252,8 @@ function PlatformAccessScreen() {
    */
   const [searchPending, setSearchPending] = useState(false);
   const [editing, setEditing] = useState<AccessRosterEntry | null>(null);
+  /** The entry a press on its row opened, read-only. Update is the separate act — see `RecordDetailsDialog`. */
+  const [viewing, setViewing] = useState<AccessRosterEntry | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1068,14 +1072,20 @@ function PlatformAccessScreen() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {rows.map((entry) => (
-                  <tr key={entry.id}>
+                  // The whole row opens the entry read-only; Update and the access buttons keep
+                  // their own clicks. The name is a real button — the same act for the keyboard.
+                  <OpenableRow key={entry.id} onOpen={() => setViewing(entry)}>
                     <td className="px-4 py-3">
-                      <div className="font-medium text-ink-900">
+                      <button
+                        type="button"
+                        onClick={() => setViewing(entry)}
+                        className="rounded-sm text-left font-medium text-ink-900 underline-offset-2 hover:underline"
+                      >
                         {/* The name is whatever an ADMIN typed. A person who has only ever been
                             refused has none, and that absence is stated rather than left blank —
                             nothing here is ever populated from an unverified profile. */}
                         {entry.fullName || <span className="text-ink-500">Name not recorded</span>}
-                      </div>
+                      </button>
                     </td>
                     {/* `break-all` rather than `truncate`: this is the row's identity and the value
                         an admin is usually here to compare against something in a message, so a long
@@ -1133,7 +1143,7 @@ function PlatformAccessScreen() {
                     <td className="px-4 py-3 text-right">
                       <RowActions>
                         <button type="button" className={rowAction("edit")} onClick={() => startEdit(entry)}>
-                          Edit
+                          Update
                         </button>
                         {entry.status === "ACTIVE" ? (
                           // Never labelled "Delete". The verb has to say what happens, and what
@@ -1154,7 +1164,7 @@ function PlatformAccessScreen() {
                         ) : null}
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                 ))}
               </tbody>
             </table>
@@ -1162,8 +1172,47 @@ function PlatformAccessScreen() {
         )}
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
+      <RecordDetailsDialog
+        open={viewing !== null}
+        onClose={() => setViewing(null)}
+        title={viewing?.fullName || "Name not recorded"}
+        description={viewing?.email}
+        details={viewing ? accessEntryDetails(viewing) : []}
+        onUpdate={() => {
+          const target = viewing;
+          setViewing(null);
+          if (target) startEdit(target);
+        }}
+      />
     </>
   );
+}
+
+/** What the read-only view of a roster entry says, in the words its row's columns use. */
+function accessEntryDetails(entry: AccessRosterEntry): [string, string | null][] {
+  const standing =
+    entry.status === "ACTIVE"
+      ? `May sign in ${entry.admitRole ? `as ${roleLabel(entry.admitRole)}` : "with the default role"}`
+      : entry.status === "PENDING"
+        ? "Waiting for a decision"
+        : `${entry.status === "REJECTED" ? "Refused" : "Suspended"} ${entry.decidedAt ? `since ${formatDate(entry.decidedAt)}` : "(date not recorded)"}`;
+  return [
+    ["Email", entry.email],
+    ["Standing", standing],
+    ["Added", entry.createdAt ? formatDate(entry.createdAt) : "Not recorded"],
+    ["Joined", entry.joinedAt ? formatDate(entry.joinedAt) : "Not yet"],
+    [
+      "First signed in",
+      entry.firstSeenAt ? formatDate(entry.firstSeenAt) : entry.joinedAt ? "Has not signed in yet" : "Has never been admitted"
+    ],
+    [
+      "Requests",
+      entry.attemptCount > 0
+        ? `${entry.attemptCount} refused attempt${entry.attemptCount === 1 ? "" : "s"}${entry.lastAttemptAt ? `, last ${formatDateTime(entry.lastAttemptAt)}` : ""}`
+        : "None"
+    ],
+    ["Note", entry.notes]
+  ];
 }
 
 /**

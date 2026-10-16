@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -442,11 +443,11 @@ class DataBrowserState(
 
 /** A [DataBrowserState] scoped to this composition, loading the root on first appearance. */
 @Composable
-fun rememberDataBrowserState(repository: WorkshopRepository): DataBrowserState {
+fun rememberDataBrowserState(repository: WorkshopRepository, startPath: String = ""): DataBrowserState {
     val scope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
     val state = remember(repository) { DataBrowserState(repository, scope, appContext) }
-    LaunchedEffect(state) { state.open("") }
+    LaunchedEffect(state) { state.open(startPath) }
     return state
 }
 
@@ -467,9 +468,19 @@ fun DataBrowserScreen(
     repository: WorkshopRepository,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
-    onMessage: (String) -> Unit = {}
+    onMessage: (String) -> Unit = {},
+    /**
+     * Where a stored file's card goes: its read-only media page. Null leaves a tap on the card to
+     * preview the file in place, as its thumbnail does.
+     */
+    onOpenMedia: ((mediaId: String) -> Unit)? = null,
+    /** The folder to open first — the one the reader left for a file's page, so Back lands there. */
+    startPath: String = "",
+    /** Told every folder the reader opens, so the host can hand it back as [startPath]. */
+    onPathChange: (String) -> Unit = {}
 ) {
-    val state = rememberDataBrowserState(repository)
+    val state = rememberDataBrowserState(repository, startPath)
+    LaunchedEffect(state.currentPath) { onPathChange(state.currentPath) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -787,6 +798,16 @@ fun DataBrowserScreen(
                     onToggleInline = { state.toggleInline(file) },
                     onToggleTranscript = { state.toggleTranscript(file) },
                     onPreview = { viewing = file },
+                    // The whole card opens the file: its read-only page where it is a stored file,
+                    // otherwise the same in-place preview its thumbnail and View button give.
+                    onOpen = {
+                        val mediaId = file.mediaId
+                        when {
+                            mediaId != null && onOpenMedia != null -> onOpenMedia(mediaId)
+                            !file.url.isNullOrBlank() -> viewing = file
+                            file.content != null -> state.toggleInline(file)
+                        }
+                    },
                     onSave = {
                         val mediaId = file.mediaId ?: return@FileRow
                         scope.launch {
@@ -1355,6 +1376,7 @@ private fun FileRow(
     onToggleInline: () -> Unit,
     onToggleTranscript: () -> Unit,
     onPreview: () -> Unit,
+    onOpen: () -> Unit,
     onSave: () -> Unit
 ) {
     val meta = listOfNotNull(
@@ -1367,7 +1389,16 @@ private fun FileRow(
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            // THE WHOLE CARD OPENS THE FILE (owner ruling, 2026-10-16), not only its thumbnail and
+            // a small button. Inside the card, so the ripple stops at its rounded corner; View, View
+            // transcript and Save are buttons and consume their own taps.
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = RecordOpen.openClickLabel(entry.name), role = Role.Button, onClick = onOpen)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,

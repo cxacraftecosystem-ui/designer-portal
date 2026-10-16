@@ -194,6 +194,23 @@ class IdentityLookup:
     user: Any | None = None
 
 
+def identifier_key(raw: Any) -> str:
+    """The canonical form of whatever was typed into the sign-in box, for a budget keyed on an
+    identifier that matched no account (``rate_limit.address_credential_attempt``). Normalised the
+    way :func:`resolve_identifier` reads it, so "A@X.org " and "a@x.org" are one bucket, as are two
+    spellings of one phone number."""
+    identifier = str(raw or "").strip()
+    if looks_like_email(identifier):
+        return "email:" + normalise_email(identifier)
+    phone_key = normalise_phone(identifier)
+    if phone_key is not None:
+        return "phone:" + phone_key
+    empanelment_key = normalise_empanelment_no(identifier)
+    if empanelment_key is not None:
+        return "empanelment:" + empanelment_key
+    return "raw:" + identifier.lower()
+
+
 async def resolve_identifier(raw: Any) -> IdentityLookup:
     """Turn whatever was typed into the sign-in box into at most one ``User`` row.
 
