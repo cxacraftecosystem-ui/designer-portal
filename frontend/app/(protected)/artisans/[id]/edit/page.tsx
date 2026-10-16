@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
+import { AadhaarVerifyPanel } from "@/components/aadhaar/AadhaarVerifyPanel";
 import { ArtisanForm } from "@/components/forms/ArtisanForm";
 import { ArtisanQuestionnairePanel } from "@/components/ArtisanQuestionnairePanel";
 import { FieldProvenance } from "@/components/FieldProvenance";
@@ -32,6 +33,8 @@ export default function EditArtisanPage() {
           {/* The artisan's own card code, drawn live. Same payload the printed roster card carries,
               so a card cut off a sheet in January and this screen in June are one code. */}
           <RecordCodeCard recordType="artisan" id={record.id} title={record.name} />
+          {/* Draws nothing unless the server has switched an Aadhaar method on. */}
+          <AadhaarVerifyPanel subject={{ kind: "artisan", id: record.id }} recordName={record.name} />
           <ArtisanQuestionnairePanel artisanId={record.id} />
           <FieldProvenance extraMetadata={record.extraMetadata} title="Artisan field contributions" />
         </div>

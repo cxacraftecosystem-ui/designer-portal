@@ -268,6 +268,11 @@ import com.designprototype.workshop.ui.UsageConsentDoor
 import com.designprototype.workshop.ui.UsageConsentGateScreen
 import com.designprototype.workshop.ui.UsageDoorState
 import com.designprototype.workshop.ui.UsageRecordingScreen
+import com.designprototype.workshop.ui.aadhaar.AadhaarSelfScreen
+import com.designprototype.workshop.ui.aadhaar.AadhaarUserBadge
+import com.designprototype.workshop.ui.aadhaar.AadhaarVerifyCard
+import com.designprototype.workshop.data.AadhaarFeatures
+import com.designprototype.workshop.data.AadhaarSubject
 import com.designprototype.workshop.ui.UsageScreen
 import com.designprototype.workshop.ui.rememberUsageDoorState
 import com.designprototype.workshop.ui.usageAnswerAtTheDoor
@@ -1018,6 +1023,12 @@ private sealed interface Screen {
      * "where do settings live" that the block above this one spent a paragraph deleting.
      */
     data object UsageRecording : Screen
+    /**
+     * THIS ACCOUNT's Aadhaar verification, one level below [Appearance] beside [UsageRecording] —
+     * the web's card on /settings. Reachable only while the server has an Aadhaar method switched on
+     * (`UserDto.features`); the Settings row that opens it is not drawn otherwise.
+     */
+    data object Aadhaar : Screen
     /**
      * The /data directory-tree browser. Its own Screen rather than a Create mode because it owns its
      * whole viewport: it draws its own top bar and lays out with a LazyColumn, which must never be
@@ -3458,6 +3469,7 @@ private fun HomeScreen(
             is Screen.SpeechAndAi -> Screen.Appearance
             is Screen.MyAiKeys -> Screen.Appearance
             is Screen.UsageRecording -> Screen.Appearance
+            is Screen.Aadhaar -> Screen.Appearance
             is Screen.DataBrowser -> Screen.Dashboard
             // One level at a time: from a tool back to the tool list, and only then out. This is
             // what lets the single header arrow replace the in-page "All admin tools" button — the
@@ -3554,6 +3566,7 @@ private fun HomeScreen(
         is Screen.MyAiKeys -> null
         // Its own TopAppBar too, for the same reason.
         is Screen.UsageRecording -> null
+        is Screen.Aadhaar -> null
         is Screen.DataBrowser -> "Data Browser"
         // Null on all eight arms immediately below — counted by reading them: workshops, stages,
         // one stage, report, report history, codes, photos, viewers. Each of those screens draws its
@@ -3631,6 +3644,7 @@ private fun HomeScreen(
         // is the cross-account aggregate, and lighting the admin row here would tell a designer with
         // no admin rights that they are inside an administrative tool.
         is Screen.UsageRecording -> NavDestination.SETTINGS
+        is Screen.Aadhaar -> NavDestination.SETTINGS
         is Screen.DataBrowser -> NavDestination.VIEW_DATA
         is Screen.AdminHub -> NavDestination.SETTINGS_HUB
         // Every screen of the 22-stage record lights the one menu row that reaches it. Unlike the
@@ -3797,6 +3811,12 @@ private fun HomeScreen(
                         onOpenSpeechAndAi = { screen = Screen.SpeechAndAi },
                         onOpenMyAiKeys = { screen = Screen.MyAiKeys },
                         onOpenUsageRecording = { screen = Screen.UsageRecording },
+                        // Null — no row at all — unless the server has an Aadhaar method switched on.
+                        onOpenAadhaar = if (AadhaarFeatures.of(user).enabled) {
+                            { screen = Screen.Aadhaar }
+                        } else {
+                            null
+                        },
                         // Through the ROUTER and not by setting the flag directly, so the settings
                         // row and the menu chip are one code path: whatever `openDestination` decides
                         // the Walkthrough means, both doors mean it. Note that this leaves the
@@ -3812,6 +3832,11 @@ private fun HomeScreen(
 
                     is Screen.MyAiKeys -> MyAiKeysScreen(
                         repository = repository,
+                        onBack = { attemptExit { goBack() } }
+                    )
+
+                    is Screen.Aadhaar -> AadhaarSelfScreen(
+                        viewer = user,
                         onBack = { attemptExit { goBack() } }
                     )
 
@@ -4742,7 +4767,7 @@ private fun HomeScreen(
             // Rendered by the FIRST dispatcher above, which owns the destinations that draw
             // their own chrome. Listed here only to keep this `when` exhaustive.
             is Screen.Appearance, is Screen.SpeechAndAi, is Screen.MyAiKeys,
-            is Screen.UsageRecording, is Screen.DataBrowser -> Unit
+            is Screen.UsageRecording, is Screen.Aadhaar, is Screen.DataBrowser -> Unit
         }
 
         message?.let {
@@ -16309,6 +16334,13 @@ private fun ViewDataDetail(
             // from every interview they belong to (alone, in a subset, or a larger set), so a group
             // recording surfaces here for this artisan to be validated individually.
             ArtisanQuestionnaireData(repository = repository, artisanId = recordId)
+            // Field staff verify an artisan by scanning the card's QR. Draws nothing unless the
+            // server has an Aadhaar method switched on; the server decides who may verify.
+            AadhaarVerifyCard(
+                subject = AadhaarSubject.Artisan(recordId),
+                viewer = repository.cachedUser(),
+                recordName = v.name,
+            )
         }
         EntryMode.PRODUCT -> {
             var d by remember(recordId) { mutableStateOf<ProductDetailDto?>(null) }
@@ -19612,6 +19644,8 @@ private fun UserManagementForm(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(appUser.name, display = true, fontWeight = FontWeight.SemiBold)
                             Text("${appUser.email} · ${roleLabel(appUser.role)}", color = Muted, fontSize = 12.sp)
+                            // Nothing unless the server has an Aadhaar method switched on.
+                            AadhaarUserBadge(account = appUser, viewer = repository.cachedUser())
                             Text(
                                 if (isMaster) "All privileges (master admin)"
                                 else "$grantedCount of 4 privileges granted",

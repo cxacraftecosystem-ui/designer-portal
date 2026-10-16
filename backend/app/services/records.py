@@ -24,6 +24,21 @@ from prisma import Json
 # (e.g. a media file's ``uploadedBy`` user, or a record's ``createdBy``).
 _SENSITIVE_KEYS = {"passwordHash"}
 
+#: THE AADHAAR VERIFICATION RESULT NEVER RIDES ALONG ON A RECORD PAYLOAD (2026-10-16). Every User
+#: embedded as ``createdBy``/``editedBy``/``reviewedBy`` would otherwise hand any reader that person's
+#: UIDAI-signed name, birth year and gender, and every Artisan list would do the same for each
+#: artisan. The account holder reads their own through ``/me``, a user manager through ``/users``
+#: (both ``serialize_user``, not this encoder), and an artisan's is served — to the people entitled
+#: to it — by ``GET /api/aadhaar/artisans/{id}``. Keyed on one sentinel column so a node without it
+#: costs one dict lookup. See services/aadhaar/records.py for the column list.
+_AADHAAR_SENTINEL = "aadhaarVerifyStatus"
+_AADHAAR_RESULT_KEYS = (
+    "aadhaarVerifyStatus", "aadhaarVerifyMethod", "aadhaarVerifiedAt", "aadhaarVerifyLast4",
+    "aadhaarVerifyName", "aadhaarVerifyBirthYear", "aadhaarVerifyDob", "aadhaarVerifyGender",
+    "aadhaarVerifySignedAt", "aadhaarVerifyTxn", "aadhaarVerifyNameMatch", "aadhaarVerifyById",
+    "aadhaarVerifyDecidedById", "aadhaarVerifyDecidedAt",
+)
+
 # Regulated identity numbers. Unlike a password hash these are MASKED rather than dropped: a
 # researcher still has to be able to confirm they are looking at the right person, and
 # "XXXX XXXX 9012" is enough for that while not being a usable identifier.
@@ -637,6 +652,9 @@ def _redact_sensitive(
     if isinstance(value, dict):
         for key in _SENSITIVE_KEYS:
             value.pop(key, None)
+        if _AADHAAR_SENTINEL in value:
+            for key in _AADHAAR_RESULT_KEYS:
+                value.pop(key, None)
         if not unmasked and not (viewer_id and value.get("createdById") == viewer_id):
             for key in _IDENTITY_KEYS:
                 if key in value:

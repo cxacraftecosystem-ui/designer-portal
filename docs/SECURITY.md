@@ -1172,6 +1172,12 @@ The archive is about people, and two columns are direct government identifiers.
 
 ### 4A.1 Aadhaar
 
+**Aadhaar VERIFICATION is a separate feature and keeps none of what this section protects.** Checking
+an account or an artisan against a document UIDAI signed (Secure QR, offline e-KYC) or against
+UIDAI's online OTP stores only a result — status, method, the last four digits, the name UIDAI signed,
+year of birth, gender, timestamps — never the number, the photograph, the address, the payload, the
+share code or an OTP; both of its flags ship off. [AADHAAR.md](AADHAAR.md) is the whole account.
+
 `Artisan.aadhaarNumber` is stored as the bare twelve digits and is `@unique` — it is the
 **deduplication key**, which is what stops the same person being entered twice under two spellings
 across two workshops. Handling, in `backend/app/services/artisan_identity.py`:

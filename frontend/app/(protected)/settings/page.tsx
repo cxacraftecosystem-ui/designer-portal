@@ -6,6 +6,7 @@ import { Activity, ClipboardCheck, KeyRound, Settings as SettingsIcon, UsersRoun
 import { PageHeader } from "@/components/PageHeader";
 import { adminChromeVisible, useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
+import { AadhaarVerifyPanel } from "@/components/aadhaar/AadhaarVerifyPanel";
 import { AppSettingsPanel } from "@/components/settings/AppSettingsPanel";
 import { ChangePasswordCard } from "@/components/settings/ChangePasswordCard";
 import { EmailNotificationsCard } from "@/components/settings/EmailNotificationsCard";
@@ -152,6 +153,10 @@ export default function SettingsPage() {
           to find your way back to is an agreement that cannot really be withdrawn.
         */}
         <UsageConsentCard />
+
+        {/* This account's own Aadhaar verification. Draws nothing unless the server has switched an
+            Aadhaar method on; open to every account, since verifying yourself needs nobody's rank. */}
+        <AadhaarVerifyPanel subject={{ kind: "self" }} />
 
         {/*
           NO ROLE GATE, AND DIRECTLY UNDER THE CONSENT CARD, FOR THE SAME REASON THAT ONE GIVES.

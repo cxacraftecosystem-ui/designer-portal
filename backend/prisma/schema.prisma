@@ -268,6 +268,40 @@ model User {
   /// /api/auth/change-password` writes none. Tokens minted before that date carry no fingerprint
   /// and are ended only by this column, or by expiring.
   sessionsValidFrom  DateTime?
+  /// ── AADHAAR VERIFICATION OF THIS ACCOUNT (2026-10-16) ─────────────────────────────────────
+  ///
+  /// The RESULT of verifying the account holder against a document UIDAI signed (Secure QR or
+  /// Paperless Offline e-KYC) or, once the Ministry holds an AUA licence, against UIDAI's online
+  /// OTP authentication. Written only by `app/services/aadhaar/records.py`; read the module and
+  /// docs/AADHAAR.md before adding a column here.
+  ///
+  /// WHAT IS DELIBERATELY ABSENT, under the Aadhaar Act and its regulations: the Aadhaar number
+  /// (only the last four digits UIDAI itself prints in the reference id), the VID, the photograph,
+  /// the address, the signed payload, the share code, any OTP or PID block, and any raw UIDAI
+  /// response. A User row stores no date of birth, so only the YEAR is kept.
+  ///
+  /// Every attempt — verified, mismatched or refused — is audited as a `RecordRevision` with
+  /// recordType "user" and nothing beyond the last four digits.
+  aadhaarVerifyStatus     AadhaarVerifyStatus?
+  aadhaarVerifyMethod     AadhaarVerifyMethod?
+  aadhaarVerifiedAt       DateTime?
+  aadhaarVerifyLast4      String?
+  /// The name exactly as UIDAI signed it — not the account's `name`, which the account owner edits.
+  aadhaarVerifyName       String?
+  aadhaarVerifyBirthYear  Int?
+  aadhaarVerifyGender     String?
+  /// When UIDAI signed the document (the timestamp inside its reference id), or the timestamp of
+  /// UIDAI's online response.
+  aadhaarVerifySignedAt   DateTime?
+  /// UIDAI's transaction id for an online authentication. NULL for an offline document.
+  aadhaarVerifyTxn        String?
+  /// Whether the UIDAI name matched `name` under the tolerant comparison in
+  /// `services/aadhaar/names.py`. False leaves `aadhaarVerifyStatus` at NAME_MISMATCH for an admin.
+  aadhaarVerifyNameMatch  Boolean?
+  /// Who performed the verification, and — for a name mismatch — which admin decided it and when.
+  aadhaarVerifyById       String?
+  aadhaarVerifyDecidedById String?
+  aadhaarVerifyDecidedAt  DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
@@ -1077,6 +1111,28 @@ model Artisan {
   /// heard of the column cannot break on it, which matters because the field handsets run offline
   /// for a fortnight at a time.
   designWorkshopId String?
+
+  /// ── AADHAAR VERIFICATION OF THIS ARTISAN (2026-10-16) ─────────────────────────────────────
+  ///
+  /// The same minimal result columns `User` carries — read the paragraph there. Two differences:
+  /// this row already stores `dateOfBirth`, so the date UIDAI signed is kept in full
+  /// (`aadhaarVerifyDob`) where the document carries one; and `aadhaarNumber` above is untouched by
+  /// verification — it is the deduplication key a researcher typed, masked by the same rules as
+  /// before. A verification whose last four digits disagree with it is REFUSED, not stored.
+  aadhaarVerifyStatus     AadhaarVerifyStatus?
+  aadhaarVerifyMethod     AadhaarVerifyMethod?
+  aadhaarVerifiedAt       DateTime?
+  aadhaarVerifyLast4      String?
+  aadhaarVerifyName       String?
+  aadhaarVerifyBirthYear  Int?
+  aadhaarVerifyDob        DateTime?
+  aadhaarVerifyGender     String?
+  aadhaarVerifySignedAt   DateTime?
+  aadhaarVerifyTxn        String?
+  aadhaarVerifyNameMatch  Boolean?
+  aadhaarVerifyById       String?
+  aadhaarVerifyDecidedById String?
+  aadhaarVerifyDecidedAt  DateTime?
 
   craft     Craft?                 @relation(fields: [craftId], references: [id], onDelete: SetNull)
   location  Location?              @relation(fields: [locationId], references: [id], onDelete: SetNull)
@@ -6693,4 +6749,46 @@ model EmailMessage {
   /// The drain's read: queued rows that are due, oldest first.
   @@index([status, runAfter, createdAt])
   @@index([recipientId])
+}
+
+// ======================================================================================
+// Aadhaar verification (2026-10-16) — docs/AADHAAR.md
+// ======================================================================================
+
+/// Where an Aadhaar verification stands on a User or an Artisan row.
+///
+/// VERIFIED      UIDAI's signature (or online answer) held and the name matched, or an admin
+///               accepted a mismatched name.
+/// NAME_MISMATCH the signature held but the name UIDAI signed did not match the record's name under
+///               the tolerant comparison; waiting for an admin.
+/// REJECTED      an admin looked at a mismatch and refused it.
+enum AadhaarVerifyStatus {
+  VERIFIED
+  NAME_MISMATCH
+  REJECTED
+}
+
+/// How the identity was established. The two ONLINE values are written only when
+/// AADHAAR_ONLINE_AUTH_ENABLED is on, which needs the Ministry's AUA licence.
+enum AadhaarVerifyMethod {
+  SECURE_QR
+  OFFLINE_XML
+  ONLINE_OTP
+  ONLINE_EKYC
+}
+
+/// One OTP request, kept ONLY to rate-limit them (services/aadhaar/online/throttle.py).
+///
+/// `uidHash` is an HMAC-SHA256 of the Aadhaar number or VID under a server secret
+/// (AADHAAR_THROTTLE_SALT), so the number cannot be recovered from this table and two tables cannot
+/// be joined on it. Rows older than the longest window are deleted on every write.
+model AadhaarOtpThrottle {
+  id        String   @id @default(cuid())
+  userId    String
+  uidHash   String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([uidHash, createdAt])
+  @@index([createdAt])
 }

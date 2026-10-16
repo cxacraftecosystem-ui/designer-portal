@@ -32,6 +32,13 @@ dependencies = [
     "email-validator>=2.1.1",
     "google-auth>=2.29.0",
     "requests>=2.32.0",
+    # Aadhaar offline e-KYC and online authentication (app/services/aadhaar/xmldsig.py): C14N for
+    # XMLDSig, which the standard library does not offer in its 1.0 form, and a parser that can be
+    # told to resolve no entity and touch no network.
+    "lxml>=6.1.3",
+    # The ASA client for online Aadhaar authentication. Already installed for prisma; named here because
+    # app code now imports it directly.
+    "httpx>=0.28.1",
     "pydub>=0.25.1",
     # THE `audioop` MODULE pydub IS BUILT ON, WHICH PYTHON 3.13 REMOVED (PEP 594). pydub 0.25.1 — its
     # newest release — does `import audioop` and falls back to `import pyaudioop`, a module that does

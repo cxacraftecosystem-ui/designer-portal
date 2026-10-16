@@ -23,6 +23,7 @@ from app.core.deps import (
 from app.core.security import hash_password
 from app.schemas.users import UserCreate, UserUpdate
 from app.services import access_roster, credential_links
+from app.services.aadhaar import flags as aadhaar_flags
 
 # THE RULES OF WHO MAY DO WHAT TO WHOSE ACCOUNT, imported rather than defined here. ``assert_role``
 # and ``assert_can_manage_target`` lived in this module until 2026-10-09; the password-link routes
@@ -98,7 +99,8 @@ logger = logging.getLogger(__name__)
 def serialize_user(user: Any) -> dict[str, Any]:
     payload = jsonable_encoder(user)
     payload.pop("passwordHash", None)
-    return payload
+    # The Aadhaar result columns ride out only while a verification feature is switched on.
+    return aadhaar_flags.hide_columns(payload)
 
 
 def assert_not_demoting_master(

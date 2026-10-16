@@ -561,6 +561,75 @@ class Settings(BaseSettings):
         default=None, alias="DATABASE_READ_REPLICA_USE_TRANSACTION_POOLER"
     )
 
+    # ── AADHAAR (docs/AADHAAR.md, docs/ENVIRONMENT.md) ─────────────────────────────────────────
+    #
+    # BOTH FEATURES ARE OFF BY DEFAULT AND INVISIBLE WHILE OFF: their routes answer 404, the
+    # verification columns are withheld from every payload, and neither client draws a single
+    # element. The owner switches them on; nothing else does.
+    aadhaar_offline_verification_enabled: bool = Field(
+        default=False, alias="AADHAAR_OFFLINE_VERIFICATION_ENABLED"
+    )
+    aadhaar_online_auth_enabled: bool = Field(default=False, alias="AADHAAR_ONLINE_AUTH_ENABLED")
+    # UIDAI asks a verifier to accept an offline e-KYC XML only if it was downloaded recently;
+    # 3 days is UIDAI's own suggestion. A Secure QR is printed on the card and has no age limit, so
+    # 0 (the default) means "accept any age and record the date".
+    aadhaar_offline_xml_max_age_days: float = Field(
+        default=3.0, alias="AADHAAR_OFFLINE_XML_MAX_AGE_DAYS"
+    )
+    aadhaar_secure_qr_max_age_days: float = Field(default=0.0, alias="AADHAAR_SECURE_QR_MAX_AGE_DAYS")
+    # CERTIFICATE ROTATION without a deploy: PEM or DER files, comma-separated, trusted IN ADDITION
+    # to the UIDAI certificates pinned in app/data/uidai/. An operator adds UIDAI's next certificate
+    # here the day UIDAI publishes it, and it moves into the pinned set with the next release.
+    aadhaar_extra_trusted_certs: str = Field(default="", alias="AADHAAR_EXTRA_TRUSTED_CERTS")
+
+    # ONLINE AUTHENTICATION THROUGH AN ASA. Every value below is required once
+    # AADHAAR_ONLINE_AUTH_ENABLED is true, and the process refuses to start without them
+    # (`_require_complete_online_aadhaar_config` below, then `services.aadhaar.online.config`
+    # at boot for the files). Secrets go in the environment or the box's .env, never the repo.
+    aadhaar_env: str = Field(default="preprod", alias="AADHAAR_ENV")
+    aadhaar_aua_code: str | None = Field(default=None, alias="AADHAAR_AUA_CODE")
+    aadhaar_sub_aua_code: str | None = Field(default=None, alias="AADHAAR_SUB_AUA_CODE")
+    aadhaar_aua_license_key: str | None = Field(default=None, alias="AADHAAR_AUA_LICENSE_KEY")
+    aadhaar_asa_license_key: str | None = Field(default=None, alias="AADHAAR_ASA_LICENSE_KEY")
+    # The ASA's three endpoints, up to and including the API version — e.g.
+    # https://asa.example.in/otp/2.5 . The client appends /<ac>/<uid[0]>/<uid[1]>/<asalk> as the
+    # OTP, Auth and e-KYC 2.5 specifications prescribe.
+    aadhaar_asa_otp_url: str | None = Field(default=None, alias="AADHAAR_ASA_OTP_URL")
+    aadhaar_asa_auth_url: str | None = Field(default=None, alias="AADHAAR_ASA_AUTH_URL")
+    aadhaar_asa_kyc_url: str | None = Field(default=None, alias="AADHAAR_ASA_KYC_URL")
+    aadhaar_aua_signing_pfx_path: str | None = Field(
+        default=None, alias="AADHAAR_AUA_SIGNING_PFX_PATH"
+    )
+    aadhaar_aua_signing_pfx_password: str | None = Field(
+        default=None, alias="AADHAAR_AUA_SIGNING_PFX_PASSWORD"
+    )
+    # Optional: the pinned UIDAI encryption certificate for AADHAAR_ENV is used when this is unset.
+    aadhaar_uidai_encryption_cert_path: str | None = Field(
+        default=None, alias="AADHAAR_UIDAI_ENCRYPTION_CERT_PATH"
+    )
+    # Optional: a UIDAI response-signing certificate to trust in addition to the pinned ones —
+    # the pinned 2026 signing certificates expired in April/May 2026 and UIDAI has published no
+    # successor yet, so an operator may have to obtain it from the ASA. See docs/AADHAAR.md.
+    aadhaar_uidai_signature_cert_path: str | None = Field(
+        default=None, alias="AADHAAR_UIDAI_SIGNATURE_CERT_PATH"
+    )
+    # Send the record's name with an OTP authentication for UIDAI to match (Pi ms="E" mv="100" —
+    # Auth 2.5 Rev-1 allows no partial match). Off sends no name, which leaves every plain OTP
+    # result for an admin to decide. e-KYC returns UIDAI's name and is matched here instead.
+    aadhaar_online_name_check: bool = Field(default=True, alias="AADHAAR_ONLINE_NAME_CHECK")
+    # The OTP channel: 00 SMS and e-mail, 01 SMS only, 02 e-mail only (OTP API 2.5 <Opts ch>).
+    aadhaar_otp_channel: str = Field(default="00", alias="AADHAAR_OTP_CHANNEL")
+    # e-KYC (name, year of birth, gender back from UIDAI) needs a KUA licence as well.
+    aadhaar_ekyc_enabled: bool = Field(default=False, alias="AADHAAR_EKYC_ENABLED")
+    aadhaar_kua_license_key: str | None = Field(default=None, alias="AADHAAR_KUA_LICENSE_KEY")
+    aadhaar_asa_timeout_seconds: float = Field(default=20.0, alias="AADHAAR_ASA_TIMEOUT_SECONDS")
+    # The server secret the OTP throttle hashes Aadhaar numbers and VIDs under. Required when
+    # online auth is on; never reuse JWT_SECRET for it.
+    aadhaar_throttle_salt: str | None = Field(default=None, alias="AADHAAR_THROTTLE_SALT")
+    aadhaar_otp_limit_per_user: int = Field(default=5, alias="AADHAAR_OTP_LIMIT_PER_USER")
+    aadhaar_otp_limit_per_uid: int = Field(default=3, alias="AADHAAR_OTP_LIMIT_PER_UID")
+    aadhaar_otp_window_minutes: int = Field(default=60, alias="AADHAAR_OTP_WINDOW_MINUTES")
+
     # ABSOLUTE, NOT ".env". See rule 2 in this module's header: a relative env_file is resolved
     # against the working directory, so `python -m uvicorn app.main:app` from backend/ and the same
     # command from the repository root read DIFFERENT configuration — and from the root they read
@@ -608,6 +677,42 @@ class Settings(BaseSettings):
         if self.database_read_replica_url:
             self.database_read_replica_url = _with_explicit_sslmode(
                 self.database_read_replica_url, self.database_require_ssl
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_complete_online_aadhaar_config(self) -> Settings:
+        """Refuse to start with online Aadhaar authentication on and any credential missing.
+
+        A half-configured AUA would fail on the first resident who tried it, after they had typed
+        their number and given consent — so the failure is moved to the deploy, where an operator
+        reads it. File contents (the PFX, the UIDAI certificate) are checked at boot by
+        ``services.aadhaar.online.config.load_online_config``.
+        """
+        if not self.aadhaar_online_auth_enabled:
+            return self
+        required = {
+            "AADHAAR_AUA_CODE": self.aadhaar_aua_code,
+            "AADHAAR_SUB_AUA_CODE": self.aadhaar_sub_aua_code,
+            "AADHAAR_AUA_LICENSE_KEY": self.aadhaar_aua_license_key,
+            "AADHAAR_ASA_LICENSE_KEY": self.aadhaar_asa_license_key,
+            "AADHAAR_ASA_OTP_URL": self.aadhaar_asa_otp_url,
+            "AADHAAR_ASA_AUTH_URL": self.aadhaar_asa_auth_url,
+            "AADHAAR_AUA_SIGNING_PFX_PATH": self.aadhaar_aua_signing_pfx_path,
+            "AADHAAR_AUA_SIGNING_PFX_PASSWORD": self.aadhaar_aua_signing_pfx_password,
+            "AADHAAR_THROTTLE_SALT": self.aadhaar_throttle_salt,
+        }
+        if self.aadhaar_ekyc_enabled:
+            required["AADHAAR_KUA_LICENSE_KEY"] = self.aadhaar_kua_license_key
+            required["AADHAAR_ASA_KYC_URL"] = self.aadhaar_asa_kyc_url
+        missing = [name for name, value in required.items() if not (value or "").strip()]
+        if self.aadhaar_env not in ("preprod", "prod"):
+            missing.append("AADHAAR_ENV (must be preprod or prod)")
+        if missing:
+            raise ValueError(
+                "AADHAAR_ONLINE_AUTH_ENABLED is true but these are not configured: "
+                + ", ".join(missing)
+                + ". Fill them in (docs/AADHAAR.md, 'Operator runbook') or switch the flag off."
             )
         return self
 

@@ -118,6 +118,18 @@ PUBLIC_ALLOWLIST: dict[tuple[str, str], str] = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _aadhaar_routes_switched_on(monkeypatch):
+    """THE AADHAAR ROUTES ANSWER 404 WHILE THEIR FLAGS ARE OFF, which is the default — and a 404 is
+    not one of this sweep's REFUSALS, rightly. So the sweep runs with both flags ON: switched on, every
+    one of them must still refuse a stranger with a 401, which is the property this module guards.
+    Only the flag is read at request time; nothing here configures or calls UIDAI."""
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "aadhaar_offline_verification_enabled", True)
+    monkeypatch.setattr(get_settings(), "aadhaar_online_auth_enabled", True)
+
+
 @pytest.fixture(scope="module")
 def client():
     """One client for the whole sweep. ``TestClient`` runs the lifespan, which is why this module
