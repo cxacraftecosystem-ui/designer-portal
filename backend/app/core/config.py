@@ -349,8 +349,11 @@ class Settings(BaseSettings):
     # anonymous limits (``rate_limit.client_address``, "Forgot your password?") key on it, and the
     # left-most entry is whatever the caller typed. 1 is the entry the nearest proxy appended — nginx
     # facing the internet. Production is CloudFront -> nginx -> uvicorn: CloudFront appends the viewer
-    # and nginx then appends the CloudFront edge, so the client is the 2nd from the right and the
-    # deploy pins FORWARDED_CLIENT_HOPS=2 (.github/workflows/deploy-backend.yml). Never 0.
+    # and nginx then appends the CloudFront edge. The viewer (2) is per person but forgeable by
+    # anybody who reaches the origin directly, and the origin is not yet locked to CloudFront, so the
+    # default and the deploy pin (.github/workflows/deploy-backend.yml) are 1: the CloudFront edge,
+    # which nginx appends and nobody can forge. 2 once the owner approves locking the origin. The
+    # documentation portal's TRUSTED_PROXY_HOPS=1 is the same choice. Never 0.
     forwarded_client_hops: int = Field(default=1, ge=1, le=5, alias="FORWARDED_CLIENT_HOPS")
 
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")

@@ -472,6 +472,13 @@ async def update_user(
         # To the address the account holds AFTER this write: an address changed in the same request
         # is the corrected one.
         await email_outbox.notify_password_event(updated, mailer.PASSWORD_CHANGED, by="administrator")
+        # AND TO THE ADDRESS IT HELD BEFORE (security review N4): an address and a password changed
+        # in one request would otherwise tell only the new inbox — exactly the one a hijacker would
+        # choose. The previous owner hears of it where they still read their mail.
+        if email_changed and user.email:
+            await email_outbox.notify_password_event(
+                updated, mailer.PASSWORD_CHANGED, by="administrator", to_address=user.email
+            )
     return serialize_user(updated)
 
 

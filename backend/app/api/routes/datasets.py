@@ -96,14 +96,19 @@ from app.core.deps import (
     password_credential,
     require_dataset_admin,
 )
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, verify_password_or_decoy
 
 # The per-account guessing budget, shared with `routes/auth.login` and `routes/auth.change_password`
 # rather than reimplemented: one account is one allowance across every door in this API that turns a
 # password into something. See the second banner in that module.
-from app.scale.rate_limit import account_credential_attempt, account_credential_refund
+from app.scale.rate_limit import (
+    account_credential_attempt,
+    account_credential_refund,
+    address_credential_attempt,
+)
 from app.schemas.auth import DatasetTokenRequest
 from app.services import two_factor
+from app.services.identity import identifier_key, normalise_email
 from app.services.concurrency import gather_reads
 from app.services.csv_export import record_media
 from app.services.feedback_vocabulary import label_for
@@ -770,7 +775,8 @@ async def mint_dataset_token(payload: DatasetTokenRequest) -> dict[str, Any]:
             detail="Dataset tokens are issued from an email and password, not a Google ID token.",
         )
 
-    user = await db.user.find_unique(where={"email": (payload.email or "").lower()})
+    email = normalise_email(payload.email)
+    user = await db.user.find_unique(where={"email": email}) if email else None
     # ── THE PER-ACCOUNT GUESSING BUDGET, TAKEN HERE TOO SINCE 2026-09-03 ────────────────────────
     #
     # THIS DOOR HAD NO LOCKOUT AT ALL, AND IT IS THE ONE THAT PAYS BEST TO ATTACK. `/auth/login`
@@ -794,16 +800,22 @@ async def mint_dataset_token(payload: DatasetTokenRequest) -> dict[str, Any]:
     # the 200 all cost nothing. That matters here more than it does at the sign-in door: the
     # operator whose nightly job is refused 503 because strangers filled the approval queue (see
     # the docstring) is having a bad enough evening without also being locked out for it.
+    #
+    # AN ADDRESS THAT MATCHES NO ACCOUNT SPENDS AN IDENTICAL BUCKET keyed on the address as typed,
+    # and the same bcrypt time through the decoy (security review N1, 2026-10-17), so the 429 is no
+    # oracle for which admin addresses exist.
     if user is not None:
         allowed, _retry = account_credential_attempt(user.id)
-        if not allowed:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=_TOKEN_THROTTLED_DETAIL,
-            )
+    else:
+        allowed, _retry = address_credential_attempt(identifier_key(payload.email))
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=_TOKEN_THROTTLED_DETAIL,
+        )
     # One message for "no such account" and "wrong password", the same as POST /auth/login: telling
     # them apart turns this endpoint into an oracle for which admin addresses exist.
-    if not user or not verify_password(payload.password or "", user.passwordHash):
+    if not verify_password_or_decoy(payload.password or "", user.passwordHash if user else None) or not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
         )

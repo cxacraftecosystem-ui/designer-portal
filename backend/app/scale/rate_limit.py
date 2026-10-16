@@ -269,6 +269,18 @@ def account_credential_attempt(account_id: str) -> tuple[bool, float]:
     return _account_buckets.take(f"acct:{account_id}")
 
 
+def address_credential_attempt(identifier_key: str) -> tuple[bool, float]:
+    """Spend one guess against a typed identifier that matches NO account (security review N1).
+
+    Without it an unknown identifier was never charged, so the eleventh wrong password answered 401
+    for an address nobody holds and 429 for a real one: an enumeration oracle. The same buckets, the
+    same capacity and refill, keyed on the normalised identifier as typed
+    (``identity.identifier_key``) instead of an account id, so the two sequences are
+    indistinguishable. Never refunded: no password is right for no account.
+    """
+    return _account_buckets.take(f"addr:{identifier_key}")
+
+
 def account_credential_refund(account_id: str) -> None:
     """Give the token back — called only after a password actually verified."""
     _account_buckets.refund(f"acct:{account_id}")
@@ -321,8 +333,11 @@ def client_address(scope: Scope) -> str:
     **COUNTED FROM THE RIGHT (2026-10-17).** Every proxy APPENDS to ``X-Forwarded-For``, so only the
     entries our own proxies wrote can be trusted, and those are the right-most ones; anything to their
     left is what the caller sent. ``FORWARDED_CLIENT_HOPS`` (``Settings.forwarded_client_hops``) says
-    how many entries from the right the client sits: 1 behind nginx alone (the address nginx
-    appended), 2 behind CloudFront -> nginx, as production is. A chain shorter than that — a request
+    how many entries from the right the client sits: 1 is the address nginx appended — in production
+    (CloudFront -> nginx) the CloudFront edge, unforgeable but shared by that edge's viewers — and 2
+    the viewer CloudFront appended, per person but forgeable by anybody reaching the origin directly.
+    Production uses 1 until the origin is locked to CloudFront (see the deploy pin's comment in
+    ``.github/workflows/deploy-backend.yml``). A chain shorter than that — a request
     that did not come through the expected proxies — is keyed on the socket peer, which nobody can
     forge. The courtesy limiter (``_identity``) keeps its own reading: it is not a security control.
     """

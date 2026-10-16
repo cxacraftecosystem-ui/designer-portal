@@ -334,12 +334,18 @@ async def notify_review_note(
         logger.exception("mail: could not queue review notices for workshop %s", _value(record, "id"))
     return queued
 
-async def notify_password_event(user: Any, kind: str, *, by: str = "self") -> bool:
+async def notify_password_event(
+    user: Any, kind: str, *, by: str = "self", to_address: str | None = None
+) -> bool:
     """Queue a PASSWORD_ADDED / PASSWORD_CHANGED security notice to the account's own address.
 
     Always sent (no opt-out): the account's owner is the one person who can tell a change they made
     from one they did not, and this is how they hear about the second. No password and no link ride
     in it. ``by`` is "self" or "administrator" (a temporary password set for them).
+
+    ``to_address`` sends the same notice somewhere other than the address the account holds now:
+    the address it held BEFORE an administrator changed it in the same request (security review N4),
+    so the person who owned the account hears of it at the inbox they still read.
 
     NEVER RAISES, and a no-op when mail is off. The password has already been written; failing to
     queue a notice about it must not turn the change into an error. Returns whether one was queued.
@@ -349,7 +355,7 @@ async def notify_password_event(user: Any, kind: str, *, by: str = "self") -> bo
     try:
         row = await enqueue(
             kind,
-            to_address=_value(user, "email") or "",
+            to_address=to_address or _value(user, "email") or "",
             recipient_id=_value(user, "id"),
             params={
                 "recipientName": _value(user, "name"),

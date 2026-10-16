@@ -26,11 +26,13 @@ from app.core.security import (
     decode_access_token,
     hash_password,
     verify_password,
+    verify_password_or_decoy,
 )
 from app.core.user_fields import HAS_PASSWORD_KEY, SECRET_USER_FIELDS
 from app.scale.rate_limit import (
     account_credential_attempt,
     account_credential_refund,
+    address_credential_attempt,
     client_address,
     forgot_password_attempt,
 )
@@ -889,14 +891,22 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
         #
         # Take-then-refund, like the middleware, for the middleware's reason: a hundred parallel
         # guesses would otherwise all pass a check-then-charge before any of them was counted.
+        #
+        # AN IDENTIFIER THAT MATCHES NO ACCOUNT PAYS THE SAME (security review N1, 2026-10-17): an
+        # identical bucket keyed on the identifier as typed, normalised, and the same bcrypt time
+        # through the decoy below. Until then only a real account was charged, so the eleventh wrong
+        # guess answered 429 for a real address and 401 for an unknown one — a list of who has an
+        # account for anybody with a script.
         if user is not None:
             allowed, _retry = account_credential_attempt(user.id)
-            if not allowed:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=ACCOUNT_THROTTLED_DETAIL,
-                )
-        if not user or not verify_password(payload.password or "", user.passwordHash):
+        else:
+            allowed, _retry = address_credential_attempt(identity.identifier_key(payload.email))
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=ACCOUNT_THROTTLED_DETAIL,
+            )
+        if not verify_password_or_decoy(payload.password or "", user.passwordHash if user else None) or not user:
             # UNCHANGED, AND DELIBERATELY SO. An unknown identifier and a wrong password are one
             # answer, and it is not the "awaiting approval" answer: somebody who mistyped their
             # password must be sent to the password, not to an administrator. The whole point of

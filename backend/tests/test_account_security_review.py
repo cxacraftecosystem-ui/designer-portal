@@ -10,7 +10,11 @@
 * B2 — "A password was added" / "Your password was changed" notices to the account's own address,
   and a first password on an account with two-step on needs the second step.
 * B3 — nobody changes their OWN address through ``PATCH /users/{self}``.
-* B4 — a master admin cannot reset, sign out or turn off two-step for ANOTHER master admin.
+* B4 — a master admin cannot reset, sign out or turn off two-step for ANOTHER master admin (nor
+  demote or delete one: ``tests/test_master_admin_peers.py``).
+* N1 — an identifier that matches no account meets the same per-account budget as a real one: the
+  sign-in and the dataset-token door answer identical 401/429 sequences, and spend the same bcrypt.
+* N4 — an administrator who changes an address and a password in one request tells BOTH addresses.
 
 The pure tests (B1's key and caps, the notice wording) need nothing; the rest need Postgres and skip
 without it. Rows written by the app are read back through ``client.portal`` (``tests/test_stage_sync.py``
@@ -141,6 +145,9 @@ ACCOUNTS: dict[str, tuple[str, bool, bool]] = {
     "adminBudget": ("RESEARCHER", True, False),
     "masterA": ("MASTER_ADMIN", True, False),
     "masterB": ("MASTER_ADMIN", True, True),
+    "enumLogin": ("RESEARCHER", True, False),
+    "enumToken": ("ADMIN", True, False),
+    "moved": ("RESEARCHER", True, False),
 }
 
 
@@ -420,3 +427,78 @@ def test_a_master_admin_cannot_help_another_master_admin_back_in(world):
     assert [a.status_code for a in attempts] == [403] * len(attempts), [a.text for a in attempts]
     row = _read(client, db.user.find_unique, where={"id": peer.id})
     assert row.twoFactorEnabled is True and row.sessionsValidFrom is None
+
+
+# ==================================================================================================
+# N1 — no enumeration through the per-account 429
+# ==================================================================================================
+
+
+def _eleven(client: Any, path: str, email: str) -> list[tuple[int, Any]]:
+    answers = []
+    for n in range(11):
+        reply = client.post(path, json={"email": email, "password": f"a-wrong-guess-{n}"})
+        answers.append((reply.status_code, reply.json()))
+    return answers
+
+
+@needs_db
+@pytest.mark.parametrize(("path", "slug"), [("/api/auth/login", "enumLogin"), ("/api/datasets/token", "enumToken")])
+def test_an_unknown_address_answers_exactly_as_a_real_one_does(world, path, slug):
+    client = world["client"]
+    rate_limit.reset_account_credential_budget()
+    known = _eleven(client, path, world["address"](slug))
+    unknown = _eleven(client, path, f"nobody-{slug.lower()}-{world['stamp']}@example.org")
+    assert known == unknown
+    assert [code for code, _ in known] == [401] * 10 + [429]
+    # The typed identifier is normalised before it is a key: a new spelling is no fresh allowance.
+    respelled = client.post(
+        path,
+        json={"email": f"  NoBody-{slug}-{world['stamp']}@Example.org ", "password": "another-guess"},
+    )
+    assert respelled.status_code == 429
+
+
+def test_an_unknown_identifier_spends_a_bcrypt_check_like_a_real_one(monkeypatch):
+    from app.core import security
+
+    checked: list[bytes] = []
+    real = security.bcrypt.checkpw
+    monkeypatch.setattr(security.bcrypt, "checkpw", lambda pw, hashed: checked.append(hashed) or real(pw, hashed))
+    assert security.verify_password_or_decoy("a-wrong-guess", None) is False
+    assert checked == [security._TIMING_DECOY_HASH.encode("ascii")]
+
+
+def test_one_identifier_typed_two_ways_is_one_key():
+    from app.services.identity import identifier_key
+
+    assert identifier_key("  Someone@Example.ORG ") == identifier_key("someone@example.org")
+    assert identifier_key("someone@example.org") != identifier_key("other@example.org")
+
+
+# ==================================================================================================
+# N4 — an address and a password changed together tell both addresses
+# ==================================================================================================
+
+
+@needs_db
+def test_a_password_set_with_a_new_address_tells_the_old_address_too(world, mail_on):
+    client = world["client"]
+    person = world["people"]["moved"]
+    old_address = world["address"]("moved")
+    new_address = f"secrev-moved-new-{world['stamp']}@example.org"
+    answer = client.patch(
+        f"/api/users/{person.id}",
+        json={"email": new_address, "password": "a-temporary-one-2"},
+        headers=_as(world, "admin"),
+    )
+    assert answer.status_code == 200, answer.text
+    assert _notices(client, old_address).count(mailer.PASSWORD_CHANGED) == 1
+    assert _notices(client, new_address).count(mailer.PASSWORD_CHANGED) == 1
+    # A password alone still tells the one address it has.
+    again = client.patch(
+        f"/api/users/{person.id}", json={"password": "a-temporary-one-3"}, headers=_as(world, "admin")
+    )
+    assert again.status_code == 200, again.text
+    assert _notices(client, old_address).count(mailer.PASSWORD_CHANGED) == 1
+    assert _notices(client, new_address).count(mailer.PASSWORD_CHANGED) == 2
