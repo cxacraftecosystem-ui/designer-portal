@@ -28,7 +28,7 @@ import java.time.Instant
  *  * IT SAYS SO. The result carries [CachedRead.cachedAt] and the screen prints when the copy is from
  *    ([readCacheNotice]). A copy presented as live is worse than an error.
  *  * PER ACCOUNT. One directory per signed-in account (hashed, like [FormDraftStore]), and every copy
- *    is deleted at sign-out ([forgetAll]) — a cache is not anybody's work, so nothing is lost, and a
+ *    is deleted at sign-out ([evictAll]) — a cache is not anybody's work, so nothing is lost, and a
  *    shared phone does not show the next person the last one's lists.
  *
  * Only for screens whose rows are plain data. Screens that hold their own rules about not degrading
@@ -129,9 +129,14 @@ object ReadCache {
             }.getOrNull()
         }
 
-    /** Every account's copies. Called at sign-out. */
-    fun forgetAll(context: Context) {
+    /**
+     * Every account's copies, deleted on [Dispatchers.IO] (a directory walk never runs on the caller's
+     * thread). Called at sign-out. The cache is this one process-wide object, so there is exactly one
+     * lock and one directory to empty.
+     */
+    suspend fun evictAll(context: Context) = withContext(Dispatchers.IO) {
         synchronized(lock) { runCatching { root(context).deleteRecursively() } }
+        Unit
     }
 }
 

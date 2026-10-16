@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 31+ backup and device-to-device transfer rules (2026-10-16). The same decisions as
+  backup_rules.xml, which explains them: keep the outbox, workshop drafts, form drafts and photos;
+  never the sign-in token or cached account profile, the cached lists, or the staged-object journal.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="field_repository_auth.xml" />
+        <exclude domain="file" path="read-cache/" />
+        <exclude domain="file" path="staged-objects.json" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="field_repository_auth.xml" />
+        <exclude domain="file" path="read-cache/" />
+        <exclude domain="file" path="staged-objects.json" />
+    </device-transfer>
+</data-extraction-rules>

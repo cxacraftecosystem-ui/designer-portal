@@ -985,9 +985,22 @@ fun DesignerProfileScreen(
             // `saved` is the snapshot the server last confirmed, and it is passed so the location is
             // sent ONLY when it has actually moved — see [ProfileForm.toBody].
             runCatching {
-                repository.saveDesignerProfile(targetUserId, form.toBody(saved, storedAddressLine))
+                // NO SIGNAL, OR IT WENT MID-REQUEST: the same whole-object body is kept in the outbox
+                // and sent when there is signal (2026-10-16). Null is that answer.
+                repository.saveDesignerProfileOrQueue(appContext, targetUserId, form.toBody(saved, storedAddressLine))
             }
                 .onSuccess { stored ->
+                    if (stored == null) {
+                        // What was typed is now the outbox's to send; the form stays as typed, and
+                        // `saved` moves with it so leaving does not ask to save what is already kept.
+                        saved = form
+                        profileDraft.discard()
+                        onMessage(
+                            "No connection, so your profile has been kept on this phone. It is sent by " +
+                                "itself as soon as there is signal."
+                        )
+                        return@onSuccess
+                    }
                     // Re-seeded from the SERVER's answer rather than left as typed, so any
                     // normalisation it applied (a trimmed website, a lower-cased email) is what the
                     // designer is looking at when they walk away — and so the unsaved-work

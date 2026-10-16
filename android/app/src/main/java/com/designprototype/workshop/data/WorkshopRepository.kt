@@ -235,6 +235,24 @@ internal const val OFFLINE_CUSTOM_QUESTIONNAIRE = "customQuestionnaire"
 internal const val OFFLINE_APP_FEEDBACK = "appFeedback"
 
 /**
+ * A "Report something" filed with no connection (2026-10-16). A create, so it carries an
+ * `Idempotency-Key` and a lost answer is not filed twice. See [WorkshopRepository.fileFeedbackReportOrQueue].
+ */
+internal const val OFFLINE_FEEDBACK_REPORT = "feedbackReport"
+
+/**
+ * A designer profile saved with no connection (2026-10-16): the whole-object PUT the screen sends,
+ * replayed as it was saved. Safe to replay: the route replaces the one profile row. See
+ * [WorkshopRepository.saveDesignerProfileOrQueue].
+ */
+internal const val OFFLINE_DESIGNER_PROFILE = "designerProfile"
+
+/** What the tray says over a correction the record moved under. Pinned by `OfflineEverywhereTest`. */
+const val STALE_CORRECTION_SENTENCE =
+    "Someone changed this record after you edited it on this phone, so your changes were not sent " +
+        "over theirs. Tap Review changes to compare and choose. Nothing has been deleted."
+
+/**
  * [PendingEntry.type] for an entry that CREATES NOTHING and only carries files to a record that is
  * already on the server. [PendingEntry.targetId] holds that record's id and [PendingEntry.label]
  * names it for the tray.
@@ -976,6 +994,10 @@ class WorkshopRepository(
     // PROCESS-WIDE, not per instance: `OutboxSyncJobService` builds its own repository, and two
     // passes over one entry would both see `createdId == null` and create the record twice.
     private val syncMutex = PROCESS_OUTBOX_SYNC_MUTEX
+
+    /** The context of the pass in flight, for replay steps that write [TempIdMap]. */
+    @Volatile
+    private var appContextForReplay: Context? = null
     /**
      * Spent by the first [syncOutbox] pass of the process that gets past the password gate: the
      * staged sweep and the orphan reclaim run once per process, off this latch. Visible to the tests
@@ -2950,6 +2972,42 @@ class WorkshopRepository(
      * The body carries every column with explicit nulls for the cleared ones — see
      * [designerProfileUpdateJson], and do not "simplify" it back into a typed body.
      */
+    /**
+     * Save a designer profile now, or — with no connection, or when it goes mid-request — keep the
+     * same whole-object body in the outbox and send it when there is signal. Null means queued.
+     */
+    suspend fun saveDesignerProfileOrQueue(
+        context: Context,
+        userId: String?,
+        body: DesignerProfileUpdateBody,
+    ): DesignerProfileDto? {
+        if (isOnline(context)) {
+            try {
+                return saveDesignerProfile(userId, body)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (!isTransient(e)) throw e
+            }
+        }
+        val payload = kotlinx.serialization.json.buildJsonObject {
+            userId?.let { put("userId", kotlinx.serialization.json.JsonPrimitive(it)) }
+            put("body", designerProfileUpdateJson(body))
+        }
+        OfflineOutbox.enqueue(
+            context,
+            PendingEntry(
+                id = java.util.UUID.randomUUID().toString(),
+                type = OFFLINE_DESIGNER_PROFILE,
+                payloadJson = payload.toString(),
+                label = body.displayName?.takeIf { it.isNotBlank() } ?: "Designer profile",
+                createdAt = Instant.now().toString(),
+                ownerUserId = cachedUser()?.id,
+            )
+        )
+        return null
+    }
+
     suspend fun saveDesignerProfile(
         userId: String?,
         body: DesignerProfileUpdateBody
@@ -3488,20 +3546,193 @@ class WorkshopRepository(
             // courtyard is posted with the questionnaire when the signal returns.
             kind = kind?.takeIf { it.isNotBlank() },
         )
+        // One key for the online attempt and, if its answer is lost, for the queued replay.
+        val key = java.util.UUID.randomUUID().toString()
         if (isOnline(context)) {
-            val sent = runCatching { api.createCustomQuestionnaire(body) }
+            val sent = runCatching { api.createCustomQuestionnaire(body, key) }
             sent.getOrNull()?.let { return it }
             val error = sent.exceptionOrNull()
             if (error != null && error !is CancellationException && !isConnectionFailure(error)) throw error
         }
-        queueOfflineEntry(
+        // QUEUED UNDER A TEMPORARY ID (2026-10-16), which the screen opens at once so sections and
+        // questions can be written under it offline; see `data/QuestionnaireAuthoring.kt`.
+        val tempId = newTempId()
+        val result = queueOfflineEntry(
             context = context,
             type = OFFLINE_CUSTOM_QUESTIONNAIRE,
             payloadJson = offlineJson.encodeToString(body),
             label = "Questionnaire · ${body.title}",
             items = emptyList(),
+            idempotencyKey = key,
         )
-        return null
+        OfflineOutbox.setTempId(context, result.entryId, tempId)
+        return CustomQuestionnaireDto(
+            id = tempId,
+            title = body.title,
+            description = body.description,
+            ownerId = cachedUser()?.id,
+            designWorkshopId = body.designWorkshopId,
+            kind = body.kind,
+        )
+    }
+
+    /** A questionnaire queued on this phone, as the screen draws it before it has uploaded. */
+    suspend fun pendingQuestionnaire(context: Context, tempId: String): CustomQuestionnaireDto? {
+        val entry = OfflineOutbox.all(context).firstOrNull { it.type == OFFLINE_CUSTOM_QUESTIONNAIRE && it.tempId == tempId }
+            ?: return null
+        val body = runCatching { offlineJson.decodeFromString<CustomQuestionnaireCreateBody>(entry.payloadJson) }.getOrNull()
+            ?: return null
+        return CustomQuestionnaireDto(
+            id = tempId,
+            title = body.title,
+            description = body.description,
+            ownerId = entry.ownerUserId,
+            designWorkshopId = body.designWorkshopId,
+            kind = body.kind,
+        )
+    }
+
+    /** Questionnaires this account queued that have not uploaded yet, for the list. */
+    suspend fun pendingQuestionnaires(context: Context): List<CustomQuestionnaireDto> {
+        val me = cachedUser()?.id
+        return OfflineOutbox.all(context)
+            .filter { it.type == OFFLINE_CUSTOM_QUESTIONNAIRE && it.tempId != null && it.createdId == null }
+            .filter { !dwDraftIsForAnotherAccount(it.ownerUserId, me) }
+            .mapNotNull { pendingQuestionnaire(context, it.tempId!!) }
+    }
+
+    /** Every authoring step still waiting on this phone for this questionnaire (any of its ids). */
+    suspend fun pendingQuestionnaireOps(context: Context, ids: Set<String>): List<QFormOp> {
+        val map = TempIdMap.all(context)
+        val wanted = ids.flatMap { listOfNotNull(it, resolveTempId(it, map)) }.toSet()
+        return OfflineOutbox.all(context)
+            .filter { it.type == OFFLINE_QFORM_OP && it.createdId == null }
+            .mapNotNull { runCatching { offlineJson.decodeFromString<QFormOp>(it.payloadJson) }.getOrNull() }
+            .filter { it.questionnaireId in wanted || resolveTempId(it.questionnaireId, map) in wanted }
+    }
+
+    /**
+     * The questionnaire to AUTHOR: the server's copy (or this phone's saved copy, or — for one queued
+     * offline — the queued row) with every step still waiting on this phone applied on top.
+     */
+    suspend fun customQuestionnaireForAuthoring(context: Context, id: String): QuestionnaireFormRead {
+        val map = TempIdMap.all(context)
+        val serverId = resolveTempId(id, map) ?: id
+        val base = if (!isTempId(serverId)) {
+            customQuestionnaireCached(context, serverId, includeRetired = true)
+        } else {
+            val queued = pendingQuestionnaire(context, id)
+                ?: throw IllegalStateException("This questionnaire is no longer on this phone.")
+            QuestionnaireFormRead(form = queued, fromCache = false)
+        }
+        val ops = pendingQuestionnaireOps(context, setOf(id, serverId))
+        return base.copy(form = applyPendingAuthoring(base.form, ops, map))
+    }
+
+    /**
+     * Run one authoring step against the server, temporary ids swapped for server ids. Used by the
+     * screen when online and by the outbox at replay, so there is one way to send each step. Returns
+     * the server's own sentence where it gave one.
+     */
+    suspend fun applyQuestionnaireOp(context: Context, op: QFormOp, idempotencyKey: String?): String? {
+        val map = TempIdMap.all(context)
+        fun need(id: String?, what: String): String {
+            val resolved = resolveTempId(id, map)
+            if (resolved == null || isTempId(resolved)) {
+                throw QFormParentMissing(
+                    "This waits for the $what it belongs to, which has not been saved. Nothing has been deleted."
+                )
+            }
+            return resolved
+        }
+        val qid = need(op.questionnaireId, "questionnaire")
+        return when (op.op) {
+            QFormOp.ADD_SECTION -> {
+                val result = api.createCustomSection(qid, CustomSectionCreateBody(title = op.title.orEmpty().trim()), idempotencyKey)
+                op.tempId?.let { temp ->
+                    createdSectionId(result, op.title.orEmpty(), map.values)?.let { TempIdMap.put(context, temp, it) }
+                }
+                null
+            }
+            QFormOp.RENAME_SECTION -> {
+                updateCustomSection(qid, need(op.sectionId, "section"), title = op.title)
+                null
+            }
+            QFormOp.ADD_QUESTION -> {
+                val sectionId = need(op.sectionId, "section")
+                val result = api.createCustomQuestion(
+                    qid,
+                    sectionId,
+                    CustomQuestionCreateBody(
+                        prompt = op.prompt.orEmpty().trim(),
+                        helpText = op.helpText?.trim()?.ifBlank { null },
+                        isRequired = op.isRequired ?: false,
+                    ),
+                    idempotencyKey,
+                )
+                op.tempId?.let { temp ->
+                    createdQuestionId(result, sectionId, op.prompt.orEmpty(), map.values)?.let { TempIdMap.put(context, temp, it) }
+                }
+                null
+            }
+            QFormOp.EDIT_QUESTION -> updateCustomQuestion(
+                id = qid,
+                questionId = need(op.questionId, "question"),
+                prompt = op.prompt,
+                helpText = op.helpText,
+                changeHelpText = op.changeHelpText,
+                isRequired = op.isRequired,
+            ).detail
+            QFormOp.REMOVE_QUESTION -> removeCustomQuestion(qid, need(op.questionId, "question")).detail
+            QFormOp.RENAME_QUESTIONNAIRE -> {
+                updateCustomQuestionnaire(
+                    id = qid,
+                    title = op.title,
+                    description = op.description,
+                    changeDescription = op.changeDescription,
+                )
+                null
+            }
+            else -> throw SerializationException("Unknown questionnaire step: ${op.op}")
+        }
+    }
+
+    /**
+     * The screen's door for every authoring step: sent now when it can be, otherwise — no signal, or
+     * the signal went mid-request, or its parent is itself still waiting — kept in the outbox under
+     * the same `Idempotency-Key`. Answers what to tell the designer.
+     */
+    suspend fun authorQuestionnaireOrQueue(context: Context, op: QFormOp, label: String): String {
+        val creates = op.op == QFormOp.ADD_SECTION || op.op == QFormOp.ADD_QUESTION
+        val key = if (creates) java.util.UUID.randomUUID().toString() else null
+        val map = TempIdMap.all(context)
+        val waitsForParent = listOf(op.questionnaireId, op.sectionId, op.questionId)
+            .any { isTempId(it) && isTempId(resolveTempId(it, map)) }
+        // AND NOTHING JUMPS THE QUEUE: if earlier steps for this questionnaire are still waiting,
+        // this one waits behind them, or a rename could land before the add it renames.
+        val behindOthers = pendingQuestionnaireOps(context, setOf(op.questionnaireId)).isNotEmpty()
+        if (!waitsForParent && !behindOthers && isOnline(context)) {
+            try {
+                return applyQuestionnaireOp(context, op, key) ?: "Saved."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (!isTransient(e)) throw e
+            }
+        }
+        OfflineOutbox.enqueue(
+            context,
+            PendingEntry(
+                id = java.util.UUID.randomUUID().toString(),
+                type = OFFLINE_QFORM_OP,
+                payloadJson = offlineJson.encodeToString(QFormOp.serializer(), op),
+                label = label,
+                createdAt = Instant.now().toString(),
+                ownerUserId = cachedUser()?.id,
+                idempotencyKey = key,
+            )
+        )
+        return "Kept on this phone. It is added to the questionnaire as soon as there is a connection."
     }
 
     suspend fun createCustomQuestionnaire(
@@ -3949,7 +4180,7 @@ class WorkshopRepository(
         runCatching { DwQuestionnaireFormCache.forgetAll(context) }
         // Cached LISTS go too (they are copies, not anybody's work). Drafts and the outbox do NOT:
         // nothing typed or captured is lost across a sign-out. See [ReadCache] and [FormDraftStore].
-        runCatching { ReadCache.forgetAll(context) }
+        runCatching { ReadCache.evictAll(context) }
     }
 
     suspend fun currentUser(): UserDto = api.me()
@@ -4769,6 +5000,41 @@ class WorkshopRepository(
     suspend fun createFeedbackReport(request: FeedbackReportCreateRequest): FeedbackReportDto =
         api.createFeedbackReport(request)
 
+    /**
+     * File a report now, or — with no connection, or when the connection goes mid-request — keep it
+     * in the outbox under the same `Idempotency-Key`, so it is filed once when there is signal. Null
+     * means queued. An answered refusal is thrown, so the screen prints the server's sentence.
+     */
+    suspend fun fileFeedbackReportOrQueue(context: Context, request: FeedbackReportCreateRequest): FeedbackReportDto? {
+        val key = java.util.UUID.randomUUID().toString()
+        if (isOnline(context)) {
+            try {
+                return api.createFeedbackReport(request, key)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (!isTransient(e)) throw e
+            }
+        }
+        OfflineOutbox.enqueue(
+            context,
+            PendingEntry(
+                id = java.util.UUID.randomUUID().toString(),
+                type = OFFLINE_FEEDBACK_REPORT,
+                payloadJson = offlineJson.encodeToString(request),
+                label = request.subject.ifBlank { "Report" },
+                createdAt = Instant.now().toString(),
+                ownerUserId = cachedUser()?.id,
+                idempotencyKey = key,
+            )
+        )
+        return null
+    }
+
+    /** The report form's choices, with this phone's last copy served offline. See [ReadCache]. */
+    suspend fun feedbackVocabularyCached(context: Context): CachedRead<FeedbackVocabularyDto> =
+        ReadCache.read(context, "feedback-vocabulary", FeedbackVocabularyDto.serializer()) { api.feedbackVocabulary() }
+
     /** This account's own reports, newest first, with the trail of who has answered them. */
     suspend fun myFeedbackReports(page: Int = 1, pageSize: Int = 25): FeedbackReportPageDto =
         api.myFeedbackReports(page, pageSize)
@@ -5172,7 +5438,8 @@ class WorkshopRepository(
     suspend fun discardUnmappedRecord(bucket: String, recordId: String): DiscardUnmappedRecordDto =
         api.discardUnmappedRecord(bucket, recordId)
 
-    suspend fun createArtisan(body: ArtisanCreateRequest): ArtisanDto = api.createArtisan(body)
+    suspend fun createArtisan(body: ArtisanCreateRequest, idempotencyKey: String? = null): ArtisanDto =
+        api.createArtisan(body, idempotencyKey)
 
     suspend fun artisan(id: String): ArtisanDetailDto = api.artisan(id)
 
@@ -5188,7 +5455,9 @@ class WorkshopRepository(
         id: String,
         body: ArtisanCreateRequest,
         clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
-    ): ArtisanDetailDto = api.updateArtisan(id, artisanPatchBody(body, clearedLinks))
+        /** The last word on the body: a queued correction narrows it to its changes. */
+        shape: (JsonObject) -> JsonObject = { it },
+    ): ArtisanDetailDto = api.updateArtisan(id, shape(artisanPatchBody(body, clearedLinks)))
 
     /**
      * A PATCH BODY THAT CAN SAY "NOTHING" — the general form of [artisanPatchBody], for the two
@@ -5941,16 +6210,20 @@ class WorkshopRepository(
 
     suspend fun process(id: String): ProcessDetailDto = api.process(id)
 
-    suspend fun createProcess(body: ProcessCreateRequest): ProcessDetailDto = api.createProcess(body)
+    suspend fun createProcess(body: ProcessCreateRequest, idempotencyKey: String? = null): ProcessDetailDto =
+        api.createProcess(body, idempotencyKey)
 
     suspend fun updateProcess(
         id: String,
         body: ProcessCreateRequest,
         clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+        /** The last word on the body: a queued correction narrows it to its changes. */
+        shape: (JsonObject) -> JsonObject = { it },
     ): ProcessDetailDto =
-        api.updateProcess(id, patchBodyWithClearances(ProcessCreateRequest.serializer(), body, clearedLinks))
+        api.updateProcess(id, shape(patchBodyWithClearances(ProcessCreateRequest.serializer(), body, clearedLinks)))
 
-    suspend fun createCraft(body: CraftCreateRequest): CreatedRecordDto = api.createCraft(body)
+    suspend fun createCraft(body: CraftCreateRequest, idempotencyKey: String? = null): CreatedRecordDto =
+        api.createCraft(body, idempotencyKey)
 
     suspend fun craft(id: String): CraftDto = api.craft(id)
 
@@ -5958,10 +6231,13 @@ class WorkshopRepository(
         id: String,
         body: CraftCreateRequest,
         clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+        /** The last word on the body: a queued correction narrows it to its changes. */
+        shape: (JsonObject) -> JsonObject = { it },
     ): CraftDto =
-        api.updateCraft(id, patchBodyWithClearances(CraftCreateRequest.serializer(), body, clearedLinks))
+        api.updateCraft(id, shape(patchBodyWithClearances(CraftCreateRequest.serializer(), body, clearedLinks)))
 
-    suspend fun createWorkshop(body: WorkshopCreateRequest): CreatedRecordDto = api.createWorkshop(body)
+    suspend fun createWorkshop(body: WorkshopCreateRequest, idempotencyKey: String? = null): CreatedRecordDto =
+        api.createWorkshop(body, idempotencyKey)
 
     suspend fun workshop(id: String): WorkshopDetailDto = api.workshop(id)
 
@@ -5969,10 +6245,13 @@ class WorkshopRepository(
         id: String,
         body: WorkshopCreateRequest,
         clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+        /** The last word on the body: a queued correction narrows it to its changes. */
+        shape: (JsonObject) -> JsonObject = { it },
     ): WorkshopDetailDto =
-        api.updateWorkshop(id, patchBodyWithClearances(WorkshopCreateRequest.serializer(), body, clearedLinks))
+        api.updateWorkshop(id, shape(patchBodyWithClearances(WorkshopCreateRequest.serializer(), body, clearedLinks)))
 
-    suspend fun createProduct(body: ProductCreateRequest): CreatedRecordDto = api.createProduct(body)
+    suspend fun createProduct(body: ProductCreateRequest, idempotencyKey: String? = null): CreatedRecordDto =
+        api.createProduct(body, idempotencyKey)
 
     suspend fun product(id: String): ProductDetailDto = api.product(id)
 
@@ -5980,10 +6259,13 @@ class WorkshopRepository(
         id: String,
         body: ProductCreateRequest,
         clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+        /** The last word on the body: a queued correction narrows it to its changes. */
+        shape: (JsonObject) -> JsonObject = { it },
     ): ProductDetailDto =
-        api.updateProduct(id, patchBodyWithClearances(ProductCreateRequest.serializer(), body, clearedLinks))
+        api.updateProduct(id, shape(patchBodyWithClearances(ProductCreateRequest.serializer(), body, clearedLinks)))
 
-    suspend fun createTool(body: ToolCreateRequest): CreatedRecordDto = api.createTool(body)
+    suspend fun createTool(body: ToolCreateRequest, idempotencyKey: String? = null): CreatedRecordDto =
+        api.createTool(body, idempotencyKey)
 
     suspend fun tool(id: String): ToolDetailDto = api.tool(id)
 
@@ -5991,8 +6273,10 @@ class WorkshopRepository(
         id: String,
         body: ToolCreateRequest,
         clearedLinks: Set<String> = WORKSHOP_LINK_KEYS,
+        /** The last word on the body: a queued correction narrows it to its changes. */
+        shape: (JsonObject) -> JsonObject = { it },
     ): ToolDetailDto =
-        api.updateTool(id, patchBodyWithClearances(ToolCreateRequest.serializer(), body, clearedLinks))
+        api.updateTool(id, shape(patchBodyWithClearances(ToolCreateRequest.serializer(), body, clearedLinks)))
 
     suspend fun questionnaireQuestions(): List<QuestionnaireQuestionDto> = api.questionnaireQuestions()
 
@@ -6024,8 +6308,10 @@ class WorkshopRepository(
     suspend fun reorderQuestionnaireQuestions(sectionId: String, questionIds: List<String>): List<QuestionnaireSectionDto> =
         api.reorderQuestionnaireQuestions(QuestionnaireQuestionReorderRequest(sectionId, questionIds))
 
-    suspend fun createQuestionnaireInterview(body: QuestionnaireInterviewCreateRequest): CreatedRecordDto =
-        api.createQuestionnaireInterview(body)
+    suspend fun createQuestionnaireInterview(
+        body: QuestionnaireInterviewCreateRequest,
+        idempotencyKey: String? = null,
+    ): CreatedRecordDto = api.createQuestionnaireInterview(body, idempotencyKey)
 
     suspend fun interviews(createdBy: String? = null): List<QuestionnaireInterviewDetailDto> =
         api.interviews(pageSize = 100, createdBy = createdBy?.blankToNull()).items
@@ -6928,6 +7214,10 @@ class WorkshopRepository(
          * and which decodes and replays exactly as an entry from any earlier build does.
          */
         unfiled: Map<String, String> = emptyMap(),
+        /** See [queueOfflineEntry]. */
+        idempotencyKey: String? = null,
+        /** See [queueOfflineEntry]. */
+        correctionBase: CorrectionBase? = null,
     ): OfflineQueueResult = queueOfflineEntry(
         context, type, payloadJson, label,
         mediaUris.mapIndexed { index, uri ->
@@ -6941,6 +7231,8 @@ class WorkshopRepository(
         },
         targetId = targetId,
         unfiled = unfiled,
+        idempotencyKey = idempotencyKey,
+        correctionBase = correctionBase,
     )
 
     /**
@@ -7066,6 +7358,13 @@ class WorkshopRepository(
         targetId: String? = null,
         /** See [queueOffline]. Empty for every caller that does not mount a workshop picker. */
         unfiled: Map<String, String> = emptyMap(),
+        /**
+         * The `Idempotency-Key` an ONLINE attempt at this create already sent, so its replay is
+         * recognised by the server as the same create. Null mints a fresh one for a create.
+         */
+        idempotencyKey: String? = null,
+        /** A correction's changed keys and base version — see [PendingEntry.changedKeys]. */
+        correctionBase: CorrectionBase? = null,
     ): OfflineQueueResult = withContext(Dispatchers.IO) {
         val media = mutableListOf<PendingMedia>()
         val unreadable = mutableListOf<String>()
@@ -7125,6 +7424,10 @@ class WorkshopRepository(
                     unfiled = unfiled,
                     ownerUserId = owner,
                     clientKey = clientKey,
+                    idempotencyKey = idempotencyKey
+                        ?: if (outboxCarriesIdempotencyKey(type, targetId)) java.util.UUID.randomUUID().toString() else null,
+                    changedKeys = correctionBase?.changedKeys,
+                    baseUpdatedAt = correctionBase?.baseUpdatedAt,
                 )
             )
         } catch (e: Throwable) {
@@ -7315,6 +7618,8 @@ class WorkshopRepository(
                             // the designer a picker for a field that is no longer what is standing
                             // in the way.
                             danglingField = outcome.danglingField,
+                            stale = outcome.stale,
+                            currentUpdatedAt = outcome.currentUpdatedAt,
                         )
                         // SAID WHEN IT CHANGES, NOT ON EVERY PASS THAT REACHES IT. Until a schema
                         // refusal could be re-attempted, an entry was refused exactly once and this
@@ -7409,6 +7714,10 @@ class WorkshopRepository(
              * `extra_forbidden`, 409, and 404/422-naming-a-reference are three different answers.
              */
             val danglingField: String? = null,
+            /** The record changed after this correction was composed — see [PendingEntry.staleCorrection]. */
+            val stale: Boolean = false,
+            /** The record's `updatedAt` in that refusal. */
+            val currentUpdatedAt: String? = null,
         ) : ReplayOutcome
     }
 
@@ -7420,7 +7729,17 @@ class WorkshopRepository(
      * pass, the next one starts from what has actually happened rather than from the top.
      */
     private suspend fun replayEntry(context: Context, queued: PendingEntry): ReplayOutcome {
+        appContextForReplay = context.applicationContext
         var entry = queued
+        // AN ENTRY QUEUED BEFORE IDEMPOTENCY KEYS EXISTED gets one now, written down BEFORE the first
+        // send, so every later replay of it carries the same key and a create whose answer is lost is
+        // answered from the first record instead of making a second (backend app/core/idempotency.py).
+        if (entry.createdId == null && entry.idempotencyKey == null &&
+            outboxCarriesIdempotencyKey(entry.type, entry.targetId)
+        ) {
+            entry = entry.copy(idempotencyKey = java.util.UUID.randomUUID().toString())
+            OfflineOutbox.update(context, entry)
+        }
         if (entry.createdId == null) {
             val created = try {
                 writeFromEntry(entry)
@@ -7438,6 +7757,22 @@ class WorkshopRepository(
                 // response" dropped the queued record and its photographs as sent. No endpoint in
                 // this API means that. The lost-response case belongs to `PendingEntry.createdId`,
                 // which knows rather than guesses; see `PendingEntry.conflict` for the argument.
+                // A CORRECTION THE RECORD HAS MOVED UNDER (409 `record_changed`, 2026-10-16). Read from
+                // a PEEK of the error body, so `apiRefusal` below still gets the whole of it.
+                val staleAt = if (entry.targetId != null && e is HttpException) {
+                    staleCorrectionCurrentVersion(e.code(), peekErrorBody(e))
+                } else {
+                    null
+                }
+                if (staleAt != null) {
+                    return ReplayOutcome.Rejected(
+                        STALE_CORRECTION_SENTENCE,
+                        schemaSkew = false,
+                        conflict = false,
+                        stale = true,
+                        currentUpdatedAt = staleAt.ifBlank { null },
+                    )
+                }
                 val clash = isConflictRefusal(e)
                 // `apiRefusal`, not `apiErrorMessage`: both facts have to come out of ONE read of the
                 // error body, because reading it consumes Retrofit's buffer. `isTransient` above is
@@ -7718,6 +8053,9 @@ class WorkshopRepository(
             // in fixes all of them at once, so this is the one 4xx that must not condemn an entry.
             401 -> true
             408, 429 -> true
+            // The server is still running the first send of this same Idempotency-Key
+            // (backend app/core/idempotency.py). Not a refusal: try again later.
+            409 -> isIdempotencyInProgress(error)
             else -> code >= 500
         }
         // No answer at all: no signal, DNS, a socket dropped mid-transfer, a gateway timeout.
@@ -7725,6 +8063,8 @@ class WorkshopRepository(
         // The queued payload itself will not parse. The next pass reads the same bytes off the same
         // disk and fails identically, so this is as permanent as a 422.
         is SerializationException -> false
+        // A questionnaire step whose parent was refused: no retry can create the parent.
+        is QFormParentMissing -> false
         // Anything else (a presign that came back malformed, an unexpected state) is treated as worth
         // another try: the cost of retrying is a delay, and the cost of not retrying is a lost record.
         else -> true
@@ -7748,6 +8088,32 @@ class WorkshopRepository(
 
     /** Queued entries the server refused, each carrying the reason it will never be sent. */
     suspend fun outboxFailures(context: Context): List<PendingEntry> = OfflineOutbox.failed(context)
+
+    /**
+     * "REVIEW CHANGES" on a correction the record moved under (2026-10-16): each field this correction
+     * changes, with the phone's value and the server's value now, so the person can choose. Needs a
+     * connection — it is answering a question about what is on the server.
+     */
+    suspend fun reviewStaleCorrection(context: Context, entryId: String): StaleCorrectionReview? {
+        val entry = OfflineOutbox.all(context).firstOrNull { it.id == entryId } ?: return null
+        val target = entry.targetId ?: return null
+        val record: JsonObject = when (entry.type) {
+            "artisan" -> offlineJson.encodeToJsonElement(ArtisanDetailDto.serializer(), artisan(target))
+            "craft" -> offlineJson.encodeToJsonElement(CraftDto.serializer(), craft(target))
+            "product" -> offlineJson.encodeToJsonElement(ProductDetailDto.serializer(), product(target))
+            "tool" -> offlineJson.encodeToJsonElement(ToolDetailDto.serializer(), tool(target))
+            "workshop" -> offlineJson.encodeToJsonElement(WorkshopDetailDto.serializer(), workshop(target))
+            "process" -> offlineJson.encodeToJsonElement(ProcessDetailDto.serializer(), process(target))
+            else -> return null
+        } as JsonObject
+        val mine = runCatching { offlineJson.parseToJsonElement(entry.payloadJson) as JsonObject }.getOrNull()
+            ?: return null
+        return staleCorrectionReview(mine, record, entry.changedKeys)
+    }
+
+    /** "Send mine": rebase the correction on the version the server holds now and send it. */
+    suspend fun keepMyCorrection(context: Context, entryId: String, currentUpdatedAt: String?): Boolean =
+        OfflineOutbox.rebaseCorrection(context, entryId, currentUpdatedAt).also { BackgroundSync.requestSoon(context) }
 
     /**
      * An artisan queued by a build that predates the identity fields carries no Pehchan answer at all,
@@ -7833,6 +8199,14 @@ class WorkshopRepository(
           as they do today. It is non-empty only where this build wrote down a choice a person made.
         */
         val cleared = entry.clearedLinkKeys
+        // ONLY WHAT CHANGED, AND ONLY IF THE RECORD HAS NOT MOVED (2026-10-16). An entry this build
+        // queued carries the keys the person changed and the version they changed them against;
+        // the server refuses with 409 `record_changed` when somebody else edited the record since,
+        // and the entry is then held for "Review changes" instead of overwriting their work. An
+        // entry from an earlier build has neither and replays the whole body exactly as before.
+        val narrow: (JsonObject) -> JsonObject = { body ->
+            restrictCorrectionBody(body, entry.changedKeys, entry.baseUpdatedAt)
+        }
         return when (entry.type) {
             // THE REPOSITORY'S OWN METHODS AND NOT `api.` DIRECTLY, for one of them specifically:
             // `updateArtisan` wraps the body in `artisanPatchBody`, which adds the EXPLICIT nulls
@@ -7850,24 +8224,25 @@ class WorkshopRepository(
                     target,
                     offlineJson.decodeFromString<ArtisanCreateRequest>(entry.payloadJson),
                     cleared,
+                    narrow,
                 ).id
             )
             "product" -> CreatedRecord(
-                updateProduct(target, offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson), cleared).id
+                updateProduct(target, offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson), cleared, narrow).id
             )
             "tool" -> CreatedRecord(
-                updateTool(target, offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson), cleared).id
+                updateTool(target, offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson), cleared, narrow).id
             )
             "workshop" -> CreatedRecord(
-                updateWorkshop(target, offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson), cleared).id
+                updateWorkshop(target, offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson), cleared, narrow).id
             )
             "craft" -> CreatedRecord(
-                updateCraft(target, offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson), cleared).id
+                updateCraft(target, offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson), cleared, narrow).id
             )
             // The step ids come back from the UPDATE too, and they have to be read: a queued
             // correction can carry step media, and `linkTargetFor` resolves `stepIndex` against this
             // list. Reading only the id would attach a step photograph to nothing.
-            "process" -> updateProcess(target, offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson), cleared)
+            "process" -> updateProcess(target, offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson), cleared, narrow)
                 .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }) }
             // DELIBERATELY ABSENT: "questionnaire". A questionnaire interview's edit route takes
             // `QuestionnaireInterviewUpdateRequest`, whose `responses` and `artisanIds` fields mean
@@ -7883,7 +8258,8 @@ class WorkshopRepository(
     private suspend fun createFromEntry(entry: PendingEntry): CreatedRecord = when (entry.type) {
         "artisan" -> CreatedRecord(
             api.createArtisan(
-                withIdentityAnswer(offlineJson.decodeFromString<ArtisanCreateRequest>(entry.payloadJson))
+                withIdentityAnswer(offlineJson.decodeFromString<ArtisanCreateRequest>(entry.payloadJson)),
+                entry.idempotencyKey,
             ).id
         )
         // ── THE IDEMPOTENCY KEY IS COPIED ONTO THE BODY HERE, NOT STORED INSIDE IT ─────────────
@@ -7904,25 +8280,31 @@ class WorkshopRepository(
         "product" -> CreatedRecord(
             api.createProduct(
                 offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson)
-                    .copy(clientKey = entry.clientKey)
+                    .copy(clientKey = entry.clientKey),
+                entry.idempotencyKey,
             ).id
         )
         "tool" -> CreatedRecord(
             api.createTool(
                 offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson)
-                    .copy(clientKey = entry.clientKey)
+                    .copy(clientKey = entry.clientKey),
+                entry.idempotencyKey,
             ).id
         )
         "workshop" -> CreatedRecord(
             api.createWorkshop(
                 offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson)
-                    .copy(clientKey = entry.clientKey)
+                    .copy(clientKey = entry.clientKey),
+                entry.idempotencyKey,
             ).id
         )
-        "craft" -> CreatedRecord(api.createCraft(offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson)).id)
+        "craft" -> CreatedRecord(
+            api.createCraft(offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson), entry.idempotencyKey).id
+        )
         "questionnaire" -> CreatedRecord(
             api.createQuestionnaireInterview(
-                offlineJson.decodeFromString<QuestionnaireInterviewCreateRequest>(entry.payloadJson)
+                offlineJson.decodeFromString<QuestionnaireInterviewCreateRequest>(entry.payloadJson),
+                entry.idempotencyKey,
             ).id
         )
         // The designer's own FORM, not a sitting. See [OFFLINE_CUSTOM_QUESTIONNAIRE] for why this is
@@ -7930,9 +8312,23 @@ class WorkshopRepository(
         // alone.
         OFFLINE_CUSTOM_QUESTIONNAIRE -> CreatedRecord(
             api.createCustomQuestionnaire(
-                offlineJson.decodeFromString<CustomQuestionnaireCreateBody>(entry.payloadJson)
-            ).id
+                offlineJson.decodeFromString<CustomQuestionnaireCreateBody>(entry.payloadJson),
+                entry.idempotencyKey,
+            ).id.also { created ->
+                // Its sections and questions were queued under this temporary id.
+                entry.tempId?.let { temp -> TempIdMap.put(appContextForReplay ?: return@let, temp, created) }
+            }
         )
+        // One authoring step, in queue order, temporary ids resolved. See QuestionnaireAuthoring.kt.
+        OFFLINE_QFORM_OP -> {
+            val op = offlineJson.decodeFromString<QFormOp>(entry.payloadJson)
+            applyQuestionnaireOp(
+                appContextForReplay ?: throw IllegalStateException("No context for a questionnaire step"),
+                op,
+                entry.idempotencyKey,
+            )
+            CreatedRecord(op.tempId ?: entry.id)
+        }
         // Steps come back in submit order, so `stepIndex` on a queued file selects the matching one.
         //
         // AND ON A REPLAY THEY COME BACK FROM THE FIRST LANDING, which is why the key matters most
@@ -7941,7 +8337,8 @@ class WorkshopRepository(
         // photograph, and a making sequence is not duplicated end to end.
         "process" -> api.createProcess(
             offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson)
-                .copy(clientKey = entry.clientKey)
+                .copy(clientKey = entry.clientKey),
+            entry.idempotencyKey,
         )
             .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }) }
         // NOT a record — a bookkeeping row about a report this phone already produced. It carries no
@@ -7974,6 +8371,21 @@ class WorkshopRepository(
                 offlineJson.decodeFromString<DesignRatingBody>(entry.payloadJson)
             ).rating.id
         )
+        // A report: a create, deduplicated by its Idempotency-Key.
+        OFFLINE_FEEDBACK_REPORT -> CreatedRecord(
+            api.createFeedbackReport(
+                offlineJson.decodeFromString<FeedbackReportCreateRequest>(entry.payloadJson),
+                entry.idempotencyKey,
+            ).id
+        )
+        // The whole profile, replayed as saved: the route replaces the one row.
+        OFFLINE_DESIGNER_PROFILE -> {
+            val payload = offlineJson.parseToJsonElement(entry.payloadJson) as JsonObject
+            val body = payload["body"] as? JsonObject ?: throw SerializationException("Queued profile has no body")
+            val userId = (payload["userId"] as? JsonPrimitive)?.content
+            val saved = if (userId == null) api.updateMyDesignerProfile(body) else api.updateDesignerProfile(userId, body)
+            CreatedRecord(saved.userId.ifBlank { entry.id })
+        }
         // An upsert of this account's one row: a replay replaces, it never duplicates.
         OFFLINE_APP_FEEDBACK -> CreatedRecord(
             api.upsertMyFeedback(offlineJson.decodeFromString<FeedbackUpsertRequest>(entry.payloadJson)).id

@@ -286,6 +286,11 @@ class QuestionnaireInterviewUpdate(APIModel):
     responses: list[QuestionnaireResponseInput] | None = None
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
+    # The version this edit was composed against (2026-10-16), the same optional precondition the six
+    # record schemas carry. Omitted is today's behaviour exactly; sent, an interview another person
+    # changed since is refused with 409 ``record_changed`` instead of being overwritten. See
+    # ``records.assert_expected_updated_at``.
+    expectedUpdatedAt: datetime | None = None
 
     # Omit to keep, send to replace, never null. See forbid_clearing_location.
     _location_kept = model_validator(mode="after")(forbid_clearing_location)

@@ -65,6 +65,8 @@
          emulator/loopback development hosts stay reachable over HTTP via that file's domain-config. -->
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:largeHeap="true"

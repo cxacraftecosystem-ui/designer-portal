@@ -234,7 +234,7 @@
         "queueVia": "queueOfflineEntry",
         "createVia": "onSubmit",
         "createCall": "onSubmit(",
-        "mountSupplies": "val created = repository.createQuestionnaireInterview(body)",
+        "mountSupplies": "val created = repository.createQuestionnaireInterview(body, key)",
         "mountRefuses": "onSubmit = { error(\"An open edit must PATCH the interview, never create a second one.\") }"
       },
       "note": [

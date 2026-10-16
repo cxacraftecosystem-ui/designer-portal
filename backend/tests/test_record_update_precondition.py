@@ -319,3 +319,31 @@ def test_every_update_route_takes_the_key_out_of_the_body():
         popped = source.index("take_expected_updated_at(data)")
         asked = source.index("assert_expected_updated_at(")
         assert popped < asked, f"{module}: pop it out of the body before asking the question"
+
+
+# --------------------------------------------------------------------------------------
+# The questionnaire interview, the seventh (2026-10-16)
+# --------------------------------------------------------------------------------------
+
+
+def test_the_interview_update_accepts_the_precondition_and_defaults_it_to_absent():
+    """The handset now queues an interview correction with the version it was composed against,
+    so the interview PATCH carries the same optional precondition as the six record routes."""
+    from app.schemas.questionnaire import QuestionnaireInterviewUpdate
+
+    assert QuestionnaireInterviewUpdate().expectedUpdatedAt is None
+    parsed = QuestionnaireInterviewUpdate(expectedUpdatedAt="2026-10-16T08:00:00.123Z")
+    assert parsed.expectedUpdatedAt == datetime(2026, 10, 16, 8, 0, 0, 123000, tzinfo=UTC)
+
+
+def test_the_interview_route_pops_the_key_and_asks_before_the_ledger_write():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "api" / "routes" / "questionnaire.py").read_text(
+        encoding="utf-8"
+    )
+    body = source[source.index("async def update_interview(") :]
+    popped = body.index("take_expected_updated_at(data)")
+    asked = body.index("assert_expected_updated_at(interview")
+    wrote = body.index("guard_record_edit(")
+    assert popped < asked < wrote

@@ -202,7 +202,9 @@ private fun stem(name: String): String = name.substringBeforeLast('.', name)
 @Stable
 class DataBrowserState(
     private val repository: WorkshopRepository,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    /** For the folder cache (2026-10-16): null reads live only, as before. See [ReadCache]. */
+    private val appContext: android.content.Context? = null,
 ) {
     /** The folder currently open. "" is the taxonomy chooser, not a folder listing. */
     var currentPath by mutableStateOf("")
@@ -217,6 +219,10 @@ class DataBrowserState(
 
     /** A message worth showing the user; cleared by [dismissError] and by the next navigation. */
     var error by mutableStateOf<String?>(null)
+        private set
+
+    /** Set when the folder on screen is this phone's saved copy — see [ReadCache]. */
+    var cachedNote by mutableStateOf<String?>(null)
         private set
 
     /** HTTP 403 from /data/tree: this account lacks the dataset-download permission. */
@@ -406,7 +412,16 @@ class DataBrowserState(
     }
 
     private suspend fun fetch(target: String): DataTreeDto? = try {
-        val level = repository.dataTree(target)
+        // The last copy of this folder, when nothing reaches the server. A 403 is still a 403.
+        val read = appContext?.let { context ->
+            com.designprototype.workshop.data.ReadCache.read(
+                context,
+                "data-tree:$target",
+                DataTreeDto.serializer(),
+            ) { repository.dataTree(target) }
+        }
+        val level = read?.value ?: repository.dataTree(target)
+        cachedNote = if (read?.fromCache == true) com.designprototype.workshop.data.readCacheNotice(read.cachedAt) else null
         levels[target] = level
         if (currentPath == target) {
             tree = level
@@ -429,7 +444,8 @@ class DataBrowserState(
 @Composable
 fun rememberDataBrowserState(repository: WorkshopRepository): DataBrowserState {
     val scope = rememberCoroutineScope()
-    val state = remember(repository) { DataBrowserState(repository, scope) }
+    val appContext = LocalContext.current.applicationContext
+    val state = remember(repository) { DataBrowserState(repository, scope, appContext) }
     LaunchedEffect(state) { state.open("") }
     return state
 }
@@ -524,6 +540,9 @@ fun DataBrowserScreen(
 
             state.error?.let { message ->
                 item("error") { ErrorBanner(message, onDismiss = state::dismissError) }
+            }
+            state.cachedNote?.let { note ->
+                item("cached") { Text(note, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
             }
 
             // Above the browser, not inside it: walking down four levels of folders to reach one

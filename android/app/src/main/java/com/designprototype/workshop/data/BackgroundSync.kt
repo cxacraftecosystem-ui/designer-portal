@@ -50,6 +50,9 @@ import java.util.concurrent.TimeUnit
  */
 object BackgroundSync {
     const val PERIODIC_JOB_ID = 0x5150_0001
+
+    /** True while [OutboxSyncJobService] is running a pass — see [requestSoon]. */
+    internal val soonPassRunning = java.util.concurrent.atomic.AtomicBoolean(false)
     const val SOON_JOB_ID = 0x5150_0002
 
     /** The platform floor for a periodic job; anything shorter is silently raised to it. */
@@ -82,9 +85,12 @@ object BackgroundSync {
     fun requestSoon(context: Context) {
         runCatching {
             val scheduler = scheduler(context) ?: return
-            // ALREADY WAITING (or running): leave it. A second schedule() of the same id would cancel
-            // a pass that may be half-way through a fortnight of photographs.
-            if (scheduler.getPendingJob(SOON_JOB_ID) != null) return
+            // RUNNING: leave it. A schedule() of the same id would cancel a pass that may be half-way
+            // through a fortnight of photographs; the pass re-reads the queue, and a write that lands
+            // during it is picked up by its retry or the periodic job.
+            // IDLE (merely waiting, or nothing scheduled): REPLACE, so the job always carries the
+            // current constraints and a fresh backoff rather than one left over from an old failure.
+            if (soonPassRunning.get()) return
             scheduler.schedule(
                 JobInfo.Builder(SOON_JOB_ID, component(context))
                     .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
@@ -129,6 +135,7 @@ class OutboxSyncJobService : JobService() {
 
     override fun onStartJob(params: JobParameters): Boolean {
         val app = applicationContext
+        BackgroundSync.soonPassRunning.set(true)
         pass = AppScope.io.launch {
             var retry = false
             try {
@@ -155,6 +162,7 @@ class OutboxSyncJobService : JobService() {
                 // Every queue keeps its work on any failure; the next run picks it up.
                 retry = true
             } finally {
+                BackgroundSync.soonPassRunning.set(false)
                 jobFinished(params, retry)
             }
         }

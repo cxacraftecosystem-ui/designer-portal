@@ -34,6 +34,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.QFormOp
+import com.designprototype.workshop.data.newTempId
 import com.designprototype.workshop.data.CustomEntryDto
 import com.designprototype.workshop.data.CustomQuestionDto
 import com.designprototype.workshop.data.CustomQuestionnaireDto
@@ -220,11 +222,10 @@ fun QuestionnaireDetailScreen(
         // questionnaire this account may no longer read is never served out of the device's memory
         // of when they could.
         runCatching {
-            repository.customQuestionnaireCached(
-                context = appContext,
-                id = questionnaireId,
-                includeRetired = true,
-            )
+            // THE FORM TO AUTHOR (2026-10-16): the server's copy, this phone's saved copy, or — for a
+            // questionnaire started offline — the queued row, with every step still waiting on this
+            // phone drawn on top. See `data/QuestionnaireAuthoring.kt`.
+            repository.customQuestionnaireForAuthoring(appContext, questionnaireId)
         }
             .map { read ->
                 if (read.fromCache) {
@@ -491,13 +492,17 @@ fun QuestionnaireDetailScreen(
             onSave = { title, description ->
                 renaming = false
                 mutate("The questionnaire could not be renamed.") {
-                    repository.updateCustomQuestionnaire(
-                        id = questionnaireId,
-                        title = title,
-                        description = description,
-                        changeDescription = true,
-                    )
-                    "Renamed."
+                    repository.authorQuestionnaireOrQueue(
+                        appContext,
+                        QFormOp(
+                            op = QFormOp.RENAME_QUESTIONNAIRE,
+                            questionnaireId = questionnaireId,
+                            title = title,
+                            description = description,
+                            changeDescription = true,
+                        ),
+                        label = "Rename questionnaire · $title",
+                    ).let { if (it == "Saved.") "Renamed." else it }
                 }
             }
         )
@@ -515,8 +520,12 @@ fun QuestionnaireDetailScreen(
             onSave = { title ->
                 addingSection = false
                 mutate("The section could not be added.") {
-                    repository.addCustomSection(questionnaireId, title)
-                    "Section added."
+                    // A TEMPORARY ID, so questions can be added to this section before it uploads.
+                    repository.authorQuestionnaireOrQueue(
+                        appContext,
+                        QFormOp(op = QFormOp.ADD_SECTION, questionnaireId = questionnaireId, tempId = newTempId(), title = title),
+                        label = "New section · $title",
+                    ).let { if (it == "Saved.") "Section added." else it }
                 }
             }
         )
@@ -535,8 +544,11 @@ fun QuestionnaireDetailScreen(
             onSave = { title ->
                 renamingSection = null
                 mutate("The section could not be renamed.") {
-                    repository.updateCustomSection(questionnaireId, section.id, title = title)
-                    "Section renamed."
+                    repository.authorQuestionnaireOrQueue(
+                        appContext,
+                        QFormOp(op = QFormOp.RENAME_SECTION, questionnaireId = questionnaireId, sectionId = section.id, title = title),
+                        label = "Rename section · $title",
+                    ).let { if (it == "Saved.") "Section renamed." else it }
                 }
             }
         )
@@ -554,14 +566,20 @@ fun QuestionnaireDetailScreen(
             onSave = { prompt, help, required ->
                 addingQuestionTo = null
                 mutate("The question could not be added.") {
-                    repository.addCustomQuestion(
-                        id = questionnaireId,
-                        sectionId = section.id,
-                        prompt = prompt,
-                        helpText = help,
-                        isRequired = required,
-                    )
-                    "Question added."
+                    repository.authorQuestionnaireOrQueue(
+                        appContext,
+                        QFormOp(
+                            op = QFormOp.ADD_QUESTION,
+                            questionnaireId = questionnaireId,
+                            tempId = newTempId(),
+                            // May itself be a temporary id: the section is created first at replay.
+                            sectionId = section.id,
+                            prompt = prompt,
+                            helpText = help,
+                            isRequired = required,
+                        ),
+                        label = "New question · $prompt",
+                    ).let { if (it == "Saved.") "Question added." else it }
                 }
             }
         )
@@ -579,21 +597,25 @@ fun QuestionnaireDetailScreen(
             onSave = { prompt, help, required ->
                 editingQuestion = null
                 mutate("The question could not be edited.") {
-                    val result = repository.updateCustomQuestion(
-                        id = questionnaireId,
-                        questionId = question.id,
-                        // Sent ONLY when the wording actually changed. Sending an unchanged prompt on
-                        // an answered question would be indistinguishable from a rewording to the
-                        // guard, so ticking "required" alone would supersede the question and split
-                        // its answers across two rows saying the same thing.
-                        prompt = prompt.takeIf { it.trim() != question.prompt.trim() },
-                        helpText = help,
-                        changeHelpText = true,
-                        isRequired = required.takeIf { it != question.isRequired },
-                    )
+                    repository.authorQuestionnaireOrQueue(
+                        appContext,
+                        QFormOp(
+                            op = QFormOp.EDIT_QUESTION,
+                            questionnaireId = questionnaireId,
+                            questionId = question.id,
+                            // Sent ONLY when the wording actually changed. Sending an unchanged prompt on
+                            // an answered question would be indistinguishable from a rewording to the
+                            // guard, so ticking "required" alone would supersede the question and split
+                            // its answers across two rows saying the same thing.
+                            prompt = prompt.takeIf { it.trim() != question.prompt.trim() },
+                            helpText = help,
+                            changeHelpText = true,
+                            isRequired = required.takeIf { it != question.isRequired },
+                        ),
+                        label = "Edit question · ${question.prompt}",
                     // The server's own sentence, verbatim, whenever it did something other than the
                     // plain edit. See CustomQuestionEditResultDto.
-                    result.detail ?: "Question updated."
+                    ).let { if (it == "Saved.") "Question updated." else it }
                 }
             }
         )
@@ -653,8 +675,11 @@ fun QuestionnaireDetailScreen(
                     onClick = {
                         removingQuestion = null
                         mutate("The question could not be removed.") {
-                            val result = repository.removeCustomQuestion(questionnaireId, question.id)
-                            result.detail ?: "Question deleted."
+                            repository.authorQuestionnaireOrQueue(
+                                appContext,
+                                QFormOp(op = QFormOp.REMOVE_QUESTION, questionnaireId = questionnaireId, questionId = question.id),
+                                label = "Remove question · ${question.prompt}",
+                            ).let { if (it == "Saved.") "Question deleted." else it }
                         }
                     }
                 ) { Text(if (retires) "Retire" else "Delete") }

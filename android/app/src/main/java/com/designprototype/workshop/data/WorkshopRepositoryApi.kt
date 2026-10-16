@@ -12,6 +12,7 @@ import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
@@ -177,7 +178,7 @@ interface WorkshopRepositoryApi {
      * `feedback/me` upserts one row per account, so a second submission destroyed the first.
      */
     @POST("feedback/reports")
-    suspend fun createFeedbackReport(@Body body: FeedbackReportCreateRequest): FeedbackReportDto
+    suspend fun createFeedbackReport(@Body body: FeedbackReportCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): FeedbackReportDto
 
     /**
      * This account's own reports, newest first, each with its status and whoever answered it.
@@ -309,7 +310,7 @@ interface WorkshopRepositoryApi {
     ): PageResponse<CraftDto>
 
     @POST("artisans")
-    suspend fun createArtisan(@Body body: ArtisanCreateRequest): ArtisanDto
+    suspend fun createArtisan(@Body body: ArtisanCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): ArtisanDto
 
     // Pre-flight duplicate check for the artisan form's Aadhaar field. Declared BEFORE `artisan(id)`
     // only for readability — Retrofit matches on the literal path, so "lookup/aadhaar" can never be
@@ -344,7 +345,7 @@ interface WorkshopRepositoryApi {
     suspend fun artisanQuestionnaire(@Path("id") id: String): ArtisanQuestionnaireDto
 
     @POST("crafts")
-    suspend fun createCraft(@Body body: CraftCreateRequest): CreatedRecordDto
+    suspend fun createCraft(@Body body: CraftCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): CreatedRecordDto
 
     @GET("crafts/{id}")
     suspend fun craft(@Path("id") id: String): CraftDto
@@ -746,7 +747,7 @@ interface WorkshopRepositoryApi {
     suspend fun process(@Path("id") id: String): ProcessDetailDto
 
     @POST("processes")
-    suspend fun createProcess(@Body body: ProcessCreateRequest): ProcessDetailDto
+    suspend fun createProcess(@Body body: ProcessCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): ProcessDetailDto
 
     /**
      * A JSON BODY, FOR THE REASON SPELLED OUT ON [updateArtisan] AND ONE MORE.
@@ -762,13 +763,13 @@ interface WorkshopRepositoryApi {
     suspend fun updateProcess(@Path("id") id: String, @Body body: JsonObject): ProcessDetailDto
 
     @POST("workshops")
-    suspend fun createWorkshop(@Body body: WorkshopCreateRequest): CreatedRecordDto
+    suspend fun createWorkshop(@Body body: WorkshopCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): CreatedRecordDto
 
     @POST("products")
-    suspend fun createProduct(@Body body: ProductCreateRequest): CreatedRecordDto
+    suspend fun createProduct(@Body body: ProductCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): CreatedRecordDto
 
     @POST("tools")
-    suspend fun createTool(@Body body: ToolCreateRequest): CreatedRecordDto
+    suspend fun createTool(@Body body: ToolCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): CreatedRecordDto
 
     @GET("questionnaire/questions")
     suspend fun questionnaireQuestions(): List<QuestionnaireQuestionDto>
@@ -807,7 +808,7 @@ interface WorkshopRepositoryApi {
     suspend fun reorderQuestionnaireQuestions(@Body body: QuestionnaireQuestionReorderRequest): List<QuestionnaireSectionDto>
 
     @POST("questionnaire/interviews")
-    suspend fun createQuestionnaireInterview(@Body body: QuestionnaireInterviewCreateRequest): CreatedRecordDto
+    suspend fun createQuestionnaireInterview(@Body body: QuestionnaireInterviewCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): CreatedRecordDto
 
     @GET("questionnaire/interviews")
     suspend fun interviews(
@@ -2330,7 +2331,8 @@ interface WorkshopRepositoryApi {
 
     @POST("questionnaires")
     suspend fun createCustomQuestionnaire(
-        @Body body: CustomQuestionnaireCreateBody
+        @Body body: CustomQuestionnaireCreateBody,
+        @Header("Idempotency-Key") idempotencyKey: String? = null,
     ): CustomQuestionnaireDto
 
     // JsonObject, so a detach can send an explicit null — see [customQuestionnaireUpdateJson].
@@ -2383,7 +2385,8 @@ interface WorkshopRepositoryApi {
     @POST("questionnaires/{id}/sections")
     suspend fun createCustomSection(
         @Path("id") id: String,
-        @Body body: CustomSectionCreateBody
+        @Body body: CustomSectionCreateBody,
+        @Header("Idempotency-Key") idempotencyKey: String? = null,
     ): CustomQuestionnaireDto
 
     @PATCH("questionnaires/{id}/sections/{sectionId}")
@@ -2397,7 +2400,8 @@ interface WorkshopRepositoryApi {
     suspend fun createCustomQuestion(
         @Path("id") id: String,
         @Path("sectionId") sectionId: String,
-        @Body body: CustomQuestionCreateBody
+        @Body body: CustomQuestionCreateBody,
+        @Header("Idempotency-Key") idempotencyKey: String? = null,
     ): CustomQuestionnaireDto
 
     // Returns the ACTION it took, not the question. Rewording a question that has answers supersedes

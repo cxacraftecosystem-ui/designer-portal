@@ -181,7 +181,22 @@ fun QuestionnaireListScreen(
                 )
             }
         }.onSuccess {
-            rows = it.items
+            // QUESTIONNAIRES STARTED ON THIS PHONE AND NOT YET UPLOADED (2026-10-16) come first, under
+            // their temporary ids, so they can be opened and written offline.
+            val waiting = if (search.isBlank()) {
+                runCatching { repository.pendingQuestionnaires(appContext) }.getOrDefault(emptyList()).map { queued ->
+                    CustomQuestionnaireSummaryDto(
+                        id = queued.id,
+                        title = queued.title,
+                        description = "Waiting to upload — kept on this phone.",
+                        ownerId = queued.ownerId,
+                        designWorkshopId = queued.designWorkshopId,
+                    )
+                }
+            } else {
+                emptyList()
+            }
+            rows = waiting + it.items
             offline = false
             // Advisory, never blocking. Silently showing a prefix is the defect itself, and the search
             // box above narrows on the SERVER, so it reaches the rows this walk stopped short of.
@@ -691,14 +706,17 @@ private fun CreateQuestionnaireDialog(
                                 kind = kind.takeIf { it.isNotBlank() },
                             )
                         }.onSuccess { created ->
-                            if (created != null) {
+                            if (created != null && com.designprototype.workshop.data.isTempId(created.id)) {
+                                // Kept on this phone under a temporary id, and opened anyway: its
+                                // sections and questions are written now and uploaded in order.
+                                onError(
+                                    "“${title.trim()}” is kept on this phone and uploads when there " +
+                                        "is a connection. You can add its sections and questions now."
+                                )
+                                onCreated(created.id)
+                            } else if (created != null) {
                                 onCreated(created.id)
                             } else {
-                                onError(
-                                    "“${title.trim()}” is saved on this phone and uploads when " +
-                                        "there is a connection. Its sections and questions can be " +
-                                        "added once it has uploaded."
-                                )
                                 onDismiss()
                             }
                         }
