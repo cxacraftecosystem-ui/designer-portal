@@ -184,7 +184,7 @@ export function CostFindingsPanel({
   return (
     <section className="panel mb-5 grid gap-4 p-4" aria-labelledby="cost-findings-heading">
       <h2 id="cost-findings-heading" className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-        <Calculator className="h-4 w-4 text-purple-700" aria-hidden />
+        <Calculator className="h-4 w-4 text-purple-700 dark:text-purple-300" aria-hidden />
         Cost sheets against their own lines
       </h2>
 

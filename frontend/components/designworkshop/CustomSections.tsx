@@ -174,7 +174,7 @@ export function CustomSectionsForm({
         {refusedRow ? (
           <p
             role="alert"
-            className="mb-3 rounded-md bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-error-600"
+            className="mb-3 rounded-md bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-red-800"
           >
             {refusedRow}
           </p>
@@ -212,7 +212,7 @@ export function CustomSectionsForm({
   return (
     <>
       {refusedRow ? (
-        <p role="alert" className="rounded-md bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-error-600">
+        <p role="alert" className="rounded-md bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-red-800">
           {refusedRow}
         </p>
       ) : null}

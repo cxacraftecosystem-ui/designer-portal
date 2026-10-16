@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -112,7 +114,7 @@ class MediaDownloader internal constructor(
     private fun failed(error: Throwable) {
         Toast.makeText(
             context,
-            "This file couldn't be saved. ${error.message ?: "Try again."}",
+            "This file couldn't be saved. ${error.userMessage("Try again.")}",
             Toast.LENGTH_LONG,
         ).show()
     }

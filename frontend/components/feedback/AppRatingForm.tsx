@@ -125,7 +125,7 @@ function StarRating({
           onClick={() => onChange(value === n ? null : n)}
           type="button"
         >
-          <Star className={`${star} ${value && n <= value ? "fill-purple-700 text-purple-700" : "text-line-200"}`} aria-hidden />
+          <Star className={`${star} ${value && n <= value ? "fill-purple-700 text-purple-700 dark:text-purple-300" : "text-line-200"}`} aria-hidden />
         </button>
       ))}
       <span className="ml-2 text-xs text-ink-500">{value ? `${value}/5` : "Not rated"}</span>
@@ -258,7 +258,7 @@ export function AppRatingForm({
   return (
     <>
       {error ? (
-        <div className="mb-4 max-w-2xl rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{error}</div>
+        <div className="mb-4 max-w-2xl rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{error}</div>
       ) : null}
       {success ? (
         <div className="mb-4 max-w-2xl rounded-md border border-emerald-200 bg-success-100 px-3 py-2 text-sm text-success-600">

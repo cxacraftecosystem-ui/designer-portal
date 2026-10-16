@@ -198,37 +198,65 @@ export function optionToTool(option: CachedReferenceOption): ToolDocumentation |
  * **The ref is not an optimisation.** `rows` must be a dependency (a page arriving late has to
  * re-test the guard), so without a record of what has already been attempted a 403 or a 404 would
  * re-fire the request on every merge, forever.
+ *
+ * **…and the guard is RELEASED when the effect is torn down before the answer lands** (2026-10-16,
+ * UX audit DW-03). `rows` arriving is itself a re-run: the read issued while the page was still
+ * loading was cancelled by that re-run, the re-run then found the id already "attempted", and the
+ * record was never set — so a prefilled design workshop beyond the first page left the box reading
+ * "Select" under a note saying it had been filled in. That is the claim-on-start, finish-on-cancel
+ * deadlock in the frontend skill's §17; only a SETTLED attempt may keep the id.
  */
 export function useRecordOffPage<T extends { id: string }>(
   endpoint: string,
   id: string,
   rows: readonly T[]
 ): T | null {
+  return useRecordOffPageState(endpoint, id, rows).record;
+}
+
+/**
+ * {@link useRecordOffPage}, plus whether the one read it made for `id` was REFUSED or failed.
+ *
+ * `failed` is the answer a prefill needs: a value the app chose for somebody that this account
+ * cannot even read must be withdrawn rather than kept invisible in the box.
+ */
+export function useRecordOffPageState<T extends { id: string }>(
+  endpoint: string,
+  id: string,
+  rows: readonly T[]
+): { record: T | null; failed: boolean } {
   const [record, setRecord] = useState<T | null>(null);
+  const [failedId, setFailedId] = useState<string | null>(null);
   const attempted = useRef(new Set<string>());
 
   useEffect(() => {
     if (!id || rows.some((row) => row.id === id)) return;
-    if (attempted.current.has(id)) return;
-    attempted.current.add(id);
+    const tried = attempted.current;
+    if (tried.has(id)) return;
+    tried.add(id);
     let cancelled = false;
+    let settled = false;
     apiFetch<T>(`${endpoint}/${id}`)
       .then((row) => {
+        settled = true;
         if (!cancelled) setRecord(row);
       })
       .catch(() => {
+        settled = true;
         // Not visible to this account, or gone. Deliberately NOT an error banner: nothing is broken
         // — the link is intact and the name beside the picker still says who it points at. This form
         // simply cannot offer to change it, which is the honest state to be in.
+        if (!cancelled) setFailedId(id);
       });
     return () => {
       cancelled = true;
+      if (!settled) tried.delete(id);
     };
   }, [endpoint, id, rows]);
 
   // A row fetched for a DIFFERENT id must never be merged into the options: the researcher has
   // moved on and it would appear as an option that is neither on a page nor selected.
-  return record && record.id === id ? record : null;
+  return { record: record && record.id === id ? record : null, failed: failedId === id && id !== "" };
 }
 
 /**

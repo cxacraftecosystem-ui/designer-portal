@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
+import { statusLabel } from "@/components/StatusBadge";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
 import { CarryForwardCards } from "@/components/CarryForwardCards";
@@ -267,7 +268,7 @@ function PehchanFields({
               {" "}
               <button
                 type="button"
-                className="font-semibold text-purple-700 underline"
+                className="font-semibold text-purple-700 dark:text-purple-300 underline"
                 onClick={() => setReplacing(true)}
               >
                 Replace this number
@@ -279,7 +280,7 @@ function PehchanFields({
               {" "}
               <button
                 type="button"
-                className="font-semibold text-purple-700 underline"
+                className="font-semibold text-purple-700 dark:text-purple-300 underline"
                 onClick={() => {
                   setReplacing(false);
                   setNumber("");
@@ -337,7 +338,9 @@ function StatusField({
       <Field label="Status">
         <Select name="status" defaultValue={initialStatus ?? "APPROVED"} onChange={onDirty}>
           {options.map((status) => (
-            <option key={status}>{status}</option>
+            <option key={status} value={status}>
+              {statusLabel(status)}
+            </option>
           ))}
         </Select>
       </Field>
@@ -1287,7 +1290,11 @@ export function ArtisanForm({
                 the plain list keeps the native type-ahead the e2e suite pins: focus Gender, press
                 "f", get Female. `SEARCH_THRESHOLD` reaches this on its own; the comment is here so
                 the next reader sees the asymmetry with Craft above was chosen. */}
-            <Select name="gender" defaultValue={initial?.gender?.trim() ? initial.gender : "Male"} onChange={markDirty}>
+            {/* NOTHING PRE-SELECTED (UX audit DW-09, 2026-10-16). This defaulted to "Male", so a box
+                nobody touched saved a claim about a person — on a women-majority craft cluster, a
+                silent skew in the dataset. Unanswered stays unanswered; the first row clears it. */}
+            <Select name="gender" defaultValue={initial?.gender?.trim() ? initial.gender : ""} onChange={markDirty}>
+              <option value="">Not stated</option>
               {genderOptions.map((option) => (
                 <option key={option}>{option}</option>
               ))}

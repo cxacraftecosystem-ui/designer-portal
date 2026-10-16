@@ -92,7 +92,7 @@ export function DuplicateArtisanDialog({
         </>
       }
     >
-      <p className="mt-2 text-xs leading-5 text-amber-800">
+      <p className="mt-2 text-xs leading-5 text-amber-800 dark:text-amber-100">
         Nothing has been saved. Open the record that already exists, throw this entry away, or stay here and
         correct the number.
       </p>

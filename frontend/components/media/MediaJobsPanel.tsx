@@ -68,7 +68,7 @@ const STATUS_TONE: Record<string, string> = {
   QUEUED: "border-line-200 bg-surface-50 text-ink-500",
   PROCESSING: "border-amber-500/30 bg-amber-100 text-amber-800",
   COMPLETED: "border-success-600/25 bg-success-100 text-success-600",
-  FAILED: "border-error-600/25 bg-error-100 text-error-600",
+  FAILED: "border-error-600/25 bg-error-100 text-red-800",
   CANCELLED: "border-line-200 bg-surface-50 text-ink-500"
 };
 
@@ -241,7 +241,7 @@ export function MediaJobsPanel() {
       <div className="flex flex-col gap-3 border-b border-line-200 p-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="flex items-center gap-2 font-display text-lg font-bold text-ink-900">
-            <ListChecks className="h-4 w-4 text-field-600" aria-hidden />
+            <ListChecks className="h-4 w-4 text-field-600 dark:text-purple-300" aria-hidden />
             Media processing jobs
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">

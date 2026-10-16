@@ -874,6 +874,7 @@ function citationAnchors(line) {
 // fix for it is to name the symbol instead of the line.
 const DRIFT_EXEMPT = new Map([
   ["AUDIT-2026-08-15.md", "a dated snapshot of the pre-fix tree; its line numbers are the record"],
+  ["UX_AUDIT_2026-10-16.md", "a dated snapshot of the tree at c13bf5be; its line numbers are the record and each finding carries its own status"],
 ]);
 
 // A document that EXHIBITS a rotted citation — "`StageScreen.kt:1320-1325` had rotted onto unrelated

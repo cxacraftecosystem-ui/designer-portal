@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.userMessage
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -580,7 +582,7 @@ fun WorkshopListScreen(
 
             (fromServer + localOnly).sortedByDescending { it.updatedAt }
         }.onSuccess { rows = it }
-            .onFailure { onError(it.message ?: "Unable to list the design workshops.") }
+            .onFailure { onError(it.userMessage("Unable to list the design workshops.")) }
         loading = false
     }
 
@@ -2450,7 +2452,7 @@ private fun CreateWorkshopDialog(
                                 )
                             }
                         }.onFailure { error ->
-                            onError(error.message ?: "Could not start the workshop on this device.")
+                            onError(error.userMessage("Could not start the workshop on this device."))
                             busy = false
                             return@launch
                         }

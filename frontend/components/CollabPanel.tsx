@@ -171,7 +171,7 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
                   {Object.entries(r.changes).map(([field, change]) => (
                     <li key={field} className="text-xs">
                       <span className="font-semibold text-ink">{field}</span>:{" "}
-                      <span className="text-red-700 line-through">{String(change.old ?? "—")}</span>{" → "}
+                      <span className="text-red-700 dark:text-red-400 line-through">{String(change.old ?? "—")}</span>{" → "}
                       <span className="text-emerald-700">{String(change.new ?? "—")}</span>
                     </li>
                   ))}

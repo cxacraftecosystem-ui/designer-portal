@@ -126,7 +126,7 @@ export default function FeedbackPage() {
             // The whole form depends on the served lists, so a failed fetch has to say so rather
             // than draw empty dropdowns. Nothing here invents a fallback list of kinds — that is the
             // drift `lib/feedback.ts` opens by forbidding.
-            <div className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{vocabError}</div>
+            <div className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{vocabError}</div>
           ) : !vocabulary ? (
             <p className="text-sm text-ink-500">Loading...</p>
           ) : (
@@ -223,7 +223,7 @@ function AllRatings() {
     <section className="mt-8">
       <h2 className="mb-3 font-display text-lg font-bold text-ink-900">Everyone&apos;s ratings</h2>
       {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{error}</div>
+        <div className="mb-4 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{error}</div>
       ) : null}
       {!items ? (
         <div className="panel p-4 text-sm text-ink-500">Loading...</div>

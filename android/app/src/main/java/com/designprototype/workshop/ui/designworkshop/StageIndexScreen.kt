@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -419,7 +421,7 @@ fun StageIndexScreen(
         }.onSuccess { (name, merged) ->
             title = name
             stages = merged
-        }.onFailure { onError(it.message ?: "Unable to read this workshop's progress.") }
+        }.onFailure { onError(it.userMessage("Unable to read this workshop's progress.")) }
         loading = false
     }
 

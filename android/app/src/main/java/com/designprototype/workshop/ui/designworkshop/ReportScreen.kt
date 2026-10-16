@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
@@ -293,6 +295,9 @@ fun ReportScreen(
      * decision the next sync silently applies to everything.
      */
     var accent by remember(workshopId) { mutableStateOf("") }
+    // Stage 20 asked for transcripts. The export below says what this file carries, in plain words,
+    // rather than leaving a designer to discover the annexure is absent (UX audit 2026-10-16, DA-29).
+    var transcriptsAsked by remember(workshopId) { mutableStateOf(false) }
     /**
      * The warning that this file cannot hold more than this device does — see [ReportSource].
      *
@@ -401,6 +406,7 @@ fun ReportScreen(
             // authority and the preset name is consulted only when it is blank. A hex the registry
             // has never heard of still renders, because it is a colour and not a token.
             accent = resolveAccent(null, settings).orEmpty()
+            transcriptsAsked = com.designprototype.workshop.report.wantsTranscripts(null, settings)
             /*
               WHAT STAGE 20 DOES TO THE FILE, said BEFORE the buttons.
 
@@ -480,7 +486,7 @@ fun ReportScreen(
             questionnaires = held
             warnings = warnings + dwQuestionnaireWarnings(held)
 
-        }.onFailure { onError(it.message ?: "Unable to prepare the report.") }
+        }.onFailure { onError(it.userMessage("Unable to prepare the report.")) }
         loading = false
     }
 
@@ -610,7 +616,7 @@ fun ReportScreen(
                   in the block above — writes no export log, no warning count and no server state.
                 */
                 if (it is kotlinx.coroutines.CancellationException) throw it
-                onError(it.message ?: "Unable to build the preview.")
+                onError(it.userMessage("Unable to build the preview."))
             }
             busy = false
         }
@@ -776,7 +782,7 @@ fun ReportScreen(
                 result = exported
                 onMessage("Report saved to ${exported.displayLocation}")
             }.onFailure { error ->
-                onError(error.message ?: "The report could not be generated.")
+                onError(error.userMessage("The report could not be generated."))
             }
             busy = false
         }
@@ -1100,6 +1106,14 @@ fun ReportScreen(
             }
         }
 
+        if (transcriptsAsked) {
+            Text(
+                "Interview transcripts are added when the report is generated online. A file exported " +
+                    "here carries the photographs and the completeness annexure.",
+                color = MaterialTheme.field.muted,
+                fontSize = 12.sp
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Button(onClick = { export("DOCX") }, enabled = !busy, modifier = Modifier.weight(1f)) {
                 Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null, modifier = Modifier.size(16.dp))

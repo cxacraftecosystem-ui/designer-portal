@@ -425,7 +425,7 @@ export function DesignWorkshopDraftBanner() {
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-2">
-          <CloudOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+          <CloudOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-800 dark:text-amber-100" aria-hidden />
           <div>
             <h2 className="font-display text-sm font-bold">
               {waiting
@@ -504,7 +504,7 @@ export function DesignWorkshopDraftBanner() {
               // are all things a person can go and fix.
               <button
                 type="button"
-                className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700 dark:text-purple-300"
                 onClick={async () => {
                   await retryDraft(draft.localId);
                   await drain("manual");

@@ -123,7 +123,7 @@ const TONE_RING: Record<DialogTone, string> = {
 
 const TONE_CHIP: Record<DialogTone, string> = {
   neutral: "bg-purple-50 text-purple-700",
-  danger: "bg-error-100 text-error-600",
+  danger: "bg-error-100 text-red-800",
   warning: "bg-amber-100 text-amber-800"
 };
 

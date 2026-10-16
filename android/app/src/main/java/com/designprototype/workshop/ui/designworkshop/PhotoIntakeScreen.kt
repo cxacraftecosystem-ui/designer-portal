@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.Context
 import android.media.ExifInterface
 import android.net.Uri
@@ -178,7 +180,7 @@ fun PhotoIntakeScreen(
             draft = local
             missingDraft = local == null
         }.onFailure {
-            onError(it.message ?: "Unable to read this workshop on this device.")
+            onError(it.userMessage("Unable to read this workshop on this device."))
         }
         loading = false
     }

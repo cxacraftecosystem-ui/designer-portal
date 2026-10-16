@@ -2352,7 +2352,7 @@ internal fun DwMarkHandle(
             Text(
                 badge,
                 color = if (outlined) markColor else discColor,
-                fontSize = 10.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
             )
         }

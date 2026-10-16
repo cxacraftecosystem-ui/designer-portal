@@ -644,8 +644,7 @@ internal const val DW_CHOOSER_UNTITLED: String = "Untitled piece"
 
 /** COULD NOT ASK, with no signal — worded so it cannot be read as "this round is empty". */
 internal const val DW_SKETCH_CHOOSER_ROUND_OFFLINE: String =
-    "No connection, so this workshop's peer round could not be read — a round that could not be " +
-        "asked for, not a round with nothing in it."
+    "No connection, so this workshop's peer round couldn't be loaded. Try again."
 
 /** The arrangement is on the phone; the request that would carry it did not complete. */
 internal const val DW_SKETCH_CHOOSER_ARRANGEMENT_NOT_SENT: String =

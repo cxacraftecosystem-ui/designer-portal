@@ -1146,8 +1146,8 @@ private fun FormCard(
             )
             if (form.sections.isEmpty()) {
                 EmptyNote(
-                    "No sections yet. Build the form in the .xlsx pro-forma on a computer and upload " +
-                        "it there, or add sections and questions here one at a time."
+                    "No sections yet. Add sections and questions here, or fill in the .xlsx " +
+                        "pro-forma and upload it from the questionnaire list."
                 )
             }
             form.sections.forEach { section ->

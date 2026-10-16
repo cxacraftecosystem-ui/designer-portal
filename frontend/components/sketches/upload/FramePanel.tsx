@@ -784,7 +784,7 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
   return (
     <div className="mb-3 rounded-md border border-line-200 bg-card p-3">
       <div className="flex items-start gap-2">
-        <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-field-200 text-field-600">
+        <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-field-200 text-field-600 dark:text-purple-300">
           <Crop className="h-4 w-4" aria-hidden />
         </span>
         <div className="min-w-0">
@@ -1044,7 +1044,7 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
           // The margin, and not the element, is what comes and goes: the same node stays in the
           // document — so the region is announced — without leaving a gap under the boxes when it is
           // empty. Changing a class does not remount it.
-          className={clampNote !== null ? "mt-2 text-xs leading-5 text-amber-800" : "text-xs leading-5 text-amber-800"}
+          className={clampNote !== null ? "mt-2 text-xs leading-5 text-amber-800 dark:text-amber-100" : "text-xs leading-5 text-amber-800 dark:text-amber-100"}
         >
           {clampNote}
         </p>
@@ -1146,7 +1146,7 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
       {problem ? (
         <p
           role="alert"
-          className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-error-100 px-2 py-1.5 text-xs leading-4 text-error-600"
+          className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-error-100 px-2 py-1.5 text-xs leading-4 text-red-800"
         >
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>{problem}</span>
@@ -1185,7 +1185,7 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
         {busy ? <p>Working on the photograph…</p> : null}
         {!busy && applied !== null && !stale ? (
           <p className="flex items-start gap-2">
-            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600" aria-hidden />
+            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600 dark:text-emerald-400" aria-hidden />
             <span>
               The trace is using {applied.crop.width}x{applied.crop.height}
               {applied.sharpen.amount > 0
@@ -1198,7 +1198,7 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
           </p>
         ) : null}
         {!busy && stale ? (
-          <p className="flex items-start gap-2 text-amber-800">
+          <p className="flex items-start gap-2 text-amber-800 dark:text-amber-100">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>
               The frame on screen is not the one being traced. The trace is still using{" "}

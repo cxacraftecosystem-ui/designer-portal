@@ -496,7 +496,7 @@ export function StageDocumentPreview({
         ) : (
           <ChevronRight className="h-4 w-4 shrink-0 text-ink-500" aria-hidden />
         )}
-        <FileText className="h-4 w-4 shrink-0 text-field-600" aria-hidden />
+        <FileText className="h-4 w-4 shrink-0 text-field-600 dark:text-purple-300" aria-hidden />
         <span className="min-w-0 flex-1 text-sm font-medium text-ink-900">
           Document preview
           <span className="ml-2 font-normal text-ink-500">— how this stage prints in the report</span>
@@ -573,7 +573,7 @@ export function StageDocumentPreview({
                       </p>
                       <button
                         type="button"
-                        className="text-xs font-medium text-purple-700 underline underline-offset-2"
+                        className="text-xs font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2"
                         onClick={() => setShowAll((current) => !current)}
                       >
                         {showAll ? "Show only this stage's pages" : "Show every page"}

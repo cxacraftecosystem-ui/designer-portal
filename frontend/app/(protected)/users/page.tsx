@@ -830,7 +830,7 @@ function UsersScreen() {
         next sign-in. The exception is an address whose empanelment was suspended: it stays suspended, and that
         person&apos;s sign-in is refused until an admin restores it.{" "}
         {canManageDesignerRoster(currentUser) ? (
-          <Link href="/admin/designers" className="font-medium text-purple-700 underline-offset-2 hover:underline">
+          <Link href="/admin/designers" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
             Open the designer roster
           </Link>
         ) : (

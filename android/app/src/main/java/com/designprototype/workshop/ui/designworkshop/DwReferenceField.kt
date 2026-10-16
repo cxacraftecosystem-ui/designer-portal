@@ -1959,7 +1959,9 @@ internal fun buildReferenceOptions(
 }
 
 /** A recognisable stand-in for an id whose record this device cannot name. Never a bare UUID. */
-private fun orphanLabel(id: String): String = "Linked record ${id.take(8)}"
+// Words, not a fragment of an id (UX audit 2026-10-16, DA-31): "Linked record a3f10c2b" read as a broken link.
+@Suppress("UNUSED_PARAMETER")
+private fun orphanLabel(id: String): String = "A linked record not yet on this phone"
 
 /**
  * A held value this device cannot name, drawn as WHAT IT ACTUALLY IS.

@@ -439,7 +439,7 @@ export function ReviewCard({
         </p>
 
         {problem ? (
-          <p className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{problem}</p>
+          <p className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{problem}</p>
         ) : null}
         {saved ? (
           <p

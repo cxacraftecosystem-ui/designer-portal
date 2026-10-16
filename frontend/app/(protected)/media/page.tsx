@@ -642,6 +642,93 @@ function MediaPageBody() {
       ? "Choose a record type"
       : `Upload ${selectedFiles.length || ""} media file${selectedFiles.length === 1 ? "" : "s"}`;
 
+  /** The preview cell of one file — table row and phone card share it. */
+  const mediaPreview = (item: MediaFile) =>
+    item.url ? (
+      <div className="w-36">
+        <MediaPreviewTile
+          item={{
+            key: item.id,
+            id: item.id,
+            name: item.originalFilename,
+            mediaType: item.mediaType,
+            mimeType: item.mimeType,
+            sizeBytes: item.sizeBytes,
+            url: item.url,
+            caption: item.caption
+          }}
+          onOpen={() =>
+            setActivePreview({
+              key: item.id,
+              id: item.id,
+              name: item.originalFilename,
+              mediaType: item.mediaType,
+              mimeType: item.mimeType,
+              sizeBytes: item.sizeBytes,
+              url: item.url,
+              caption: item.caption,
+              transcriptStatus: item.transcriptStatus,
+              transcriptText: item.transcriptText,
+              transcriptError: item.transcriptError
+            })
+          }
+        />
+      </div>
+    ) : (
+      <span className="text-ink-500">No URL</span>
+    );
+
+  /** One file's actions — Code, Transcribe, Delete, and the held word. Table and phone card share them. */
+  const mediaActions = (item: MediaFile, hold: HeldPostRefusal) => (
+    <RowActions>
+      <button
+        className={rowAction("neutral", codeFor === item.id ? "bg-surface-50" : undefined)}
+        onClick={() => setCodeFor(codeFor === item.id ? null : item.id)}
+        aria-expanded={codeFor === item.id}
+      >
+        <QrCode className="h-3.5 w-3.5" aria-hidden />
+        {codeFor === item.id ? "Hide code" : "Code"}
+      </button>
+      {canTranscribe && item.mediaType === "AUDIO" ? (
+        <button
+          className={rowAction("edit")}
+          onClick={() => transcribeNow(item)}
+          disabled={transcribingId === item.id || writesHeld(hold)}
+          aria-describedby={typeof hold === "string" ? heldNoticeId : undefined}
+          data-testid="media-transcribe-now"
+        >
+          {transcribingId === item.id ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <AudioLines className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {transcribingId === item.id
+            ? "Transcribing…"
+            : item.transcriptText
+              ? "Re-transcribe now"
+              : "Transcribe now"}
+        </button>
+      ) : null}
+      {adminMode ? (
+        <button
+          className={rowAction("danger")}
+          onClick={() => remove(item)}
+          disabled={writesHeld(hold)}
+          aria-describedby={typeof hold === "string" ? heldNoticeId : undefined}
+        >
+          Delete
+        </button>
+      ) : null}
+      {/* The word, so a held row is never told apart by greyed buttons alone. The
+          amber pair, not amber ink: the table's ground inverts and the pair does not. */}
+      {typeof hold === "string" ? (
+        <span className="self-center rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
+          {MEDIA_HELD_LABEL}
+        </span>
+      ) : null}
+    </RowActions>
+  );
+
   return (
     <>
       <PageHeader
@@ -829,7 +916,58 @@ function MediaPageBody() {
             <EmptyState title="No media uploaded" body={search ? "Nothing matches this search." : undefined} />
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* PHONES: ONE CARD PER FILE (UX audit DW-07). The 1200px table put everything after the
+              preview off-screen at 390px. Below `md` each file is a card — preview, name, status, one
+              meta line and the actions; the transcript stays one tap away in its own disclosure. */}
+          <ul className="divide-y divide-line-200 md:hidden">
+            {data.items.map((item) => {
+              const hold = holdOf(item);
+              return (
+                <li key={item.id} className="px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <div className="shrink-0">{mediaPreview(item)}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <p className="min-w-0 break-words font-medium text-ink-900">{item.originalFilename}</p>
+                        <StatusBadge status={item.status} />
+                      </div>
+                      {item.caption ? <p className="truncate text-xs text-ink-500">{item.caption}</p> : null}
+                      <p className="mt-1 text-xs leading-5 text-ink-500">
+                        {[
+                          item.mediaType,
+                          bytes(item.sizeBytes),
+                          item.linkedRecordType ? LINK_TYPE_LABEL.get(item.linkedRecordType) ?? item.linkedRecordType : null,
+                          formatDateTime(item.createdAt)
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                      {item.transcriptText ? (
+                        <details className="mt-1 text-sm">
+                          <summary className="cursor-pointer font-semibold text-field-700 dark:text-purple-300 pointer-coarse:py-2">
+                            View transcript
+                          </summary>
+                          <div className="mt-2 max-h-64 overflow-auto rounded-md bg-field-100 p-3">
+                            <Markdown text={item.transcriptText} />
+                          </div>
+                        </details>
+                      ) : item.transcriptError ? (
+                        <p className="mt-1 text-xs text-red-700 dark:text-red-400">{item.transcriptError}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="mt-3 [&>div]:justify-start">{mediaActions(item, hold)}</div>
+                  {codeFor === item.id ? (
+                    <div className="mt-3 rounded-md bg-surface-50 p-3">
+                      <RecordCodeCard recordType="media" id={item.id} title={item.caption?.trim() || item.originalFilename} />
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[1200px] text-left text-sm">
               <thead className="bg-surface-50 text-xs uppercase text-ink-500">
                 <tr>
@@ -853,39 +991,7 @@ function MediaPageBody() {
                     <Fragment key={item.id}>
                       <tr>
                         <td className="px-4 py-3">
-                          {item.url ? (
-                            <div className="w-36">
-                              <MediaPreviewTile
-                                item={{
-                                  key: item.id,
-                                  id: item.id,
-                                  name: item.originalFilename,
-                                  mediaType: item.mediaType,
-                                  mimeType: item.mimeType,
-                                  sizeBytes: item.sizeBytes,
-                                  url: item.url,
-                                  caption: item.caption
-                                }}
-                                onOpen={() =>
-                                  setActivePreview({
-                                    key: item.id,
-                                    id: item.id,
-                                    name: item.originalFilename,
-                                    mediaType: item.mediaType,
-                                    mimeType: item.mimeType,
-                                    sizeBytes: item.sizeBytes,
-                                    url: item.url,
-                                    caption: item.caption,
-                                    transcriptStatus: item.transcriptStatus,
-                                    transcriptText: item.transcriptText,
-                                    transcriptError: item.transcriptError
-                                  })
-                                }
-                              />
-                            </div>
-                          ) : (
-                            <span className="text-ink-500">No URL</span>
-                          )}
+                          {mediaPreview(item)}
                         </td>
                         <td className="px-4 py-3">
                           <div className="font-medium text-ink-900">{item.originalFilename}</div>
@@ -899,7 +1005,7 @@ function MediaPageBody() {
                         <td className="px-4 py-3 text-ink-700">
                           {item.transcriptText ? (
                             <details>
-                              <summary className="cursor-pointer font-semibold text-field-700">View transcript</summary>
+                              <summary className="cursor-pointer font-semibold text-field-700 dark:text-purple-300">View transcript</summary>
                               <div className="mt-2 max-h-64 min-w-64 overflow-auto rounded-md bg-field-100 p-3">
                                 <Markdown text={item.transcriptText} />
                               </div>
@@ -911,7 +1017,7 @@ function MediaPageBody() {
                                   that failed read as one word with no cause and no recourse. The reason
                                   is stored on the row; print it. */}
                               {item.transcriptError ? (
-                                <div className="mt-1 max-w-xs text-xs text-red-700">{item.transcriptError}</div>
+                                <div className="mt-1 max-w-xs text-xs text-red-700 dark:text-red-400">{item.transcriptError}</div>
                               ) : null}
                             </>
                           )}
@@ -930,53 +1036,7 @@ function MediaPageBody() {
                               tag that opens it is the exact gap the tag exists to close. The "Admin only"
                               line this cell used to fall back to is gone with it — the cell is never
                               empty now. */}
-                          <RowActions>
-                            <button
-                              className={rowAction("neutral", codeFor === item.id ? "bg-surface-50" : undefined)}
-                              onClick={() => setCodeFor(codeFor === item.id ? null : item.id)}
-                              aria-expanded={codeFor === item.id}
-                            >
-                              <QrCode className="h-3.5 w-3.5" aria-hidden />
-                              {codeFor === item.id ? "Hide code" : "Code"}
-                            </button>
-                            {canTranscribe && item.mediaType === "AUDIO" ? (
-                              <button
-                                className={rowAction("edit")}
-                                onClick={() => transcribeNow(item)}
-                                disabled={transcribingId === item.id || writesHeld(hold)}
-                                aria-describedby={typeof hold === "string" ? heldNoticeId : undefined}
-                                data-testid="media-transcribe-now"
-                              >
-                                {transcribingId === item.id ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                                ) : (
-                                  <AudioLines className="h-3.5 w-3.5" aria-hidden />
-                                )}
-                                {transcribingId === item.id
-                                  ? "Transcribing…"
-                                  : item.transcriptText
-                                    ? "Re-transcribe now"
-                                    : "Transcribe now"}
-                              </button>
-                            ) : null}
-                            {adminMode ? (
-                              <button
-                                className={rowAction("danger")}
-                                onClick={() => remove(item)}
-                                disabled={writesHeld(hold)}
-                                aria-describedby={typeof hold === "string" ? heldNoticeId : undefined}
-                              >
-                                Delete
-                              </button>
-                            ) : null}
-                            {/* The word, so a held row is never told apart by greyed buttons alone. The
-                                amber pair, not amber ink: the table's ground inverts and the pair does not. */}
-                            {typeof hold === "string" ? (
-                              <span className="self-center rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
-                                {MEDIA_HELD_LABEL}
-                              </span>
-                            ) : null}
-                          </RowActions>
+                          {mediaActions(item, hold)}
                         </td>
                       </tr>
                       {codeFor === item.id ? (
@@ -1008,6 +1068,7 @@ function MediaPageBody() {
               </tbody>
             </table>
           </div>
+          </>
         )}
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>

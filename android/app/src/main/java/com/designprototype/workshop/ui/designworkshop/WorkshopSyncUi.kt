@@ -191,7 +191,7 @@ internal fun WorkshopSyncActions(
                         "Nothing above has been deleted from this device. Everything listed is still " +
                             "here and still editable.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -314,7 +314,7 @@ internal fun DeviceSyncBanner(
             Text(
                 banner.detail,
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 10.sp
+                fontSize = 11.sp
             )
         }
         OutlinedButton(onClick = onSyncNow, enabled = !busy) {

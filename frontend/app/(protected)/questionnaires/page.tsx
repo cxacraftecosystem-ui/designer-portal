@@ -468,7 +468,7 @@ export default function QuestionnairesPage() {
       <p className="mb-5 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
         Looking for the shared artisan questionnaire — the standard one, with its sections and questions already
         in place? It is separate from the ones on this page and it lives on{" "}
-        <Link href="/questionnaire" className="font-medium text-purple-700 underline-offset-2 hover:underline">
+        <Link href="/questionnaire" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
           Take interview
         </Link>
         , where every signed-in account can answer it. The questionnaires below are the ones you built yourself.
@@ -664,7 +664,7 @@ export default function QuestionnairesPage() {
         <label className="flex items-start gap-2.5 text-sm leading-6 text-ink-900">
           <input
             type="checkbox"
-            className="mt-1.5 h-4 w-4 rounded border-line-200 text-purple-700"
+            className="mt-1.5 h-4 w-4 rounded border-line-200 text-purple-700 dark:text-purple-300"
             checked={showDeactivated}
             onChange={(event) => {
               setShowDeactivated(event.target.checked);

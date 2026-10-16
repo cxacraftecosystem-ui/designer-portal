@@ -405,6 +405,8 @@ fun MapScreen(
     var data by remember { mutableStateOf<MapPointsDto?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Bumped by Try again on the error card, which re-runs the load below (UX audit DA-43).
+    var retryKey by remember { mutableStateOf(0) }
     var selectedKey by remember { mutableStateOf<String?>(null) }
 
     /**
@@ -482,7 +484,7 @@ fun MapScreen(
         flashKey = null
     }
 
-    LaunchedEffect(level, workshopScope.requestKey, workshopScope.settled, activeFocusType, activeFocusId) {
+    LaunchedEffect(level, workshopScope.requestKey, workshopScope.settled, activeFocusType, activeFocusId, retryKey) {
         if (!workshopScope.settled) return@LaunchedEffect
         loading = true
         // Cleared BEFORE the request, not after it: a failed load followed by a level change would
@@ -595,7 +597,7 @@ fun MapScreen(
 
         when {
             error != null -> MapCard(title = "The map could not be loaded") {
-                Text(error.orEmpty(), color = MaterialTheme.field.body, fontSize = 13.sp)
+                LoadFailedCard(message = error.orEmpty(), onRetry = { retryKey++ })
             }
 
             current == null -> MapCard(title = "Placing the records…") {
@@ -761,18 +763,12 @@ private fun DetailLevelControl(
         levelHint(selected)?.let { hint ->
             Text(hint, color = MaterialTheme.field.muted, fontSize = 11.sp)
         }
+        // One line (UX audit 2026-10-16, DA-27). It was a nine-line paragraph about boundary data,
+        // ending in a count of districts the data does not draw — a gap admission, not a map key.
         Text(
-            "The outline is the international border, as the Government of India depicts it, and it " +
-                "is the same line at every level: state and district borders are clipped to it, so " +
-                "changing the detail never moves the national boundary. State borders are drawn at " +
-                "State and District; district borders at District. Records stay labelled, sized " +
-                "points per state or district rather than shaded regions — the pin says how many " +
-                "records are there, the border says where the unit ends. 43 of the 795 districts have " +
-                "no border of their own in the published boundary data — most were notified after it " +
-                "was published. Their records are placed and counted exactly like every other, inside " +
-                "the parent district each was carved from, or their state where that is not on record.",
+            "Pins show how many records are in each place. The outline follows India's official border.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            fontSize = 12.sp
         )
     }
 }
@@ -2286,10 +2282,10 @@ private fun PointRecordRow(
         Text(
             row.type.uppercase(Locale.ROOT),
             color = MaterialTheme.field.muted,
-            fontSize = 9.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
-            modifier = Modifier.width(62.dp)
+            modifier = Modifier.width(76.dp)
         )
         Text(
             row.title.ifBlank { "Untitled" },
@@ -2364,7 +2360,7 @@ private fun MapPill(text: String, emphasised: Boolean = false) {
     Text(
         text,
         color = foreground,
-        fontSize = 9.sp,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
         maxLines = 1,
         modifier = Modifier

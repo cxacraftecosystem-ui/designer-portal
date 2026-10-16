@@ -691,7 +691,7 @@ function PlatformAccessScreen() {
       */}
       <p className="mb-4 text-sm leading-6 text-ink-500">
         This list decides who may sign in at all. Who the institution recognises as a designer is on the{" "}
-        <Link href="/admin/designers" className="font-medium text-purple-700 hover:underline">
+        <Link href="/admin/designers" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
           designer roster
         </Link>
         . The master admin can always sign in, so somebody can always let people back in.
@@ -716,7 +716,7 @@ function PlatformAccessScreen() {
           {passwordAccount && passwordAccount.notice === notice ? (
             <>
               {" "}Will they sign in with a password instead? Adding them here does not create a password account —{" "}
-              <Link href={passwordAccount.href} className="font-medium text-purple-700 hover:underline">
+              <Link href={passwordAccount.href} className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
                 create their password account on Manage users
               </Link>
               {/* Two sentences, because the link carries a tier only when one was chosen here. An
@@ -823,7 +823,7 @@ function PlatformAccessScreen() {
                 For somebody who signs in with Google, no account is needed: the account is created the first time
                 they sign in with Google. Somebody who will sign in with a
                 password needs an account made for them on{" "}
-                <Link href="/users" className="font-medium text-purple-700 hover:underline">
+                <Link href="/users" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
                   Manage users
                 </Link>
                 , which adds the address here as well. Adding somebody here approves them, so they never appear in the

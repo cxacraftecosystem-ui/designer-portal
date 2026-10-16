@@ -1783,8 +1783,10 @@ test("off-page recovery is decided at every site, and both answers are in use", 
   // And the recovering sites reach for the ONE hook rather than a fourth hand-rolled merge. The
   // inspectors panel had one of the three copies — `options.push({ value: workshopId, … })` after the
   // loop — and it is gone with the label builder it depended on.
-  expect(withoutComments(read("components", "forms", "DesignWorkshopSelect.tsx"))).toContain(
-    'useRecordOffPage<DwSummary>("/design-workshops"'
+  // `useRecordOffPageState` is the same hook with the refusal kept (2026-10-16, UX audit DW-03): the
+  // record forms withdraw a prefill this account cannot read rather than keep it invisible.
+  expect(withoutComments(read("components", "forms", "DesignWorkshopSelect.tsx"))).toMatch(
+    /useRecordOffPageState<DwSummary>\(\s*"\/design-workshops"/
   );
   expect(withoutComments(read("app", "(protected)", "questionnaires", "[id]", "page.tsx"))).toContain(
     'useRecordOffPage<DwSummary>('

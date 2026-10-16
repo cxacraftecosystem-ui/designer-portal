@@ -215,7 +215,7 @@ export function ReaderFilesPanel({
         can be changed, and the links stop working a few minutes after the page loads — Refresh files renews them.
       </p>
       {state === "loading" ? <p className="text-sm text-ink-700">Loading the files…</p> : null}
-      {state === "failed" ? <p className="text-sm text-red-700">{failure}</p> : null}
+      {state === "failed" ? <p className="text-sm text-red-700 dark:text-red-400">{failure}</p> : null}
       {state === "ready" && files.length === 0 ? (
         <p className="text-sm text-ink-700">No files have been filed with this workshop.</p>
       ) : null}

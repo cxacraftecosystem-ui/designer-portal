@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.Intent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -248,7 +250,7 @@ fun WorkshopCodesScreen(
             remoteStages = loaded.third
             deviceOnlyNote = note
         }.onFailure {
-            onError(it.message ?: "Unable to read this workshop's prototypes and roster.")
+            onError(it.userMessage("Unable to read this workshop's prototypes and roster."))
         }
         loading = false
     }
@@ -515,7 +517,7 @@ fun WorkshopCodesScreen(
                             exported = it
                             onMessage("Saved ${it.fileName}")
                         }
-                        .onFailure { onError(it.message ?: "The sheet could not be written.") }
+                        .onFailure { onError(it.userMessage("The sheet could not be written.")) }
                     exporting = false
                 }
             },
@@ -1162,7 +1164,7 @@ private fun DwDesignWorkshopCodeCard(workshopId: String) {
                 )
             }.fold(
                 onSuccess = { it to null },
-                onFailure = { null to (it.message ?: "This code could not be drawn.") },
+                onFailure = { null to (it.userMessage("This code could not be drawn.")) },
             )
         }
     }

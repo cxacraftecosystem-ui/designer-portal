@@ -406,7 +406,7 @@ export function AiVerbReviewDialog({
           <p
             className={
               result.aiVerbsRemaining <= AI_VERB_COUNTDOWN_FROM
-                ? "text-xs leading-5 text-amber-800"
+                ? "text-xs leading-5 text-amber-800 dark:text-amber-100"
                 : "text-xs leading-5 text-ink-500"
             }
           >

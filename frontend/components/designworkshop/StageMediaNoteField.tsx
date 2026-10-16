@@ -527,7 +527,7 @@ export function StageMediaNoteField({
                 record&apos;s own count is kept as the first sentence — narrowing never makes it smaller.{" "}
                 <button
                   type="button"
-                  className="font-medium text-purple-700 underline underline-offset-2"
+                  className="font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2"
                   onClick={() => applySelection([])}
                   disabled={disabled}
                 >
@@ -636,7 +636,7 @@ export function StageMediaNoteField({
           <span className="font-medium">{recordCount}</span>{" "}
           <button
             type="button"
-            className="font-medium text-purple-700 underline underline-offset-2"
+            className="font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2"
             onClick={() => {
               setPicked([]);
               setRefusedOverrun(0);
