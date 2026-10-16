@@ -261,6 +261,15 @@ def render(
                 "Choose your password with the link below, then sign in with this e-mail address."
             )
             label = "Choose your password"
+        elif params.get("requestedBy") == "self":
+            # "Forgot your password?" — the person asked, so the message says so, and says that the
+            # second step (if it is on) is still asked for at sign-in afterwards.
+            lead = (
+                f"You asked for a link to set a new password for {PRODUCT_NAME}. Setting it signs you "
+                "out everywhere you are signed in. If two-step verification is on for your account, "
+                "you will still need your authenticator app to sign in afterwards."
+            )
+            label = "Set a new password"
         else:
             lead = (
                 f"An administrator has issued you a link to set a new password for {PRODUCT_NAME}. "

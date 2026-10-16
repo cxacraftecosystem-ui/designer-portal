@@ -188,15 +188,17 @@ test("account provisioning is a set: the ministry admin and both admin tiers, an
     expect(canManageUsers(user(role)), role).toBe(true);
   }
 
-  // The create ceiling is the minting ceiling above: inclusive of one's own tier, below admin for a
-  // ministry admin, and MASTER_ADMIN for a master admin alone.
+  // The create ceiling is STRICTLY below one's own tier (owner's decision, 2026-10-16): a ministry
+  // admin creates up to Regional Director, an admin up to Ministry Admin, and only the master admin
+  // creates an Admin.
   const ministry = provisionableRoles(user("MINISTRY_ADMIN"));
-  expect(ministry).toEqual(assignableRoles(user("MINISTRY_ADMIN")));
-  expect(ministry).toContain("MINISTRY_ADMIN");
-  expect(ministry).not.toContain("ADMIN");
-  expect(provisionableRoles(user("ADMIN"))).toContain("ADMIN");
-  expect(provisionableRoles(user("ADMIN"))).not.toContain("MASTER_ADMIN");
-  expect(provisionableRoles(user("MASTER_ADMIN"))).toContain("MASTER_ADMIN");
+  expect(ministry).toEqual(assignableRoles(user("MINISTRY_ADMIN")).filter((role) => role !== "MINISTRY_ADMIN"));
+  expect(ministry).not.toContain("MINISTRY_ADMIN");
+  expect(ministry).toContain("REGIONAL_DIRECTOR");
+  expect(provisionableRoles(user("ADMIN"))).toContain("MINISTRY_ADMIN");
+  expect(provisionableRoles(user("ADMIN"))).not.toContain("ADMIN");
+  expect(provisionableRoles(user("MASTER_ADMIN"))).toContain("ADMIN");
+  expect(provisionableRoles(user("MASTER_ADMIN"))).not.toContain("MASTER_ADMIN");
 });
 
 test("the review queue's Edit is the server's can_edit_others_record: Professor and above, over a creator below", () => {

@@ -339,8 +339,17 @@ class CredentialDelivery(Protocol):
 
     name: str
 
-    async def deliver(self, *, user: Any, link: str, purpose: str, expires_at: datetime) -> str:
-        """Return the ``deliveredBy`` value the clients render."""
+    async def deliver(
+        self,
+        *,
+        user: Any,
+        link: str,
+        purpose: str,
+        expires_at: datetime,
+        requested_by: str = "administrator",
+    ) -> str:
+        """Return the ``deliveredBy`` value the clients render. ``requested_by`` is ``administrator``
+        or ``self`` ("Forgot your password?"), and only changes the words of an e-mail."""
 
 
 class CopyLinkDelivery:
@@ -353,7 +362,15 @@ class CopyLinkDelivery:
 
     name = "COPY_LINK"
 
-    async def deliver(self, *, user: Any, link: str, purpose: str, expires_at: datetime) -> str:
+    async def deliver(
+        self,
+        *,
+        user: Any,
+        link: str,
+        purpose: str,
+        expires_at: datetime,
+        requested_by: str = "administrator",
+    ) -> str:
         # At INFO and WITHOUT THE LINK. The link is a credential; the fact that one was issued is
         # an operational event worth having in a log, and the credential itself is not. The account
         # is named by its id, like every other line about a password in this product.
@@ -376,7 +393,15 @@ class EmailDelivery:
 
     name = "EMAIL"
 
-    async def deliver(self, *, user: Any, link: str, purpose: str, expires_at: datetime) -> str:
+    async def deliver(
+        self,
+        *,
+        user: Any,
+        link: str,
+        purpose: str,
+        expires_at: datetime,
+        requested_by: str = "administrator",
+    ) -> str:
         from app.services import email_outbox, mailer
 
         row = await email_outbox.enqueue(
@@ -387,6 +412,7 @@ class EmailDelivery:
                 "purpose": purpose,
                 "recipientName": getattr(user, "name", None),
                 "expiresAt": expires_at.isoformat(),
+                "requestedBy": requested_by,
             },
             secret=link,
         )
@@ -442,6 +468,7 @@ async def issue_link(
     purpose: str | None = None,
     issued_by_id: str | None = None,
     deliver_by: str = COPY_LINK,
+    requested_by: str = "administrator",
 ) -> DeliveredLink:
     """Mint, record, deliver.
 
@@ -487,7 +514,11 @@ async def issue_link(
     )
     try:
         delivered = await delivery(deliver_by).deliver(
-            user=user, link=link_for(token), purpose=kind, expires_at=expires_at
+            user=user,
+            link=link_for(token),
+            purpose=kind,
+            expires_at=expires_at,
+            requested_by=requested_by,
         )
     except Exception:
         # Nobody holds this link — it was never handed back and never queued — so the row is
@@ -581,3 +612,16 @@ async def mark_used(raw: str) -> None:
         await db.passwordresettoken.update(
             where={"id": row.id}, data={"usedAt": datetime.now(UTC)}
         )
+
+
+async def self_service_links_since(user_id: str, since: datetime) -> int:
+    """How many links "Forgot your password?" has minted for *user_id* since *since*.
+
+    The self-service door's own, SILENT, per-address cap (``services/password_reset``) reads this: a
+    link nobody issued (``issuedById`` NULL) is a link the account's own address asked for. Links an
+    administrator made are not counted, so a flood of strangers' requests can never use up an
+    administrator's ability to help — :data:`ISSUE_BUDGET` still bounds the two together.
+    """
+    return await db.passwordresettoken.count(
+        where={"userId": user_id, "issuedById": None, "createdAt": {"gte": since}}
+    )

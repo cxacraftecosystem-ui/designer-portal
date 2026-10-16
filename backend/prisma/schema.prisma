@@ -5700,6 +5700,30 @@ model PasswordResetToken {
   @@index([issuedById])
 }
 
+/// ONE ROW PER "FORGOT YOUR PASSWORD?" REQUEST — the audit trail of the self-service door.
+///
+/// Written for EVERY well-formed request, unknown addresses included, after the one neutral answer
+/// has gone (`app/services/password_reset.py`). The typed address is kept as typed (normalised), with
+/// the client address beside it, so "I asked and nothing came" and "somebody keeps asking for my
+/// address" can both be answered. `accountId` is a plain column and not a relation: the row is about
+/// the REQUEST, and it must outlive the account it matched.
+///
+/// `outcome` is one of: emailed, unknown-address, no-password, not-admitted, address-rate-limited,
+/// email-not-configured, email-failed. Never shown to the person who asked.
+model PasswordResetRequest {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  email     String
+  accountId String?
+  outcome   String
+  ipAddress String?
+  userAgent String?
+
+  @@index([email, createdAt])
+  @@index([accountId])
+  @@index([createdAt])
+}
+
 /// One sign-in that passed its first factor and is waiting on the second.
 ///
 /// The challenge token handed to the client is a signed JWT carrying this row's `id` as its `jti`;

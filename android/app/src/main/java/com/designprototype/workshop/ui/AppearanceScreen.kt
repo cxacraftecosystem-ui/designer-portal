@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 // leads to a CONSENT and its withdrawal — the figures behind it are the smaller half. A chart glyph
 // here would read as the admin's aggregate, which is a different screen at a different rank.
 import androidx.compose.material.icons.filled.Policy
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.VpnKey
@@ -414,6 +415,8 @@ fun AppearanceScreen(
     onOpenUsageRecording: () -> Unit,
     /** Open this account's own two-step verification. */
     onOpenTwoStepVerification: () -> Unit,
+    /** Open Settings → Password: change it, or set a first one. */
+    onOpenPassword: () -> Unit = {},
     /**
      * Re-open the first-run walkthrough. See the row at the bottom of this screen for why a settings
      * page carries it at all.
@@ -631,6 +634,13 @@ fun AppearanceScreen(
          * on another phone, on the web — asks for the code. Its summary says what it is rather than
          * whether it is on, for the usage row's reason: the state is a network read.
          */
+        SettingsRow(
+            icon = Icons.Filled.Key,
+            title = "Password",
+            summary = "Change your password, or set one to sign in with your email address",
+            onClick = onOpenPassword,
+        )
+
         SettingsRow(
             icon = Icons.Filled.Security,
             title = "Two-step verification",

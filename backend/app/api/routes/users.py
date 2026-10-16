@@ -21,7 +21,7 @@ from app.core.deps import (
     role_value,
 )
 from app.core.security import hash_password
-from app.core.user_fields import SECRET_USER_FIELDS
+from app.core.user_fields import HAS_PASSWORD_KEY, SECRET_USER_FIELDS
 from app.schemas.users import UserCreate, UserUpdate
 from app.services import access_roster, credential_links, two_factor
 from app.services.aadhaar import flags as aadhaar_flags
@@ -44,7 +44,7 @@ from app.services.account_provisioning import (
     assert_not_escaping_a_bar,
     assert_not_overturning_a_bar,
     assert_role,
-    create_account,
+    create_account_in_one_step,
     email_in_use,
     holds_a_temporary_password,
     is_master_address,
@@ -104,6 +104,7 @@ def serialize_user(user: Any) -> dict[str, Any]:
     # ``twoFactorEnabled`` stays: it is the "Two-step on" badge.
     for field in SECRET_USER_FIELDS:
         payload.pop(field, None)
+    payload[HAS_PASSWORD_KEY] = getattr(user, "passwordHash", None) is not None
     # The Aadhaar result columns ride out only while a verification feature is switched on.
     return aadhaar_flags.hide_columns(payload)
 
@@ -202,9 +203,28 @@ async def create_user(
     ``mustChangePassword`` comes from the body and defaults to True. The answer is the ordinary user
     payload, which carries ``mustChangePassword``, ``passwordSetAt`` and ``firstLoginAt`` so the
     screen can say what to hand over and whether the temporary secret is still live.
+
+    **ONE STEP SINCE 2026-10-17 (owner).** ``passwordMode`` chooses the way in — SET, GENERATE (the
+    temporary password is answered once, as ``temporaryPassword``) or NONE (provider only, with
+    ``sendPasswordLink`` e-mailing a set-password link after the commit). The account, its
+    allow-list admission and its role's own list are written in ONE transaction; an account is made
+    only strictly below the creator's role, an admin only by a master admin; a duplicate is a 409
+    naming the existing account, with ``X-Existing-Account-Id``. See
+    ``account_provisioning.create_account_in_one_step``.
     """
-    user = await create_account(current_user, payload)
-    return serialize_user(user)
+    created = await create_account_in_one_step(current_user, payload)
+    answer = serialize_user(created.user)
+    # THE ONE-STEP ACCOUNT'S EXTRAS (2026-10-17). The generated temporary password is in this answer
+    # and NOWHERE ELSE — not a log line, not a column — so the screen shows it once, with Copy.
+    if created.temporary_password is not None:
+        answer["temporaryPassword"] = created.temporary_password
+    if created.password_link is not None:
+        answer["passwordLink"] = created.password_link
+    if created.password_link_error is not None:
+        answer["passwordLinkError"] = created.password_link_error
+    answer["rosterAdded"] = True
+    answer["roleListsAdded"] = created.role_lists
+    return answer
 
 
 @router.patch("/{user_id}")
@@ -830,6 +850,42 @@ async def reset_two_factor(
         destroyed,
     )
     updated = await db.user.find_unique(where={"id": target.id})
+    return serialize_user(updated)
+
+
+#: Your own account is not signed out from the users screen. "Sign out" ends this device; a
+#: password change ends the rest.
+OWN_SESSIONS_DETAIL = (
+    "Use Sign out on this device instead; your own sessions end when you change your password."
+)
+
+
+@router.post("/{user_id}/sign-out-everywhere")
+async def sign_out_everywhere(
+    user_id: str, current_user: Any = Depends(require_account_provisioner)
+) -> dict[str, Any]:
+    """Sign somebody out of every device — "help them back in" when a phone was lost or shared.
+
+    THE PASSWORD-RESET AUTHORITY, EXACTLY (``account_provisioning.assert_may_reset_credentials``): a
+    provisioner, on an account it may manage, never its own. Ending somebody's sessions is half of
+    what a reset does, so whoever may do the one may do the other, and nobody else.
+
+    It stamps ``User.sessionsValidFrom``, the watermark ``deps._user_from_bearer`` refuses every older
+    token against — the same column a link redemption, a temporary password and the two-step reset
+    write. Nothing else changes: the password, the second step and the access stay as they are, so
+    the person simply signs in again. Answers the account as the users screen shows it.
+    """
+    target = await db.user.find_unique(where={"id": user_id})
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if target.id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=OWN_SESSIONS_DETAIL)
+    assert_may_reset_credentials(current_user, target)
+    updated = await db.user.update(
+        where={"id": target.id}, data={"sessionsValidFrom": datetime.now(UTC)}
+    )
+    invalidate_cached_user(target.id)
+    logger.info("users: %s signed account %s out of every device", current_user.id, target.id)
     return serialize_user(updated)
 
 

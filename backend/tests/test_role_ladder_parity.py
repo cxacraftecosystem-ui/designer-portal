@@ -851,6 +851,17 @@ MIRRORS: tuple[Mirror, ...] = (
         ),
     ),
     Mirror(
+        path=f"{_ANDROID_UI}/ui/AddPersonCopy.kt",
+        binding="ALL_ROLES",
+        kind="closed",
+        pattern=r"val ALL_ROLES = listOf\(([\s\S]*?)\n\)",
+        why=(
+            "Added 2026-10-16 with the one-step Add a person form. `creatableRoles` filters THIS list "
+            "by rank to decide which roles the form offers, so a tier missing here is a role an "
+            "administrator can never create from the handset, although the server would allow it."
+        ),
+    ),
+    Mirror(
         path=f"{_ANDROID_TEST}/ui/AppSearchTest.kt",
         binding="everyRole",
         kind="closed",
@@ -1368,6 +1379,17 @@ LADDER_SHAPED = 5
 #: reason has to be "this does not purport to enumerate the ladder" — never "this failure was
 #: inconvenient". Anything that DOES enumerate belongs in ``MIRRORS``, not here.
 KNOWN_NON_MIRRORS: dict[str, str] = {
+    "android/app/src/test/java/com/designprototype/workshop/ui/AddPersonCopyTest.kt": (
+        "Tiers named in individual assertions, and NOT an enumeration -- no tuple, map or loop. It pins "
+        "`creatableRoles` at its edges: an ADMIN tops out at MINISTRY_ADMIN, a MASTER_ADMIN is offered "
+        "ADMIN and never MASTER_ADMIN. The list it filters, `ALL_ROLES` in ui/AddPersonCopy.kt, is the "
+        "`closed` mirror above, so a new tier reaches the function without this file changing."
+    ),
+    "frontend/e2e/account-recovery-unit.spec.ts": (
+        "Tiers named in individual assertions, and NOT an enumeration. It pins `provisionableRoles` at "
+        "its edges (strictly below the viewer; ADMIN only for the master admin); the ladder that "
+        "function walks is `lib/permissions.ts::ROLE_RANK`, already a `ranked` mirror above."
+    ),
     "android/app/src/test/java/com/designprototype/workshop/ui/designworkshop/DwAdoptOfferScopeTest.kt": (
         "Eight tiers named in individual assertions, and NOT an enumeration -- there is no tuple, no "
         "map and no loop. It pins one boolean, `dwOfferDraftMove`, at the four points where its two "
