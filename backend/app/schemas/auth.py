@@ -134,6 +134,10 @@ class ChangePasswordRequest(APIModel):
 
     currentPassword: str = Field(default="", max_length=MAX_PASSWORD_LENGTH)
     newPassword: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)
+    #: The second step, for a FIRST password on an account that has two-step verification on
+    #: (2026-10-17): a six-digit code or a recovery code. Ignored on an ordinary change, where the
+    #: current password is the proof. The bound is a budget, like ``TwoFactorCodeRequest.code``'s.
+    twoFactorCode: str | None = Field(default=None, max_length=64)
 
 
 class ForgotPasswordRequest(APIModel):

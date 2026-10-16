@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 
 import { newAccountBody, rowOffers } from "@/app/(protected)/users/accountAdmin";
 import { ApiError } from "@/lib/api";
+import { firstPasswordNeedsCode, twoFactorCodeRequired } from "@/lib/passwordChange";
 import { provisionableRoles } from "@/lib/permissions";
 import { EXISTING_ACCOUNT_HEADER, existingAccountId, retryAfterWords } from "@/lib/signIn";
 import type { User } from "@/lib/types";
@@ -168,4 +169,37 @@ test("the form asks how they will sign in, shows a generated password once, and 
   expect(USERS).toMatch(/passwordMode === "NONE" && mailAvailable \? \([\s\S]{0,400}Email them a link to set a password too/);
   expect(USERS).toContain("They must change it when they first sign in");
   expect(USERS).toMatch(/aria-label="Temporary password"/);
+});
+
+const CARD = read("components", "settings", "ChangePasswordCard.tsx");
+const ASSET_LINKS = read("public", ".well-known", "assetlinks.json");
+const NEXT_CONFIG = read("next.config.ts");
+
+test("a first password on a two-step account asks for the code and sends it", () => {
+  expect(firstPasswordNeedsCode({ twoFactorEnabled: true })).toBe(true);
+  expect(firstPasswordNeedsCode({ twoFactorEnabled: false })).toBe(false);
+  expect(firstPasswordNeedsCode(null)).toBe(false);
+  expect(SIGN_IN).toMatch(/twoFactorCode: code/);
+  expect(CARD).toMatch(/Code from your authenticator app/);
+  expect(CARD).toMatch(/setFirstPassword\(next, askCode \? code : undefined\)/);
+});
+
+test("a refusal for the two-step code is read off its header, not its words", () => {
+  const refused = new ApiError(400, "Enter the code", null, new Headers({ "x-two-factor-required": "1" }));
+  expect(twoFactorCodeRequired(refused)).toBe(true);
+  expect(twoFactorCodeRequired(new ApiError(400, "Enter the code", null, new Headers()))).toBe(false);
+  expect(twoFactorCodeRequired(new ApiError(401, "x", null, new Headers({ "x-two-factor-required": "1" })))).toBe(false);
+});
+
+test("assetlinks.json names the app and a release certificate fingerprint, served as JSON", () => {
+  const statements = JSON.parse(ASSET_LINKS) as Array<{
+    relation: string[];
+    target: { namespace: string; package_name: string; sha256_cert_fingerprints: string[] };
+  }>;
+  const app = statements.find((s) => s.target.namespace === "android_app");
+  expect(app?.relation).toContain("delegate_permission/common.handle_all_urls");
+  expect(app?.target.package_name).toBe("com.designprototype.workshop");
+  expect(app?.target.sha256_cert_fingerprints.length).toBeGreaterThan(0);
+  for (const fp of app?.target.sha256_cert_fingerprints ?? []) expect(fp).toMatch(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+  expect(NEXT_CONFIG).toMatch(/source: "\/\.well-known\/assetlinks\.json"[\s\S]*?application\/json/);
 });

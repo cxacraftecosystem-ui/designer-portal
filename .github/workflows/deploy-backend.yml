@@ -1692,6 +1692,25 @@ jobs:
           # rather than in somebody's inbox.
           grep -qxF 'NEXT_PUBLIC_APP_URL=https://designer-repository.vercel.app' .env || { echo "link origin did not land on its own line"; exit 1; }
           echo "link origin pinned"
+
+          # ── WHICH X-Forwarded-For ENTRY IS THE CLIENT — 2026-10-17 ──────────────────────────────
+          #
+          # "Forgot your password?" limits per client address (backend/app/scale/rate_limit.py,
+          # `client_address`), counted from the RIGHT of X-Forwarded-For because the left is
+          # whatever the caller typed. Production is CloudFront -> nginx -> uvicorn: CloudFront
+          # appends the viewer, nginx appends the CloudFront edge.
+          #
+          # 1, NOT 2, UNTIL THE ORIGIN IS LOCKED TO CLOUDFRONT. The origin still accepts connections
+          # that did not come through CloudFront, so a client reaching the box directly could write
+          # the "viewer" slot (2nd from the right) itself and meet a fresh bucket every request. 1
+          # keys on the CloudFront edge — the address nginx appends, which nobody can forge — at the
+          # cost of sharing a bucket with the edge's other viewers. When the owner approves locking
+          # the origin to CloudFront, change this to 2. The documentation portal pins the same
+          # (TRUSTED_PROXY_HOPS=1).
+          sed -i '/^FORWARDED_CLIENT_HOPS=/d' .env
+          printf 'FORWARDED_CLIENT_HOPS=%s\n' '1' >> .env
+          grep -qxF 'FORWARDED_CLIENT_HOPS=1' .env || { echo "forwarded hops did not land on their own line"; exit 1; }
+          echo "forwarded client hops pinned"
           REMOTE
 
       # The sender address and SES region are Actions VARIABLES, not lines inside BACKEND_ENV: they

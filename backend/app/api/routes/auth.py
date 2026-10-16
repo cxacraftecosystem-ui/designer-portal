@@ -26,11 +26,13 @@ from app.core.security import (
     decode_access_token,
     hash_password,
     verify_password,
+    verify_password_or_decoy,
 )
 from app.core.user_fields import HAS_PASSWORD_KEY, SECRET_USER_FIELDS
 from app.scale.rate_limit import (
     account_credential_attempt,
     account_credential_refund,
+    address_credential_attempt,
     client_address,
     forgot_password_attempt,
 )
@@ -47,7 +49,9 @@ from app.schemas.auth import (
 from app.services import (
     access_roster,
     credential_links,
+    email_outbox,
     identity,
+    mailer,
     oidc_sign_in,
     password_reset,
     two_factor,
@@ -887,14 +891,22 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
         #
         # Take-then-refund, like the middleware, for the middleware's reason: a hundred parallel
         # guesses would otherwise all pass a check-then-charge before any of them was counted.
+        #
+        # AN IDENTIFIER THAT MATCHES NO ACCOUNT PAYS THE SAME (security review N1, 2026-10-17): an
+        # identical bucket keyed on the identifier as typed, normalised, and the same bcrypt time
+        # through the decoy below. Until then only a real account was charged, so the eleventh wrong
+        # guess answered 429 for a real address and 401 for an unknown one — a list of who has an
+        # account for anybody with a script.
         if user is not None:
             allowed, _retry = account_credential_attempt(user.id)
-            if not allowed:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=ACCOUNT_THROTTLED_DETAIL,
-                )
-        if not user or not verify_password(payload.password or "", user.passwordHash):
+        else:
+            allowed, _retry = address_credential_attempt(identity.identifier_key(payload.email))
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=ACCOUNT_THROTTLED_DETAIL,
+            )
+        if not verify_password_or_decoy(payload.password or "", user.passwordHash if user else None) or not user:
             # UNCHANGED, AND DELIBERATELY SO. An unknown identifier and a wrong password are one
             # answer, and it is not the "awaiting approval" answer: somebody who mistyped their
             # password must be sent to the password, not to an administrator. The whole point of
@@ -1385,6 +1397,13 @@ async def set_password(payload: SetPasswordRequest) -> dict[str, bool]:
     invalidate_cached_user(verdict.user_id)
     await credential_links.mark_used(payload.token)
     logger.info("auth: password set through a %s link for account %s", verdict.purpose, verdict.user_id)
+    # The owner hears about it at their own address (2026-10-17): a link in the wrong hands is
+    # exactly the case they would otherwise never learn of. Only when the account HAD a password —
+    # whatever the link's purpose, which follows sign-in history, not the hash — because replacing
+    # one is the change the owner must hear of; a first password through an invitation is the
+    # invitee's own act.
+    if account is not None and account.passwordHash is not None:
+        await email_outbox.notify_password_event(account, mailer.PASSWORD_CHANGED)
     return {"ok": True}
 
 
@@ -1485,6 +1504,24 @@ SIGN_IN_AGAIN_DETAIL = (
     f"{PASSWORD_REAUTH_MINUTES} minutes."
 )
 
+#: A first password on an account with two-step verification on needs the second step too
+#: (2026-10-17). The header lets a client draw the code box without matching prose; it must be in
+#: ``expose_headers`` in app/main.py (imported there), like the three above.
+TWO_FACTOR_REQUIRED_HEADER = "X-Two-Factor-Required"
+FIRST_PASSWORD_NEEDS_CODE_DETAIL = "Enter the code from your authenticator app to set a password."
+
+
+def _watermark_now() -> datetime:
+    """``sessionsValidFrom`` for a password change: now, cut to the whole second.
+
+    ``deps._user_from_bearer`` refuses a token whose integer ``iat`` is below the stamp. Cut to the
+    second, the token minted right after the write (``iat`` = this second) is not below it, so the
+    session that made the change carries on; every token minted in an earlier second — with or
+    without a ``cred`` claim — is refused. Pre-2026-10-09 tokens carry no ``cred`` claim, so the
+    fingerprint alone could not retire them; this does.
+    """
+    return datetime.now(UTC).replace(microsecond=0)
+
 
 def _session_is_recent(credentials: HTTPAuthorizationCredentials | None) -> bool:
     """Was the bearer token on this request minted in the last :data:`PASSWORD_REAUTH_MINUTES`?
@@ -1559,9 +1596,11 @@ async def change_password(
     own session has lost control of nothing. That holds for the person and fails for the password: a
     forced change retires a password somebody else typed and sent, and every session opened with
     it — the provisioner's, anybody's who read the chat it went over — was RELEASED by the change
-    rather than ended, with full access for up to seven days. No ``sessionsValidFrom`` is written:
-    the fingerprint retires exactly the sessions the old password opened, and a watermark stamped
-    here would also refuse the new token, whose ``iat`` falls in the same wall second.
+    rather than ended, with full access for up to seven days. **``sessionsValidFrom`` IS WRITTEN TOO
+    (2026-10-17, security review):** the fingerprint cannot retire a token minted before 2026-10-09,
+    which carries no ``cred`` claim, so the watermark does — cut to the whole second
+    (:func:`_watermark_now`) so the new token, minted after the write in the same second, survives it.
+    The owner is told at their own address (``mailer.PASSWORD_CHANGED``).
 
     **THE NEW TOKEN RIDES IN THE ``X-Session-Token`` HEADER, AND THE BODY IS STILL EXACTLY
     ``{"ok": true}``.** See :data:`SESSION_TOKEN_HEADER` for the shipped handsets that break on any
@@ -1595,6 +1634,8 @@ async def change_password(
             "passwordHash": password_hash,
             "passwordSetAt": datetime.now(UTC),
             "mustChangePassword": False,
+            # After bcrypt, immediately before the write; see _watermark_now.
+            "sessionsValidFrom": _watermark_now(),
         },
     )
     invalidate_cached_user(current_user.id)
@@ -1605,6 +1646,7 @@ async def change_password(
     # Minted from the row the write returned, so it carries the NEW password's fingerprint — the one
     # session the change does not end. In the header, never the body: see SESSION_TOKEN_HEADER.
     response.headers[SESSION_TOKEN_HEADER] = _session_token(updated)
+    await email_outbox.notify_password_event(updated, mailer.PASSWORD_CHANGED)
     return {"ok": True}
 
 
@@ -1626,8 +1668,16 @@ async def _set_first_password(
     THE PROVIDER STAYS. ``authProvider`` is left as it is: the person can now sign in either way, and
     a Google sign-in on an account with a password keeps the password (``_sign_in_verified_mailbox``).
 
-    Every OTHER session ends through the credential fingerprint (the hash changes from none to one),
-    and this one continues on the token handed back in ``X-Session-Token`` — exactly as a change does.
+    **AND THE SECOND STEP, WHEN THE ACCOUNT HAS ONE ON (2026-10-17, security review).** Recency
+    proves a sign-in happened lately, not that the person holding this token is the one who made it.
+    So an account with two-step verification on must send ``twoFactorCode`` — a six-digit code or a
+    recovery code, checked by ``two_factor.check_second_factor`` with its own failure budget and lock
+    — or is refused with :data:`TWO_FACTOR_REQUIRED_HEADER` and nothing written.
+
+    Every OTHER session ends — through the credential fingerprint (the hash changes from none to one)
+    and the whole-second watermark (:func:`_watermark_now`), which also ends tokens too old to carry
+    a fingerprint — and this one continues on the token handed back in ``X-Session-Token``, exactly as
+    a change does. The owner is told at their own address (``mailer.PASSWORD_ADDED``).
     """
     if not _session_is_recent(credentials):
         raise HTTPException(
@@ -1635,6 +1685,27 @@ async def _set_first_password(
             detail=SIGN_IN_AGAIN_DETAIL,
             headers={SIGN_IN_AGAIN_HEADER: "1"},
         )
+    if getattr(current_user, "twoFactorEnabled", False):
+        code = (payload.twoFactorCode or "").strip()
+        if not code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=FIRST_PASSWORD_NEEDS_CODE_DETAIL,
+                headers={TWO_FACTOR_REQUIRED_HEADER: "1"},
+            )
+        try:
+            accepted = await two_factor.check_second_factor(current_user, code)
+        except two_factor.SecondFactorLocked as locked:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=two_factor.TOO_MANY_ATTEMPTS_DETAIL,
+            ) from locked
+        if not accepted:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=two_factor.WRONG_CODE_DETAIL,
+                headers={TWO_FACTOR_REQUIRED_HEADER: "1"},
+            )
     password_hash = hash_password(payload.newPassword)
     updated = await db.user.update(
         where={"id": current_user.id},
@@ -1642,6 +1713,7 @@ async def _set_first_password(
             "passwordHash": password_hash,
             "passwordSetAt": datetime.now(UTC),
             "mustChangePassword": False,
+            "sessionsValidFrom": _watermark_now(),
         },
     )
     invalidate_cached_user(current_user.id)
@@ -1651,4 +1723,5 @@ async def _set_first_password(
         )
     logger.info("auth: account %s set its first password", current_user.id)
     response.headers[SESSION_TOKEN_HEADER] = _session_token(updated)
+    await email_outbox.notify_password_event(updated, mailer.PASSWORD_ADDED)
     return {"ok": True}

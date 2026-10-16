@@ -651,14 +651,16 @@ def test_changing_the_password_releases_the_account_and_hands_back_a_session(wor
     token minted after the write — in its ``X-Session-Token`` header, the body staying exactly
     ``{"ok": true}`` — and that token reaches what the flag was holding back.
 
-    The token used here carries no password binding — a pre-release session — so it is RELEASED by
-    the change, exactly as every session was before 2026-10-09; that is the owner's ruling for those
-    tokens, pinned so it cannot change by accident. A session opened through today's sign-in ENDS
-    with the password it was opened with:
+    The token used here carries no password binding — a pre-release session. It used to be RELEASED
+    by the change; since the security review of 2026-10-17 the change stamps ``sessionsValidFrom``
+    (cut to the whole second), so it ENDS like every other session opened before the change, and only
+    the handed-back token carries on. A session opened through today's sign-in ends through its
+    fingerprint as well:
     ``test_a_session_opened_with_a_temporary_password_ends_when_it_is_replaced``.
     """
     headers = _headers(world, "changer")
     assert client.get("/api/users/directory", headers=headers).status_code == 401
+    time.sleep(1.1)  # the watermark is compared with a token's whole-second ``iat``
     changed = client.post(
         "/api/auth/change-password",
         json={"currentPassword": PASSWORD, "newPassword": NEW_PASSWORD},
@@ -668,8 +670,8 @@ def test_changing_the_password_releases_the_account_and_hands_back_a_session(wor
     released = client.get("/api/users/directory", headers=fresh)
     assert released.status_code == 200, released.text
     assert client.get("/api/me", headers=fresh).json()["mustChangePassword"] is False
-    assert client.get("/api/users/directory", headers=headers).status_code == 200, (
-        "a token from before the password binding must be accepted exactly as it was"
+    assert client.get("/api/users/directory", headers=headers).status_code == 401, (
+        "a token from before the password binding must end with the change, like every older session"
     )
 
 

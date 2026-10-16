@@ -213,14 +213,17 @@ async def test_a_valid_credential_that_is_simply_not_an_admin_is_refunded(world,
 async def test_an_unknown_address_spends_nobody_s_budget(world, client):
     """A stranger must not be able to close a real admin's door by guessing at an address.
 
-    There is no account, so there is no bucket to charge — the budget is keyed on the RESOLVED
-    account id, which is exactly what the middleware next door cannot do. The assertion is made from
-    the other side, on the real admin, because "these all answered 401" would also be true of an
-    implementation that charged a shared bucket for unknown addresses.
+    An unknown address spends a bucket of its OWN, keyed on the address as typed (security review
+    N1, 2026-10-17): until then it spent nothing and always answered 401, so the 429 a real address
+    earns after ten guesses told a script which addresses exist. It now answers exactly as a real
+    one does — ten 401s, then 429 — and the assertion that matters is still made from the other
+    side, on the real admin, whose budget the stranger's guesses never touch.
     """
     stranger = f"tokenbudget-nobody-{world['stamp']}@example.org"
     statuses = _statuses(client, stranger, WRONG, _ACCOUNT_FAILURES + 5)
-    assert set(statuses) == {401}, f"an unknown address was answered something else: {statuses}"
+    assert statuses == [401] * _ACCOUNT_FAILURES + [429] * 5, (
+        f"an unknown address was not answered as a real one is: {statuses}"
+    )
     assert _mint(client, world["address"]("admin")).status_code == 200, (
         "guessing at an address that does not exist spent the real admin's budget"
     )
