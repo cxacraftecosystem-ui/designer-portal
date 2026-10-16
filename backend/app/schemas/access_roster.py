@@ -17,6 +17,7 @@ from typing import Literal
 
 from pydantic import EmailStr, Field
 
+from app.core.security import MAX_PASSWORD_LENGTH
 from app.schemas.common import APIModel
 
 
@@ -30,12 +31,21 @@ class AccessRosterCreate(APIModel):
 
     ``role`` is the tier the account is created at (or lifted to) when the person first signs in.
     Absent means the platform default, which is the lowest rung.
+
+    ``password`` (2026-10-17) chooses the OTHER way in. Absent, nothing but the address is admitted
+    and the account is made at the person's first Google, Microsoft or Yahoo sign-in. Present, the
+    password account is created now, through the very path ``POST /api/users`` takes (same authority,
+    same refusals), with ``mustChangePassword`` as sent — True by default, because a password one
+    person typed for another is a shared secret. Either way the person may later also sign in with a
+    provider on the same address.
     """
 
     email: EmailStr
     fullName: str | None = Field(default=None, max_length=180)
     role: str | None = None
     notes: str | None = Field(default=None, max_length=4000)
+    password: str | None = Field(default=None, min_length=8, max_length=MAX_PASSWORD_LENGTH)
+    mustChangePassword: bool = True
 
 
 class AccessRosterUpdate(APIModel):

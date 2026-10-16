@@ -245,6 +245,65 @@ export async function changeOwnPassword(currentPassword: string, newPassword: st
   return token ? token : null;
 }
 
+/**
+ * The header `POST /auth/change-password` sets, with a 400, when an account with no password asks to
+ * set its first one from a session older than the server's re-sign-in window (15 minutes). Its value
+ * is "1". Read off the header and never off the sentence, which is prose and will be reworded.
+ */
+export const SIGN_IN_AGAIN_HEADER = "x-sign-in-again";
+
+/**
+ * An account that signs in with Google, Microsoft or Yahoo choosing a password as well — the same
+ * route as a change, with no current password because there is none to prove. The server accepts it
+ * only from a session opened in the last few minutes and otherwise answers 400 with
+ * {@link SIGN_IN_AGAIN_HEADER}. Returns the fresh session exactly as {@link changeOwnPassword} does:
+ * the new password changes the fingerprint every session carries.
+ */
+export async function setFirstPassword(newPassword: string): Promise<string | null> {
+  const { headers } = await apiFetchWithHeaders<unknown>("/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify({ newPassword })
+  });
+  const token = headers.get(SESSION_TOKEN_HEADER)?.trim();
+  return token ? token : null;
+}
+
+/** `Retry-After` (seconds) in words, or null when the header is absent or unreadable. */
+export function retryAfterWords(header: string | null | undefined): string | null {
+  const seconds = Number(header);
+  if (!header || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const minutes = Math.ceil(seconds / 60);
+  return minutes <= 1 ? "Try again in a minute." : `Try again in ${minutes} minutes.`;
+}
+
+/**
+ * "Sign out of every device" for another account — `POST /users/{id}/sign-out-everywhere`. The server
+ * ends every session the account holds (its `sessionsValidFrom`) and answers the account as it now
+ * is. Their password and two-step verification are untouched; they simply sign in again.
+ */
+export async function signOutEverywhere(userId: string): Promise<User> {
+  return apiFetch<User>(`/users/${userId}/sign-out-everywhere`, { method: "POST" });
+}
+
+/** What `POST /auth/forgot-password` answers — one sentence, the same for every address. */
+export type ForgotPasswordAnswer = { message: string };
+
+/**
+ * "Forgot your password?" — ask for a set-password link by e-mail.
+ *
+ * THE ANSWER IS THE SAME FOR EVERY ADDRESS, and the screen prints it verbatim: the server says the one
+ * sentence whether or not an account exists, so nothing here can branch on it. The only refusals are
+ * about the REQUEST — a malformed address (422) and too many requests from this connection (429, with
+ * `Retry-After`). PUBLIC, so a 401 is never a redirect: the reader is by definition not signed in.
+ */
+export async function requestForgotPasswordLink(email: string): Promise<ForgotPasswordAnswer> {
+  return apiFetch<ForgotPasswordAnswer>(
+    "/auth/forgot-password",
+    { method: "POST", body: JSON.stringify({ email }) },
+    { redirectOn401: false }
+  );
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Provisioning — an account provisioner's half of a password account
  *
@@ -256,23 +315,68 @@ export async function changeOwnPassword(currentPassword: string, newPassword: st
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * `POST /api/users`. `mustChangePassword` is sent always rather than left to the server's default,
- * so what was ticked on the form is what happened. The capability grants are an ADMIN's to send: a
- * provisioner who is not an admin is refused with a 403 for any of them set true, so a caller leaves
- * them out entirely rather than sending `false` it has no business deciding.
+ * How a new account will sign in — "Add a person"'s three answers, as `POST /api/users` spells them.
+ *
+ * - `SET`: the provisioner types a password (sent exactly as typed) and decides `mustChangePassword`.
+ * - `GENERATE`: the server makes a strong temporary password and answers it ONCE as
+ *   `temporaryPassword`; the account must change it at its first sign-in.
+ * - `NONE`: no password — they sign in with Google, Microsoft or Yahoo. `sendPasswordLink` also
+ *   e-mails them a single-use link to set one, after the account is saved.
+ */
+export type PasswordMode = "SET" | "GENERATE" | "NONE";
+
+/**
+ * `POST /api/users`. `mustChangePassword` is sent always with a typed password rather than left to the
+ * server's default, so what was ticked on the form is what happened. The capability grants are an
+ * ADMIN's to send: a provisioner who is not an admin is refused with a 403 for any of them set true,
+ * so a caller leaves them out entirely rather than sending `false` it has no business deciding.
  */
 export type NewPasswordAccount = {
   name: string;
   email: string;
   role: UserRole;
-  password: string;
-  mustChangePassword: boolean;
+  passwordMode: PasswordMode;
+  password?: string;
+  mustChangePassword?: boolean;
+  sendPasswordLink?: boolean;
   canManageQuestionnaire?: boolean;
   canDownloadDataset?: boolean;
 };
 
-export async function createPasswordAccount(account: NewPasswordAccount): Promise<User> {
-  return apiFetch<User>("/users", { method: "POST", body: JSON.stringify(account) });
+/** The link a `NONE` + `sendPasswordLink` create e-mailed — never the link itself. */
+export type CreatedAccountLink = {
+  id: string;
+  expiresAt: string;
+  purpose: "INVITE" | "RESET";
+  deliveredBy: PasswordLinkDelivery;
+};
+
+/**
+ * What `POST /api/users` answers: the account, and — at most once, for the screen that just asked —
+ * the generated temporary password, or the e-mailed link (or the sentence saying why it could not be
+ * sent; the account exists either way).
+ */
+export type CreatedAccount = User & {
+  temporaryPassword?: string | null;
+  passwordLink?: CreatedAccountLink | null;
+  passwordLinkError?: string | null;
+};
+
+export async function createPasswordAccount(account: NewPasswordAccount): Promise<CreatedAccount> {
+  return apiFetch<CreatedAccount>("/users", { method: "POST", body: JSON.stringify(account) });
+}
+
+/**
+ * The header a duplicate create's 409 carries: the id of the account that already holds the address,
+ * so the screen can open it instead of making a second one. Lower-case for `Headers.get`.
+ */
+export const EXISTING_ACCOUNT_HEADER = "x-existing-account-id";
+
+/** The existing account a 409 from `POST /api/users` names, or null. Read off the header only. */
+export function existingAccountId(error: unknown): string | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const id = error.headers?.get(EXISTING_ACCOUNT_HEADER)?.trim();
+  return id ? id : null;
 }
 
 /**

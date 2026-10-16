@@ -15,6 +15,7 @@
  */
 
 import { ApiError } from "@/lib/api";
+import { SIGN_IN_AGAIN_HEADER } from "@/lib/signIn";
 import type { User } from "@/lib/types";
 
 /**
@@ -27,8 +28,31 @@ import type { User } from "@/lib/types";
  * nothing, and the card must not offer a change the server would refuse with "This account has no
  * password to change".
  */
-export function hasOwnPassword(user: Pick<User, "passwordSetAt"> | null | undefined): boolean {
-  return user?.passwordSetAt != null;
+export function hasOwnPassword(user: Pick<User, "passwordSetAt" | "hasPassword"> | null | undefined): boolean {
+  if (!user) return false;
+  // The server's own answer wins where it sent one; `passwordSetAt` is the fallback for an older API.
+  if (typeof user.hasPassword === "boolean") return user.hasPassword;
+  return user.passwordSetAt != null;
+}
+
+/**
+ * May this account SET a first password from Settings? A signed-in account with none of its own —
+ * it signs in with Google, Microsoft or Yahoo. Once set, it can sign in either way.
+ */
+export function canSetFirstPassword(user: Pick<User, "passwordSetAt" | "hasPassword"> | null | undefined): boolean {
+  return !!user && !hasOwnPassword(user);
+}
+
+/** Under the "Set a password" boxes: what the new password adds, and what it does not take away. */
+export const FIRST_PASSWORD_NOTE =
+  "After this you can sign in with your email address and this password, or the way you sign in now.";
+
+/**
+ * Did `POST /auth/change-password` refuse a first password because the session is too old? The server
+ * says so with a 400 carrying `X-Sign-In-Again: 1` — read off the header, never off the sentence.
+ */
+export function signInAgainRequired(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 400 && error.headers?.get(SIGN_IN_AGAIN_HEADER) === "1";
 }
 
 /**

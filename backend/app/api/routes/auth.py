@@ -1,9 +1,10 @@
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from fastapi.encoders import jsonable_encoder
+from fastapi.security import HTTPAuthorizationCredentials
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
@@ -11,6 +12,7 @@ from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import (
     ROLE_RANK,
+    bearer_scheme,
     get_current_user,
     invalidate_cached_user,
     is_break_glass_master,
@@ -19,11 +21,22 @@ from app.core.deps import (
     role_rank,
     role_value,
 )
-from app.core.security import create_access_token, hash_password, verify_password
-from app.core.user_fields import SECRET_USER_FIELDS
-from app.scale.rate_limit import account_credential_attempt, account_credential_refund
+from app.core.security import (
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    verify_password,
+)
+from app.core.user_fields import HAS_PASSWORD_KEY, SECRET_USER_FIELDS
+from app.scale.rate_limit import (
+    account_credential_attempt,
+    account_credential_refund,
+    client_address,
+    forgot_password_attempt,
+)
 from app.schemas.auth import (
     ChangePasswordRequest,
+    ForgotPasswordRequest,
     IssuePasswordLinkRequest,
     LoginRequest,
     PasswordLinkCheckRequest,
@@ -31,7 +44,15 @@ from app.schemas.auth import (
     TokenResponse,
     TwoFactorChallengeResponse,
 )
-from app.services import access_roster, credential_links, identity, oidc_sign_in, two_factor, usage
+from app.services import (
+    access_roster,
+    credential_links,
+    identity,
+    oidc_sign_in,
+    password_reset,
+    two_factor,
+    usage,
+)
 from app.services.aadhaar import flags as aadhaar_flags
 from app.services.account_provisioning import (
     GOOGLE_ONLY_LINK_DETAIL,
@@ -236,6 +257,9 @@ def serialize_user(user: Any) -> dict[str, Any]:
     for field in SECRET_USER_FIELDS:
         payload.pop(field, None)
     payload[USAGE_CONSENT_GATE_KEY] = usage.consent_gate(user)
+    # Derived, because the hash itself never leaves: the account screen offers "Change password" or
+    # "Set a password" on it, and the users screen whether a link or a temporary password makes sense.
+    payload[HAS_PASSWORD_KEY] = getattr(user, "passwordHash", None) is not None
     # The optional features this deployment has switched on, so a client can draw (or not draw)
     # them from the payload it already holds — and a handset can keep the answer offline. While
     # both Aadhaar switches are off the verification columns are withheld too (services/aadhaar).
@@ -1364,6 +1388,46 @@ async def set_password(payload: SetPasswordRequest) -> dict[str, bool]:
     return {"ok": True}
 
 
+@router.post("/forgot-password")
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    response: Response,
+    background: BackgroundTasks,
+) -> dict[str, str]:
+    """"Forgot your password?" — ask for a single-use set-password link by e-mail.
+
+    Unauthenticated, because the person asking cannot sign in. **ONE ANSWER FOR EVERY ADDRESS**:
+    a well-formed request always gets ``password_reset.FORGOT_PASSWORD_MESSAGE``, and everything that
+    depends on WHICH address it is — the lookup, the allow-list, the per-address cap, the link, the
+    outbox row, the audit row — runs after the response has gone, so a real account does not answer
+    more slowly than a stranger's guess. See ``app/services/password_reset.py`` for the rules and
+    what this deliberately does not do (end sessions, clear throttles, mention two-step).
+
+    The two refusals are about the REQUEST: 422 for a malformed address (pydantic), and 429 for too
+    many requests from one connection (``rate_limit.forgot_password_attempt``), with ``Retry-After``.
+    The link is built from ``NEXT_PUBLIC_APP_URL`` inside ``credential_links``; nothing from this
+    request's headers reaches it.
+    """
+    allowed, retry_after = forgot_password_attempt(request.scope)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=password_reset.TOO_MANY_REQUESTS_DETAIL,
+            headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
+        )
+    address = client_address(request.scope)
+    background.add_task(
+        password_reset.request_password_reset,
+        str(payload.email),
+        ip_address=address.removeprefix("ip:"),
+        user_agent=request.headers.get("user-agent"),
+    )
+    # No shared cache may hold one person's answer for another.
+    response.headers["Cache-Control"] = "no-store"
+    return {"message": password_reset.FORGOT_PASSWORD_MESSAGE}
+
+
 #: A new password that IS the one the account holds now. Shared by link redemption and
 #: ``change_password``, which refuse it for the same reason: the forced change exists to retire a
 #: password somebody else chose, and "changing" it to itself would clear the flag and keep the secret.
@@ -1390,17 +1454,6 @@ _SET_PASSWORD_REFUSALS = {
 }
 
 
-#: ``change_password``'s answer to an account with no password. Two sentences, chosen by provider,
-#: because the remedy differs and a wrong one sends the person to a refusal: a Google account has
-#: nothing to change and no link to ask for (``POST /auth/password-links`` refuses one, 422), while a
-#: password-less LOCAL account can be sent a link.
-GOOGLE_ACCOUNT_HAS_NO_PASSWORD_DETAIL = (
-    "This account signs in with Google and has no password to change."
-)
-NO_PASSWORD_YET_DETAIL = (
-    "This account has no password to change. Ask an administrator for a set-password link."
-)
-
 #: The header ``change_password``'s answer carries the caller's NEW session token in (2026-10-09).
 #:
 #: A HEADER AND NOT A FIELD IN THE BODY, AND THE REASON IS A CLIENT ALREADY IN PEOPLE'S HANDS. The
@@ -1418,12 +1471,45 @@ NO_PASSWORD_YET_DETAIL = (
 #: ``Origin``.
 SESSION_TOKEN_HEADER = "X-Session-Token"
 
+#: An account with no password may SET its first one only on a session opened this recently. A
+#: provider sign-in is the proof the person is at the keyboard now; a week-old token is not, and
+#: without this a stolen session would turn into a permanent password on somebody else's account.
+PASSWORD_REAUTH_MINUTES = 15
+
+#: The header on the refusal, so a client can offer "Sign out and sign in again" without matching
+#: prose. Must be in ``expose_headers`` in app/main.py (imported there), like the two above.
+SIGN_IN_AGAIN_HEADER = "X-Sign-In-Again"
+
+SIGN_IN_AGAIN_DETAIL = (
+    f"For your security, sign out and sign in again, then set your password within "
+    f"{PASSWORD_REAUTH_MINUTES} minutes."
+)
+
+
+def _session_is_recent(credentials: HTTPAuthorizationCredentials | None) -> bool:
+    """Was the bearer token on this request minted in the last :data:`PASSWORD_REAUTH_MINUTES`?
+
+    The token has already been verified by ``get_current_user``; this only reads its ``iat``. A
+    token that cannot be dated is not recent.
+    """
+    if credentials is None:
+        return False
+    try:
+        issued_at = decode_access_token(credentials.credentials).get("iat")
+    except ValueError:
+        return False
+    if not isinstance(issued_at, int | float):
+        return False
+    cutoff = datetime.now(UTC) - timedelta(minutes=PASSWORD_REAUTH_MINUTES)
+    return issued_at >= cutoff.timestamp()
+
 
 @router.post("/change-password")
 async def change_password(
     payload: ChangePasswordRequest,
     response: Response,
     current_user: Any = Depends(get_current_user),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> dict[str, bool]:
     """The signed-in account replacing its own password. The route ``mustChangePassword`` sends
     somebody to.
@@ -1433,10 +1519,11 @@ async def change_password(
     replace it" — and the person always has the password, because they used it to get the token they
     are calling this with.
 
-    AN ACCOUNT WITH NO PASSWORD CANNOT USE THIS ROUTE and is told what it can do instead
-    (:data:`GOOGLE_ACCOUNT_HAS_NO_PASSWORD_DETAIL`, :data:`NO_PASSWORD_YET_DETAIL`). There is nothing
-    to prove here, and accepting an empty current password would turn a stolen Google session into a
-    permanent password on the account.
+    AN ACCOUNT WITH NO PASSWORD SETS ITS FIRST ONE HERE (2026-10-17, owner's parity decision) — see
+    :func:`_set_first_password`. It used to be refused outright, on the argument that accepting an
+    empty current password would turn a stolen Google session into a permanent password on the
+    account. That argument stands, and is answered by recency instead of refusal: only a session
+    opened in the last :data:`PASSWORD_REAUTH_MINUTES` minutes may do it.
 
     **AND THE PER-ACCOUNT GUESSING BUDGET CLOSES THE OTHER HALF OF THAT SAME ARGUMENT, 2026-09-03.**
     The paragraph above says this route exists so that a stolen session cannot become a permanent
@@ -1482,14 +1569,7 @@ async def change_password(
     in again with the password just chosen.
     """
     if current_user.passwordHash is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                GOOGLE_ACCOUNT_HAS_NO_PASSWORD_DETAIL
-                if _auth_provider(current_user) == "GOOGLE"
-                else NO_PASSWORD_YET_DETAIL
-            ),
-        )
+        return await _set_first_password(payload, response, current_user, credentials)
     allowed, _retry = account_credential_attempt(current_user.id)
     if not allowed:
         # The sign-in door's sentence, deliberately verbatim rather than a second wording of the
@@ -1524,5 +1604,51 @@ async def change_password(
         )
     # Minted from the row the write returned, so it carries the NEW password's fingerprint — the one
     # session the change does not end. In the header, never the body: see SESSION_TOKEN_HEADER.
+    response.headers[SESSION_TOKEN_HEADER] = _session_token(updated)
+    return {"ok": True}
+
+
+async def _set_first_password(
+    payload: ChangePasswordRequest,
+    response: Response,
+    current_user: Any,
+    credentials: HTTPAuthorizationCredentials | None,
+) -> dict[str, bool]:
+    """An account with no password (Google, Microsoft or Yahoo only) choosing its first one.
+
+    **NO CURRENT PASSWORD, SO RECENCY STANDS IN FOR IT.** There is nothing to prove with a password,
+    and a bearer token alone is not proof that the account's owner is at the keyboard — it can be a
+    week old, on a borrowed laptop. So the session must have been opened in the last
+    :data:`PASSWORD_REAUTH_MINUTES` minutes, by a sign-in that passed the provider AND the second step
+    if the account has one on (``POST /auth/login`` mints nothing else). Otherwise a 400 with
+    :data:`SIGN_IN_AGAIN_HEADER`, and nothing written and nothing charged: no guess was made.
+
+    THE PROVIDER STAYS. ``authProvider`` is left as it is: the person can now sign in either way, and
+    a Google sign-in on an account with a password keeps the password (``_sign_in_verified_mailbox``).
+
+    Every OTHER session ends through the credential fingerprint (the hash changes from none to one),
+    and this one continues on the token handed back in ``X-Session-Token`` — exactly as a change does.
+    """
+    if not _session_is_recent(credentials):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=SIGN_IN_AGAIN_DETAIL,
+            headers={SIGN_IN_AGAIN_HEADER: "1"},
+        )
+    password_hash = hash_password(payload.newPassword)
+    updated = await db.user.update(
+        where={"id": current_user.id},
+        data={
+            "passwordHash": password_hash,
+            "passwordSetAt": datetime.now(UTC),
+            "mustChangePassword": False,
+        },
+    )
+    invalidate_cached_user(current_user.id)
+    if updated is None:  # deleted between authenticating this request and the write
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="This account no longer exists. Sign in again."
+        )
+    logger.info("auth: account %s set its first password", current_user.id)
     response.headers[SESSION_TOKEN_HEADER] = _session_token(updated)
     return {"ok": True}

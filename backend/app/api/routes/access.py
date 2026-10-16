@@ -81,6 +81,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 # reason — if it ever needs to go the other way, move the function to app/core/deps.py rather than
 # duplicating it.
 from app.api.routes.users import assert_role
+from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import (
     ROLE_LABELS,
@@ -91,10 +92,12 @@ from app.core.deps import (
     role_value,
 )
 from app.schemas.access_roster import AccessDecision, AccessRosterCreate, AccessRosterUpdate
+from app.schemas.users import UserCreate
 from app.services import access_roster, credential_links
 from app.services.access_roster import access_payload, normalise_email
 from app.services.account_provisioning import (
     APPROVAL_KEEPS_THE_TIER_DETAIL,
+    create_account,
     holds_a_temporary_password,
 )
 from app.services.designers import (
@@ -435,6 +438,8 @@ async def add_to_access_roster(
                 f"Decide or update that entry instead of adding it again.{same_mailbox}"
             ),
         )
+    if payload.password is not None:
+        return await _admit_with_a_password(payload, email, current_user)
     row = await access_roster.admit(
         email,
         admit_role=payload.role,
@@ -444,6 +449,33 @@ async def add_to_access_roster(
     )
     await _empanel_an_admitted_designer(row, current_user.id)
     return access_payload(row)
+
+
+async def _admit_with_a_password(payload: AccessRosterCreate, email: str, actor: Any) -> dict[str, Any]:
+    """The access list's "with a password" choice: create the account now, which admits the address.
+
+    NOT A SECOND ACCOUNT-CREATING PATH. It builds the ``UserCreate`` body ``POST /api/users`` takes and
+    hands it to ``account_provisioning.create_account``, so every rule of that door holds here too —
+    the provisioner authority, the tier ceiling, one account per mailbox (409), the bars — and the
+    allow-list row and the designer empanelment are written by that function, not here. The answer is
+    the allow-list row, as for an address admitted without a password, plus ``accountCreated``.
+    """
+    name = _clean(payload.fullName) or email.split("@", maxsplit=1)[0]
+    body = UserCreate(
+        email=email,
+        name=name[:160],
+        password=payload.password,
+        role=payload.role or get_settings().default_signup_role,
+        mustChangePassword=payload.mustChangePassword,
+    )
+    await create_account(actor, body, via="on the access list")
+    row = await access_roster.access_row(email)
+    note = _clean(payload.notes)
+    if row is not None and note:
+        row = await db.accessroster.update(where={"id": row.id}, data={"notes": note})
+    answer = access_payload(row) if row is not None else {"email": email}
+    answer["accountCreated"] = True
+    return answer
 
 
 @router.post("/roster/{row_id}/decision")

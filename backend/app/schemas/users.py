@@ -1,4 +1,6 @@
-from pydantic import EmailStr, Field
+from typing import Literal
+
+from pydantic import EmailStr, Field, model_validator
 
 from app.core.security import MAX_PASSWORD_LENGTH
 from app.schemas.common import APIModel
@@ -19,7 +21,14 @@ class UserCreate(APIModel):
 
     email: EmailStr
     name: str = Field(min_length=1, max_length=160)
-    password: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)
+    password: str | None = Field(default=None, min_length=8, max_length=MAX_PASSWORD_LENGTH)
+    #: HOW THEY WILL SIGN IN (2026-10-17, the owner's one-step account): ``SET`` — the password sent
+    #: here; ``GENERATE`` — the server makes a temporary one and answers it once; ``NONE`` — Google,
+    #: Microsoft or Yahoo only, optionally with an e-mailed link to set a password too. Absent means
+    #: ``SET`` when a password is sent, which is every client that predates the field.
+    passwordMode: Literal["SET", "GENERATE", "NONE"] | None = None
+    #: ``NONE`` only: e-mail them a link to set a password as well, after the account is committed.
+    sendPasswordLink: bool = False
     role: str = "RESEARCHER"
     mustChangePassword: bool = True
     canManageQuestionnaire: bool = False
@@ -28,6 +37,27 @@ class UserCreate(APIModel):
     canReview: bool = False
     canViewProvenance: bool = False
     canDownloadDataset: bool = False
+
+    @model_validator(mode="after")
+    def settle_password_mode(self) -> UserCreate:
+        mode = self.password_mode
+        if mode is None:
+            raise ValueError(
+                "Choose how they will sign in: a password you set now, a temporary password made for "
+                "you, or Google, Microsoft or Yahoo only."
+            )
+        if mode == "SET" and self.password is None:
+            raise ValueError("Type the password they will sign in with, or choose another way to sign in.")
+        if mode != "SET" and self.password is not None:
+            raise ValueError("Send a password only with \"Set a password now\".")
+        if mode != "NONE" and self.sendPasswordLink:
+            raise ValueError("A set-password link is offered only to an account with no password.")
+        return self
+
+    @property
+    def password_mode(self) -> str | None:
+        """``passwordMode``, with the old clients' default (a password sent means ``SET``) applied."""
+        return self.passwordMode or ("SET" if self.password is not None else None)
 
 
 class UserUpdate(APIModel):

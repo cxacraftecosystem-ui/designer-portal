@@ -9,8 +9,15 @@
  * past it an account had no way to rotate a password it suspected somebody else knew except to ask
  * an administrator for a link. The accounts that sign in with a password are the ones this matters
  * for — the ones an administrator created and typed a password for, which by construction two people
- * knew — so the card is drawn for an account with a password of its own (`hasOwnPassword`) and for
- * nobody else: a Google-only account has nothing here to change, and the server would say so.
+ * knew — so the change form is drawn for an account with a password of its own (`hasOwnPassword`).
+ *
+ * ── AND "SET A PASSWORD" FOR AN ACCOUNT THAT HAS NONE ───────────────────────────────────────────
+ *
+ * An account that signs in with Google, Microsoft or Yahoo has no current password to type, so the
+ * same card asks only for the new one (`setFirstPassword`) — the same route, which accepts that only
+ * from a session opened in the last few minutes. An older session is answered 400 with
+ * `X-Sign-In-Again` (`signInAgainRequired`), and the card then offers to sign out so the person can
+ * sign straight back in and finish. Either way the account keeps the way it signs in now.
  *
  * ── THE SAME RULES AS THE GATE, FROM THE SAME PLACE ────────────────────────────────────────────
  *
@@ -33,19 +40,29 @@ import { useAuth } from "@/components/AuthProvider";
 import { setToken } from "@/lib/api";
 import { isUnreachable } from "@/lib/failureTriage";
 import {
+  FIRST_PASSWORD_NOTE,
   PASSWORD_CHANGE_SESSIONS,
+  canSetFirstPassword,
   currentPasswordRefused,
-  hasOwnPassword,
-  newPasswordProblem
+  newPasswordProblem,
+  signInAgainRequired
 } from "@/lib/passwordChange";
-import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, changeOwnPassword, passwordRuleLine } from "@/lib/signIn";
+import {
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  changeOwnPassword,
+  passwordRuleLine,
+  setFirstPassword
+} from "@/lib/signIn";
 
 /** The receipt, worded by what the server did — see `submit`. */
 const CHANGED_HERE_ONLY = "Password changed. You are still signed in here; everywhere else, sign in with the new one.";
 const CHANGED = "Password changed. Use the new one the next time you sign in.";
+/** The receipt after a first password was set. */
+const PASSWORD_ADDED = "Password set. You can now sign in with your email address and this password too.";
 
 export function ChangePasswordCard() {
-  const { user, refreshMe } = useAuth();
+  const { user, refreshMe, logout } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -56,18 +73,27 @@ export function ChangePasswordCard() {
   const [changed, setChanged] = useState<string | null>(null);
   /** Refusals of the current password, counted so that EVERY one puts the caret back in its box. */
   const [currentRefusals, setCurrentRefusals] = useState(0);
+  /** The server asked for a fresh sign-in before a first password may be set. */
+  const [needsSignIn, setNeedsSignIn] = useState(false);
   const currentBox = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (currentRefusals > 0) currentBox.current?.focus();
   }, [currentRefusals]);
 
-  if (!user || !hasOwnPassword(user)) return null;
+  if (!user) return null;
+  // No password of its own: the same card asks only for the new one. Decided after every hook.
+  const settingFirst = canSetFirstPassword(user);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setChanged(null);
-    const problem = newPasswordProblem({ current, next, confirm });
+    setNeedsSignIn(false);
+    const problem = settingFirst
+      ? next !== confirm
+        ? newPasswordProblem({ current: "", next, confirm })
+        : null
+      : newPasswordProblem({ current, next, confirm });
     if (problem) {
       setError(problem);
       return;
@@ -75,7 +101,7 @@ export function ChangePasswordCard() {
     setSaving(true);
     setError(null);
     try {
-      const fresh = await changeOwnPassword(current, next);
+      const fresh = settingFirst ? await setFirstPassword(next) : await changeOwnPassword(current, next);
       // Emptied, all three: a form still holding both passwords after it worked is a form somebody
       // walks away from with the secret sitting in it.
       setCurrent("");
@@ -89,7 +115,10 @@ export function ChangePasswordCard() {
         // refused and this tab is signed out by its own change.
         setToken(fresh);
         void refreshMe();
-        setChanged(CHANGED_HERE_ONLY);
+        setChanged(settingFirst ? PASSWORD_ADDED : CHANGED_HERE_ONLY);
+      } else if (settingFirst) {
+        void refreshMe();
+        setChanged(PASSWORD_ADDED);
       } else {
         // No session came back, so nothing here changes hands. An older server retired none; a
         // header the browser was not allowed to read means this tab's next request is refused and
@@ -97,7 +126,9 @@ export function ChangePasswordCard() {
         setChanged(CHANGED);
       }
     } catch (err) {
-      if (currentPasswordRefused(err)) {
+      if (settingFirst && signInAgainRequired(err)) {
+        setNeedsSignIn(true);
+      } else if (!settingFirst && currentPasswordRefused(err)) {
         // Emptied because what was in it is wrong. The new password and its repeat are kept: nothing
         // was said against them, and retyping a long one twice is how a typo gets saved.
         setCurrent("");
@@ -123,10 +154,12 @@ export function ChangePasswordCard() {
         <span className="grid h-8 w-8 place-items-center rounded-md bg-purple-950 text-purple-100">
           <KeyRound className="h-4 w-4" aria-hidden />
         </span>
-        <h2 className="font-display font-bold text-ink-900">Change password</h2>
+        <h2 className="font-display font-bold text-ink-900">{settingFirst ? "Set a password" : "Change password"}</h2>
       </div>
       <p className="mt-1.5 text-xs leading-5 text-ink-500">
-        The password you sign in with. You need the current one to choose another.
+        {settingFirst
+          ? "You sign in with Google, Microsoft or Yahoo. Add a password to sign in with your email address as well."
+          : "The password you sign in with. You need the current one to choose another."}
       </p>
 
       <form onSubmit={submit} className="mt-3 grid max-w-md gap-3">
@@ -147,6 +180,13 @@ export function ChangePasswordCard() {
         >
           {error ?? ""}
         </div>
+        {needsSignIn ? (
+          <div>
+            <button type="button" className="field-button-secondary" onClick={() => void logout()}>
+              Sign out and sign in again
+            </button>
+          </div>
+        ) : null}
         <p
           role="status"
           aria-live="polite"
@@ -155,6 +195,7 @@ export function ChangePasswordCard() {
           {changed ?? ""}
         </p>
 
+        {settingFirst ? null : (
         <div>
           <label htmlFor="settings-current-password" className="field-label">
             Current password
@@ -171,6 +212,7 @@ export function ChangePasswordCard() {
             className="field-input mt-1.5"
           />
         </div>
+        )}
 
         <div>
           <label htmlFor="settings-new-password" className="field-label">
@@ -222,11 +264,13 @@ export function ChangePasswordCard() {
 
         {/* The gate's sentence, from the same function and the same constant: a change ends every
             session of the account but the one it hands back (`PASSWORD_CHANGE_SESSIONS`). */}
-        <p className="text-xs leading-5 text-ink-500">{passwordRuleLine(PASSWORD_CHANGE_SESSIONS)}</p>
+        <p className="text-xs leading-5 text-ink-500">
+          {passwordRuleLine(settingFirst ? FIRST_PASSWORD_NOTE : PASSWORD_CHANGE_SESSIONS)}
+        </p>
 
         <div>
           <button type="submit" className="field-button" disabled={saving}>
-            {saving ? "Saving…" : "Change password"}
+            {saving ? "Saving…" : settingFirst ? "Set password" : "Change password"}
           </button>
         </div>
       </form>

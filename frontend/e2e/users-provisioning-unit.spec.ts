@@ -115,21 +115,24 @@ test("nobody below the ministry admin provisions — the directorate posts and P
   }
 });
 
-test("the creation ceiling is inclusive of one's own tier, exactly as assert_role rules", () => {
+test("the creation ceiling is strictly below one's own tier (owner's decision, 2026-10-16)", () => {
   for (const role of ACCOUNT_PROVISIONER_ROLES) {
     const actor = account(role);
     const offered = provisionableRoles(actor);
-    // At or below one's own rank, and one's own tier included.
-    expect(offered, role).toContain(role);
-    for (const option of offered) expect(ROLE_RANK[option], `${role} offers ${option}`).toBeLessThanOrEqual(ROLE_RANK[role]);
+    // Strictly below one's own rank: nobody creates a peer they could not then manage.
+    expect(offered, role).not.toContain(role);
+    for (const option of offered) expect(ROLE_RANK[option], `${role} offers ${option}`).toBeLessThan(ROLE_RANK[role]);
     // Never more than the promotion picker would let the same account hand out a moment later.
     for (const option of offered) expect(assignableRoles(actor), role).toContain(option);
     // Highest first: the picker's order is the ladder's.
     expect(offered).toEqual(ROLES_BY_RANK.filter((option) => offered.includes(option)));
   }
   expect(provisionableRoles(account("MINISTRY_ADMIN"))).not.toContain("ADMIN");
+  expect(provisionableRoles(account("ADMIN"))).not.toContain("ADMIN");
   expect(provisionableRoles(account("ADMIN"))).not.toContain("MASTER_ADMIN");
-  expect(provisionableRoles(account("MASTER_ADMIN"))).toContain("MASTER_ADMIN");
+  // Only the master admin is offered Admin.
+  expect(provisionableRoles(account("MASTER_ADMIN"))).toContain("ADMIN");
+  expect(provisionableRoles(account("MASTER_ADMIN"))).not.toContain("MASTER_ADMIN");
 });
 
 test("the sentence naming who provisions is derived from the set, lowest tier first", () => {
@@ -290,6 +293,7 @@ test("a non-admin provisioner's create carries no grant at all; an admin's carri
     name: "A Designer",
     email: "a.designer@example.org",
     role: BELOW_PROFESSOR,
+    passwordMode: "SET",
     password: " exactly as typed ",
     mustChangePassword: false
   });
@@ -329,9 +333,11 @@ test("the create form: raw password, browser hints, one ceiling, and the first-s
 
 test("the success panel says what to hand over and never holds the password", () => {
   expect(PAGE).toContain("Hand them two things, and not in the same message");
-  // The state the panel draws from has no password in it, and the form is remounted empty.
-  expect(PAGE).toContain("useState<{ account: User; mustChangePassword: boolean; signInAt: string } | null>");
-  expect(PAGE).not.toMatch(/setCreated\(\{[^}]*password:/);
+  // The state the panel draws from holds no TYPED password — only the one the server generated,
+  // shown once — and the form is remounted empty.
+  expect(PAGE).toContain("useState<CreatedPanel | null>(null)");
+  expect(PAGE).not.toMatch(/setCreated\(\{[^}]*\bpassword:/);
+  expect(PAGE).toContain("temporaryPassword: account.temporaryPassword ?? null");
   expect(PAGE).toMatch(/setFormGeneration\(\(value\) => value \+ 1\)/);
   expect(PAGE).toMatch(/<form\s+key=\{formGeneration\}/);
 });

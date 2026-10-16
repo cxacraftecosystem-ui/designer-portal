@@ -281,7 +281,9 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
     any module that writes a User row must also name ``invalidate_cached_user``. Adding a new
     promotion or deactivation path therefore fails here rather than in production.
     """
-    writes = re.compile(r"db\.user\.(update|create|delete|upsert|update_many|delete_many)\b")
+    # ``tx`` too (2026-10-17): a write inside ``async with db.tx() as tx`` is a User write all the same,
+    # and the one-step account create and the sanction register both write that way.
+    writes = re.compile(r"\b(?:db|tx)\.user\.(update|create|delete|upsert|update_many|delete_many)\b")
     sources = [
         path
         for directory in ("app", "scripts")
@@ -310,6 +312,9 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         # (scripts/provision_account.py, which writes no User row of its own) and the route share one
         # writer. It invalidates exactly as the route did.
         "app/services/account_provisioning.py",
+        # The sanction register creates a designer's account inside its own transaction
+        # (``create_from_sanction``, through ``tx``) and invalidates after the commit.
+        "app/services/sanction_orders.py",
         # Two-step verification (2026-10-16): the secret, the recovery codes, the last step and the
         # failure budgets. Every budget write invalidates; the routes invalidate after the rest.
         "app/services/two_factor.py",

@@ -54,6 +54,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+import jwt
 import pytest
 from conftest import needs_db
 
@@ -639,10 +640,15 @@ def test_the_tiers_that_promote_but_do_not_provision_are_refused(world, client, 
     assert refused.json()["detail"] == ACCOUNT_PROVISIONER_REQUIRED_DETAIL
 
 
-def test_a_ministry_admin_creates_at_its_own_tier_and_below_and_never_above(world, client):
-    """THE CEILING IS INCLUSIVE AND IS ``assert_role``'s, unchanged."""
+def test_a_ministry_admin_creates_only_below_its_own_tier(world, client):
+    """THE CEILING IS STRICT SINCE 2026-10-17 (owner): an account is created only BELOW the creator's
+    own role (``account_provisioning.assert_may_create_role``). ``assert_role``'s inclusive ceiling
+    still answers first for a role above, so those two sentences are unchanged."""
     own = _create(client, world, "ministry", _fresh(world, "own-tier"), role="MINISTRY_ADMIN")
-    assert own.status_code == 201, own.text
+    assert own.status_code == 403, own.text
+    assert own.json()["detail"] == "You can only create accounts with a role below your own."
+    below = _create(client, world, "ministry", _fresh(world, "below-tier"), role="REGIONAL_DIRECTOR")
+    assert below.status_code == 201, below.text
 
     admin = _create(client, world, "ministry", _fresh(world, "over-admin"), role="ADMIN")
     assert admin.status_code == 403, admin.text
@@ -727,7 +733,10 @@ def test_an_address_is_one_account_in_any_letter_case(world, client):
     assert _create(client, world, "admin", email).status_code == 201
     again = _create(client, world, "admin", email.upper())
     assert again.status_code == 409, again.text
-    assert again.json()["detail"] == "Email already exists"
+    # Since 2026-10-17 the refusal names the account that holds the address, and its id rides in
+    # ``X-Existing-Account-Id`` so the screen can open it instead of making a second one.
+    assert again.json()["detail"].startswith(f"{email} already has an account (")
+    assert again.headers["x-existing-account-id"]
 
 
 def test_two_requests_racing_for_one_address_still_get_a_409(world, client, monkeypatch):
@@ -736,10 +745,10 @@ def test_two_requests_racing_for_one_address_still_get_a_409(world, client, monk
     email = _fresh(world, "race")
     assert _create(client, world, "admin", email).status_code == 201
 
-    async def _lost_the_race(*_args: Any, **_kwargs: Any) -> bool:
-        return False
+    async def _lost_the_race(*_args: Any, **_kwargs: Any) -> None:
+        return None
 
-    monkeypatch.setattr(account_provisioning, "email_in_use", _lost_the_race)
+    monkeypatch.setattr(account_provisioning, "existing_account", _lost_the_race)
     raced = _create(client, world, "admin", email)
     assert raced.status_code == 409, raced.text
     assert raced.json()["detail"] == "Email already exists"
@@ -816,15 +825,22 @@ def test_the_flag_cannot_be_raised_on_an_account_with_no_password(world, client)
     assert "link" not in refused.json()["detail"]
     assert _link(client, world, "ministry", google_only).status_code == 422
 
+    # Its own way to a password is to SET one from its account screen, on a fresh sign-in; a session
+    # an hour old is sent to sign in again, and nothing is written (2026-10-17).
+    settings = get_settings()
+    now = int(time.time())
+    stale = jwt.encode(
+        {"sub": google_only, "iat": now - 3600, "exp": now + 3600},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
     told = client.post(
         "/api/auth/change-password",
         json={"currentPassword": "anything-at-all", "newPassword": "a-new-password-for-it"},
-        headers=_headers(world, "googleOnly"),
+        headers=_bearer(stale),
     )
     assert told.status_code == 400, told.text
-    assert told.json()["detail"] == (
-        "This account signs in with Google and has no password to change."
-    )
+    assert told.headers.get("x-sign-in-again") == "1"
 
 
 @pytest.mark.parametrize("actor", ["ministry", "admin", "master"])
@@ -1699,7 +1715,8 @@ def test_no_account_is_created_on_a_mailbox_another_account_uses(world, client):
     ):
         again = _create(client, world, actor, spelling)
         assert again.status_code == 409, (actor, again.text)
-        assert again.json()["detail"] == "Email already exists"
+        assert again.json()["detail"].startswith(f"one.inbox.{stamp}@gmail.com already has an account (")
+        assert again.headers["x-existing-account-id"] == first.json()["id"]
 
     for spelling in (f"dot.ted.{stamp}@example.org", f"dotted.{stamp}@example.org"):
         assert _create(client, world, "admin", spelling).status_code == 201, spelling

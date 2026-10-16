@@ -240,18 +240,19 @@ export function canProvisionAccounts(user: User | null | undefined) {
 }
 
 /**
- * The tiers this account may CREATE an account at — exactly what the server's `assert_role`
- * (backend/app/services/account_provisioning.py) accepts from it: its own tier and every tier below,
- * and MASTER_ADMIN only for a master admin. Empty for anybody who cannot provision at all, because
- * the create route refuses them before it reads a role.
+ * The tiers this account may CREATE an account at on "Add a person" — every tier STRICTLY BELOW its
+ * own (owner's decision, 2026-10-16), so only the master admin is offered Admin and nobody creates a
+ * peer. Empty for anybody who cannot provision at all, because the create route refuses them before
+ * it reads a role. The server's `POST /api/users` refuses the same tiers with a 403.
  *
- * THE CEILING IS INCLUSIVE ON PURPOSE (an admin creates an admin, a ministry admin a ministry
- * admin). The same account may already promote anybody it manages UP TO its own tier on this page,
- * so a stricter ceiling for creation alone would be undone by one role change a moment later.
+ * It was inclusive of one's own tier until then (an admin created an admin), which handed every new
+ * account at the creator's own tier to nobody: the creator could not manage it afterwards — no link,
+ * no password, no correction — because managing is strictly-below.
  */
 export function provisionableRoles(user: User | null | undefined): UserRole[] {
   if (!canProvisionAccounts(user)) return [];
-  return assignableRoles(user).filter((role) => role !== "MASTER_ADMIN" || isMasterAdmin(user));
+  const own = roleRank(user);
+  return ROLES_BY_RANK.filter((role) => ROLE_RANK[role] < own);
 }
 
 /**
