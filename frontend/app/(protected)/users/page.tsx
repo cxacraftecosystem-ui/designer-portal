@@ -36,10 +36,14 @@ import {
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   createPasswordAccount,
+  existingAccountId,
   issuePasswordLink,
   revokePasswordLink,
+  signOutEverywhere,
+  type CreatedAccountLink,
   type IssuedPasswordLink,
-  type PasswordLinkDelivery
+  type PasswordLinkDelivery,
+  type PasswordMode
 } from "@/lib/signIn";
 import { resetTwoFactorForUser } from "@/lib/twoFactor";
 import type { PageResult, User, UserRole } from "@/lib/types";
@@ -135,6 +139,24 @@ function AccountStatusCell({ user }: { user: User }) {
  * a link from "Who may sign in" carries. The fallback is the page's own header, so the frame does not
  * jump while the query string is read.
  */
+/** What the "account created" panel draws from — see `created` for the one secret it may hold. */
+type CreatedPanel = {
+  account: User;
+  mustChangePassword: boolean;
+  signInAt: string;
+  passwordMode: PasswordMode;
+  temporaryPassword: string | null;
+  passwordLink: CreatedAccountLink | null;
+  passwordLinkError: string | null;
+};
+
+/** "How will they sign in?" — the three answers, in the order the form offers them. */
+const SIGN_IN_CHOICES: { mode: PasswordMode; label: string }[] = [
+  { mode: "SET", label: "Set a password now" },
+  { mode: "GENERATE", label: "Make a temporary password for me" },
+  { mode: "NONE", label: "Google, Microsoft or Yahoo only" }
+];
+
 export default function UsersPage() {
   return (
     <Suspense fallback={<PageHeader title="Users" icon={<ShieldCheck className="h-5 w-5" aria-hidden />} />}>
@@ -207,14 +229,23 @@ function UsersScreen() {
   const [edgeSpace, setEdgeSpace] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  /** "How will they sign in?" — SET (typed here), GENERATE (the server makes one) or NONE. */
+  const [passwordMode, setPasswordMode] = useState<PasswordMode>("SET");
+  /** NONE only, and only drawn where mail is set up: also e-mail them a link to set a password. */
+  const [sendLink, setSendLink] = useState(false);
+  /** A duplicate create's 409: the account that already holds the address, to open instead. */
+  const [existing, setExisting] = useState<{ id: string; email: string } | null>(null);
+  /** The row "Open their account" brought into view, outlined once. */
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [temporaryCopied, setTemporaryCopied] = useState(false);
   /**
    * The account just made, held on screen until dismissed so the creator is told what to hand over.
-   * NEVER THE PASSWORD: the form is remounted empty the moment this is set, and nothing here keeps
-   * the typed value — a page that echoed a temporary password back would be one more place it lives.
+   * NEVER A TYPED PASSWORD: the form is remounted empty the moment this is set, and nothing here keeps
+   * the typed value — a page that echoed it back would be one more place it lives. The one secret it
+   * DOES hold is a password the SERVER generated (`temporaryPassword`), because this panel is the only
+   * place it will ever exist: shown once, with Copy, and gone with "Done".
    */
-  const [created, setCreated] = useState<{ account: User; mustChangePassword: boolean; signInAt: string } | null>(
-    null
-  );
+  const [created, setCreated] = useState<CreatedPanel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [temporary, setTemporary] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
   const [requiring, setRequiring] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
@@ -355,10 +386,12 @@ function UsersScreen() {
         name: requiredText(form, "name"),
         email: requiredText(form, "email"),
         role,
+        passwordMode,
         // EXACTLY AS TYPED, never through `requiredText`, which trims: a password stored trimmed
         // while its owner pastes the original is refused at sign-in for ever.
         password: passwordFrom(form),
         mustChangePassword: requireChange,
+        sendPasswordLink: passwordMode === "NONE" && mailAvailable && sendLink,
         canManageQuestionnaire: form.get("canManageQuestionnaire") === "on",
         canDownloadDataset: form.get("canDownloadDataset") === "on"
       },
@@ -366,14 +399,20 @@ function UsersScreen() {
     );
     setCreating(true);
     setCreateError(null);
+    setExisting(null);
     try {
       const account = await createPasswordAccount(body);
       setCreated({
         account,
         // The SERVER's answer, not the box: what the account now owes is what was stored.
-        mustChangePassword: account.mustChangePassword ?? body.mustChangePassword,
-        signInAt: `${window.location.origin}/login`
+        mustChangePassword: account.mustChangePassword ?? body.mustChangePassword ?? false,
+        signInAt: `${window.location.origin}/login`,
+        passwordMode,
+        temporaryPassword: account.temporaryPassword ?? null,
+        passwordLink: account.passwordLink ?? null,
+        passwordLinkError: account.passwordLinkError ?? null
       });
+      setTemporaryCopied(false);
       setIssuedLink(null);
       setNotice(null);
       // Remount the form empty — the typed password is gone with it — and drop the link's prefill.
@@ -381,14 +420,31 @@ function UsersScreen() {
       setRole(createFormRole(NO_PREFILL, offeredRoles));
       setFormGeneration((value) => value + 1);
       setRequireChange(true);
+      setPasswordMode("SET");
+      setSendLink(false);
       setEdgeSpace(false);
       setShowNewPassword(false);
       load();
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Unable to create the account");
+      // The address already has an account: offer THAT account rather than a second one.
+      const id = existingAccountId(err);
+      setExisting(id ? { id, email: body.email } : null);
     } finally {
       setCreating(false);
     }
+  }
+
+  /** "Open their account" — the table narrowed to the address, scrolled to and the row outlined. */
+  function openExisting() {
+    if (!existing) return;
+    setQuery(existing.email);
+    setApplied(existing.email);
+    setPage(1);
+    setFocusId(existing.id);
+    setExisting(null);
+    setCreateError(null);
+    requestAnimationFrame(() => document.getElementById("users-table")?.scrollIntoView({ block: "start" }));
   }
 
   async function issueLink(user: User, delivery: PasswordLinkDelivery = "COPY_LINK") {
@@ -448,6 +504,29 @@ function UsersScreen() {
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to turn off two-step verification");
+    }
+  }
+
+  async function endEverySession(user: User) {
+    const ok = await confirm({
+      title: "Sign out of every device?",
+      body: (
+        <>
+          <span className="font-medium text-ink-900">{user.name || user.email}</span> is signed out on every phone,
+          tablet and browser now, and signs in again the usual way.
+        </>
+      ),
+      note: "Their password and two-step verification stay as they are.",
+      confirmLabel: "Sign out everywhere",
+      tone: "warning"
+    });
+    if (!ok) return;
+    try {
+      await signOutEverywhere(user.id);
+      setError(null);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to sign them out");
     }
   }
 
@@ -617,18 +696,74 @@ function UsersScreen() {
               Account created for {created.account.name} · {created.account.email}, as{" "}
               {roleLabel(created.account.role)}
             </h2>
-            <p className="text-sm leading-6 text-ink-700">
-              Hand them two things, and not in the same message: the address they sign in with,{" "}
-              <span className="break-all font-medium text-ink-900">{created.account.email}</span>, and the password you
-              typed — this page does not show it again. They sign in at{" "}
-              <span className="break-all font-medium text-ink-900">{created.signInAt}</span>.
-            </p>
-            <p className="text-sm leading-6 text-ink-700">
-              {created.mustChangePassword
-                ? "At their first sign-in they choose their own password before they can do anything else, and the one you typed stops working."
-                : "You did not require a new password, so the one you typed stays theirs until they change it."}
-              {createdLinkOffered ? " Rather not pass a password on? A password link lets them choose their own instead." : null}
-            </p>
+            {created.passwordMode === "NONE" ? (
+              <>
+                <p className="text-sm leading-6 text-ink-700">
+                  They sign in with Google, Microsoft or Yahoo using{" "}
+                  <span className="break-all font-medium text-ink-900">{created.account.email}</span>, at{" "}
+                  <span className="break-all font-medium text-ink-900">{created.signInAt}</span>. Nothing else to hand
+                  over.
+                </p>
+                {created.passwordLink ? (
+                  <p className="text-sm leading-6 text-ink-700">
+                    A link to set a password was e-mailed to them as well. It works once and expires{" "}
+                    {new Date(created.passwordLink.expiresAt).toLocaleString()}.
+                  </p>
+                ) : null}
+                {created.passwordLinkError ? <p className={CAUTION_CLASS}>{created.passwordLinkError}</p> : null}
+              </>
+            ) : created.temporaryPassword ? (
+              <>
+                <p className="text-sm leading-6 text-ink-700">
+                  Their temporary password is below. It is shown only now — copy it and hand it over, not in the same
+                  message as the address they sign in with,{" "}
+                  <span className="break-all font-medium text-ink-900">{created.account.email}</span>. They sign in at{" "}
+                  <span className="break-all font-medium text-ink-900">{created.signInAt}</span>.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    readOnly
+                    value={created.temporaryPassword}
+                    aria-label="Temporary password"
+                    onFocus={(event) => event.currentTarget.select()}
+                    className="field-input min-w-0 flex-1 font-mono text-sm"
+                  />
+                  <button
+                    type="button"
+                    className="field-button-secondary"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(created.temporaryPassword ?? "");
+                        setTemporaryCopied(true);
+                      } catch {
+                        // Refused clipboard: the password is on screen and selectable; never claim a copy.
+                        setTemporaryCopied(false);
+                      }
+                    }}
+                  >
+                    {temporaryCopied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <p className="text-sm leading-6 text-ink-700">
+                  They must change it when they first sign in, and this one then stops working.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm leading-6 text-ink-700">
+                  Hand them two things, and not in the same message: the address they sign in with,{" "}
+                  <span className="break-all font-medium text-ink-900">{created.account.email}</span>, and the password
+                  you typed — this page does not show it again. They sign in at{" "}
+                  <span className="break-all font-medium text-ink-900">{created.signInAt}</span>.
+                </p>
+                <p className="text-sm leading-6 text-ink-700">
+                  {created.mustChangePassword
+                    ? "At their first sign-in they choose their own password before they can do anything else, and the one you typed stops working."
+                    : "You did not require a new password, so the one you typed stays theirs until they change it."}
+                  {createdLinkOffered ? " Rather not pass a password on? A password link lets them choose their own instead." : null}
+                </p>
+              </>
+            )}
             {/* An account at the creator's own tier is one the link route refuses them (403 every
                 time), so the panel says why there is no button rather than offering one. */}
             {createdLinkNote ? <p className="text-sm leading-6 text-ink-700">{createdLinkNote}</p> : null}
@@ -653,7 +788,14 @@ function UsersScreen() {
                   Send a password link by e-mail
                 </button>
               ) : null}
-              <button type="button" className="field-button-secondary" onClick={() => setCreated(null)}>
+              <button
+                type="button"
+                className="field-button-secondary"
+                onClick={() => {
+                  setCreated(null);
+                  setTemporaryCopied(false);
+                }}
+              >
                 Done
               </button>
             </div>
@@ -669,10 +811,10 @@ function UsersScreen() {
         >
           <div>
             <h2 id="create-account-heading" className="font-display text-lg font-bold text-ink-900">
-              Create a password account
+              Add a person
             </h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              For somebody who will sign in with their email address and a password you set.{" "}
+              Their name, address and role, and how they will sign in — in one step.{" "}
               {/* Two readers, two true sentences: an admin's create admits the address on "Who may
                   sign in" whatever stood there, while a ministry admin's is refused (409) for an
                   address an admin refused or suspended — overturning that is an admin's decision. */}
@@ -692,6 +834,7 @@ function UsersScreen() {
             <Field label="Email" required>
               <TextInput name="email" type="email" required autoComplete="off" defaultValue={prefill.email} />
             </Field>
+            {passwordMode === "SET" ? (
             <Field label="Password" required>
               {/*
                 THE EYE, ADDED 2026-08-30. This box is where an administrator TYPES A PASSWORD FOR
@@ -720,6 +863,7 @@ function UsersScreen() {
                 />
               </div>
             </Field>
+            ) : null}
             <Field label="Role">
               {/* `provisionableRoles` — exactly what the server's `assert_role` accepts from this
                   account, and empty for anybody the create route refuses outright. Required, and
@@ -751,7 +895,41 @@ function UsersScreen() {
                 : "This is your own role: once the account exists you cannot set its password, issue it a link or correct it — only a higher role can."}
             </p>
           ) : null}
-          {edgeSpace ? <EdgeSpaceNote /> : null}
+          <fieldset className="grid gap-2">
+            <legend className="field-label mb-1">How will they sign in?</legend>
+            {SIGN_IN_CHOICES.map((choice) => (
+              <label key={choice.mode} className="flex items-start gap-2 text-sm text-ink-700">
+                <input
+                  type="radio"
+                  name="passwordMode"
+                  value={choice.mode}
+                  checked={passwordMode === choice.mode}
+                  onChange={() => setPasswordMode(choice.mode)}
+                  className="mt-1"
+                />
+                <span>{choice.label}</span>
+              </label>
+            ))}
+            {passwordMode === "GENERATE" ? (
+              <p className="text-xs leading-5 text-ink-500">
+                A strong password is made for you and shown once, after the account is saved. They must change it when
+                they first sign in.
+              </p>
+            ) : null}
+            {passwordMode === "NONE" && mailAvailable ? (
+              <label className="flex items-start gap-2 text-sm text-ink-700">
+                <input
+                  type="checkbox"
+                  checked={sendLink}
+                  onChange={(event) => setSendLink(event.target.checked)}
+                  className="mt-1"
+                />
+                <span>Email them a link to set a password too</span>
+              </label>
+            ) : null}
+          </fieldset>
+          {passwordMode === "SET" && edgeSpace ? <EdgeSpaceNote /> : null}
+          {passwordMode === "SET" ? (
           <div className="grid gap-2">
             {/* Ticked by default and SENT EITHER WAY: what the box says is what the account owes. */}
             <label className="flex items-start gap-2 text-sm text-ink-700">
@@ -765,6 +943,7 @@ function UsersScreen() {
             </label>
             <RequireChangeNote required={requireChange} when="first" />
           </div>
+          ) : null}
           {admin ? (
             <div className="flex flex-wrap gap-2">
               <label className="flex items-center gap-2 rounded-md border border-line-200 bg-field-100 px-3 py-2 text-sm text-ink-muted">
@@ -788,12 +967,19 @@ function UsersScreen() {
             // already an account, or one an admin has barred, is about THIS form.
             <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {createError}
+              {existing ? (
+                <div className="mt-2">
+                  <button type="button" className="field-button-secondary" onClick={openExisting}>
+                    Open their account
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div>
             <button className="field-button" disabled={creating}>
               <UserPlus className="h-4 w-4" aria-hidden />
-              {creating ? "Creating…" : "Create account"}
+              {creating ? "Adding…" : "Add person"}
             </button>
           </div>
         </form>
@@ -862,7 +1048,7 @@ function UsersScreen() {
             <EmptyState title="No users found" />
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div id="users-table" className="overflow-x-auto scroll-mt-28">
             <table className="w-full min-w-[1000px] text-left text-sm">
               <thead className="bg-surface-50 text-xs uppercase text-ink-500">
                 <tr>
@@ -884,7 +1070,11 @@ function UsersScreen() {
                   // ONE DECISION PER ROW, made in ./accountAdmin where a test can reach it.
                   const offers = rowOffers(currentUser, user, { provision, admin });
                   return (
-                  <tr key={user.id}>
+                  <tr
+                    key={user.id}
+                    data-flash={focusId === user.id ? "true" : undefined}
+                    className="fr-flash-row"
+                  >
                     <td className="px-4 py-3 font-medium text-ink-900">{user.name}</td>
                     <td className="px-4 py-3 text-ink-700">{user.email}</td>
                     <td className="px-4 py-3">
@@ -1003,6 +1193,15 @@ function UsersScreen() {
                               onClick={() => turnOffTwoFactor(user)}
                             >
                               Turn off two-step verification
+                            </button>
+                          ) : null}
+                          {offers.signOutEverywhere ? (
+                            <button
+                              type="button"
+                              className={rowAction("neutral")}
+                              onClick={() => endEverySession(user)}
+                            >
+                              Sign out of every device
                             </button>
                           ) : null}
                           {offers.remove ? (

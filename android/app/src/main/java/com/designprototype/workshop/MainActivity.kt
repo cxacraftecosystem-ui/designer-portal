@@ -275,6 +275,10 @@ import com.designprototype.workshop.ui.UsageDoorState
 import com.designprototype.workshop.ui.UsageRecordingScreen
 import com.designprototype.workshop.ui.TwoStepChallengeForm
 import com.designprototype.workshop.ui.TwoStepVerificationScreen
+import com.designprototype.workshop.ui.AccountPasswordScreen
+import com.designprototype.workshop.ui.ForgotPasswordScreen
+import com.designprototype.workshop.ui.HelpThemBackInActions
+import com.designprototype.workshop.ui.AddPersonCard
 import com.designprototype.workshop.data.SignInOutcome
 import com.designprototype.workshop.ui.UsageScreen
 import com.designprototype.workshop.ui.rememberUsageDoorState
@@ -1032,6 +1036,8 @@ private sealed interface Screen {
      * reason, and its own TopAppBar.
      */
     data object TwoStepVerification : Screen
+    /** Settings → Password: change it, or set a first one — `ui/AccountRecovery.kt`. */
+    data object AccountPassword : Screen
     /**
      * The /data directory-tree browser. Its own Screen rather than a Create mode because it owns its
      * whole viewport: it draws its own top bar and lays out with a LazyColumn, which must never be
@@ -1515,6 +1521,10 @@ private fun RepositoryApp(
      * alternatives rather than a screen and its dialog.
      */
     var redeemingLink by remember { mutableStateOf(false) }
+    /** "Forgot your password?" in place of the sign-in card — the link screen's arrangement. */
+    var forgotPassword by remember { mutableStateOf(false) }
+    /** The address typed on the card when it was pressed, so the screen does not ask for it again. */
+    var forgotPasswordEmail by remember { mutableStateOf("") }
     /**
      * The link a deep-link tap handed this app, waiting to be put in the redeem screen's box.
      *
@@ -1888,6 +1898,14 @@ private fun RepositoryApp(
              * one thing that is going to refuse them. `redeemingLink` is cleared on both exits, so
              * the card comes straight back either way.
              */
+            user == null && forgotPassword -> ForgotPasswordScreen(
+                repository = repository,
+                initialEmail = forgotPasswordEmail,
+                onBack = {
+                    forgotPassword = false
+                    forgotPasswordEmail = ""
+                }
+            )
             user == null && redeemingLink -> SetPasswordLinkScreen(
                 repository = repository,
                 initialLink = pastedLink,
@@ -1955,6 +1973,10 @@ private fun RepositoryApp(
                         }
                 },
                 onOpenSetPasswordLink = { redeemingLink = true },
+                onForgotPassword = { typed ->
+                    forgotPasswordEmail = typed
+                    forgotPassword = true
+                },
                 onLogin = { email, password ->
                     scope.launch {
                         loading = true
@@ -2374,7 +2396,9 @@ private fun LoginScreen(
      * links cannot sign in — that is the whole reason they were sent it — so a route to the screen
      * from inside the app would be a route past a door they cannot open.
      */
-    onOpenSetPasswordLink: () -> Unit = {}
+    onOpenSetPasswordLink: () -> Unit = {},
+    /** "Forgot your password?", with whatever is in the email box. See `ui/AccountRecovery.kt`. */
+    onForgotPassword: (String) -> Unit = {}
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -2591,6 +2615,13 @@ private fun LoginScreen(
                 // not a third full-height button: it is the least-used of the three ways in, and
                 // giving it the same weight as Google would make the card read as three equal
                 // choices when it is two and an exception.
+                TextButton(
+                    onClick = { onForgotPassword(email.trim()) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RectangleShape
+                ) {
+                    Text("Forgot your password?", fontSize = 12.sp)
+                }
                 TextButton(
                     onClick = onOpenSetPasswordLink,
                     modifier = Modifier.fillMaxWidth(),
@@ -3520,6 +3551,7 @@ private fun HomeScreen(
             is Screen.MyAiKeys -> Screen.Appearance
             is Screen.UsageRecording -> Screen.Appearance
             is Screen.TwoStepVerification -> Screen.Appearance
+            is Screen.AccountPassword -> Screen.Appearance
             is Screen.DataBrowser -> Screen.Dashboard
             // One level at a time: from a tool back to the tool list, and only then out. This is
             // what lets the single header arrow replace the in-page "All admin tools" button — the
@@ -3617,6 +3649,7 @@ private fun HomeScreen(
         // Its own TopAppBar too, for the same reason.
         is Screen.UsageRecording -> null
         is Screen.TwoStepVerification -> null
+        is Screen.AccountPassword -> null
         is Screen.DataBrowser -> "Data Browser"
         // Null on all eight arms immediately below — counted by reading them: workshops, stages,
         // one stage, report, report history, codes, photos, viewers. Each of those screens draws its
@@ -3695,6 +3728,7 @@ private fun HomeScreen(
         // no admin rights that they are inside an administrative tool.
         is Screen.UsageRecording -> NavDestination.SETTINGS
         is Screen.TwoStepVerification -> NavDestination.SETTINGS
+        is Screen.AccountPassword -> NavDestination.SETTINGS
         is Screen.DataBrowser -> NavDestination.VIEW_DATA
         is Screen.AdminHub -> NavDestination.SETTINGS_HUB
         // Every screen of the 22-stage record lights the one menu row that reaches it. Unlike the
@@ -3862,6 +3896,7 @@ private fun HomeScreen(
                         onOpenMyAiKeys = { screen = Screen.MyAiKeys },
                         onOpenUsageRecording = { screen = Screen.UsageRecording },
                         onOpenTwoStepVerification = { screen = Screen.TwoStepVerification },
+                        onOpenPassword = { screen = Screen.AccountPassword },
                         // Through the ROUTER and not by setting the flag directly, so the settings
                         // row and the menu chip are one code path: whatever `openDestination` decides
                         // the Walkthrough means, both doors mean it. Note that this leaves the
@@ -3888,6 +3923,12 @@ private fun HomeScreen(
                     is Screen.TwoStepVerification -> TwoStepVerificationScreen(
                         repository = repository,
                         onBack = { attemptExit { goBack() } }
+                    )
+
+                    is Screen.AccountPassword -> AccountPasswordScreen(
+                        repository = repository,
+                        onBack = { attemptExit { goBack() } },
+                        onSignOut = onLogout
                     )
 
                     else -> {
@@ -4802,7 +4843,8 @@ private fun HomeScreen(
             // Rendered by the FIRST dispatcher above, which owns the destinations that draw
             // their own chrome. Listed here only to keep this `when` exhaustive.
             is Screen.Appearance, is Screen.SpeechAndAi, is Screen.MyAiKeys,
-            is Screen.UsageRecording, is Screen.TwoStepVerification, is Screen.DataBrowser -> Unit
+            is Screen.UsageRecording, is Screen.TwoStepVerification, is Screen.AccountPassword,
+            is Screen.DataBrowser -> Unit
         }
 
         message?.let {
@@ -19635,6 +19677,20 @@ private fun UserManagementForm(
                 onDismiss = { issuedLink = null }
             )
         }
+        // "Add a person": the account, its admission and its role's own list in one step —
+        // `ui/AddPerson.kt`. Admins and the master admin; roles strictly below the viewer's own.
+        if (actorIsAdmin) {
+            AddPersonCard(
+                repository = repository,
+                actorRole = actor?.role,
+                actorIsMaster = actorIsMaster,
+                onCreated = { refreshUsers() },
+                onOpenExisting = { id ->
+                    expandedUsers = expandedUsers + id
+                    refreshUsers()
+                }
+            )
+        }
         confirmTwoStepReset?.let { target ->
             AlertDialog(
                 onDismissRequest = { confirmTwoStepReset = null },
@@ -19873,6 +19929,16 @@ private fun UserManagementForm(
                             ) {
                                 Text("Turn off two-step verification")
                             }
+                        }
+                        // E-mail them a link, a temporary password, sign them out of every device —
+                        // `ui/AccountRecovery.kt`. The same gate as the two buttons above.
+                        if (actorIsAdmin && canManageTarget) {
+                            HelpThemBackInActions(
+                                repository = repository,
+                                target = appUser,
+                                onChanged = { refreshUsers() },
+                                onError = onError
+                            )
                         }
                     }
                 }

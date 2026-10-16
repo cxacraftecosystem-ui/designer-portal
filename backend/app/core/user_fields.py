@@ -28,3 +28,8 @@ SECRET_USER_FIELDS: tuple[str, ...] = (
     "twoFactorRecoveryLockedUntil",
     "twoFactorRecoveryLockouts",
 )
+
+#: The one fact about ``passwordHash`` a client may know: whether there is one. Added beside the
+#: stripped fields by both ``serialize_user`` functions (``routes/auth``, ``routes/users``), so the
+#: account screen can offer "Set a password" and the users screen a link or a temporary password.
+HAS_PASSWORD_KEY = "hasPassword"

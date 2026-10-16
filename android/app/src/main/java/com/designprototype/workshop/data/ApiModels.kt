@@ -121,6 +121,11 @@ data class UserDto(
      */
     val mustChangePassword: Boolean? = null,
     /**
+     * Whether the account holds a password of its own, derived by the server. Null from a server
+     * older than the field — read it through `accountHasPassword`, never raw.
+     */
+    val hasPassword: Boolean? = null,
+    /**
      * ISO-8601, or null. A null BESIDE a Google account means "has never had a password", which is
      * the distinction this column exists to make; see schema.prisma. Read by `passwordLinkOffered`,
      * which decides whether an administrator is offered a set-password link for the account — the
@@ -3718,7 +3723,15 @@ data class AccessRosterCreateBody(
     val fullName: String? = null,
     /** Null means the platform default joining tier — the lowest rung. */
     val role: String? = null,
-    val notes: String? = null
+    val notes: String? = null,
+    /**
+     * Set only when the administrator chose "With a password": the account is created now with this
+     * password instead of at the person's first Google, Microsoft or Yahoo sign-in. Null — and so
+     * absent from the body — otherwise.
+     */
+    val password: String? = null,
+    /** Sent only beside [password]: ask them to choose their own at the first sign-in. */
+    val mustChangePassword: Boolean? = null
 )
 
 /**

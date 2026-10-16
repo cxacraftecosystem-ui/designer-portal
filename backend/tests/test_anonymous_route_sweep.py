@@ -99,6 +99,7 @@ PUBLIC_ALLOWLIST: dict[tuple[str, str], str] = {
     ("GET", "/api/auth/set-password"): "a link holder has no session by definition; the token is the credential.",
     ("POST", "/api/auth/set-password/check"): "the GET's question and answer, the token moved off the request line.",
     ("POST", "/api/auth/set-password"): "same: redeeming the link is how the account gets a password at all.",
+    ("POST", "/api/auth/forgot-password"): "a person who forgot their password has no session; one neutral answer for every address.",
     # The machine credential door. Email + password in, a scoped read token out — the second thing in
     # this API that turns a password into a token, and like the first it cannot ask for one.
     ("POST", "/api/datasets/token"): "mints the machine token FROM a password; there is nothing to present.",

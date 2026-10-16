@@ -1090,6 +1090,11 @@ function LoginView() {
                   {showPassword ? <EyeOff size={22} aria-hidden /> : <Eye size={22} aria-hidden />}
                 </button>
               </div>
+              {/* Under the box it is about, and a plain link to a public page: somebody who cannot
+                  sign in must be able to reach it without signing in. */}
+              <Link href="/forgot-password" className="justify-self-end text-sm font-medium text-purple-700 hover:underline">
+                Forgot your password?
+              </Link>
             </div>
 
             {/*

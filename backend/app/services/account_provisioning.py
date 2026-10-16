@@ -65,8 +65,9 @@ operator script is that third caller, so it moved.
 """
 
 import logging
+import secrets
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -77,6 +78,7 @@ from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import (
     ACCOUNT_PROVISIONER_REQUIRED_DETAIL,
+    ROLE_LABELS,
     ROLE_RANK,
     can_manage_access_roster,
     can_provision_accounts,
@@ -92,7 +94,7 @@ from app.core.deps import (
     role_value,
 )
 from app.core.security import hash_password
-from app.services import access_roster
+from app.services import access_roster, credential_links
 from app.services.designers import (
     GMAIL_DOMAINS,
     adopt_allow_list_name,
@@ -565,6 +567,65 @@ async def assert_not_escaping_a_bar(
     return barred, ended
 
 
+#: THE ONE-STEP ACCOUNT'S HIERARCHY (owner, 2026-10-17). Creating somebody is placing them BELOW you:
+#: an account is made only at a role strictly below the creator's own, and an ADMIN (or another master
+#: admin) only by a master admin. Stricter than :func:`assert_role`, which still governs the PATCH
+#: (a role change may go up to the changer's own tier there, on an account it already manages).
+ONLY_MASTER_CREATES_ADMIN_DETAIL = "Only the master admin can create an admin account."
+CREATE_BELOW_YOUR_OWN_DETAIL = "You can only create accounts with a role below your own."
+
+#: The header a duplicate's 409 carries: the id of the account that already holds the address, so the
+#: users screen can open it ("Open their account") instead of making a second one. In
+#: ``expose_headers`` in app/main.py, imported there.
+EXISTING_ACCOUNT_HEADER = "X-Existing-Account-Id"
+
+
+def assert_may_create_role(actor: Any, role: str) -> None:
+    """403 unless ``actor`` may CREATE an account at ``role`` — see the two sentences above."""
+    if is_master_admin(actor):
+        return
+    if role in ("ADMIN", "MASTER_ADMIN"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ONLY_MASTER_CREATES_ADMIN_DETAIL)
+    if ROLE_RANK.get(role, 0) >= role_rank(actor):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=CREATE_BELOW_YOUR_OWN_DETAIL)
+
+
+def duplicate_account_detail(account: Any) -> str:
+    """The 409 a duplicate reads, naming the account that already holds the address."""
+    role = role_value(account)
+    return (
+        f"{get_value(account, 'email')} already has an account ({get_value(account, 'name')}, "
+        f"{ROLE_LABELS.get(role, role)}). Open it to change their role or access instead."
+    )
+
+
+def refuse_duplicate(account: Any) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=duplicate_account_detail(account),
+        headers={EXISTING_ACCOUNT_HEADER: str(get_value(account, "id"))},
+    )
+
+
+async def existing_account(email: Any, *, except_id: str | None = None) -> Any | None:
+    """The account that already holds this address — any letter case, or any spelling of its Gmail
+    mailbox — or None. :func:`email_in_use` is this question answered yes or no."""
+    where: dict[str, Any] = {"email": {"equals": normalise_email(email), "mode": "insensitive"}}
+    if except_id:
+        where["id"] = {"not": except_id}
+    found = await db.user.find_first(where=where)
+    if found is not None:
+        return found
+    if canonical_email(email).partition("@")[2] not in GMAIL_DOMAINS:
+        return None
+    accounts = await access_roster.accounts_on_the_mailbox_for_sign_in(email)
+    if accounts is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=MAILBOX_UNCHECKED_DETAIL
+        )
+    return next((a for a in accounts if getattr(a, "id", None) != except_id), None)
+
+
 async def email_in_use(email: Any, *, except_id: str | None = None) -> bool:
     """Does another account already hold this address, in ANY letter case — or its MAILBOX?
 
@@ -585,23 +646,16 @@ async def email_in_use(email: Any, *, except_id: str | None = None) -> bool:
     already uses: the question is ``access_roster.accounts_on_the_mailbox_for_sign_in``'s, the Gmail
     fold done by Postgres. Outside the Gmail domains the literal answer above is already the whole
     one, and nothing more is read. A lookup that could not finish refuses (503) rather than guessing.
+
+    Since 2026-10-17 the reading itself is :func:`existing_account`, which also says WHICH account
+    holds the address — the one-step create names it in its 409.
     """
-    where: dict[str, Any] = {"email": {"equals": normalise_email(email), "mode": "insensitive"}}
-    if except_id:
-        where["id"] = {"not": except_id}
-    if await db.user.find_first(where=where) is not None:
-        return True
-    if canonical_email(email).partition("@")[2] not in GMAIL_DOMAINS:
-        return False
-    accounts = await access_roster.accounts_on_the_mailbox_for_sign_in(email)
-    if accounts is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=MAILBOX_UNCHECKED_DETAIL
-        )
-    return any(getattr(account, "id", None) != except_id for account in accounts)
+    return await existing_account(email, except_id=except_id) is not None
 
 
-async def empanel_an_admitted_designer(row: Any, actor_id: str | None) -> None:
+async def empanel_an_admitted_designer(
+    row: Any, actor_id: str | None, *, client: Any = None
+) -> bool:
     """An ACTIVE allow-list row admitting a DESIGNER gets the empanelment that admission implies.
 
     ``routes/access._empanel_an_admitted_designer``'s rule, which is the authority for every word of
@@ -610,12 +664,19 @@ async def empanel_an_admitted_designer(row: Any, actor_id: str | None) -> None:
     row already existed, the allow-list's name is offered to it (fill, never overwrite).
     """
     if access_roster.status_of(row) != access_roster.ACTIVE:
-        return
+        return False
     if access_roster.role_of(row) != "DESIGNER":
-        return
-    created = await ensure_empanelled(getattr(row, "email", None), actor_id=actor_id)
+        return False
+    # Inside a transaction (``client``) a lost unique race must abort it rather than be swallowed —
+    # see ``ensure_empanelled``'s ``swallow_race``.
+    created = await ensure_empanelled(
+        getattr(row, "email", None), actor_id=actor_id, client=client, swallow_race=client is None
+    )
     if not created:
-        await adopt_allow_list_name(getattr(row, "email", None), getattr(row, "fullName", None))
+        await adopt_allow_list_name(
+            getattr(row, "email", None), getattr(row, "fullName", None), client=client
+        )
+    return created
 
 
 # --------------------------------------------------------------------------------------
@@ -641,6 +702,10 @@ class AccountPlan:
     #: True when an ADMIN is creating a DESIGNER whose empanelment was ended: the account will exist
     #: and the empanelment gate will refuse its sign-in until somebody restores the empanelment.
     empanelment_suspended: bool
+    #: SET, GENERATE or NONE — ``UserCreate.passwordMode``. Never the password itself.
+    password_mode: str = "SET"
+    #: NONE only: e-mail a set-password link once the account is committed.
+    send_password_link: bool = False
 
 
 async def plan_account(actor: Any, payload: Any) -> AccountPlan:
@@ -659,87 +724,150 @@ async def plan_account(actor: Any, payload: Any) -> AccountPlan:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MASTER_EMAIL_DETAIL)
     role = "MASTER_ADMIN" if is_master_address(email) else payload.role
     assert_role(role, actor)
+    assert_may_create_role(actor, role)
     grants = {flag: bool(getattr(payload, flag)) for flag in GRANT_FLAGS}
     assert_may_grant(actor, grants)
-    if await email_in_use(email):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DUPLICATE_EMAIL_DETAIL)
+    holder = await existing_account(email)
+    if holder is not None:
+        raise refuse_duplicate(holder)
     barred, suspended = await assert_not_overturning_a_bar(actor, email, role=role)
     if role == "MASTER_ADMIN":
         grants = dict.fromkeys(GRANT_FLAGS, True)
+    mode = getattr(payload, "password_mode", None) or "SET"
     return AccountPlan(
         email=email,
         name=payload.name,
         role=role,
-        must_change_password=bool(payload.mustChangePassword),
+        # SET honours the box; a GENERATED password is somebody else's by definition; NONE has none.
+        must_change_password=(
+            bool(payload.mustChangePassword) if mode == "SET" else mode == "GENERATE"
+        ),
         grants=grants,
         barred=barred,
         empanelment_suspended=suspended,
+        password_mode=mode,
+        send_password_link=bool(getattr(payload, "sendPasswordLink", False)),
     )
 
 
-async def write_account(
-    actor: Any, plan: AccountPlan, password: str, *, via: str = "on the users screen"
-) -> Any:
-    """Create the account :func:`plan_account` approved, admit it, and empanel it if a designer.
+#: The alphabet a generated temporary password is drawn from: no 0/O, 1/l/I, so it can be read out
+#: over the telephone and typed back without a second call.
+GENERATED_PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+GENERATED_PASSWORD_LENGTH = 16
 
-    ``password`` is hashed here and goes nowhere else — not into the plan, not into a log line.
-    ``via`` is how the allow-list note says where the account was made.
+#: What the answer says when "e-mail them a link too" could not be done. The account exists either way.
+LINK_NOT_SENT_NO_MAIL_DETAIL = (
+    "The account was made, but e-mail is not set up here, so no link was sent. Make a password link "
+    "from their row on the users screen and pass it on yourself."
+)
+LINK_NOT_SENT_THROTTLED_DETAIL = (
+    "The account was made, but several links have already been sent for this address in the last "
+    "hour, so no new one was sent."
+)
+
+
+def generate_temporary_password() -> str:
+    """Sixteen characters from :data:`GENERATED_PASSWORD_ALPHABET` (about 92 bits), from ``secrets``."""
+    return "".join(
+        secrets.choice(GENERATED_PASSWORD_ALPHABET) for _ in range(GENERATED_PASSWORD_LENGTH)
+    )
+
+
+@dataclass
+class CreatedAccount:
+    """What the one-step create did. ``temporary_password`` is set only for GENERATE and is handed
+    back ONCE, in the answer — it is never logged and never stored except as its bcrypt hash."""
+
+    user: Any
+    temporary_password: str | None = None
+    #: The per-role lists the account was added to, beyond the allow-list (``designerRoster``).
+    role_lists: list[str] = field(default_factory=list)
+    password_link: dict[str, Any] | None = None
+    password_link_error: str | None = None
+
+
+async def _write_in_one_transaction(
+    actor: Any, plan: AccountPlan, password: str | None, *, via: str
+) -> CreatedAccount:
+    """The User row, its allow-list admission and its role's own list, ALL OR NOTHING (2026-10-17).
+
+    ONE ``db.tx()``. These three used to be three independent writes, so a failure in the second or
+    third left an account the allow-list refused, or a designer nobody had empanelled — exactly the
+    half-states the gates fail closed on. Every callee is handed ``tx`` (``db.tx()`` returns a
+    DIFFERENT client; a write through the module ``db`` would commit on its own), and the empanelment
+    is asked NOT to swallow a unique race, which inside a transaction must abort it.
+
+    PER-ROLE LISTS, as they exist in this schema: ``DesignerRoster`` (the empanelment) is the only list
+    a ROLE puts somebody on. ``RegionalDirectorState`` needs states an administrator chooses, and the
+    inspector and oversight tables are per-workshop assignments — none of those is implied by a role,
+    so none is written here.
     """
     now = datetime.now(UTC)
+    actor_id = getattr(actor, "id", None)
+    actor_email = getattr(actor, "email", None) or "an administrator"
+    has_password = password is not None
+    role_lists: list[str] = []
     try:
-        user = await db.user.create(
-            data={
-                "email": plan.email,
-                "name": plan.name,
-                "passwordHash": hash_password(password),
-                # THE FIRST-SIGN-IN FLAG, and since 2026-10-09 it REFUSES as well as reports. A
-                # password one person typed for another is a shared secret by construction, so the
-                # default is True; ``deps.refuse_while_password_change_pending`` holds the account
-                # to it on every route but the change-password screen's own, and both clients draw
-                # that screen. A provisioner who unticks it has said the password is final.
-                "mustChangePassword": plan.must_change_password,
-                # Stamped so that "has never had a password" stays distinguishable from "signs in
-                # with Google" — the whole reason this column exists. There is no default.
-                "passwordSetAt": now,
-                "role": plan.role,
-                "authProvider": "LOCAL",
-                **plan.grants,
-            }
-        )
+        async with db.tx() as tx:
+            user = await tx.user.create(
+                data={
+                    "email": plan.email,
+                    "name": plan.name,
+                    "passwordHash": hash_password(password) if password is not None else None,
+                    # THE FIRST-SIGN-IN FLAG, and since 2026-10-09 it REFUSES as well as reports. A
+                    # password one person typed for another is a shared secret by construction, so
+                    # the default is True; ``deps.refuse_while_password_change_pending`` holds the
+                    # account to it on every route but the change-password screen's own. A
+                    # provisioner who unticks it has said the password is final. A generated one is
+                    # always temporary; an account with no password has nothing to change.
+                    "mustChangePassword": plan.must_change_password and has_password,
+                    # Stamped so that "has never had a password" stays distinguishable from "signs
+                    # in with Google" — the whole reason this column exists. There is no default.
+                    "passwordSetAt": now if has_password else None,
+                    "role": plan.role,
+                    "authProvider": "LOCAL",
+                    **plan.grants,
+                }
+            )
+            # PROVISIONING AN ACCOUNT IS APPROVING IT. Without this the platform allow-list would
+            # refuse the account the moment it was made. The gate fails closed
+            # (``auth.assert_access_admits``), so every path that mints an account has to admit it.
+            admitted = await access_roster.admit(
+                user.email,
+                admit_role=plan.role,
+                actor_id=actor_id,
+                full_name=user.name,
+                note=f"Admitted with the account, created {via} by {actor_email}.",
+                client=tx,
+            )
+            # AND A DESIGNER PROVISIONED HERE HAS BEEN EMPANELLED, read off the STORED row — see
+            # :func:`empanel_an_admitted_designer`. ``actor_id`` is the provisioner: somebody really
+            # did take this action, and the roster screen says who.
+            if await empanel_an_admitted_designer(admitted, actor_id, client=tx):
+                role_lists.append("designerRoster")
     except UniqueViolationError as exc:
-        # The race :func:`email_in_use` cannot close: a double-click, or two provisioners typing the
-        # same person in at once. The database is the referee and the loser hears what it would have
-        # heard a moment later — not a 500.
+        # The race :func:`existing_account` cannot close: a double-click, or two provisioners typing
+        # the same person in at once. The transaction is rolled back whole; the loser hears a 409.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=DUPLICATE_EMAIL_DETAIL
         ) from exc
-    # A brand-new cuid cannot already be cached, but every write to a User row invalidates without
-    # exception — a rule with a documented exception is a rule the next person has to re-derive.
+    # After the commit: a brand-new cuid cannot already be cached, but every write to a User row
+    # invalidates without exception.
     invalidate_cached_user(user.id)
-    # PROVISIONING AN ACCOUNT IS APPROVING IT. Without this the platform allow-list would refuse the
-    # account the moment it was made, and the provisioner would hand somebody a password and watch
-    # them be told they are awaiting approval. The gate fails closed (``auth.assert_access_admits``),
-    # so every path that mints an account has to admit it.
-    actor_email = getattr(actor, "email", None) or "an administrator"
-    admitted = await access_roster.admit(
-        user.email,
-        admit_role=plan.role,
-        actor_id=getattr(actor, "id", None),
-        full_name=user.name,
-        note=f"Admitted with the account, created {via} by {actor_email}.",
-    )
-    # AND A DESIGNER PROVISIONED HERE HAS BEEN EMPANELLED, read off the STORED row — see
-    # :func:`empanel_an_admitted_designer`. ``actor_id`` is the provisioner, unlike the sign-in
-    # path's None: somebody really did take this action, and the roster screen says who.
-    await empanel_an_admitted_designer(admitted, getattr(actor, "id", None))
-    logger.info(
-        "accounts: %s created account %s at %s (mustChangePassword=%s)%s",
-        getattr(actor, "id", None),
+    # THE AUDIT LINE: ids, the role, the mode and what was written — never a password or a link.
+    logger.warning(
+        "AUDIT account created: actor=%s user=%s role=%s passwordMode=%s mustChange=%s "
+        "rosterAdded=%s roleListsAdded=%s via=%s%s",
+        actor_id,
         user.id,
         plan.role,
+        plan.password_mode,
         # A WORD THE FLAG PICKS, NOT THE FLAG: its own value is read by a name a scanner takes for
         # the password — see the audit line in ``routes/users.update_user``, which says it the same.
-        "required" if plan.must_change_password else "not required",
+        "required" if plan.must_change_password and has_password else "not required",
+        True,
+        ",".join(role_lists) or "-",
+        via,
         (f"; re-admitted an address the allow-list held as {plan.barred}" if plan.barred else "")
         + (
             "; the address's designer empanelment is suspended, so this designer cannot sign in "
@@ -748,13 +876,68 @@ async def write_account(
             else ""
         ),
     )
-    return user
+    return CreatedAccount(user=user, role_lists=role_lists)
+
+
+async def write_account(
+    actor: Any, plan: AccountPlan, password: str | None, *, via: str = "on the users screen"
+) -> Any:
+    """Create the account :func:`plan_account` approved, admit it, and empanel it if a designer —
+    in ONE transaction (see :func:`_write_in_one_transaction`). Answers the new ``User``.
+
+    ``password`` is hashed here and goes nowhere else — not into the plan, not into a log line.
+    ``None`` makes an account with no password (``passwordMode: NONE``). ``via`` is how the
+    allow-list note says where the account was made.
+    """
+    return (await _write_in_one_transaction(actor, plan, password, via=via)).user
+
+
+async def create_account_in_one_step(
+    actor: Any, payload: Any, *, via: str = "on the users screen"
+) -> CreatedAccount:
+    """``POST /api/users``: plan, choose the password by mode, write in one transaction, and only
+    THEN — after the commit — e-mail a set-password link when ``NONE`` asked for one.
+
+    The link goes after the commit on purpose: a link for an account the transaction then rolled back
+    would be a credential for nobody, and an e-mail that says "your account is ready" about an account
+    that does not exist.
+    """
+    plan = await plan_account(actor, payload)
+    password: str | None
+    generated: str | None = None
+    if plan.password_mode == "GENERATE":
+        password = generated = generate_temporary_password()
+    elif plan.password_mode == "NONE":
+        password = None
+    else:
+        password = payload.password
+    created = await _write_in_one_transaction(actor, plan, password, via=via)
+    created.temporary_password = generated
+    if plan.password_mode == "NONE" and plan.send_password_link:
+        try:
+            issued = await credential_links.issue_link(
+                user=created.user,
+                purpose=credential_links.INVITE,
+                issued_by_id=getattr(actor, "id", None),
+                deliver_by=credential_links.EMAIL,
+            )
+            created.password_link = {
+                "id": issued.id,
+                "expiresAt": issued.expiresAt,
+                "purpose": issued.purpose,
+                "deliveredBy": issued.deliveredBy,
+            }
+        except credential_links.DeliveryUnavailable:
+            created.password_link_error = LINK_NOT_SENT_NO_MAIL_DETAIL
+        except credential_links.IssueThrottled:
+            created.password_link_error = LINK_NOT_SENT_THROTTLED_DETAIL
+    return created
 
 
 async def create_account(actor: Any, payload: Any, *, via: str = "on the users screen") -> Any:
-    """``POST /api/users``: plan, then write. Raises the route's own HTTPExceptions."""
-    plan = await plan_account(actor, payload)
-    return await write_account(actor, plan, payload.password, via=via)
+    """:func:`create_account_in_one_step`, answering just the ``User`` — for callers (the access
+    list's "with a password") that need nothing else. Raises the route's own HTTPExceptions."""
+    return (await create_account_in_one_step(actor, payload, via=via)).user
 
 
 # --------------------------------------------------------------------------------------
