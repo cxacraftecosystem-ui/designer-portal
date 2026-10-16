@@ -95,9 +95,11 @@ import { CloudOff, DraftingCompass, Info, Plus } from "lucide-react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { EmptyState } from "@/components/EmptyState";
 import { DateRangePicker, toIsoDate } from "@/components/forms/DateTimeField";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
+import { OpenableCard, OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { PageHeader } from "@/components/PageHeader";
 import { RecordCodeCard } from "@/components/RecordCode";
 import { Pagination } from "@/components/Pagination";
@@ -707,9 +709,20 @@ function DesignWorkshopsPageBody() {
     }
   }, [page, applied, status, kindFilter]);
 
+  /**
+   * Search, page, the status and kind filters and scroll, so Back from a workshop lands on the same
+   * rows. Recalled once before the first fetch — `placeRestored` holds that fetch until it has been.
+   */
+  const memory = useListMemory(
+    "design-workshops",
+    { query, applied, page, filters: { status, kind: kindFilter } },
+    data !== null
+  );
+  const [placeRestored, setPlaceRestored] = useState(false);
   useEffect(() => {
+    if (!placeRestored) return;
     load();
-  }, [load]);
+  }, [load, placeRestored]);
 
   /**
    * `?new=1` — the dashboard tile's "New workshop" button, finally doing what it says.
@@ -812,6 +825,24 @@ function DesignWorkshopsPageBody() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [query]);
+
+  // AFTER the debounce effect on purpose: effects run in declaration order, so the debounce's own
+  // first run has already spent `skipFirstDebounce`, and the flag raised here is the one that stops
+  // the restored query being debounced into a page-1 reset.
+  useEffect(() => {
+    const remembered = memory.recall();
+    if (remembered) {
+      if ((remembered.query ?? "") !== "") skipFirstDebounce.current = true;
+      setQuery(remembered.query ?? "");
+      setApplied(remembered.applied ?? "");
+      setPage(remembered.page ?? 1);
+      setStatus(remembered.filters?.status ?? "");
+      setKindFilter(remembered.filters?.kind ?? "");
+    }
+    setPlaceRestored(true);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1257,9 +1288,9 @@ function DesignWorkshopsPageBody() {
   /** The title cell of one row: name, code, and the two device-draft notes. Table and phone card share it. */
   const workshopTitleBlock = (workshop: (typeof rows)[number]) => (
     <>
-      <Link href={`/design-workshops/${workshop.id}`} className="font-medium text-ink-900 underline-offset-2 hover:underline">
-        {workshop.title}
-      </Link>
+      {/* The real link is the keyboard route; the rest of the row or card does the same for a
+          pointer (`OpenableRow` / `OpenableCard`). */}
+      <OpenableRowLink href={`/design-workshops/${workshop.id}`}>{workshop.title}</OpenableRowLink>
       {/* The code is denormalised from stage 1 and is null until that stage has
           been saved — so its absence means "stage 1 is not done", not "missing". */}
       <div className="text-xs text-ink-500">{workshop.workshopCode ?? "No workshop code yet"}</div>
@@ -2047,7 +2078,10 @@ function DesignWorkshopsPageBody() {
               scroller. Below `md` each workshop is a card: title, status, one meta line, actions. */}
           <ul className="divide-y divide-line-200 md:hidden">
             {rows.map((workshop) => (
-              <li key={workshop.id} className="px-4 py-3">
+              <li key={workshop.id}>
+                {/* The whole card opens the workshop's read-only overview, as the table row does;
+                    its actions keep their own presses, and the code card sits outside the surface. */}
+                <OpenableCard href={`/design-workshops/${workshop.id}`} className="px-4 py-3">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">{workshopTitleBlock(workshop)}</div>
                   <StatusBadge status={workshop.status} />
@@ -2065,8 +2099,9 @@ function DesignWorkshopsPageBody() {
                     .join(" · ")}
                 </p>
                 <div className="mt-3 [&>div]:justify-start">{workshopActions(workshop)}</div>
+                </OpenableCard>
                 {codeFor?.id === workshop.id ? (
-                  <div className="mt-3 rounded-md bg-surface-50 p-3">
+                  <div className="mx-4 mb-3 rounded-md bg-surface-50 p-3">
                     <RecordCodeCard recordType="designWorkshop" id={workshop.id} title={workshop.title} />
                   </div>
                 ) : null}
@@ -2088,7 +2123,10 @@ function DesignWorkshopsPageBody() {
               <tbody className="divide-y divide-line-200">
                 {rows.map((workshop) => (
                   <Fragment key={workshop.id}>
-                  <tr>
+                  {/* The whole row opens the workshop's own page — its read-only overview, where
+                      "Update details" is the way to the form. Open, Report, Show code, Move and
+                      Delete keep their own clicks (`OpenableRow`). */}
+                  <OpenableRow href={`/design-workshops/${workshop.id}`}>
                     <td className="px-4 py-3">
                       {workshopTitleBlock(workshop)}
                     </td>
@@ -2109,7 +2147,7 @@ function DesignWorkshopsPageBody() {
                     <td className="px-4 py-3 text-right">
                       {workshopActions(workshop)}
                     </td>
-                  </tr>
+                  </OpenableRow>
                   {codeFor?.id === workshop.id ? (
                     /*
                       THE WORKSHOP'S OWN CODE, and the whole of what "join by QR" can honestly be.

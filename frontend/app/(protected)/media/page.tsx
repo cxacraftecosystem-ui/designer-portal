@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react
 import { AudioLines, Images, Loader2, QrCode, Upload } from "lucide-react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { OpenableCard, OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import {
   HELD_POST_PENDING_FILES,
   HeldPostNotice,
@@ -21,6 +22,7 @@ import { DictationUnavailableNotice } from "@/components/richtext/DictationUnava
 import { DesignWorkshopSelect, useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
 import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { LocationFields } from "@/components/forms/LocationFields";
@@ -45,6 +47,7 @@ import { bytes, formatDateTime } from "@/lib/format";
 import { locationFromForm, textValue } from "@/lib/forms";
 import { inferMediaType, transcribeMediaNow, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { isAdmin } from "@/lib/permissions";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
 import { WORKSHOP_OPTION_PAGE_SIZE, fieldWorkshopOptions } from "@/lib/workshopOptions";
 import type {
@@ -422,11 +425,29 @@ function MediaPageBody() {
     []
   );
 
+  /**
+   * Search, page and scroll, so Back from a file's read-only page lands on the same rows. Recalled
+   * once before the first fetch — `placeRestored` holds that fetch until it has been.
+   */
+  const memory = useListMemory("media", { query: search, page }, data !== null);
+  const [placeRestored, setPlaceRestored] = useState(false);
+  useEffect(() => {
+    const remembered = memory.recall();
+    if (remembered) {
+      setSearch(remembered.query ?? "");
+      setPage(remembered.page ?? 1);
+    }
+    setPlaceRestored(true);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Live search: debounce keystrokes, reload most-recent-first from page 1.
   useEffect(() => {
+    if (!placeRestored) return;
     const timer = setTimeout(() => load(page, search), 300);
     return () => clearTimeout(timer);
-  }, [page, search, load]);
+  }, [page, search, load, placeRestored]);
 
   // Android parity: when the linked record type changes, load that type's entries
   // for the optional second dropdown.
@@ -924,12 +945,21 @@ function MediaPageBody() {
             {data.items.map((item) => {
               const hold = holdOf(item);
               return (
-                <li key={item.id} className="px-4 py-3">
+                <li key={item.id}>
+                  {/* The whole card opens the file's read-only page, as the table row does. The
+                      preview tile, the transcript disclosure and every button keep their own
+                      presses; the code card sits outside the surface. A stored file has no form,
+                      so there is no Update here — its page offers Download. */}
+                  <OpenableCard href={RECORD_VIEW_HREF.media(item.id)} className="px-4 py-3">
                   <div className="flex items-start gap-3">
                     <div className="shrink-0">{mediaPreview(item)}</div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-start justify-between gap-2">
-                        <p className="min-w-0 break-words font-medium text-ink-900">{item.originalFilename}</p>
+                        <p className="min-w-0 break-words font-medium text-ink-900">
+                          <OpenableRowLink href={RECORD_VIEW_HREF.media(item.id)} className="break-all">
+                            {item.originalFilename}
+                          </OpenableRowLink>
+                        </p>
                         <StatusBadge status={item.status} />
                       </div>
                       {item.caption ? <p className="truncate text-xs text-ink-500">{item.caption}</p> : null}
@@ -944,7 +974,8 @@ function MediaPageBody() {
                           .join(" · ")}
                       </p>
                       {item.transcriptText ? (
-                        <details className="mt-1 text-sm">
+                        // `data-row-ignore`: reading the open transcript is not a press on the card.
+                        <details data-row-ignore="" className="mt-1 text-sm">
                           <summary className="cursor-pointer font-semibold text-field-700 dark:text-purple-300 pointer-coarse:py-2">
                             View transcript
                           </summary>
@@ -958,8 +989,9 @@ function MediaPageBody() {
                     </div>
                   </div>
                   <div className="mt-3 [&>div]:justify-start">{mediaActions(item, hold)}</div>
+                  </OpenableCard>
                   {codeFor === item.id ? (
-                    <div className="mt-3 rounded-md bg-surface-50 p-3">
+                    <div className="mx-4 mb-3 rounded-md bg-surface-50 p-3">
                       <RecordCodeCard recordType="media" id={item.id} title={item.caption?.trim() || item.originalFilename} />
                     </div>
                   ) : null}
@@ -989,12 +1021,17 @@ function MediaPageBody() {
                   const hold = holdOf(item);
                   return (
                     <Fragment key={item.id}>
-                      <tr>
+                      {/* The whole row opens the file's own read-only page — preview, transcript,
+                          Download. The preview tile, the transcript disclosure and every button keep
+                          their own clicks (`OpenableRow`). */}
+                      <OpenableRow href={RECORD_VIEW_HREF.media(item.id)}>
                         <td className="px-4 py-3">
                           {mediaPreview(item)}
                         </td>
                         <td className="px-4 py-3">
-                          <div className="font-medium text-ink-900">{item.originalFilename}</div>
+                          <OpenableRowLink href={RECORD_VIEW_HREF.media(item.id)} className="break-all">
+                            {item.originalFilename}
+                          </OpenableRowLink>
                           {item.caption ? <div className="max-w-xs truncate text-xs text-ink-500">{item.caption}</div> : null}
                         </td>
                         <td className="px-4 py-3 text-ink-700">{item.mediaType}</td>
@@ -1004,7 +1041,8 @@ function MediaPageBody() {
                         </td>
                         <td className="px-4 py-3 text-ink-700">
                           {item.transcriptText ? (
-                            <details>
+                            // `data-row-ignore`: reading the open transcript is not a press on the row.
+                            <details data-row-ignore="">
                               <summary className="cursor-pointer font-semibold text-field-700 dark:text-purple-300">View transcript</summary>
                               <div className="mt-2 max-h-64 min-w-64 overflow-auto rounded-md bg-field-100 p-3">
                                 <Markdown text={item.transcriptText} />
@@ -1038,13 +1076,13 @@ function MediaPageBody() {
                               empty now. */}
                           {mediaActions(item, hold)}
                         </td>
-                      </tr>
+                      </OpenableRow>
                       {codeFor === item.id ? (
-                        /* An expanded row and not a route, because a media file has no per-record page
-                           on the web — `lib/workshopCodeLookup.ts` says so in as many words and lands a
+                        /* An expanded row, kept beside the file's own read-only page (/media/[id],
+                           2026-10-16) because the code is what a designer prints for a row they are
+                           already looking at in the list. `lib/workshopCodeLookup.ts` still lands a
                            scanned M code on the stored object or, when the caller is not entitled to the
-                           bytes, on this list. This row is the closest thing a designer opens for ONE
-                           file, so it is where the code for one file belongs. Android shows the same
+                           bytes, on this list. Android shows the same
                            card on its own media detail (`RecordCodeSection(..., MEDIA, ...)` in
                            MainActivity); until now the web showed none, and two clients disagreeing
                            about which records have a code is a defect in itself.

@@ -26,6 +26,7 @@ import {
 import { StatusBadge } from "@/components/StatusBadge";
 import { useAuth } from "@/components/AuthProvider";
 import { cappedListNotice, listCut, LIST_PAGE_CEILING, type ListCut } from "@/components/data/cappedList";
+import { OpenableCard } from "@/components/data/OpenableRow";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import {
@@ -37,6 +38,7 @@ import { apiFetch, buildQuery, listResource } from "@/lib/api";
 import type { DwSummary } from "@/lib/designWorkshops";
 import { formatDateTime } from "@/lib/format";
 import { canViewDesignWorkshopData } from "@/lib/permissions";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { Artisan, Craft, MediaFile, ProductDocumentation, ToolDocumentation, Workshop } from "@/lib/types";
 
 type SearchResult = {
@@ -84,10 +86,9 @@ type SearchResult = {
 };
 
 /**
- * One row in a result bucket. `href` is the SAME destination the matching list page uses, so a hit
- * here opens the record instead of dead-ending: artisans, products and tools have `[id]/edit`
- * routes; workshops are edited inline on the workshops list, and a media file opens the object
- * itself (`external`), because neither has a per-record route to link to.
+ * One row in a result bucket. `href` is the SAME destination the matching list page's rows open: the
+ * record's READ-ONLY page (`lib/recordView.ts`, owner ruling 2026-10-16), from which "Update" reaches
+ * the form. The whole result card is the click target (`OpenableCard`).
  */
 type ResultItem = {
   id: string;
@@ -556,7 +557,7 @@ export default function SearchPage() {
               subtitle: [item.place, item.craft?.name].filter(Boolean).join(" · "),
               status: item.status,
               date: item.createdAt,
-              href: `/artisans/${item.id}/edit`
+              href: RECORD_VIEW_HREF.artisan(item.id)
             }))}
           />
           ) : null}
@@ -569,11 +570,7 @@ export default function SearchPage() {
               subtitle: item.place,
               status: item.status,
               date: item.date,
-              // Workshops are created and edited inline on their list page — there is no
-              // /workshops/[id] — so the id travels as `?edit=`, which that page reads via
-              // `useEditDeepLink`. Linking to the bare list dropped the id and opened a create form.
-              href: `/workshops?edit=${item.id}`,
-              actionLabel: "Open in Workshops"
+              href: RECORD_VIEW_HREF.workshop(item.id)
             }))}
           />
           ) : null}
@@ -586,7 +583,7 @@ export default function SearchPage() {
               subtitle: `${item.craftName} · ${item.artisanName} · ${item.place}`,
               status: item.status,
               date: item.createdAt,
-              href: `/products/${item.id}/edit`
+              href: RECORD_VIEW_HREF.product(item.id)
             }))}
           />
           ) : null}
@@ -599,7 +596,7 @@ export default function SearchPage() {
               subtitle: `${item.craftName} · ${item.artisanName} · ${item.place}`,
               status: item.status,
               date: item.createdAt,
-              href: `/tools/${item.id}/edit`
+              href: RECORD_VIEW_HREF.tool(item.id)
             }))}
           />
           ) : null}
@@ -612,11 +609,9 @@ export default function SearchPage() {
               subtitle: `${item.mediaType} · ${item.mimeType}`,
               status: item.status,
               date: item.createdAt,
-              // A media file has no detail page: play/open the object when it has a URL, otherwise
-              // fall back to the Miscellaneous Media list.
-              href: item.url ?? "/media",
-              external: Boolean(item.url),
-              actionLabel: item.url ? "Open file" : "Open in Media"
+              // The file's own read-only page: preview, transcript and Download in one place, and
+              // the same page whether or not this account is entitled to the bytes.
+              href: RECORD_VIEW_HREF.media(item.id)
             }))}
           />
           ) : null}
@@ -681,7 +676,13 @@ function ResultSection({ title, items, note }: { title: string; items: ResultIte
       </div>
       <div className="divide-y divide-line-200">
         {items.map((item) => (
-          <div key={item.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          // The whole card opens the result; the title is the same act as a real link.
+          <OpenableCard
+            key={item.id}
+            href={item.href}
+            external={item.external}
+            className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          >
             <div className="min-w-0">
               <ResultLink item={item} className="font-medium text-ink-900 hover:text-purple-700 hover:underline">
                 {item.title}
@@ -710,7 +711,7 @@ function ResultSection({ title, items, note }: { title: string; items: ResultIte
                 </ResultLink>
               </RowActions>
             </div>
-          </div>
+          </OpenableCard>
         ))}
       </div>
     </section>

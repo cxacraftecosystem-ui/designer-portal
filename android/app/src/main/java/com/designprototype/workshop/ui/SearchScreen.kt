@@ -43,6 +43,8 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +53,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -327,6 +330,32 @@ private val SEARCH_MEDIA_TYPES = listOf("IMAGE", "VIDEO", "AUDIO", "PDF", "DOCUM
 // ---------------------------------------------------------------------------------------------
 
 /**
+ * What the search screen keeps across a trip to a record and back — the filters, the page and the
+ * rows on screen. Owned by the HOST, because the screen leaves composition when a result opens the
+ * record's read-only page (owner ruling, 2026-10-16), and everything it remembered goes with it: Back
+ * used to land on an empty search box. Plain fields, not state: the screen reads it once on arrival
+ * and writes it after every change, and nothing draws from it directly.
+ */
+class SearchMemory {
+    internal var focus: String? = null
+    internal var filters: SearchFilters? = null
+    internal var applied: SearchFilters? = null
+    internal var page: Int = 1
+    internal var browseAll: Boolean = false
+    internal var results: SearchResultsDto? = null
+
+    /** Forget everything — a fresh way in to search starts empty. */
+    fun clear() {
+        focus = null
+        filters = null
+        applied = null
+        page = 1
+        browseAll = false
+        results = null
+    }
+}
+
+/**
  * Search across every record type at once.
  *
  * @param onOpenRecord called with a [SearchRecordTypes] value and the record's id when a result is
@@ -381,6 +410,8 @@ fun SearchScreen(
      * not sit on an empty form waiting to be told again.
      */
     initialRecordType: String? = null,
+    /** Where the screen keeps its place across a trip to a record and back — see [SearchMemory]. */
+    memory: SearchMemory? = null,
     modifier: Modifier = Modifier
 ) {
     /*
@@ -417,19 +448,32 @@ fun SearchScreen(
             SearchRecordTypes.ALL - SearchRecordTypes.DESIGN_WORKSHOP
         }
     }
+    // Back from a record: the place this screen was left in, for the same focus. Read once.
+    val recalled = remember(seed) { memory?.takeIf { it.applied != null && it.focus == initialRecordType } }
     // Live inputs.
-    var filters by remember(seed) { mutableStateOf(seed) }
+    var filters by remember(seed) { mutableStateOf(recalled?.filters ?: seed) }
     // The filters the CURRENT results belong to. The pager and the rendered buckets walk THESE,
     // never `filters`: they describe the rows on screen, and a half-typed box does not.
-    var applied by remember(seed) { mutableStateOf(seed) }
-    var page by remember(seed) { mutableStateOf(1) }
+    var applied by remember(seed) { mutableStateOf(recalled?.applied ?: seed) }
+    var page by remember(seed) { mutableStateOf(recalled?.page ?: 1) }
     // Bumped by the Search button so pressing it re-runs an identical query (same filters, same page).
     var runCount by remember { mutableStateOf(0) }
     // Set once the researcher explicitly asks for an unfiltered listing — or immediately, when the
     // screen was opened from a dashboard total, which is that same request made by tapping a number.
-    var browseAll by remember(seed) { mutableStateOf(initialRecordType != null) }
+    var browseAll by remember(seed) { mutableStateOf(recalled?.browseAll ?: (initialRecordType != null)) }
 
-    var results by remember(seed) { mutableStateOf<SearchResultsDto?>(null) }
+    var results by remember(seed) { mutableStateOf<SearchResultsDto?>(recalled?.results) }
+    // Kept current for the host, so a result opened from here comes Back to this exact place.
+    SideEffect {
+        memory?.let {
+            it.focus = initialRecordType
+            it.filters = filters
+            it.applied = applied
+            it.page = page
+            it.browseAll = browseAll
+            it.results = results
+        }
+    }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -593,7 +637,15 @@ fun SearchScreen(
     // buckets and a "No more results" message — for a scope that plainly has records in it. Keyed on
     // `requestKey` rather than on the raw set so re-picking the same two workshops in the other order
     // is not a change.
-    LaunchedEffect(workshopScope.requestKey) { page = 1 }
+    // Not on the first pass when the screen came Back to a remembered page: that pass is arrival,
+    // not a change of scope, and resetting there would drop the reader on page 1.
+    var scopeSeen by remember(seed) { mutableStateOf(false) }
+    LaunchedEffect(workshopScope.requestKey) {
+        val arriving = !scopeSeen
+        scopeSeen = true
+        if (arriving && recalled != null) return@LaunchedEffect
+        page = 1
+    }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (showBackAction) {
@@ -1268,7 +1320,11 @@ internal fun SearchResultRow(row: SearchRow, onOpen: () -> Unit, openable: Boole
             .fillMaxWidth()
             .background(MaterialTheme.field.surface50, MaterialTheme.shapes.medium)
             .border(1.dp, MaterialTheme.field.hairline, MaterialTheme.shapes.medium)
-            .then(if (openable) Modifier.clickable(onClick = onOpen) else Modifier)
+            // The whole card opens the record's read-only page (RecordOpen); announced as "Open …".
+            .then(
+                if (openable) Modifier.clickable(onClickLabel = RecordOpen.openClickLabel(row.title), role = Role.Button, onClick = onOpen)
+                else Modifier
+            )
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {

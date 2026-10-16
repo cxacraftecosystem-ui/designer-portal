@@ -32,6 +32,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import com.designprototype.workshop.ui.RecordDetailsDialog
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +54,7 @@ import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.DesignerStandingChips
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.InstitutionVocabulary
+import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.RosterEmptyState
 import com.designprototype.workshop.ui.RosterFilterButton
 import com.designprototype.workshop.ui.RosterFilterSheet
@@ -731,12 +735,38 @@ private fun RosterCard(
     /** Null when this row has no account behind it yet; the action is then not rendered at all. */
     onOpenProfile: (() -> Unit)?,
 ) {
+    // A tap anywhere on the card opens the entry READ-ONLY (owner ruling, 2026-10-16); Update, the
+    // access toggle and the profile link are their own acts and consume their own taps.
+    var viewing by remember(row.id) { mutableStateOf(false) }
+    val name = row.fullName?.takeIf { it.isNotBlank() } ?: row.email
+    if (viewing) {
+        RecordDetailsDialog(
+            title = name,
+            details = listOf(
+                "Email" to row.email,
+                "Institution" to (row.institution ?: "Not recorded"),
+                "May sign in" to if (row.isActive) "Yes" else ("Suspended" + (row.revokedAt?.let { " ${it.take(10)}" } ?: "")),
+                "Invitation" to (row.firstSeenAt?.let { "Signed in ${it.take(10)}" } ?: "Outstanding"),
+                "Empanelled by" to addedByLabel,
+                "Note" to row.notes
+            ),
+            onDismiss = { viewing = false },
+            onUpdate = if (busy) null else ({ viewing = false; onEdit() })
+        )
+    }
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            // Inside the card, so the ripple stops at its rounded corner.
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = RecordOpen.openClickLabel(name), role = Role.Button) { viewing = true }
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     // The admin's typed name until the account exists, and the email after that
@@ -802,7 +832,7 @@ private fun RosterCard(
                 OutlinedButton(onClick = onEdit, enabled = !busy, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Edit")
+                    Text(RecordOpen.UPDATE_LABEL)
                 }
                 OutlinedButton(onClick = onToggleAccess, enabled = !busy, modifier = Modifier.weight(1f)) {
                     Icon(

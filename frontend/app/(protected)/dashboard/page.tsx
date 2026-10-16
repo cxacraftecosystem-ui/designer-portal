@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 
 import { DashboardCard } from "@/components/DashboardCard";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { EntryPointCard } from "@/components/dashboard/EntryPointCard";
 import { MegaCard, type MegaTone } from "@/components/dashboard/MegaCard";
 import { MinistryDeskCard } from "@/components/dashboard/MinistryDeskCard";
@@ -58,6 +59,7 @@ import {
   isAdmin,
   roleLabel
 } from "@/lib/permissions";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 
 /** The five record counters plus the pending backlog — the shape both halves of "At a glance" share. */
 type StatTotals = {
@@ -226,38 +228,29 @@ const TILE_GROUPS = [
 type TileGroup = (typeof TILE_GROUPS)[number]["id"];
 
 /**
- * Where a "recent submission" row goes when it is clicked.
+ * Where a "recent submission" row goes when it is clicked: the record's READ-ONLY page
+ * (`lib/recordView.ts`, owner ruling 2026-10-16), whose "Update" button keeps the id on its way to
+ * the form — the bare list route there is the blank-CREATE-form bug §13.0 records shipping here once.
  *
- * Two shapes, because the app has two ways of editing a record and neither is going away:
- *
- * * artisans, products and tools own a real `/[id]/edit` ROUTE, so the id is a path segment;
- * * workshops, crafts and processes are edited INLINE on their list page, so the id travels as
- *   `?edit=` and `useEditDeepLink` on that page loads it into the form.
- *
- * The three inline types used to return the bare list route and drop the id — clicking a named row
- * in Recent submissions opened the blank CREATE form for its type, which is the same screen the
- * "New" tile opens. (`/processes?edit=` was the exception: it carried the id but nothing on the
- * receiving page read it, so it behaved identically until that page grew the hook.) Interviews are
- * still list-level: an interview is identified by its artisan SET, not by a row id, so
- * `/questionnaire` has no single-record form to deep-link into.
+ * An interview opens its own sitting's page, like every other record.
  */
 function recordHref(type: string, id: string): string | null {
   switch ((type || "").toLowerCase()) {
     case "artisan":
-      return `/artisans/${id}/edit`;
+      return RECORD_VIEW_HREF.artisan(id);
     case "product":
-      return `/products/${id}/edit`;
+      return RECORD_VIEW_HREF.product(id);
     case "tool":
-      return `/tools/${id}/edit`;
+      return RECORD_VIEW_HREF.tool(id);
     case "process":
-      return `/processes?edit=${id}`;
+      return RECORD_VIEW_HREF.process(id);
     case "workshop":
-      return `/workshops?edit=${id}`;
+      return RECORD_VIEW_HREF.workshop(id);
     case "craft":
-      return `/crafts?edit=${id}`;
+      return RECORD_VIEW_HREF.craft(id);
     case "questionnaire":
     case "interview":
-      return "/questionnaire";
+      return RECORD_VIEW_HREF.interview(id);
     default:
       return null;
   }
@@ -989,21 +982,14 @@ function DashboardView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-200">
-                {stats.recentSubmissions.map((item) => (
-                  <tr key={`${item.type}-${item.id}`} className="hover:bg-surface-50">
+                {stats.recentSubmissions.map((item) => {
+                  const href = recordHref(item.type, item.id);
+                  const cells = (
+                    <>
                     <td className="px-4 py-3 font-medium text-ink-900">
-                      {/* The row a researcher recognises is the one they want to correct, so the
-                          title is the link — straight into the edit view for that record type. */}
-                      {recordHref(item.type, item.id) ? (
-                        <Link
-                          href={recordHref(item.type, item.id)!}
-                          className="text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline"
-                        >
-                          {item.title}
-                        </Link>
-                      ) : (
-                        item.title
-                      )}
+                      {/* The title is the real link — the row's keyboard route; the rest of the row
+                          does the same for a pointer (`OpenableRow`). */}
+                      {href ? <OpenableRowLink href={href} className="text-purple-700 dark:text-purple-300">{item.title}</OpenableRowLink> : item.title}
                     </td>
                     <td className="px-4 py-3 capitalize text-ink-700">{item.type}</td>
                     <td className="px-4 py-3 text-ink-700">{item.place ?? "-"}</td>
@@ -1012,8 +998,16 @@ function DashboardView() {
                       <StatusBadge status={item.status} />
                     </td>
                     <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
-                  </tr>
-                ))}
+                    </>
+                  );
+                  return href ? (
+                    <OpenableRow key={`${item.type}-${item.id}`} href={href}>
+                      {cells}
+                    </OpenableRow>
+                  ) : (
+                    <tr key={`${item.type}-${item.id}`}>{cells}</tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

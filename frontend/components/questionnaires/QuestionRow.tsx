@@ -202,7 +202,7 @@ export function QuestionRow({
           {mayEdit ? (
             <div className="flex flex-wrap justify-end gap-2">
               <button type="button" className={rowAction("edit")} onClick={() => setEditing(true)} disabled={busy}>
-                Edit
+                Update
               </button>
               <button type="button" className={rowAction("neutral")} onClick={toggleRequired} disabled={busy}>
                 {question.isRequired ? "Make optional" : "Make required"}

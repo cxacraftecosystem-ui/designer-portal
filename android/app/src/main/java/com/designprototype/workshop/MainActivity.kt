@@ -138,6 +138,8 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.LocalContentColor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.encodeToString
@@ -402,6 +404,7 @@ import com.designprototype.workshop.ui.NO_DESIGN_WORKSHOP
 import com.designprototype.workshop.ui.workshopCapLine
 import com.designprototype.workshop.ui.RecordCodeLookupPanel
 import com.designprototype.workshop.ui.RecordCodeSection
+import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.RecordEditHistorySection
 // The shared prose box behind every record form: an optional on-device microphone and an optional
 // rich-text editor, both defaulting to off. See `ui/RecordProseField.kt` and `ui/RecordProseText.kt`.
@@ -473,6 +476,7 @@ import com.designprototype.workshop.ui.rememberWorkshopScope
 import com.designprototype.workshop.ui.ProvideAppPreferences
 import com.designprototype.workshop.ui.SystemBarsInsetsRoot
 import com.designprototype.workshop.ui.SearchRecordTypes
+import com.designprototype.workshop.ui.SearchMemory
 import com.designprototype.workshop.ui.SearchScreen
 import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
@@ -622,6 +626,7 @@ import com.designprototype.workshop.data.WorkshopMappingPlanDto
 import com.designprototype.workshop.data.WorkshopSubmissionCheckDto
 import com.designprototype.workshop.data.titleCasePreview
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.snapshotFlow
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -1033,7 +1038,23 @@ private sealed interface Screen {
         val searchFocus: String? = null
     ) : Screen
     data class Browse(val mode: EntryMode) : Screen
-    data class Edit(val mode: EntryMode, val recordId: String) : Screen
+    /**
+     * One record, READ-ONLY — where a tap anywhere on a record's card lands (owner ruling,
+     * 2026-10-16; [com.designprototype.workshop.ui.RecordOpen]). [Edit] is reached from here, and
+     * only here, through the "Update" button.
+     */
+    data class View(
+        val mode: EntryMode,
+        val recordId: String,
+        /**
+         * The screen the record was opened FROM — search, the map, a scanned code, Recent
+         * submissions, My Activity or the record picker — and so where Back returns. Null falls back
+         * to the record picker for [mode].
+         */
+        val from: Screen? = null
+    ) : Screen
+    /** The form, reached from [View]'s Update or the picker's; [from] is where Back returns. */
+    data class Edit(val mode: EntryMode, val recordId: String, val from: Screen? = null) : Screen
     // Hamburger-only screens (not on the dashboard).
     data object MyActivity : Screen
     data object ToolAssign : Screen
@@ -3112,6 +3133,16 @@ private fun HomeScreen(
     var crafts by remember { mutableStateOf<List<CraftDto>>(emptyList()) }
     var artisans by remember { mutableStateOf<List<ArtisanDto>>(emptyList()) }
     var screen by remember { mutableStateOf<Screen>(Screen.Dashboard) }
+    // The data browser's open folder, kept here so Back from a file's read-only page lands in it.
+    var dataBrowserPath by remember { mutableStateOf("") }
+    // The search screen's filters, page and rows, kept here for the same reason — see SearchMemory.
+    val searchMemory = remember { SearchMemory() }
+    // Where each list was scrolled to when one of its records was opened, so Back puts the reader
+    // on the row they left rather than at the top. Keyed by the list's own Screen value.
+    val listScroll = remember { mutableMapOf<Screen, Int>() }
+    // The list Back is returning to, whose remembered position should be put back. Set only by Back
+    // from a record, so a list reached any other way still starts at the top.
+    var restoreScrollFor by remember { mutableStateOf<Screen?>(null) }
 
     /**
      * A questionnaire arriving from another phone OPENS THE SCREEN THAT CAN RECEIVE IT.
@@ -3397,7 +3428,9 @@ private fun HomeScreen(
                 showMessage(unroutableRecordLine(recordType))
             } else {
                 message = null
-                screen = Screen.Edit(mode, recordId)
+                // Back from the record returns here. A form is never the return point: the trip to
+                // the record has already left it.
+                screen = Screen.View(mode, recordId, from = screen.takeUnless { it is Screen.Edit })
             }
         }
     }
@@ -3452,7 +3485,15 @@ private fun HomeScreen(
      * screens that own their whole viewport get their own Screen instead (see [Screen.DataBrowser]).
      */
     fun screenFor(mode: EntryMode): Screen =
-        if (mode == EntryMode.DATA_BROWSER) Screen.DataBrowser else Screen.Create(mode)
+        if (mode == EntryMode.DATA_BROWSER) {
+            // A fresh way in starts at the top of the tree; only Back from a file returns deeper.
+            dataBrowserPath = ""
+            Screen.DataBrowser
+        } else {
+            // Likewise a fresh way in to search starts empty; only Back from a result returns to it.
+            if (mode == EntryMode.SEARCH) searchMemory.clear()
+            Screen.Create(mode)
+        }
 
     fun refresh() {
         scope.launch {
@@ -3616,7 +3657,11 @@ private fun HomeScreen(
     fun goBack() {
         message = null
         screen = when (val s = screen) {
-            is Screen.Edit -> Screen.Browse(s.mode)
+            // The form is opened from the record's page (or the picker's Update), so Back from it
+            // returns there; the page in turn returns to wherever it was opened from — search, the
+            // map, My Activity — and only to the picker when nothing else opened it.
+            is Screen.Edit -> s.from ?: Screen.View(s.mode, s.recordId)
+            is Screen.View -> (s.from ?: Screen.Browse(s.mode)).also { restoreScrollFor = it }
             is Screen.Browse -> Screen.Dashboard
             is Screen.Create -> Screen.Dashboard
             is Screen.MyActivity -> Screen.Dashboard
@@ -3714,7 +3759,8 @@ private fun HomeScreen(
         is Screen.Browse -> "Update ${s.mode.label.lowercase()}"
         // A media file has no edit form (the web opens the object itself), so "Edit …" would be a lie
         // for the one non-editable type search can land on.
-        is Screen.Edit -> if (s.mode.editable) "Edit ${s.mode.label.lowercase()}" else s.mode.label
+        is Screen.View -> s.mode.label
+        is Screen.Edit -> if (s.mode.editable) "${RecordOpen.UPDATE_LABEL} ${s.mode.label.lowercase()}" else s.mode.label
         is Screen.MyActivity -> "My Activity"
         is Screen.ToolAssign -> "Assign tools to artisans"
         is Screen.Feedback -> "App feedback"
@@ -3868,7 +3914,7 @@ private fun HomeScreen(
         // Lighting it while an admin edits somebody else's would say "you are on your own profile"
         // on the one screen where getting that wrong means editing the wrong person's report cover.
         is Screen.DesignerProfile -> if (s.userId == null) NavDestination.DESIGNER_PROFILE else null
-        is Screen.Browse, is Screen.Edit -> null
+        is Screen.Browse, is Screen.View, is Screen.Edit -> null
         is Screen.Create -> when (s.mode) {
             EntryMode.ARTISAN -> NavDestination.RECORD_ARTISAN
             EntryMode.PRODUCT -> NavDestination.RECORD_PRODUCT
@@ -4003,8 +4049,14 @@ private fun HomeScreen(
                     is Screen.DataBrowser -> DataBrowserScreen(
                         repository = repository,
                         // Back walks one folder up first; this fires only at the top of the tree.
-                        onBack = { attemptExit { goBack() } },
-                        onMessage = { showMessage(it) }
+                        onBack = { attemptExit { dataBrowserPath = ""; goBack() } },
+                        onMessage = { showMessage(it) },
+                        onOpenMedia = { mediaId ->
+                            message = null
+                            screen = Screen.View(EntryMode.MEDIA, mediaId, from = Screen.DataBrowser)
+                        },
+                        startPath = dataBrowserPath,
+                        onPathChange = { dataBrowserPath = it }
                     )
 
                     is Screen.Appearance -> AppearanceScreen(
@@ -4069,6 +4121,25 @@ private fun HomeScreen(
                 // nothing on it to explain why. `key` throws the state away when the destination
                 // changes, so each page starts where a page starts.
                 val pageScroll = key(screen) { rememberScrollState() }
+                // BACK FROM A RECORD LANDS ON THE ROW IT WAS OPENED FROM (owner ruling, 2026-10-16:
+                // a tap on a card opens the record, so list → record → Back is the commonest walk
+                // in the app). Every page leaves its position behind as it goes; Back from a record
+                // asks for it again. The list refetches on arrival, so the restore waits until the
+                // page is tall enough to hold the position — and gives up quietly if it never is.
+                key(screen) {
+                    val here = screen
+                    DisposableEffect(Unit) { onDispose { listScroll[here] = pageScroll.value } }
+                    LaunchedEffect(Unit) {
+                        if (restoreScrollFor != here) return@LaunchedEffect
+                        restoreScrollFor = null
+                        val target = listScroll[here] ?: 0
+                        if (target <= 0) return@LaunchedEffect
+                        withTimeoutOrNull(5_000) {
+                            snapshotFlow { pageScroll.maxValue }.first { it >= target }
+                        }
+                        pageScroll.scrollTo(target)
+                    }
+                }
                 // The island floats over the BOTTOM of the page (see IslandBottomNav.kt), outside the
                 // scroller so it stays put while the page moves underneath it. The scaffold measures
                 // the bar and hands the page that height as bottom padding, so the last field or
@@ -4240,6 +4311,7 @@ private fun HomeScreen(
                     // in search rather than in a second listing built only for the dashboard.
                     onOpenSearchFor = { recordType ->
                         message = null
+                        searchMemory.clear()
                         screen = Screen.Create(EntryMode.SEARCH, searchFocus = recordType)
                     },
                     // `require_reviewer`, not admin chrome (see canReview above): a Field Contributor
@@ -4250,15 +4322,27 @@ private fun HomeScreen(
                     // Every "Your contribution" figure counts this account's own rows, and My Activity
                     // asks the API for exactly those — so the number and the list behind it agree.
                     onOpenMyActivity = { message = null; screen = Screen.MyActivity },
-                    onOpenRecord = { mode, recordId -> message = null; screen = Screen.Edit(mode, recordId) },
-                    onOpenArtisan = { artisanId -> message = null; screen = Screen.Edit(EntryMode.ARTISAN, artisanId) }
+                    onOpenRecord = { mode, recordId -> message = null; screen = Screen.View(mode, recordId, from = Screen.Dashboard) },
+                    onOpenArtisan = { artisanId -> message = null; screen = Screen.View(EntryMode.ARTISAN, artisanId, from = Screen.Dashboard) }
                 )
             }
 
             is Screen.Browse -> RecordPickerScreen(
                 repository = repository,
                 mode = s.mode,
-                onPick = { recordId -> screen = Screen.Edit(s.mode, recordId) },
+                canUpdate = RecordOpen.mayUpdate(s.mode.name, user),
+                onOpen = { recordId -> message = null; screen = Screen.View(s.mode, recordId, from = s) },
+                onUpdate = { recordId -> message = null; screen = Screen.Edit(s.mode, recordId, from = s) },
+                onError = { showError(it) }
+            )
+
+            is Screen.View -> RecordViewScreen(
+                repository = repository,
+                mode = s.mode,
+                recordId = s.recordId,
+                canUpdate = RecordOpen.mayUpdate(s.mode.name, user),
+                showProvenance = canViewProvenance,
+                onUpdate = { message = null; screen = Screen.Edit(s.mode, s.recordId, from = s) },
                 onError = { showError(it) }
             )
 
@@ -4350,7 +4434,7 @@ private fun HomeScreen(
                     adminChrome = adminChrome,
                     showProvenance = canViewProvenance,
                     canDownloadDataset = canDownloadDataset,
-                    onOpenDataBrowser = { message = null; screen = Screen.DataBrowser },
+                    onOpenDataBrowser = { message = null; screen = screenFor(EntryMode.DATA_BROWSER) },
                     onError = { showError(it) }
                 )
                 // /search on the web — open to every signed-in user. It renders into the shared
@@ -4388,14 +4472,15 @@ private fun HomeScreen(
                         // See [openDesignWorkshopFromSearch] and [SearchDesignWorkshopRoute].
                         onOpenDesignWorkshop = openDesignWorkshopFromSearch,
                         onBack = { attemptExit { goBack() } },
-                        initialRecordType = s.searchFocus
+                        initialRecordType = s.searchFocus,
+                        memory = searchMemory
                     )
                 }
                 // Routed as Screen.DataBrowser by `screenFor`, since the browser owns its whole
                 // viewport. This branch only exists so the `when` stays exhaustive — and, if anything
                 // ever does route here directly, it offers the way in rather than a blank screen.
                 EntryMode.DATA_BROWSER -> DataBrowserEntryCard(
-                    onOpen = { message = null; screen = Screen.DataBrowser }
+                    onOpen = { message = null; screen = screenFor(EntryMode.DATA_BROWSER) }
                 )
                 // /map on the web. Renders into the shared chrome like SEARCH above, so it draws no
                 // scaffold and no back control of its own.
@@ -4540,7 +4625,7 @@ private fun HomeScreen(
             is Screen.MyActivity -> MyActivityScreen(
                 repository = repository,
                 userId = user.id,
-                onOpen = { mode, recordId -> message = null; screen = Screen.Edit(mode, recordId) },
+                onOpen = { mode, recordId -> message = null; screen = Screen.View(mode, recordId, from = Screen.MyActivity) },
                 onError = { showError(it) }
             )
 
@@ -6338,10 +6423,11 @@ private fun DashboardScreen(
                             .clickable(
                                 interactionSource = interaction,
                                 indication = LocalIndication.current,
-                                onClickLabel = "Edit ${artisan.name}"
+                                onClickLabel = RecordOpen.openClickLabel(artisan.name),
+                                role = Role.Button
                             ) { onOpenArtisan(artisan.id) }
                             .semantics(mergeDescendants = true) {
-                                contentDescription = "${artisan.name}. Opens this artisan for editing."
+                                contentDescription = "${artisan.name}. Opens this artisan."
                             }
                             .padding(12.dp)
                     ) {
@@ -6982,15 +7068,17 @@ private fun RecentSubmissionRow(
     val typeLabel = item.type.replaceFirstChar { it.uppercase() }
     val title = item.title?.takeIf { it.isNotBlank() }
         ?: "Untitled ${item.type.ifBlank { "record" }}"
-    // The row a researcher recognises is the one they want to correct, so the title is the way in —
-    // straight into the edit view for that record type, exactly as the web links it.
+    // The whole row is the way in, to the record's READ-ONLY page — exactly as the web opens it
+    // (owner ruling, 2026-10-16); Update on that page is the way to the form.
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
             .then(
                 if (mode == null) Modifier
-                else Modifier.clickable(onClickLabel = "Open $title") { onOpenRecord(mode, item.id) }
+                else Modifier.clickable(onClickLabel = RecordOpen.openClickLabel(title), role = Role.Button) {
+                    onOpenRecord(mode, item.id)
+                }
             )
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -9930,12 +10018,18 @@ private fun LoadingCard(mode: EntryMode, failed: String? = null, onRetry: () -> 
     }
 }
 
-/** Dropdown-driven picker for choosing an existing record to edit. */
+/**
+ * The existing records of one kind, each a card that opens the record READ-ONLY when tapped anywhere
+ * (owner ruling, 2026-10-16). The card's own "Update" button — drawn only where [canUpdate] — goes
+ * straight to the form, and consumes its own tap so the card underneath does not also open.
+ */
 @Composable
 private fun RecordPickerScreen(
     repository: WorkshopRepository,
     mode: EntryMode,
-    onPick: (String) -> Unit,
+    canUpdate: Boolean,
+    onOpen: (String) -> Unit,
+    onUpdate: (String) -> Unit,
     onError: (String) -> Unit
 ) {
     // UX audit 2026-10-16, DA-08. This picker used to read the first page of 100 and stop, so the
@@ -9996,8 +10090,12 @@ private fun RecordPickerScreen(
     }
 
     val noun = mode.label.lowercase()
-    RecordCard(title = "Update existing $noun") {
-        Text("Pick a record to open and edit it. Edits are attributed to you per field.", color = Muted, fontSize = 12.sp)
+    RecordCard(title = "Existing $noun records") {
+        Text(
+            "Tap a record to read it. ${RecordOpen.UPDATE_LABEL} opens its form; changes are attributed to you per field.",
+            color = Muted,
+            fontSize = 12.sp
+        )
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -10022,10 +10120,10 @@ private fun RecordPickerScreen(
                     onSelect = { selected = it }
                 )
                 Button(
-                    onClick = { if (selected.isNotBlank()) onPick(selected) },
+                    onClick = { if (selected.isNotBlank()) onOpen(selected) },
                     enabled = selected.isNotBlank(),
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Open for editing") }
+                ) { Text(RecordOpen.OPEN_LABEL) }
                 if (total > options.size) {
                     Text(
                         "Showing the newest ${options.size} of $total. Type a name above to find any of them.",
@@ -10037,22 +10135,80 @@ private fun RecordPickerScreen(
                 options.take(if (query.isBlank()) 12 else 50).forEach { (id, label) ->
                     ElevatedCard(
                         colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .clickable { onPick(id) }
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            // The WHOLE card is the target, announced as "Open <record>" — never a
+                            // small link at its edge. The click sits INSIDE the card, not on it: the
+                            // card clips its own shape, so the ripple stops at the rounded corner
+                            // instead of flashing a square. The Update button consumes its own tap.
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clickable(onClickLabel = RecordOpen.openClickLabel(label), role = Role.Button) { onOpen(id) }
+                                .padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("Edit ›", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                            if (canUpdate) {
+                                TextButton(onClick = { onUpdate(id) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                                    Text(RecordOpen.UPDATE_LABEL, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * One record, READ-ONLY — what a tap on its card opens (owner ruling, 2026-10-16). Every field the
+ * View Data detail prints, the media with their players and Download, the record's code, comments
+ * and history; nothing on it is a control that changes the record. "Update" at the top, drawn only
+ * where [canUpdate], opens the existing form.
+ *
+ * It renders [ViewDataDetail] rather than a second copy of it: View Data has been the handset's
+ * read-only record view all along, reached through two dropdowns. This screen is the same view
+ * reached by a tap, so the two cannot drift into two descriptions of one record — and the Aadhaar
+ * stays masked here exactly as it is there.
+ */
+@Composable
+private fun RecordViewScreen(
+    repository: WorkshopRepository,
+    mode: EntryMode,
+    recordId: String,
+    canUpdate: Boolean,
+    showProvenance: Boolean,
+    onUpdate: () -> Unit,
+    onError: (String) -> Unit
+) {
+    if (canUpdate) {
+        Button(
+            onClick = onUpdate,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+        ) {
+            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("${RecordOpen.UPDATE_LABEL} this ${mode.label.lowercase()}")
+        }
+    }
+    ViewDataDetail(
+        repository = repository,
+        mode = mode,
+        recordId = recordId,
+        // FALSE, not the admin's override: a tap on a matrix cell changes the completion status, and
+        // this page changes nothing. The override stays on View Data and the forms.
+        canOverrideCompletion = false,
+        showProvenance = showProvenance,
+        onError = onError,
+        readOnly = true
+    )
+    // The record's own code, as the form beside it has always drawn it — printing a tag is reading,
+    // not changing, so it belongs on the read-only page too.
+    DwWorkshopRecordType.entries.firstOrNull { it.name == mode.name }?.let { type ->
+        RecordCodeSection(repository, type, recordId)
     }
 }
 
@@ -10236,7 +10392,7 @@ private fun DwInlineRecordDialog(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            if (editing) "Edit $noun" else "New $noun",
+                            if (editing) "Update $noun" else "New $noun",
                             display = true,
                             fontSize = 20.sp,
                             color = MaterialTheme.colorScheme.onSurface
@@ -10710,7 +10866,7 @@ private fun CraftForm(
             workshop.isDirty() || media.uris.isNotEmpty()
     )
 
-    RecordCard(title = if (isEdit) "Edit craft" else "Add craft") {
+    RecordCard(title = if (isEdit) "Update craft" else "Add craft") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -11177,7 +11333,7 @@ private fun ArtisanForm(
             link.isDirty() || media.uris.isNotEmpty()
     )
 
-    RecordCard(title = if (isEdit) "Edit artisan" else "Add artisan") {
+    RecordCard(title = if (isEdit) "Update artisan" else "Add artisan") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -11650,7 +11806,7 @@ private fun WorkshopForm(
         WorkshopMappingCard(repository = repository, onOpenRecord = onOpenRecord, onError = onError)
     }
 
-    RecordCard(title = if (isEdit) "Edit workshop" else "Add workshop") {
+    RecordCard(title = if (isEdit) "Update workshop" else "Add workshop") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -11971,7 +12127,7 @@ private fun ProductForm(
         productSig() != initialSig || link.isDirty() || media.uris.isNotEmpty()
     )
 
-    RecordCard(title = if (isEdit) "Edit product" else "Add product") {
+    RecordCard(title = if (isEdit) "Update product" else "Add product") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -12704,7 +12860,7 @@ private fun ToolForm(
             media.uris.isNotEmpty() || stages.uris.isNotEmpty()
     )
 
-    RecordCard(title = if (isEdit) "Edit tool" else "Add tool") {
+    RecordCard(title = if (isEdit) "Update tool" else "Add tool") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -13418,7 +13574,7 @@ private fun ProcessForm(
             preMedia.uris.isNotEmpty() || steps.any { it.media.uris.isNotEmpty() }
     )
 
-    RecordCard(title = if (isEdit) "Edit process" else "Document process") {
+    RecordCard(title = if (isEdit) "Update process" else "Document process") {
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -13902,7 +14058,8 @@ private fun MyActivityScreen(
                         // "no MEDIA branch" — it has one now (EntryMode.MEDIA -> ViewDataDetail plus
                         // its record code), reached from Search and from this list. The flag outlived
                         // its reason and was left asserting the opposite of the code beside it.
-                        .clickable { onOpen(item.mode, item.id) }
+                        // Read-only first: the record's page, where Update leads to the form.
+                        .clickable(onClickLabel = RecordOpen.openClickLabel(item.title), role = Role.Button) { onOpen(item.mode, item.id) }
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(item.title, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
@@ -14061,9 +14218,20 @@ private fun DetailRow(label: String, value: String?) {
     }
 }
 
-/** A saved media row, its upload provenance, plus the transcript (or a live "transcribing" spinner). */
+/**
+ * A saved media row, its upload provenance, plus the transcript (or a live "transcribing" spinner).
+ *
+ * [readOnly] is a record's read-only page: "Transcribe now" and the AI refinement both REPLACE the
+ * stored transcript, so they are updates, and on that page updating is only ever behind "Update".
+ * Playing, copying and downloading stay — they read.
+ */
 @Composable
-private fun MediaWithTranscript(context: Context, media: MediaFileDto, repository: WorkshopRepository? = null) {
+private fun MediaWithTranscript(
+    context: Context,
+    media: MediaFileDto,
+    repository: WorkshopRepository? = null,
+    readOnly: Boolean = false
+) {
     // The repository was already optional here and was already being passed down for the transcript
     // half; handing it on is what lets an expired URL be refreshed on this row too.
     AndroidSavedMediaPreview(context = context, media = media, repository = repository)
@@ -14088,7 +14256,7 @@ private fun MediaWithTranscript(context: Context, media: MediaFileDto, repositor
     var transcribing by remember(media.id) { mutableStateOf(false) }
     val status = liveStatus?.uppercase()
     // Admins/master admins can transcribe (or re-transcribe) on the spot, applying the settings-page mode.
-    val isAdmin = repository?.cachedUser()?.role in setOf("ADMIN", "MASTER_ADMIN")
+    val isAdmin = !readOnly && repository?.cachedUser()?.role in setOf("ADMIN", "MASTER_ADMIN")
 
     fun transcribeNow() {
         val repo = repository ?: return
@@ -14193,7 +14361,7 @@ private fun MediaWithTranscript(context: Context, media: MediaFileDto, repositor
             // the record/update & view screens). Turns the raw transcript into a clean conversation,
             // optionally translated to English. Both actions are billable, so they're gated behind a
             // one-time cost confirmation. Approving a refined version saves it in place via onApplied.
-            if (repository != null) {
+            if (repository != null && !readOnly) {
                 TranscriptRefineControls(
                     context = context,
                     media = media,
@@ -14507,7 +14675,9 @@ private fun RecordMediaSection(
     context: Context,
     linkedType: String,
     recordId: String,
-    onError: (String) -> Unit
+    onError: (String) -> Unit,
+    /** A record's read-only page — see [MediaWithTranscript]. */
+    readOnly: Boolean = false
 ) {
     var media by remember(linkedType, recordId) { mutableStateOf<List<MediaFileDto>>(emptyList()) }
     var loading by remember(linkedType, recordId) { mutableStateOf(true) }
@@ -14523,7 +14693,7 @@ private fun RecordMediaSection(
     when {
         loading -> Text("Loading media…", color = Muted, fontSize = 12.sp)
         media.isEmpty() -> Text("No media attached.", color = Muted, fontSize = 12.sp)
-        else -> media.forEach { MediaWithTranscript(context, it, repository) }
+        else -> media.forEach { MediaWithTranscript(context, it, repository, readOnly) }
     }
 }
 
@@ -16084,7 +16254,7 @@ private fun PendingReviewRow(
                 ) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (panel == "edit") "Close" else "Edit", maxLines = 1, fontSize = 13.sp)
+                    Text(if (panel == "edit") "Close" else RecordOpen.UPDATE_LABEL, maxLines = 1, fontSize = 13.sp)
                 }
                 OutlinedButton(
                     onClick = { panel = if (panel == "revise") null else "revise" },
@@ -16695,7 +16865,9 @@ private fun ViewDataDetail(
     /** Admin AND admin view on — the web's `adminMode && isAdmin(user)` for the completion matrix. */
     canOverrideCompletion: Boolean = false,
     showProvenance: Boolean = false,
-    onError: (String) -> Unit
+    onError: (String) -> Unit,
+    /** A record's read-only page: no control on it changes the record — see [MediaWithTranscript]. */
+    readOnly: Boolean = false
 ) {
     val context = LocalContext.current
     // A failed read shows its reason and Try again instead of a card that never stops loading (DA-06).
@@ -16717,14 +16889,14 @@ private fun ViewDataDetail(
                 if (d.media.isNotEmpty()) {
                     HorizontalDivider()
                     Text("Pre-process media", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-                    d.media.forEach { MediaWithTranscript(context, it, repository) }
+                    d.media.forEach { MediaWithTranscript(context, it, repository, readOnly) }
                 }
                 d.steps.forEach { step ->
                     HorizontalDivider()
                     Text("Step ${step.sortOrder} · ${if (step.stepType == "SEQUENTIAL") "Sequential" else "Group"} — ${step.name}", color = Body, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     step.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted, fontSize = 12.sp) }
                     if (step.media.isEmpty()) Text("No media.", color = Muted, fontSize = 12.sp)
-                    step.media.forEach { MediaWithTranscript(context, it, repository) }
+                    step.media.forEach { MediaWithTranscript(context, it, repository, readOnly) }
                 }
             }
         }
@@ -16745,11 +16917,13 @@ private fun ViewDataDetail(
                 // form (same record, same DTO) shows it in full to the person about to correct it.
                 DetailRow("Aadhaar number", maskAadhaar(v.aadhaarNumber))
                 DetailRow("Pehchan card", if (v.pehchanCardAvailable) "Yes" else "No")
-                DetailRow("Pehchan card number", v.pehchanCardNumber)
+                // "On file", never the number — the web's read-only page says the same, and no list
+                // shows it. The form shows it to the person about to correct it, as with the Aadhaar.
+                DetailRow("Pehchan card number", v.pehchanCardNumber?.takeIf { it.isNotBlank() }?.let { "On file" })
                 NumberedListDisplay("Do's (positive prompt)", v.dos)
                 NumberedListDisplay("Don'ts (negative prompt)", v.donts)
                 DetailRow("Status", v.status)
-                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError)
+                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError, readOnly)
             }
             // Per-artisan completion: the same matrix, scoped to just this artisan (one row).
             CompletionMatrixCard(repository = repository, artisanId = recordId, canEdit = canOverrideCompletion, onError = onError)
@@ -16781,7 +16955,7 @@ private fun ViewDataDetail(
                 DetailRow("Function", v.productFunctionUse)
                 DetailRow("Remarks", v.remarks)
                 DetailRow("Status", v.status)
-                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError)
+                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError, readOnly)
             }
         }
         EntryMode.TOOL -> {
@@ -16799,7 +16973,7 @@ private fun ViewDataDetail(
                 DetailRow("Used in", v.processUsedIn)
                 DetailRow("Remarks", v.remarks)
                 DetailRow("Status", v.status)
-                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError)
+                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError, readOnly)
             }
         }
         EntryMode.WORKSHOP -> {
@@ -16813,7 +16987,7 @@ private fun ViewDataDetail(
                 DetailRow("Notes", v.notes)
                 DetailRow("Status", v.status)
                 DetailRow("Artisans", v.artisans.mapNotNull { it.artisan?.name }.joinToString(", ").ifBlank { null })
-                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError)
+                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError, readOnly)
             }
         }
         EntryMode.CRAFT -> {
@@ -16826,7 +17000,7 @@ private fun ViewDataDetail(
                 DetailRow("Category", v.category)
                 DetailRow("Place", v.place)
                 DetailRow("Description", v.description)
-                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError)
+                RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError, readOnly)
             }
         }
         EntryMode.QUESTIONNAIRE -> {
@@ -16892,7 +17066,7 @@ private fun ViewDataDetail(
                 HorizontalDivider()
                 Text("Recordings & media", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                 if (groupMedia.isEmpty()) Text("No media attached.", color = Muted, fontSize = 12.sp)
-                else groupMedia.forEach { MediaWithTranscript(context, it, repository) }
+                else groupMedia.forEach { MediaWithTranscript(context, it, repository, readOnly) }
             }
         }
         EntryMode.MEDIA -> {
@@ -16903,7 +17077,7 @@ private fun ViewDataDetail(
                 DetailRow("Type", v.mediaType)
                 DetailRow("Caption", v.caption)
                 v.linkedRecordType?.takeIf { it.isNotBlank() }?.let { DetailRow("Linked to", it.replaceFirstChar { c -> c.uppercase() }) }
-                MediaWithTranscript(context, v, repository)
+                MediaWithTranscript(context, v, repository, readOnly)
             }
         }
         else -> Text("This record type cannot be viewed here.", color = Muted)
@@ -18530,7 +18704,7 @@ private fun QuestionnaireForm(
         )
     }
 
-    RecordCard(title = if (isEdit) "Edit interview" else "Add questionnaire interview") {
+    RecordCard(title = if (isEdit) "Update interview" else "Add questionnaire interview") {
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
@@ -19764,9 +19938,12 @@ private fun QuestionnaireBuilder(
     // Sections render collapsed by default; a section's editors + questions are only composed when it
     // is expanded, so opening the builder never composes hundreds of fields at once (was an ANR/crash).
     var expandedSections by remember { mutableStateOf(setOf<String>()) }
+    // A tap on a section SHOWS it (owner ruling, 2026-10-16: a card opens to be read). Its editors
+    // are a second, explicit act behind "Update", tracked per section here.
+    var updatingSections by remember { mutableStateOf(setOf<String>()) }
 
     RecordCard(title = "Questionnaire builder") {
-        Text("Master admin controls for adding, editing, removing, moving sections, and moving questions between sections. Tap a section to expand and edit it.", color = Muted, fontSize = 12.sp)
+        Text("Master admin controls for adding, updating, removing, moving sections, and moving questions between sections. Tap a section to read its questions; ${RecordOpen.UPDATE_LABEL} opens its editors.", color = Muted, fontSize = 12.sp)
         TextInput("New section code", newCode, dictate = false) { newCode = it }
         TextInput("New section title", newTitle) { newTitle = it }
         Button(
@@ -19786,13 +19963,23 @@ private fun QuestionnaireBuilder(
 
         sections.forEachIndexed { sectionIndex, section ->
             val expanded = expandedSections.contains(section.id)
+            val updating = expanded && updatingSections.contains(section.id)
             ElevatedCard(colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard)) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                expandedSections = if (expanded) expandedSections - section.id else expandedSections + section.id
+                            .heightIn(min = 48.dp)
+                            .clickable(
+                                onClickLabel = if (expanded) "Hide ${section.title}" else RecordOpen.openClickLabel(section.title),
+                                role = Role.Button
+                            ) {
+                                if (expanded) {
+                                    expandedSections = expandedSections - section.id
+                                    updatingSections = updatingSections - section.id
+                                } else {
+                                    expandedSections = expandedSections + section.id
+                                }
                             },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -19800,10 +19987,27 @@ private fun QuestionnaireBuilder(
                             Text("${section.sortOrder}. ${section.code} - ${section.title}", display = true, fontWeight = FontWeight.SemiBold)
                             Text("${section.questions.size} question(s)", color = Muted, fontSize = 11.sp)
                         }
-                        Text(if (expanded) "Hide ▲" else "Edit ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (expanded) "Hide ▲" else "Show ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
-                    // Heavy editors + per-question rows compose only for the expanded section.
-                    if (expanded) {
+                    // Shown: the section's questions, read-only, and the one way into its editors.
+                    if (expanded && !updating) {
+                        if (section.questions.isEmpty()) {
+                            Text("No questions in this section yet.", color = Muted, fontSize = 12.sp)
+                        }
+                        section.questions.forEach { question ->
+                            Text("${question.sortOrder}. ${question.prompt}", color = Body, fontSize = 13.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { updatingSections = updatingSections + section.id },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        ) { Text(RecordOpen.UPDATE_LABEL) }
+                    }
+                    // Heavy editors + per-question rows compose only for the section being updated.
+                    if (updating) {
+                        TextButton(
+                            onClick = { updatingSections = updatingSections - section.id },
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) { Text("Done updating") }
                         var code by remember(section.id, section.code) { mutableStateOf(section.code) }
                         var sectionTitle by remember(section.id, section.title) { mutableStateOf(section.title) }
                         var newPrompt by remember(section.id) { mutableStateOf("") }
@@ -20005,9 +20209,11 @@ private fun UserManagementForm(
     LaunchedEffect(Unit) {
         refreshUsers()
     }
-    // Each user is collapsed by default (an accordion); tapping the header expands it to reveal the
-    // grantable privileges, so a long user list stays scannable.
+    // Each user is collapsed by default (an accordion); a tap anywhere on the card opens a READ-ONLY
+    // summary of the account (owner ruling, 2026-10-16: a card opens to be read). The role picker,
+    // the grant toggles and the account actions are a second, explicit act behind "Update".
     var expandedUsers by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var updatingUsers by remember { mutableStateOf<Set<String>>(emptySet()) }
     // Who is doing the managing. Read from the cached profile rather than threaded in, so the rules
     // below can mirror `assert_role` / `assert_can_manage_target` without changing every call site.
     val actor = remember { repository.cachedUser() }
@@ -20028,7 +20234,8 @@ private fun UserManagementForm(
             "Professors and above can change a user's role (never above their own); admins can also " +
                 "grant or revoke questionnaire-builder, record review & approval, view-provenance " +
                 "and dataset-download access. Craft and workshop creation come with the Professor " +
-                "role, so change the role instead. Tap a user to manage them.",
+                "role, so change the role instead. Tap a user to read their account; " +
+                "${RecordOpen.UPDATE_LABEL} changes it.",
             color = Muted,
             fontSize = 12.sp
         )
@@ -20115,6 +20322,11 @@ private fun UserManagementForm(
             // admin and above.
             val canEditGrants = actorIsAdmin && canManageTarget && !targetIsProfessorPlus
             val expanded = expandedUsers.contains(appUser.id)
+            val updating = expanded && updatingUsers.contains(appUser.id)
+            // Whether anything behind Update would be live for this viewer: the role picker, or an
+            // admin's grants and account actions. The same gates the controls themselves use, so a
+            // viewer who could change nothing is never offered the button.
+            val mayUpdateUser = canManageTarget && ((!isMaster && assignableRoles.isNotEmpty()) || actorIsAdmin)
             // Count of granted privileges, for the collapsed summary line. One entry per toggle
             // rendered below, and in the same order — the list used to name crafts and workshops
             // (which are no longer grantable) while omitting the dataset toggle that is, so the
@@ -20125,14 +20337,40 @@ private fun UserManagementForm(
                 roleRank(appUser.role) >= RANK_ADMIN || appUser.canViewProvenance,
                 targetIsProfessorPlus || appUser.canDownloadDataset
             ).count { it }
+            val toggleUser = {
+                if (expanded) {
+                    expandedUsers = expandedUsers - appUser.id
+                    updatingUsers = updatingUsers - appUser.id
+                } else {
+                    expandedUsers = expandedUsers + appUser.id
+                }
+            }
             ElevatedCard(colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard)) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    // The WHOLE card is the target while it is only being read — inside the card, so
+                    // the ripple stops at its rounded corner. While it is being updated only the
+                    // header toggles it, so a tap between two switches cannot fold the card away.
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (updating) Modifier
+                            else Modifier.clickable(
+                                onClickLabel = if (expanded) "Hide ${appUser.name}" else RecordOpen.openClickLabel(appUser.name),
+                                role = Role.Button,
+                                onClick = toggleUser
+                            )
+                        )
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                expandedUsers = if (expanded) expandedUsers - appUser.id else expandedUsers + appUser.id
-                            },
+                            .heightIn(min = 48.dp)
+                            .then(
+                                if (updating) Modifier.clickable(onClickLabel = "Hide ${appUser.name}", role = Role.Button, onClick = toggleUser)
+                                else Modifier
+                            ),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
@@ -20150,10 +20388,31 @@ private fun UserManagementForm(
                                 Text("Two-step on", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
-                        Text(if (expanded) "Hide ▲" else "Manage ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (expanded) "Hide ▲" else "Show ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
-                    if (expanded) {
+                    // Read-only: what the account is and holds, in the words the controls use.
+                    if (expanded && !updating) {
                         HorizontalDivider()
+                        DetailRow("Role", roleLabel(appUser.role))
+                        DetailRow("Questionnaire builder", if (targetIsProfessorPlus || appUser.canManageQuestionnaire) "Granted" else "Not granted")
+                        DetailRow("Record review & approval", if (roleRank(appUser.role) >= RANK_FIELD_CONTRIBUTOR || appUser.canReview) "Granted" else "Not granted")
+                        DetailRow("View provenance", if (roleRank(appUser.role) >= RANK_ADMIN || appUser.canViewProvenance) "Granted" else "Not granted")
+                        DetailRow("Download entire dataset", if (targetIsProfessorPlus || appUser.canDownloadDataset) "Granted" else "Not granted")
+                        DetailRow("Password", if (appUser.passwordSetAt.isNullOrBlank()) "Not set" else "Set")
+                        DetailRow("Two-step verification", if (appUser.twoFactorEnabled) "On" else "Off")
+                        if (mayUpdateUser) {
+                            OutlinedButton(
+                                onClick = { updatingUsers = updatingUsers + appUser.id },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            ) { Text(RecordOpen.UPDATE_LABEL) }
+                        }
+                    }
+                    if (updating) {
+                        HorizontalDivider()
+                        TextButton(
+                            onClick = { updatingUsers = updatingUsers - appUser.id },
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) { Text("Done updating") }
                         // The eleven-tier ladder (ELEVEN since the three directorate tiers landed
                         // on 2026-09-13; the count is ROLE_RANK.size, and the sentence on the card
                         // above says the same number by hand), not an admin/researcher switch: the previous two-state

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Boxes, Plus } from "lucide-react";
 
 import { CollabDialog } from "@/components/CollabDialog";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { DownloadCsvButton } from "@/components/DownloadCsvButton";
 import { useAuth } from "@/components/AuthProvider";
@@ -19,8 +20,10 @@ import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useAdminView } from "@/components/AdminViewProvider";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
+import { RECORD_UPDATE_HREF, RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { PageResult, ProductDocumentation } from "@/lib/types";
 
 export default function ProductsPage() {
@@ -56,6 +59,8 @@ export default function ProductsPage() {
    * guard in front of it too — a single unguarded write restores the dead pager.
    */
   const currentLoad = useRef(0);
+  /** Search, page, funnel and scroll, so Back from a product's page lands on the same rows. */
+  const memory = useListMemory("products", { query, applied, page, funnel }, data !== null);
 
   async function load() {
     const generation = (currentLoad.current += 1);
@@ -99,6 +104,18 @@ export default function ProductsPage() {
   }, [query]);
 
   function onFunnelChange(next: FunnelValue, _workshop: FunnelWorkshop | null) {
+    // The funnel's FIRST answer is when this page learns its defaults — and so when a remembered
+    // place (Back from a record's page) replaces them. See `useListMemory`.
+    const remembered = funnelReady ? null : memory.recall();
+    if (remembered) {
+      if ((remembered.query ?? "") !== query) skipFirstDebounce.current = true;
+      setQuery(remembered.query ?? "");
+      setApplied(remembered.applied ?? "");
+      setFunnel(remembered.funnel ?? next);
+      setPage(remembered.page ?? 1);
+      setFunnelReady(true);
+      return;
+    }
     setFunnel(next);
     setPage(1);
     setFunnelReady(true);
@@ -180,9 +197,11 @@ export default function ProductsPage() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((product) => (
-                  <tr key={product.id}>
+                  // The whole row opens the record read-only; its name is the same act as a real link.
+                  // Update, Discuss, Delete and the preview tiles keep their own clicks (`OpenableRow`).
+                  <OpenableRow key={product.id} href={RECORD_VIEW_HREF.product(product.id)}>
                     <td className="px-4 py-3">
-                      <div className="font-medium text-ink-900">{product.productName}</div>
+                      <OpenableRowLink href={RECORD_VIEW_HREF.product(product.id)}>{product.productName}</OpenableRowLink>
                       <div className="text-xs text-ink-500">{product.localName ?? product.productType}</div>
                     </td>
                     <td className="px-4 py-3 text-ink-700">{product.craftName}</td>
@@ -220,8 +239,8 @@ export default function ProductsPage() {
                     <td className="px-4 py-3 text-ink-700">{formatDate(product.createdAt)}</td>
                     <td className="px-4 py-3 text-right">
                       <RowActions>
-                        <Link className={rowAction("edit")} href={`/products/${product.id}/edit`}>
-                          Edit
+                        <Link className={rowAction("edit")} href={RECORD_UPDATE_HREF.product(product.id)}>
+                          Update
                         </Link>
                         <button className={rowAction("neutral")} onClick={() => setCollabId(product.id)}>
                           Discuss
@@ -233,7 +252,7 @@ export default function ProductsPage() {
                         ) : null}
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                 ))}
               </tbody>
             </table>

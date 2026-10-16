@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { Landmark } from "lucide-react";
 
 import { CollabDialog } from "@/components/CollabDialog";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { useEditDeepLink } from "@/components/hooks/useEditDeepLink";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
@@ -29,6 +31,7 @@ import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
+import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { requiredText, textValue } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, type BatchProgress } from "@/lib/media";
@@ -151,10 +154,17 @@ function CraftsPageBody() {
     }
   }
 
+  /**
+   * Search, page and scroll, so Back from a craft's read-only page lands on the same rows. Recalled
+   * once before the first fetch — `placeRestored` holds that fetch until it has been.
+   */
+  const memory = useListMemory("crafts", { query, applied, page }, data !== null);
+  const [placeRestored, setPlaceRestored] = useState(false);
   useEffect(() => {
+    if (!placeRestored) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, applied]);
+  }, [page, applied, placeRestored]);
 
   // Live search: debounce typing by 350ms; Enter applies immediately via onSubmit.
   useEffect(() => {
@@ -168,6 +178,22 @@ function CraftsPageBody() {
     }, 350);
     return () => clearTimeout(timer);
   }, [query]);
+
+  // AFTER the debounce effect on purpose: effects run in declaration order, so the debounce's own
+  // first run has already spent `skipFirstDebounce`, and the flag raised here is the one that stops
+  // the restored query being debounced into a page-1 reset.
+  useEffect(() => {
+    const remembered = memory.recall();
+    if (remembered) {
+      if ((remembered.query ?? "") !== "") skipFirstDebounce.current = true;
+      setQuery(remembered.query ?? "");
+      setApplied(remembered.applied ?? "");
+      setPage(remembered.page ?? 1);
+    }
+    setPlaceRestored(true);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Warn on hard navigation (close tab / reload) while the craft form has unsaved edits.
   useEffect(() => {
@@ -613,8 +639,11 @@ function CraftsPageBody() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {rows.map((craft) => (
-                  <tr key={craft.id}>
-                    <td className="px-4 py-3 font-medium text-ink-900">{craft.name}</td>
+                  // The whole row opens the craft read-only; Update loads it into the form above.
+                  <OpenableRow key={craft.id} href={RECORD_VIEW_HREF.craft(craft.id)}>
+                    <td className="px-4 py-3">
+                      <OpenableRowLink href={RECORD_VIEW_HREF.craft(craft.id)}>{craft.name}</OpenableRowLink>
+                    </td>
                     <td className="px-4 py-3 text-ink-700">{craft.localName ?? "-"}</td>
                     <td className="px-4 py-3 text-ink-700">{craft.category ?? "-"}</td>
                     <td className="px-4 py-3 text-ink-700">{craft.place ?? "-"}</td>
@@ -624,7 +653,7 @@ function CraftsPageBody() {
                       <RowActions>
                         {allowManage ? (
                           <button className={rowAction("edit")} onClick={() => guard(() => resetForm(craft))}>
-                            Edit
+                            Update
                           </button>
                         ) : null}
                         <button className={rowAction("neutral")} onClick={() => setCollabId(craft.id)}>
@@ -637,7 +666,7 @@ function CraftsPageBody() {
                         ) : null}
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                 ))}
               </tbody>
             </table>

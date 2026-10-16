@@ -72,12 +72,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Download, FileSignature, Upload } from "lucide-react";
 
+import { OpenableCard } from "@/components/data/OpenableRow";
 import { WorkshopDesignerPicker } from "@/components/designworkshop/WorkshopDesignerPicker";
 import { refreshAwaitingSanctionCount } from "@/components/hooks/useAwaitingSanctionCount";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
+import { RecordDetailsDialog } from "@/components/records/RecordDetailsDialog";
 import { SearchInput } from "@/components/SearchInput";
 import { describeApiDetail } from "@/lib/api";
 import { namedDesignerTeam } from "@/lib/designWorkshops";
@@ -179,6 +181,13 @@ export default function SanctionOrdersPage() {
    */
   const [copied, setCopied] = useState<string | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
+  /**
+   * The order a press on its card opened, READ-ONLY (owner ruling, 2026-10-16: a record opens to be
+   * read). A dialog and not a route: the order's whole record is what its card carries, and the
+   * dialog is the room to read every designer and the sheet it came from in one place. There is no
+   * Update — this screen has never edited an order, and a view must not start to.
+   */
+  const [viewing, setViewing] = useState<SanctionOrder | null>(null);
   const [linkNotice, setLinkNotice] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
 
@@ -797,11 +806,18 @@ export default function SanctionOrdersPage() {
         <div className="panel overflow-hidden">
           <ul className="divide-y divide-line-200">
             {items.map((order) => (
-              <li key={order.id} className="grid gap-2 px-4 py-3">
+              // The whole card opens the order read-only; the workshop link and the re-issue
+              // buttons keep their own clicks. The order number is a real button — the same act
+              // for the keyboard.
+              <OpenableCard as="li" key={order.id} href={null} onOpen={() => setViewing(order)} className="grid gap-2 px-4 py-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="font-display text-base font-semibold text-ink-900">
+                  <button
+                    type="button"
+                    onClick={() => setViewing(order)}
+                    className="rounded-sm text-left font-display text-base font-semibold text-ink-900 underline-offset-2 hover:underline"
+                  >
                     {order.sanctionOrderNo}
-                  </span>
+                  </button>
                   <span className="text-sm text-ink-700">
                     {order.sanctionOrderDate} · {formatSanctionAmount(order.sanctionAmount)}
                   </span>
@@ -917,7 +933,7 @@ export default function SanctionOrdersPage() {
                     Still needed on Workshop Setup: {order.missingMandatory.join(", ")}
                   </p>
                 ) : null}
-              </li>
+              </OpenableCard>
             ))}
           </ul>
           <Pagination
@@ -928,6 +944,52 @@ export default function SanctionOrdersPage() {
           />
         </div>
       )}
+      <RecordDetailsDialog
+        open={viewing !== null}
+        onClose={() => setViewing(null)}
+        title={viewing ? `Sanction order ${viewing.sanctionOrderNo}` : "Sanction order"}
+        details={
+          viewing
+            ? [
+                ["Order number", viewing.sanctionOrderNo],
+                ["Order date", viewing.sanctionOrderDate ?? "Not given"],
+                ["Sanctioned amount", formatSanctionAmount(viewing.sanctionAmount)],
+                [
+                  viewing.designers.length > 1 ? "Designers" : "Designer",
+                  viewing.designers.length > 0
+                    ? viewing.designers.map((designer) => `${designer.designerName} (${designer.designerEmail})`).join(", ")
+                    : `${viewing.designerName} (${viewing.designerEmail})`
+                ],
+                ["Name on the report", viewing.designers.length > 1 ? viewing.designers[0]!.designerName : null],
+                ["Workshop", `${viewing.workshopTitle} · ${viewing.workshopStatus}`],
+                ["Readiness", readinessSentence(viewing)],
+                [
+                  "Still needed on Workshop Setup",
+                  !viewing.readyForWork && viewing.missingMandatory.length ? viewing.missingMandatory.join(", ") : null
+                ],
+                [
+                  "Imported from",
+                  viewing.sourceFilename
+                    ? `${viewing.sourceFilename}${viewing.sheetRow != null ? `, row ${viewing.sheetRow}` : ""}`
+                    : null
+                ],
+                ["Recorded by", viewing.createdByName ?? "Unknown"],
+                ["Notes", viewing.notes]
+              ]
+            : []
+        }
+      >
+        {viewing ? (
+          <p className="mt-4 text-sm">
+            <Link
+              href={`/design-workshops/${viewing.designWorkshopId}`}
+              className="text-ministry-700 underline underline-offset-2 dark:text-ministry-300"
+            >
+              Open the workshop
+            </Link>
+          </p>
+        ) : null}
+      </RecordDetailsDialog>
     </>
   );
 }

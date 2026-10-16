@@ -10,6 +10,7 @@ import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
+import { OpenableCard, OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { ResizableTh } from "@/components/ResizableTh";
 import { ReviewEditPanel } from "@/components/review/ReviewEditPanel";
 import { reviewEditableFields } from "@/components/review/reviewEditFields";
@@ -19,6 +20,7 @@ import { readableError } from "@/components/review/reviewErrors";
 import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { canEditOthersRecord, hasRank, isAdmin, roleLabel } from "@/lib/permissions";
+import { reviewRecordViewHref } from "@/lib/recordView";
 
 /**
  * One row of the review queue. The backend only returns records whose creator ranks strictly
@@ -384,7 +386,7 @@ export default function ReviewPage() {
             onClick={() => toggleAction(item, "edit")}
             disabled={submitting}
           >
-            {activeAction === "edit" ? "Close editor" : "Edit"}
+            {activeAction === "edit" ? "Close editor" : "Update"}
           </button>
         )}
         <button
@@ -530,7 +532,7 @@ export default function ReviewPage() {
         title="Review"
         description={
           hasRank(user, "PROFESSOR")
-            ? "Approve, fix in place with Edit, send for revision, or reject pending submissions from contributors you may review."
+            ? "Approve, fix in place with Update, send for revision, or reject pending submissions from contributors you may review."
             : "Approve, send for revision, or reject pending submissions from contributors you may review."
         }
         icon={<ClipboardCheck className="h-5 w-5" aria-hidden />}
@@ -618,16 +620,23 @@ export default function ReviewPage() {
                 const key = rowKey(item);
                 const activeAction = active?.key === key ? active.action : null;
                 const panel = activeAction ? decisionPanel(item, activeAction) : null;
+                // The whole card opens the record read-only, exactly as the table row does; the tick
+                // and the four decisions keep their own presses (`ROW_OWN_CLICK_SELECTOR`). The open
+                // panel sits OUTSIDE the openable surface, so a press in the gap around a note box or
+                // the field editor is never read as "open this record".
+                const viewHref = reviewRecordViewHref(item.recordType, item.id);
                 return (
                   <li
                     key={key}
-                    className={selected.has(key) ? "bg-purple-50/60 px-4 py-3 dark:bg-purple-950/30" : "px-4 py-3"}
+                    className={selected.has(key) ? "bg-purple-50/60 dark:bg-purple-950/30" : undefined}
                   >
-                    <div className="flex items-start gap-3">
+                    <OpenableCard href={viewHref} className="flex items-start gap-3 px-4 py-3">
                       <div className="pt-0.5">{selectBox(item)}</div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-start justify-between gap-2">
-                          <p className="min-w-0 font-medium text-ink-900">{item.label}</p>
+                          <p className="min-w-0 font-medium text-ink-900">
+                            {viewHref ? <OpenableRowLink href={viewHref}>{item.label}</OpenableRowLink> : item.label}
+                          </p>
                           <StatusBadge status={item.status ?? "PENDING"} />
                         </div>
                         {outOfWindow(item)}
@@ -642,9 +651,9 @@ export default function ReviewPage() {
                         </p>
                         {lockNote(item)}
                         <div className="mt-3 [&>div]:justify-start">{decisionButtons(item, activeAction)}</div>
-                        {panel ? <div className="mt-3 rounded-md bg-surface-50 p-3">{panel}</div> : null}
                       </div>
-                    </div>
+                    </OpenableCard>
+                    {panel ? <div className="mx-4 mb-3 rounded-md bg-surface-50 p-3">{panel}</div> : null}
                   </li>
                 );
               })}
@@ -677,13 +686,16 @@ export default function ReviewPage() {
                     const key = rowKey(item);
                     const activeAction = active?.key === key ? active.action : null;
                     const panel = activeAction ? decisionPanel(item, activeAction) : null;
-                    return (
-                      <Fragment key={key}>
-                        <tr className={selected.has(key) ? "bg-purple-50/60 dark:bg-purple-950/30" : undefined}>
+                    // The whole row opens the record read-only; the checkbox and the decision
+                    // buttons keep their own clicks (`ROW_OWN_CLICK_SELECTOR`).
+                    const viewHref = reviewRecordViewHref(item.recordType, item.id);
+                    const rowTone = selected.has(key) ? "bg-purple-50/60 dark:bg-purple-950/30" : undefined;
+                    const cells = (
+                      <>
                           <td className="px-4 py-3 align-top">{selectBox(item)}</td>
                           <td className="px-4 py-3">
                             <div className="font-medium text-ink-900">
-                              {item.label}
+                              {viewHref ? <OpenableRowLink href={viewHref}>{item.label}</OpenableRowLink> : item.label}
                               {outOfWindow(item)}
                             </div>
                             {lockNote(item)}
@@ -705,7 +717,17 @@ export default function ReviewPage() {
                           </td>
                           <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
                           <td className="px-4 py-3 text-right">{decisionButtons(item, activeAction)}</td>
-                        </tr>
+                      </>
+                    );
+                    return (
+                      <Fragment key={key}>
+                        {viewHref ? (
+                          <OpenableRow href={viewHref} className={rowTone ?? ""}>
+                            {cells}
+                          </OpenableRow>
+                        ) : (
+                          <tr className={rowTone}>{cells}</tr>
+                        )}
                         {panel ? (
                           <tr className="bg-surface-50">
                             {/* Eight, not seven: the bulk-select checkbox added a column ahead of

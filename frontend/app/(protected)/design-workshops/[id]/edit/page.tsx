@@ -148,7 +148,7 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
   return (
     <>
       <PageHeader
-        title="Edit workshop details"
+        title="Update workshop details"
         description={
           state?.kind === "loaded"
             ? state.record.title

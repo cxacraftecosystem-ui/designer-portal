@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Checkbox
@@ -837,12 +838,50 @@ private fun AccessCard(
     onReject: () -> Unit,
     onSuspend: () -> Unit,
 ) {
+    // A tap anywhere on the card opens the entry READ-ONLY (owner ruling, 2026-10-16); Update and the
+    // access buttons are their own acts and consume their own taps.
+    var viewing by remember(row.id) { mutableStateOf(false) }
+    val name = row.fullName?.takeIf { it.isNotBlank() } ?: row.email
+    if (viewing) {
+        RecordDetailsDialog(
+            title = name,
+            details = listOf(
+                "Email" to row.email,
+                "Standing" to when (row.status) {
+                    AccessStatus.ACTIVE -> row.admitRole?.let { "May sign in as ${FieldPermissions.label(it)}" } ?: "May sign in"
+                    AccessStatus.PENDING -> "Waiting for a decision"
+                    else -> (if (row.status == AccessStatus.REJECTED) "Refused" else "Suspended") +
+                        (row.decidedAt?.let { " ${it.take(10)}" } ?: "")
+                },
+                "Added" to (row.createdAt?.take(10) ?: "Not recorded"),
+                "Joined" to (row.joinedAt?.take(10) ?: "Not yet"),
+                "First signed in" to (row.firstSeenAt?.take(10)
+                    ?: if (row.joinedAt != null) "Has not signed in yet" else "Has never been admitted"),
+                "Requests" to if (row.attemptCount > 0) {
+                    "${row.attemptCount} refused attempt${if (row.attemptCount == 1) "" else "s"}" +
+                        (row.lastAttemptAt?.let { ", last ${it.take(10)}" } ?: "")
+                } else {
+                    "None"
+                },
+                "Note" to row.notes
+            ),
+            onDismiss = { viewing = false },
+            onUpdate = if (busy) null else ({ viewing = false; onEdit() })
+        )
+    }
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            // Inside the card, so the ripple stops at its rounded corner.
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = RecordOpen.openClickLabel(name), role = Role.Button) { viewing = true }
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     // The name is whatever an ADMIN typed; a person who has only ever been refused
@@ -893,7 +932,7 @@ private fun AccessCard(
                 OutlinedButton(onClick = onEdit, enabled = !busy, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Edit")
+                    Text(RecordOpen.UPDATE_LABEL)
                 }
                 if (row.status == AccessStatus.ACTIVE) {
                     // Never labelled "Remove". The verb has to say what happens, and what happens is

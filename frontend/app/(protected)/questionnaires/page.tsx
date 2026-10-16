@@ -24,11 +24,13 @@ import { useRouter } from "next/navigation";
 import { ClipboardList, Download, FileSpreadsheet, Plus, Upload } from "lucide-react";
 
 import { attachHold, HeldPostNotice, useHeldPostRefusal, writesHeld } from "@/components/designworkshop/HeldPostNotice";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextInput } from "@/components/FormControls";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { cappedListNotice, cutOf } from "@/components/data/cappedList";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
@@ -214,9 +216,20 @@ export default function QuestionnairesPage() {
     }
   }, [page, applied, showDeactivated]);
 
+  /**
+   * Search, page, the deactivated switch and scroll, so Back from a questionnaire lands on the same
+   * rows. Recalled once before the first fetch — `placeRestored` holds that fetch until it has been.
+   */
+  const memory = useListMemory(
+    "questionnaires",
+    { query, applied, page, filters: { showDeactivated: showDeactivated ? "1" : "" } },
+    data !== null
+  );
+  const [placeRestored, setPlaceRestored] = useState(false);
   useEffect(() => {
+    if (!placeRestored) return;
     load();
-  }, [load]);
+  }, [load, placeRestored]);
 
   // The design workshops a questionnaire can be attached to. Fetched once and shared by the create
   // form and the upload dialog, so the two cannot offer different lists.
@@ -297,6 +310,23 @@ export default function QuestionnairesPage() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [query]);
+
+  // AFTER the debounce effect on purpose: effects run in declaration order, so the debounce's own
+  // first run has already spent `skipFirstDebounce`, and the flag raised here is the one that stops
+  // the restored query being debounced into a page-1 reset.
+  useEffect(() => {
+    const remembered = memory.recall();
+    if (remembered) {
+      if ((remembered.query ?? "") !== "") skipFirstDebounce.current = true;
+      setQuery(remembered.query ?? "");
+      setApplied(remembered.applied ?? "");
+      setPage(remembered.page ?? 1);
+      setShowDeactivated(remembered.filters?.showDeactivated === "1");
+    }
+    setPlaceRestored(true);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function download(fetcher: () => Promise<{ blob: Blob; fileName: string }>, failure: string) {
     setDownloading(true);
@@ -707,14 +737,10 @@ export default function QuestionnairesPage() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((row) => (
-                  <tr key={row.id}>
+                  // The whole row opens the questionnaire; every action button keeps its own click.
+                  <OpenableRow key={row.id} href={`/questionnaires/${row.id}`}>
                     <td className="px-4 py-3">
-                      <Link
-                        href={`/questionnaires/${row.id}`}
-                        className="font-medium text-ink-900 underline-offset-2 hover:underline"
-                      >
-                        {row.title}
-                      </Link>
+                      <OpenableRowLink href={`/questionnaires/${row.id}`}>{row.title}</OpenableRowLink>
                       <div className="text-xs text-ink-500">
                         {/* The source file name is null for a questionnaire built in the app, which
                             is a fact worth showing rather than a blank: it tells a designer whether
@@ -827,7 +853,7 @@ export default function QuestionnairesPage() {
                         </button>
                       </RowActions>
                     </td>
-                  </tr>
+                  </OpenableRow>
                 ))}
               </tbody>
             </table>
