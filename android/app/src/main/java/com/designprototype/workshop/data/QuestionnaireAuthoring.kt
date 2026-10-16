@@ -65,6 +65,8 @@ data class QFormOp(
     val helpText: String? = null,
     val changeHelpText: Boolean = false,
     val isRequired: Boolean? = null,
+    /** [REUSE] only: the design workshop the copy is for. Null makes an unattached copy. */
+    val designWorkshopId: String? = null,
 ) {
     companion object {
         const val ADD_SECTION = "addSection"
@@ -73,6 +75,13 @@ data class QFormOp(
         const val EDIT_QUESTION = "editQuestion"
         const val REMOVE_QUESTION = "removeQuestion"
         const val RENAME_QUESTIONNAIRE = "renameQuestionnaire"
+        /**
+         * Copy this questionnaire as a template (2026-10-17). A create of a NEW questionnaire that
+         * changes nothing on the source, so it is safe to send late; it waits behind any step still
+         * queued for the source, so the copy includes them, and carries an `Idempotency-Key` so a
+         * lost answer is not a second copy.
+         */
+        const val REUSE = "reuse"
     }
 }
 

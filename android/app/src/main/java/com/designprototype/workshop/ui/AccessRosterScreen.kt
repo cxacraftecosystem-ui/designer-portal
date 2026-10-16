@@ -854,6 +854,9 @@ private fun AccessCard(
                         (row.decidedAt?.let { " ${it.take(10)}" } ?: "")
                 },
                 "Added" to (row.createdAt?.take(10) ?: "Not recorded"),
+                // Names joined by the server's roster list (2026-10-17); a null row is left out.
+                "Added by" to row.addedByName,
+                "Decided by" to row.decidedByName.takeIf { row.status != AccessStatus.PENDING },
                 "Joined" to (row.joinedAt?.take(10) ?: "Not yet"),
                 "First signed in" to (row.firstSeenAt?.take(10)
                     ?: if (row.joinedAt != null) "Has not signed in yet" else "Has never been admitted"),

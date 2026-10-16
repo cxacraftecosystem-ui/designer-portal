@@ -25,11 +25,11 @@ the last section.
 | Piece | Where | What it guarantees |
 |---|---|---|
 | Records outbox | `android/app/src/main/java/com/designprototype/workshop/data/Offline.kt:1149` (`OfflineOutbox`) | One JSON queue in `filesDir/outbox/`, written atomically (temp, `fd.sync()`, rename), quarantined — never deleted — when damaged. Media is copied into `filesDir/outbox/media/` at queue time. Each entry is stamped with the account that captured it and is only ever sent as that account. |
-| Outbox replay | `android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepository.kt:7572` (`replayEntry`) | Create, then upload each file, persisting progress per file. A transient failure (`isTransient`, line 7715) stops the pass with nothing marked failed; an answered refusal is recorded on that entry and shown in the outbox tray. Creates of workshop/product/tool/process carry a client key so a lost answer does not duplicate the record. |
+| Outbox replay | `android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepository.kt:7637` (`replayEntry`) | Create, then upload each file, persisting progress per file. A transient failure (`isTransient`, line 7715) stops the pass with nothing marked failed; an answered refusal is recorded on that entry and shown in the outbox tray. Creates of workshop/product/tool/process carry a client key so a lost answer does not duplicate the record. |
 | Design-workshop drafts | `android/app/src/main/java/com/designprototype/workshop/data/WorkshopDraftStore.kt:666` (`WorkshopDraftStore`) | One directory per workshop under `filesDir/workshops/`, the stage screen saving on an 800 ms debounce (`persistLocally`, `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/StageScreen.kt:3319`). Synced by `WorkshopSyncEngine` with a payload signature per stage, so an edit that never landed is re-sent and nothing local is ever deleted by a sync. |
 | **Background sync (new)** | `android/app/src/main/java/com/designprototype/workshop/data/BackgroundSync.kt:51` (`BackgroundSync`) | A persisted, network-constrained `JobScheduler` job — periodic every ~15 minutes, plus a one-shot requested by every outbox enqueue (`Offline.kt:1290`), every workshop-draft write (`WorkshopDraftStore.kt:991`) and every queued join card. It calls the same `syncOutbox` the activity calls, so everything above drains with the app closed and after a reboot. |
 | **Form drafts (new)** | `android/app/src/main/java/com/designprototype/workshop/data/FormDraftStore.kt:58` (`FormDraftStore`), `android/app/src/main/java/com/designprototype/workshop/ui/FormDraftPersistence.kt:116` (`rememberFormDraft`) | What a form holds BEFORE Save, on disk per account, on a 600 ms debounce and on leaving the screen. Restored when the form is reopened, with a "Restored what you entered…" line and a Start over button. Picked files are copied into app storage so they are still readable after the process that picked them is gone. |
-| **Read cache (new)** | `android/app/src/main/java/com/designprototype/workshop/data/ReadCache.kt:49` (`ReadCache`) | Live first; on a connectivity-class failure only (no signal, 408, 429, 5xx) the last copy this account read is shown, with the date it was read. An answered refusal (401/403/404/422) is never papered over. Deleted at sign-out (`WorkshopRepository.kt:4222`). |
+| **Read cache (new)** | `android/app/src/main/java/com/designprototype/workshop/data/ReadCache.kt:49` (`ReadCache`) | Live first; on a connectivity-class failure only (no signal, 408, 429, 5xx) the last copy this account read is shown, with the date it was read. An answered refusal (401/403/404/422) is never papered over. Deleted at sign-out (`WorkshopRepository.kt:4292`). |
 | **Idempotent creates (second change)** | `backend/app/core/idempotency.py`, `android/app/src/main/java/com/designprototype/workshop/data/Offline.kt` (`outboxCarriesIdempotencyKey`) | Every create — online or from the outbox — sends an `Idempotency-Key`; the server keeps the first answer 30 days per account and returns it for a repeat. An online create whose answer is lost moves into the outbox under the same key, so it is written once however often it is sent. |
 | **Corrections under a precondition (second change)** | `android/app/src/main/java/com/designprototype/workshop/data/Offline.kt` (`restrictCorrectionBody`) | A queued correction sends only its changed fields and the record's `updatedAt`; a record that moved is refused (409 `record_changed`) and held for "Review changes" in the tray. |
 | **Temporary ids (second change)** | `android/app/src/main/java/com/designprototype/workshop/data/QuestionnaireAuthoring.kt` (`TempIdMap`) | Questionnaires, sections and questions made offline get client ids; queued children reference them, and the server ids are resolved at replay, in order. |
@@ -72,7 +72,7 @@ background kill but not a swipe-away or force-stop.
 | Process form — `MainActivity.kt:13019` (`ProcessForm`) | create/update process, steps, per-step media | same, steps and their media included | disk (was memory) | same | client key on create | same | product/artisan registers cached | **OK** (was GAP, fixed) |
 | Interview form — `MainActivity.kt:18117` (`QuestionnaireForm`) | interview + answers + clips + transcripts | same; answers, clips and the machine's transcript text (so a restored transcript is not taken as typed) | disk (was memory) | same | duplicate artisan-set offer on answer | same | sections cached | **OK** (was GAP, fixed) |
 | Any record form, online save on a failing connection — `MainActivity.kt:10372` (`createKey`) | the create or correction | the form (disk); then the outbox under the SAME `Idempotency-Key` the online attempt sent | disk | outbox + background job | the server answers a repeat of the key from the first record (backend `app/core/idempotency.py`), so a create whose answer was lost is not written twice | "saved on this device" | — | **OK** (was RISK, fixed in the second change) |
-| Miscellaneous media — `MainActivity.kt:17171` (`AndroidMediaForm`) | loose media upload | Before: picker in **memory**, offline upload just **failed**. Now: draft, and queued to the outbox when offline or when the signal goes mid-batch (`queueForLater`, `MainActivity.kt:17171`; `WorkshopRepository.kt:7446`, `queueLooseMedia`) with its design workshop and GPS fix | disk (was memory) | outbox + background job | media rows; a lost answer can duplicate a row | "saved on this device" sentence | recent-media list live only | **OK** (was GAP, fixed) |
+| Miscellaneous media — `MainActivity.kt:17171` (`AndroidMediaForm`) | loose media upload | Before: picker in **memory**, offline upload just **failed**. Now: draft, and queued to the outbox when offline or when the signal goes mid-batch (`queueForLater`, `MainActivity.kt:17171`; `WorkshopRepository.kt:7511`, `queueLooseMedia`) with its design workshop and GPS fix | disk (was memory) | outbox + background job | media rows; a lost answer can duplicate a row | "saved on this device" sentence | recent-media list live only | **OK** (was GAP, fixed) |
 | Stage screen — `StageScreen.kt:3319` (`persistLocally`) | stage values, rows, media | `WorkshopDraftStore`, 800 ms debounce, flushed on leave | disk | engine via `syncOutbox`; now also background | signature per stage, refusals per field, nothing local deleted | chip and device sync banner | the draft is the source | **OK** (was RISK — synced only while the app was open) |
 | Photo intake — `PhotoIntakeScreen.kt:111` (`importMedia`) | workshop photographs | `WorkshopDraftStore.importMedia` into the workshop directory | disk | engine, now also background | as stage | as stage | draft | **OK** (was RISK, as above) |
 | Workshop list / stage index — `WorkshopListScreen.kt:440` | offline-started workshops, consent | `WorkshopDraftStore` | disk | engine | create is write-back ordered | "kept on this phone" | local drafts listed offline | **OK** (was RISK, as above) |
@@ -99,7 +99,7 @@ background kill but not a swipe-away or force-stop.
 | Screen | Writes | Pending data lives | Survives death | Syncs | Offline the user sees | Reads cached | Class |
 |---|---|---|---|---|---|---|---|
 | Questionnaire list — `QuestionnaireListScreen.kt:690` | a new form (the row only) via `createCustomQuestionnaireOrQueue` (`WorkshopRepository.kt:3533`) | outbox | disk | outbox | Before: "could not connect" and **no rows**. Now: the last unfiltered list with its date | **ReadCache (new)**; a search is never answered from the device | **OK** (was GAP, fixed) |
-| Questionnaire detail — `QuestionnaireDetailScreen.kt:572` (`ADD_QUESTION`), `QuestionnaireAuthoring.kt:32` (`OFFLINE_QFORM_OP`) | sections, questions, renames, removals | each step is an outbox entry under a temporary id; children of a queued section — or of a questionnaire started offline — are queued against its temporary id and resolved to the server id at replay | disk (including the temp-id map) | outbox in queue order + background job; creates carry an `Idempotency-Key` | a child whose parent was refused is refused in its turn, with a sentence saying why | the steps drawn on the form at once | form cached | **OK** (was RISK) — re-uploading a workbook, reuse and starting a sitting still need a connection (§3) |
+| Questionnaire detail — `QuestionnaireDetailScreen.kt:572` (`ADD_QUESTION`), `QuestionnaireAuthoring.kt:32` (`OFFLINE_QFORM_OP`) | sections, questions, renames, removals | each step is an outbox entry under a temporary id; children of a queued section — or of a questionnaire started offline — are queued against its temporary id and resolved to the server id at replay | disk (including the temp-id map) | outbox in queue order + background job; creates carry an `Idempotency-Key` | a child whose parent was refused is refused in its turn, with a sentence saying why | the steps drawn on the form at once | form cached | **OK** (was RISK) — a copy (reuse) is queued too; re-uploading a workbook and starting a sitting need a connection, by decision (§3, 11) |
 | Answer a questionnaire — `QuestionnaireAnswerScreen.kt:208` | answers + notes | Before: **memory**, while the screen said "your typing is still here — save when you have a signal" (`QuestionnaireAnswerScreen.kt:262`). Now: a form draft | disk (was memory) | **sent only when the person presses Save on the live form** — by decision, §3 | cached-copy notice | form cached | **OK** (was GAP, fixed — the promise on screen is now true) |
 | Consolidated questionnaire — `ConsolidatedQuestionnaireScreen.kt:275` | — | — | — | — | Before: an error. Now: the last copy with its date | **ReadCache (new)** for the artisan list and each document | **OK** (was GAP, fixed) |
 
@@ -111,7 +111,7 @@ background kill but not a swipe-away or force-stop.
 | My activity — `MainActivity.kt:13800` (`MyActivityScreen`) | — | — | — | the last list with its date | **ReadCache** (`CachedActivityRow`) | **OK** (was GAP) |
 | App feedback rating — `MainActivity.kt:15023` (`FeedbackScreen`) | `PUT /feedback/me` | Before: memory, and an offline Save **failed**. Now: a draft, and queued to the outbox as `appFeedback` (`WorkshopRepository.kt:235`, `OFFLINE_APP_FEEDBACK`) — an upsert, so a replay never duplicates | disk (was memory) | "kept on this device" | stored rating live | **OK** (was GAP, fixed) |
 | Report something — `MainActivity.kt:14801` (`FeedbackReportSection`) | bug/suggestion report | a draft; on Send with no signal, queued as `feedbackReport` under an `Idempotency-Key`; the form's choices are cached | disk | "kept on this phone" | vocabulary via **ReadCache** | **OK** (was GAP) |
-| Update existing / record editor — `MainActivity.kt:9641` (`RecordPickerScreen`), `MainActivity.kt:10056` (`EditScreen`) | corrections | the picker list and each record opened before are cached (`cachedRecordForCorrection`); a correction made on them is queued with ONLY its changed fields (`changedKeys`) and the record's `updatedAt` (`baseUpdatedAt`) | disk | the server refuses with 409 `record_changed` if anybody changed the record since; the tray then offers **Review changes** — each changed field, mine against theirs, then *Send mine* (only my fields, rebased) or *Keep theirs* | **ReadCache** | **OK** (was GAP) — an interview correction still needs a connection (§3, decision 8) |
+| Update existing / record editor — `MainActivity.kt:9641` (`RecordPickerScreen`), `MainActivity.kt:10056` (`EditScreen`) | corrections | the picker list and each record opened before are cached (`cachedRecordForCorrection`); a correction made on them is queued with ONLY its changed fields (`changedKeys`) and the record's `updatedAt` (`baseUpdatedAt`) | disk | the server refuses with 409 `record_changed` if anybody changed the record since; the tray then offers **Review changes** — each changed field, mine against theirs, then *Send mine* (only my fields, rebased) or *Keep theirs* | **ReadCache** | **OK** (was GAP) — an interview correction is queued the same way since 2026-10-17 (§3, decision 8) |
 | View data, data browser — `MainActivity.kt:15683` (`ViewDataScreen`), `DataBrowserScreen.kt:422` | admin review actions | online only (§3) | — | the last lists and folders with their date | **ReadCache** (`loadViewEntriesCached`, `data-tree`) | **OK** (was GAP) |
 | Map — `MapScreen.kt:501` | — | — | — | Before: "the map could not be loaded". Now: the last map for the same scope and level, with its date; the outline and borders are bundled | **ReadCache (new)** | **OK** (was GAP, fixed) |
 | Search, scan a code — `SearchScreen.kt:554`, `RecordCodeLookup.kt:159` (`lookUpRecordCode`) | — (a join card scanned here is queued, as above) | — | — | "no connection" in words | no — a query, not a list (§3) | **OK by decision** |
@@ -163,20 +163,35 @@ authoring, the designer profile and "Report something", and appearance changes m
    `expectedUpdatedAt` (`records.assert_expected_updated_at`, already on the six record routes). If
    anybody changed the record since, the server refuses it and the tray says so; nothing is
    overwritten in silence. This closes the MEDIUM finding of 2026-10-10 for the six record types.
-8. **An INTERVIEW correction still needs a connection.** The interview PATCH now accepts the same
-   precondition, but a sitting's answers live in their own table and another interviewer's answers do
-   not move the interview's `updatedAt`, so the precondition cannot protect them; a queued interview
-   correction could still drop a colleague's answers. The form refuses in words with the answers kept.
+8. **An INTERVIEW correction is queued too (since 2026-10-17).** It needed a connection while
+   another interviewer's answers, which live in their own table, did not move the interview's
+   `updatedAt`. Now every answer write moves it (`upsert_responses`), and the PATCH claims the version
+   with a compare-and-set inside its transaction (`records.claim_expected_updated_at`), so two
+   corrections composed against one version cannot both pass. The correction is queued with only its
+   changed keys and that version, and a moved interview is held for **Review changes**, answers named
+   by their question (`InterviewCorrection.kt`). Pinned by `backend/tests/test_interview_version.py`
+   and `InterviewCorrectionTest`.
 9. **Idempotency keys are honoured on record creates only** (`CREATE_ROUTES` in
    `backend/app/core/idempotency.py`), kept 30 days, and a first request still running is taken over
    only after 15 minutes, by one conditional update. Sign-in, token, password, secret and AI-key
    routes are never stored, whatever header they carry. That includes the two-step verification routes under
    `/api/auth/two-factor/` that arrived with the 2026-10-16 merge of `integrate/designer-release`:
    setup answers a secret and verify answers a token, so neither is ever written to the table.
+   Copying a questionnaire as a template (`/questionnaires/{id}/reuse`) joined the list on
+   2026-10-17, when the handset began to queue it.
 10. **Backups keep work and drop sessions.** `android/app/src/main/res/xml/backup_rules.xml` and
     `data_extraction_rules.xml` exclude the sign-in token and cached account (`field_repository_auth`,
     where any two-step state also lives), the cached lists and the staged-object journal, and keep the
     outbox, drafts and photographs.
+11. **Uploading an edited workbook and starting a sitting need a connection; copying a questionnaire
+    does not (2026-10-17).** A re-upload replaces the questionnaire's questions with the file's and
+    answers with the report of what it kept, reworded and retired; applied hours later it would retire
+    questions somebody added on the web in between as "not in the file", and the report would reach
+    nobody. A sitting's answers are only sent from the live form (decision 3), so a sitting started
+    offline could not be answered until there was a signal anyway. Both say so under the control and
+    when tapped (`QuestionnaireOfflineCopy.kt`). A copy changes nothing on the original, so it is a
+    queued step (`QFormOp.REUSE`) behind any step still waiting for the source, with an
+    `Idempotency-Key`.
 
 ---
 
@@ -184,8 +199,8 @@ authoring, the designer profile and "Report something", and appearance changes m
 
 Nothing. The six items the first change deferred were built by the second and are closed in
 [OPEN_FINDINGS.md](OPEN_FINDINGS.md) under *Closed on 2026-10-16*. What remains online-only does so
-by decision (§3: administrative writes, secrets and consent, answering a questionnaire, interview
-corrections, searches).
+by decision (§3: administrative writes, secrets and consent, answering a questionnaire, uploading a
+workbook and starting a sitting, searches).
 
 ---
 

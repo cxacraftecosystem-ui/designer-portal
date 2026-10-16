@@ -1200,6 +1200,8 @@ function accessEntryDetails(entry: AccessRosterEntry): [string, string | null][]
     ["Email", entry.email],
     ["Standing", standing],
     ["Added", entry.createdAt ? formatDate(entry.createdAt) : "Not recorded"],
+    ["Added by", entry.addedByName ?? null],
+    ...(entry.status === "PENDING" ? [] : [["Decided by", entry.decidedByName ?? null] as [string, string | null]]),
     ["Joined", entry.joinedAt ? formatDate(entry.joinedAt) : "Not yet"],
     [
       "First signed in",

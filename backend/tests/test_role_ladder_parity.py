@@ -820,18 +820,6 @@ MIRRORS: tuple[Mirror, ...] = (
         ),
     ),
     Mirror(
-        path=f"{_ANDROID_TEST}/ui/IslandBottomNavTest.kt",
-        binding="every role",
-        kind="closed",
-        pattern=r"listOf\(\s*\n([\s\S]*?)\n[ \t]*\)\.forEach \{ role ->",
-        why=(
-            "Registered 2026-10-16, when the bottom-nav branch merged into the offline review. The "
-            "test walks EVERY tier through `slotsFor` and `splitIsland` and asserts the island and "
-            "its More sheet partition exactly the slots that tier may see, so a tier missing here is "
-            "a tier whose navigation is never checked."
-        ),
-    ),
-    Mirror(
         path=f"{_ANDROID_TEST}/SearchRecordRoutingTest.kt",
         binding="everyRole",
         kind="closed",

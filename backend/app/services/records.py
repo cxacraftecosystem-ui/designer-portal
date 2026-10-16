@@ -1920,7 +1920,40 @@ def assert_expected_updated_at(record: Any, expected: datetime | None) -> None:
         stored = stored.replace(tzinfo=UTC)
     if abs(stored - expected) <= EXPECTED_UPDATED_AT_TOLERANCE:
         return
-    raise HTTPException(
+    raise _record_changed(expected, stored)
+
+
+async def claim_expected_updated_at(delegate: Any, record: Any, expected: datetime | None) -> None:
+    """The precondition made race-free: compare-and-set the row's ``updatedAt`` inside the caller's tx.
+
+    :func:`assert_expected_updated_at` compares against a row read BEFORE the transaction, so two
+    queued corrections composed against the same version and replayed at the same moment could both
+    pass it and the second would overwrite the first. This moves ``updatedAt`` only if it still
+    holds the value that was read: the first writer's UPDATE takes the row lock, the second waits
+    for it, re-reads the row under PostgreSQL's READ COMMITTED rule, matches nothing and is refused
+    with the same 409. Call it after the assert and before any other write. ``None`` passes, as there.
+    """
+    if expected is None:
+        return
+    stored = getattr(record, "updatedAt", None)
+    if not isinstance(stored, datetime):
+        return
+    claimed = await delegate.update_many(
+        where={"id": record.id, "updatedAt": stored}, data={"updatedAt": datetime.now(UTC)}
+    )
+    if claimed:
+        return
+    current = await delegate.find_unique(where={"id": record.id})
+    now_stored = getattr(current, "updatedAt", None)
+    if expected.tzinfo is None:
+        expected = expected.replace(tzinfo=UTC)
+    raise _record_changed(expected, now_stored if isinstance(now_stored, datetime) else stored)
+
+
+def _record_changed(expected: datetime, stored: datetime) -> HTTPException:
+    if stored.tzinfo is None:
+        stored = stored.replace(tzinfo=UTC)
+    return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail={
             "code": "record_changed",

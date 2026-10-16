@@ -148,7 +148,15 @@ data class UserDto(
     val aadhaarVerifyName: String? = null,
     val aadhaarVerifyNameMatch: Boolean? = null,
     /** Two-step verification is on. Drives the "Two-step on" badge and the administrator's reset. */
-    val twoFactorEnabled: Boolean = false
+    val twoFactorEnabled: Boolean = false,
+    /**
+     * SIGN-IN HISTORY, for Manage users (2026-10-17): when the account was made, and the first and
+     * the last time it actually got in. ISO-8601 or null; read through `accountSignInLabel`, never
+     * raw — see `ui/AccountSignInCopy.kt` for what a null means for each.
+     */
+    val createdAt: String? = null,
+    val firstLoginAt: String? = null,
+    val lastLoginAt: String? = null
 )
 
 /**
@@ -2084,6 +2092,12 @@ data class QuestionnaireInterviewDetailDto(
     val location: LocationDto? = null,
     val createdById: String? = null,
     val createdAt: String? = null,
+    /**
+     * The interview's version, answers included: the server moves it whenever an answer is written
+     * (2026-10-17), so a correction queued offline carries it as `expectedUpdatedAt` and is held for
+     * "Review changes" when another interviewer has answered since.
+     */
+    val updatedAt: String? = null,
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null
 )
@@ -3719,7 +3733,10 @@ data class AccessRosterDto(
     val notes: String? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
-    val addedById: String? = null
+    val addedById: String? = null,
+    /** Who added the address and who decided it, in words — joined on the roster list (2026-10-17). */
+    val addedByName: String? = null,
+    val decidedByName: String? = null
 )
 
 /**

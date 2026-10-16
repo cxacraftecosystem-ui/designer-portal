@@ -249,6 +249,10 @@ model User {
   /// this one is about the ACCOUNT, and the two differ for anybody whose account predates the
   /// roster row. Written once and never moved.
   firstLoginAt       DateTime?
+  /// The LAST time this account got in, through either credential: moved on every successful
+  /// sign-in, at the same point as `firstLoginAt`. Null on an account that has not signed in since
+  /// the column was added (2026-10-17); the screens then fall back to `firstLoginAt`.
+  lastLoginAt        DateTime?
   /// ── SESSION REVOCATION, EXPRESSED AS ONE TIMESTAMP RATHER THAN A SESSION TABLE ─────────────
   ///
   /// Bearer tokens here are stateless JWTs with no `jti` and no row behind them, so "sign every

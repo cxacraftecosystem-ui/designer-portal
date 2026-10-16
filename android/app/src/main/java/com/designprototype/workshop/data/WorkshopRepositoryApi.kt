@@ -845,6 +845,13 @@ interface WorkshopRepositoryApi {
         @Body body: QuestionnaireInterviewUpdateRequest
     ): QuestionnaireInterviewDetailDto
 
+    /** The same route with a body already narrowed to a queued correction's changes and its version. */
+    @PATCH("questionnaire/interviews/{id}")
+    suspend fun updateInterviewJson(
+        @Path("id") id: String,
+        @Body body: JsonObject
+    ): QuestionnaireInterviewDetailDto
+
     /**
      * FOLD `{id}` INTO `{targetId}`: move its answers, its recordings and the sections its title
      * names onto the target, then remove it. Answers with the SURVIVOR, hydrated.
@@ -2397,7 +2404,8 @@ interface WorkshopRepositoryApi {
     @POST("questionnaires/{id}/reuse")
     suspend fun reuseQuestionnaire(
         @Path("id") id: String,
-        @Body body: JsonObject
+        @Body body: JsonObject,
+        @Header("Idempotency-Key") idempotencyKey: String? = null,
     ): QFormReuseResultDto
 
     @POST("questionnaires/{id}/sections")

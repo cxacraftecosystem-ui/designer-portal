@@ -108,9 +108,22 @@ from app.services.designers import (
 )
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_filters import enum_filter_list_or_422
-from app.services.records import add_date_range, contains, count_and_page, enum_filter_or_422
+from app.services.records import (
+    Relation,
+    add_date_range,
+    contains,
+    count_and_page,
+    enum_filter_or_422,
+)
 
 router = APIRouter(prefix="/access", tags=["access"])
+
+#: The two accounts a roster row names, loaded beside each page so the screen can say "Added by"
+#: and "Decided by" in words: one batched read each, never one per row.
+ROSTER_PEOPLE = (
+    Relation("addedBy", "user", "addedById"),
+    Relation("decidedBy", "user", "decidedById"),
+)
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +386,7 @@ async def list_access_roster(
         skip=skip,
         take=clean_size,
         order={ACCESS_SORT_COLUMNS[sort_token]: dir_token},
+        relations=ROSTER_PEOPLE,
     )
     return page_payload([access_payload(r) for r in rows], total, clean_page, clean_size) | {
         # ALWAYS FALSE ON THIS ROUTE — see the docstring: ``admitRole`` is a real column here, so

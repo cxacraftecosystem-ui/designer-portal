@@ -1309,7 +1309,19 @@ def access_payload(row: Any) -> dict[str, Any]:
         "createdAt": _iso(row.createdAt),
         "updatedAt": _iso(row.updatedAt),
         "addedById": row.addedById,
+        # WHO, IN WORDS (2026-10-17). Present when the route loaded the two accounts — the roster
+        # list does, through ``ROSTER_PEOPLE`` — and null otherwise, or when the account is gone.
+        "addedByName": person_name(getattr(row, "addedBy", None)),
+        "decidedByName": person_name(getattr(row, "decidedBy", None)),
     }
+
+
+def person_name(user: Any) -> str | None:
+    """An account as a roster screen names it: its name, else its address, else nothing."""
+    if user is None:
+        return None
+    name = str(getattr(user, "name", "") or "").strip()
+    return name or (getattr(user, "email", None) or None)
 
 
 def _iso(value: Any) -> str | None:

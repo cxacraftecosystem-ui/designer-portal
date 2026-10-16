@@ -1015,11 +1015,14 @@ async def open_session(user: Any, access: Any) -> dict[str, Any]:
     # Written once and never moved, so "has this person ever actually used the product" stays
     # answerable.
     #
-    # ONE EXTRA WRITE, AND ONLY EVER ONCE PER ACCOUNT. The guard is a `getattr` off the row
-    # already in hand, so an account that has signed in before pays nothing at all.
+    # ONE WRITE PER SIGN-IN (2026-10-17; it was once per account): the LAST time moves every time,
+    # so "last signed in" on the account screens is a fact, and the first sign-in stamps both.
+    signed_in_at = datetime.now(UTC)
+    stamps: dict[str, Any] = {"lastLoginAt": signed_in_at}
     if getattr(user, "firstLoginAt", None) is None:
-        await db.user.update(where={"id": user.id}, data={"firstLoginAt": datetime.now(UTC)})
-        invalidate_cached_user(user.id)
+        stamps["firstLoginAt"] = signed_in_at
+    await db.user.update(where={"id": user.id}, data=stamps)
+    invalidate_cached_user(user.id)
 
     # ── THE USAGE-CONSENT GATE, AT THE ONE POINT BOTH CREDENTIALS JOIN ──────────────────────────
     #

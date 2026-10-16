@@ -628,9 +628,9 @@ data class OfflineQueueResult(
  * Because a queued correction WILL win, and nothing else in the app said so. `writeFromEntry` replays
  * it as a whole create-shaped body through `updateArtisan`/`updateProduct`/… with no version and no
  * `If-Match`, so a correction composed on the bus and drained hours later overwrites anything anybody
- * else changed in between, field for field, with nobody told. The questionnaire interview form refuses
- * to queue an edit for exactly this hazard and spends a paragraph explaining why (see MainActivity's
- * questionnaire save handler); the six record types accept it, which is a defensible trade for a
+ * else changed in between, field for field, with nobody told. The questionnaire interview form used to
+ * refuse to queue an edit for exactly this hazard, and since 2026-10-17 queues it with the interview's
+ * version as its precondition (see MainActivity's questionnaire save handler); the six record types accept it, which is a defensible trade for a
  * register a small team keeps — losing a courtyard's fieldwork to a refusal is worse than a rare
  * overwrite — but it is not defensible to make it silently. "The office still sees the earlier
  * version" told the designer the half that costs them nothing and left out the half that costs

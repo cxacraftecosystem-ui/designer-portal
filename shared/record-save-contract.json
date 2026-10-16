@@ -681,31 +681,6 @@
         ]
       },
       {
-        "id": "android-refuses-to-queue-an-interview-edit",
-        "between": "the two clients",
-        "stillTrue": {
-          "androidFormContains": {
-            "form": "QuestionnaireForm",
-            "text": "A correction to an interview cannot be saved on this device."
-          }
-        },
-        "why": [
-          "THE HANDSET EDITS AN INTERVIEW IN PLACE AND WILL NOT QUEUE THAT EDIT OFFLINE. It refuses, in",
-          "the room, with the answers still on screen, and says why.",
-          "",
-          "The reason is `responsesToSend`: it is a DIFF computed against what the server held when the",
-          "form was opened, and `QuestionnaireInterviewUpdateRequest` reads a present `responses` as",
-          "\"replace\". Replaying that diff hours later, against a sitting a second interviewer may have",
-          "added answers to, would drop theirs without either person being told. `artisanIds` has the",
-          "same shape and the same hazard.",
-          "",
-          "THE BROWSER NEVER MEETS THIS because its capture form is create-only — an interview is",
-          "corrected through the review panel — so there is no web behaviour to match. Closing it",
-          "properly needs the interview's own version as a precondition, which is what the custom",
-          "questionnaire's write already does, and not a queue."
-        ]
-      },
-      {
         "id": "craft-and-media-draw-one-box",
         "between": "record forms and the two forms that are not",
         "stillTrue": {

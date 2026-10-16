@@ -119,7 +119,7 @@ def test_the_same_key_for_a_different_body_is_refused():
 
 def test_a_refused_or_failed_create_is_not_remembered():
     store = MemoryStore()
-    app, records = _app(store)
+    app, _records = _app(store)
     client = TestClient(app, raise_server_exceptions=False)
     headers = {**_auth(), "Idempotency-Key": "failing-key-0001"}
     assert client.post("/api/crafts", json={"name": "refuse"}, headers=headers).status_code == 409
@@ -290,6 +290,8 @@ def test_routes_off_the_create_allow_list_are_never_stored():
     assert len(calls) == 4
     assert idempotency.is_create_route("/api/artisans")
     assert idempotency.is_create_route("/api/questionnaires/q1/sections/s1/questions")
+    # A questionnaire copied as a template, queued offline on the handset (2026-10-17).
+    assert idempotency.is_create_route("/api/questionnaires/q1/reuse")
     assert not idempotency.is_create_route("/api/auth/login")
     assert not idempotency.is_create_route("/api/users/me/password")
     # Two-step verification (2026-10-16 merge): its setup answers a secret, its verify a token.
@@ -299,8 +301,8 @@ def test_routes_off_the_create_allow_list_are_never_stored():
 
 
 def test_keys_are_kept_thirty_days():
-    assert idempotency.TTL == timedelta(days=30)
-    assert idempotency.STALE_PENDING == timedelta(minutes=15)
+    assert timedelta(days=30) == idempotency.TTL
+    assert timedelta(minutes=15) == idempotency.STALE_PENDING
 
 
 def test_the_prisma_store_round_trip_and_expiry():

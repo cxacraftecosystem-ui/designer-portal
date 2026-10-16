@@ -93,6 +93,7 @@ from app.services.designers import (
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_filters import enum_filter_list_or_422
 from app.services.records import (
+    Relation,
     add_date_range,
     attach_location,
     contains,
@@ -487,6 +488,7 @@ async def list_roster(
         skip=skip,
         take=clean_size,
         order={DESIGNER_SORT_COLUMNS[sort_token]: dir_token},
+        relations=(Relation("addedBy", "user", "addedById"),),
     )
     return page_payload([roster_payload(r) for r in rows], total, clean_page, clean_size) | {
         # See the docstring: ``True`` only when the roles query above actually hit its cap. Sent

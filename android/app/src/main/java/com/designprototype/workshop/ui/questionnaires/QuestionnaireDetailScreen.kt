@@ -362,7 +362,10 @@ fun QuestionnaireDetailScreen(
                     savedQuestionSetTo = savedQuestionSetTo,
                     savedWorkbookTo = savedWorkbookTo,
                     onDownload = ::download,
-                    onPickWorkbook = pickWorkbook,
+                    // Asked at the tap, before the file picker opens: see QuestionnaireOfflineCopy.kt.
+                    onPickWorkbook = {
+                        if (repository.isOnline(appContext)) pickWorkbook() else onError(WORKBOOK_UPLOAD_OFFLINE)
+                    },
                 )
 
                 // THE OFFLINE HANDOFF, directly beneath the two .xlsx controls and sharing their one
@@ -412,7 +415,9 @@ fun QuestionnaireDetailScreen(
                 SittingsCard(
                     form = loaded,
                     busy = busy,
-                    onStart = { startingSitting = true },
+                    onStart = {
+                        if (repository.isOnline(appContext)) startingSitting = true else onError(SITTING_START_OFFLINE)
+                    },
                     onOpenEntry = onOpenEntry,
                 )
 
@@ -448,16 +453,24 @@ fun QuestionnaireDetailScreen(
                     reuseReport = null
                     scope.launch {
                         runCatching {
-                            repository.reuseQuestionnaire(
+                            // Kept on this phone with no signal (2026-10-17): the copy changes
+                            // nothing on this questionnaire, so it is safe to make later.
+                            repository.reuseQuestionnaireOrQueue(
+                                context = appContext,
                                 id = questionnaireId,
                                 designWorkshopId = targetWorkshopId,
                                 title = newTitle,
                                 description = newDescription,
                                 changeDescription = changeDescription,
+                                label = "Copy of “${newTitle?.takeIf { it.isNotBlank() } ?: loaded.title.ifBlank { "questionnaire" }}”",
                             )
                         }
-                            .onSuccess { result ->
+                            .onSuccess { made ->
                                 reusing = false
+                                val result = made ?: run {
+                                    onMessage(REUSE_KEPT_OFFLINE)
+                                    return@onSuccess
+                                }
                                 reuseReport = result.report
                                 // NAMED, because this screen does not move. The copy is a different
                                 // questionnaire and nothing here navigates to it, so the one thing a
@@ -990,7 +1003,7 @@ private fun InterchangeCard(
                         "that already has answers is never overwritten: its old wording is kept with " +
                         "its answers and your new wording is added beside it, and you are told which " +
                         "ones. A file downloaded from a DIFFERENT questionnaire is refused rather " +
-                        "than applied.",
+                        "than applied. $WORKBOOK_UPLOAD_NEEDS_CONNECTION",
                     busy = busy,
                     working = reuploading,
                     onPick = onPickWorkbook,
@@ -1054,6 +1067,7 @@ private fun SittingsCard(
             when {
                 !form.isActive -> EmptyNote("This questionnaire is deactivated, so no new answers can be recorded against it.")
                 total == 0 -> EmptyNote("There is nothing to answer yet — add some questions first.")
+                else -> EmptyNote(SITTING_START_NEEDS_CONNECTION)
             }
         }
     }

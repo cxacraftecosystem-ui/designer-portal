@@ -81,6 +81,9 @@ export type AccessRosterEntry = {
   createdAt: string | null;
   updatedAt: string | null;
   addedById: string | null;
+  /** The adder's and the decider's names, joined by the server on the roster list (2026-10-17). */
+  addedByName?: string | null;
+  decidedByName?: string | null;
 };
 
 export type AccessRosterPage = PageResult<AccessRosterEntry>;

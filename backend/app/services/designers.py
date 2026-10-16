@@ -808,7 +808,16 @@ def roster_payload(row: Any) -> dict[str, Any]:
         "createdAt": _iso(row.createdAt),
         "updatedAt": _iso(row.updatedAt),
         "addedById": row.addedById,
+        # The empanelling admin in words, when the route loaded the account (the roster list does).
+        "addedByName": _added_by_name(getattr(row, "addedBy", None)),
     }
+
+
+def _added_by_name(user: Any) -> str | None:
+    if user is None:
+        return None
+    name = str(getattr(user, "name", "") or "").strip()
+    return name or (getattr(user, "email", None) or None)
 
 
 # --------------------------------------------------------------------------------------

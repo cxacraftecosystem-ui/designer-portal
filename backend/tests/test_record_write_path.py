@@ -489,7 +489,9 @@ def test_a_duplicate_question_in_one_body_is_saved_once_last_wins(monkeypatch):
     monkeypatch.setattr(
         questionnaire,
         "db",
-        SimpleNamespace(questionnaireresponse=responses, questionnairequestion=questions),
+        # The interview delegate takes the version bump an answer write now makes (2026-10-17).
+        SimpleNamespace(questionnaireresponse=responses, questionnairequestion=questions,
+                        questionnaireinterview=_Delegate()),
     )
 
     body = [
@@ -517,7 +519,9 @@ def test_a_duplicate_over_an_answer_that_already_exists_updates_rather_than_inse
     monkeypatch.setattr(
         questionnaire,
         "db",
-        SimpleNamespace(questionnaireresponse=responses, questionnairequestion=questions),
+        # The interview delegate takes the version bump an answer write now makes (2026-10-17).
+        SimpleNamespace(questionnaireresponse=responses, questionnairequestion=questions,
+                        questionnaireinterview=_Delegate()),
     )
 
     body = [
