@@ -225,6 +225,16 @@ internal const val OFFLINE_DESIGN_RATING = "designRating"
 internal const val OFFLINE_CUSTOM_QUESTIONNAIRE = "customQuestionnaire"
 
 /**
+ * A PERSON'S OWN RATING OF THE APP, SAVED WITH NO CONNECTION (2026-10-16).
+ *
+ * The body of `PUT /feedback/me`, replayed as it was typed. Safe to replay because the route is an
+ * UPSERT of the one row this account owns: a second send replaces the first, it never adds a row.
+ * Stamped with its owner like every entry, so it is never sent under somebody else's account. No
+ * media. See [WorkshopRepository.saveMyFeedback].
+ */
+internal const val OFFLINE_APP_FEEDBACK = "appFeedback"
+
+/**
  * [PendingEntry.type] for an entry that CREATES NOTHING and only carries files to a record that is
  * already on the server. [PendingEntry.targetId] holds that record's id and [PendingEntry.label]
  * names it for the tray.
@@ -909,6 +919,12 @@ internal suspend fun fetchInterviewArtisans(
     designWorkshopId = scope.designWorkshopId,
 ).items
 
+/** See `syncMutex`: one outbox pass at a time across every [WorkshopRepository] in the process. */
+private val PROCESS_OUTBOX_SYNC_MUTEX = Mutex()
+
+/** See `inspectionMutex`. */
+private val PROCESS_INSPECTION_SYNC_MUTEX = Mutex()
+
 class WorkshopRepository(
     private val api: WorkshopRepositoryApi,
     private val tokenStore: TokenStore
@@ -957,7 +973,9 @@ class WorkshopRepository(
     // omitted defaults. A `processingRequests: []` that should have been absent changes what the
     // server does with the file.
     private val completeJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
-    private val syncMutex = Mutex()
+    // PROCESS-WIDE, not per instance: `OutboxSyncJobService` builds its own repository, and two
+    // passes over one entry would both see `createdId == null` and create the record twice.
+    private val syncMutex = PROCESS_OUTBOX_SYNC_MUTEX
     /**
      * Spent by the first [syncOutbox] pass of the process that gets past the password gate: the
      * staged sweep and the orphan reclaim run once per process, off this latch. Visible to the tests
@@ -2318,7 +2336,8 @@ class WorkshopRepository(
         withContext(Dispatchers.IO) { DwInspectionStore.of(context).remove(noteId) }
     }
 
-    private val inspectionMutex = Mutex()
+    // Process-wide for the same reason as `syncMutex`.
+    private val inspectionMutex = PROCESS_INSPECTION_SYNC_MUTEX
 
     /**
      * Send what is waiting, workshop by workshop, under the conflict rules.
@@ -3928,6 +3947,9 @@ class WorkshopRepository(
     suspend fun logout(context: Context) {
         tokenStore.clear()
         runCatching { DwQuestionnaireFormCache.forgetAll(context) }
+        // Cached LISTS go too (they are copies, not anybody's work). Drafts and the outbox do NOT:
+        // nothing typed or captured is lost across a sign-out. See [ReadCache] and [FormDraftStore].
+        runCatching { ReadCache.forgetAll(context) }
     }
 
     suspend fun currentUser(): UserDto = api.me()
@@ -4699,6 +4721,33 @@ class WorkshopRepository(
     /** Create or update the current user's detailed feedback (they can revisit and change it anytime). */
     suspend fun upsertMyFeedback(request: FeedbackUpsertRequest): FeedbackDto =
         api.upsertMyFeedback(request)
+
+    /**
+     * Save this account's rating of the app, or — when nothing could reach the server — keep it in the
+     * outbox, which sends it when there is signal (in the background if need be). Null means queued.
+     * An ANSWERED refusal is thrown as before, so the screen prints what the server said.
+     */
+    suspend fun saveMyFeedback(context: Context, request: FeedbackUpsertRequest): FeedbackDto? {
+        try {
+            return api.upsertMyFeedback(request)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (e is HttpException || !isTransient(e)) throw e
+            OfflineOutbox.enqueue(
+                context,
+                PendingEntry(
+                    id = java.util.UUID.randomUUID().toString(),
+                    type = OFFLINE_APP_FEEDBACK,
+                    payloadJson = offlineJson.encodeToString(request),
+                    label = "Your rating of the app",
+                    createdAt = Instant.now().toString(),
+                    ownerUserId = cachedUser()?.id,
+                )
+            )
+            return null
+        }
+    }
 
     /** Master-admin only: all users' feedback, newest first, each with its author. */
     suspend fun allFeedback(): List<FeedbackDto> = api.allFeedback()
@@ -6929,6 +6978,45 @@ class WorkshopRepository(
     )
 
     /**
+     * Queue files from the "Miscellaneous Media" screen that could not be uploaded because there is no
+     * connection, so they are sent by the outbox (in the background if need be) instead of sitting in
+     * a picker that dies with the screen.
+     *
+     * An [OFFLINE_MEDIA_ONLY] entry, exactly like [queueMediaForSavedRecord]: the record the files
+     * are linked to (if any) is already on the server, so the replay creates nothing and only uploads.
+     * The files carry everything the online upload would have sent — caption, title, record link,
+     * design workshop and GPS fix — so the row the server writes is the one it would have written.
+     * [items] pairs each Uri with its position in the batch the person chose, which names the file.
+     */
+    suspend fun queueLooseMedia(
+        context: Context,
+        linkedRecordType: String,
+        linkedRecordId: String,
+        designWorkshopId: String?,
+        caption: String?,
+        location: LocationRequest?,
+        titleHint: String?,
+        items: List<Pair<Int, Uri>>,
+    ): OfflineQueueResult = queueOfflineEntry(
+        context = context,
+        type = OFFLINE_MEDIA_ONLY,
+        payloadJson = "",
+        label = titleHint?.takeIf { it.isNotBlank() } ?: "Media upload",
+        items = items.map { (batchIndex, uri) ->
+            OfflineMediaSpec(
+                uri = uri,
+                caption = caption?.takeIf { it.isNotBlank() },
+                recordName = titleHint?.takeIf { it.isNotBlank() },
+                batchIndex = batchIndex,
+                linkedType = linkedRecordType,
+                designWorkshopId = designWorkshopId?.takeIf { it.isNotBlank() },
+                location = location,
+            )
+        },
+        targetId = linkedRecordId,
+    )
+
+    /**
      * Queue an offline entry with a fully specified media list (e.g. attachments + stage captures).
      *
      * ── WHY THIS RETURNS SOMETHING NOW, AND WHY IT NEVER THROWS ON A BAD FILE ─────────────────
@@ -6996,7 +7084,7 @@ class WorkshopRepository(
                     linkedType = spec.linkedType,
                     stepIndex = spec.stepIndex,
                     purpose = spec.purpose
-                )
+                ).copy(designWorkshopId = spec.designWorkshopId, location = spec.location)
             }
             staged.getOrNull()?.let { media.add(it) }
                 // `withIndex` and not `items.indexOf(spec)`: two captures of the same file in one
@@ -7886,6 +7974,10 @@ class WorkshopRepository(
                 offlineJson.decodeFromString<DesignRatingBody>(entry.payloadJson)
             ).rating.id
         )
+        // An upsert of this account's one row: a replay replaces, it never duplicates.
+        OFFLINE_APP_FEEDBACK -> CreatedRecord(
+            api.upsertMyFeedback(offlineJson.decodeFromString<FeedbackUpsertRequest>(entry.payloadJson)).id
+        )
         else -> throw IllegalStateException("Unknown offline entry type: ${entry.type}")
     }
 
@@ -8417,8 +8509,10 @@ internal fun pendingMediaCompleteRequest(
     bucket = bucket,
     url = publicUrl,
     caption = pm.caption.blankToNull(),
-    linkedRecordType = linkedRecordType,
-    linkedRecordId = linkedRecordId,
+    // Blank -> absent, as the online `uploadResolved` sends it: a loose upload from the media screen
+    // may be linked to a record TYPE with no record chosen. Never blank for a record form's file.
+    linkedRecordType = linkedRecordType.blankToNull(),
+    linkedRecordId = linkedRecordId.blankToNull(),
     recordedAt = recordedAt,
     processingRequests = pm.processing
         ?: if (pm.mediaType == "AUDIO") listOf("TRANSCRIPTION") else emptyList(),
@@ -8431,6 +8525,9 @@ internal fun pendingMediaCompleteRequest(
     // `createdAt ASC, id ASC`. Null for every other queued file, and `ApiClient.json` leaves
     // `encodeDefaults` false, so those bodies are byte-identical to what they always were.
     extraMetadata = mediaPurposeMetadata(pm.purpose),
+    // Null for every record form's file, so those bodies are unchanged; set only by the media screen.
+    designWorkshopId = pm.designWorkshopId.blankToNull(),
+    location = pm.location,
 )
 
 /**

@@ -91,6 +91,18 @@ internal fun InspectionFeedbackPanel(
     var queued by remember(record.id) { mutableStateOf<List<DwQueuedInspectionNote>>(emptyList()) }
     var reread by remember { mutableIntStateOf(0) }
 
+    // THE NOTE BEING TYPED, ON DISK (2026-10-16). `rememberSaveable` above survives Android recycling
+    // the process in the background but not a swipe-away, a force-stop or an update; this survives
+    // all of them. Cleared the moment the note is handed to `fileInspectionNote`, which owns it after.
+    val noteDraft = com.designprototype.workshop.ui.rememberFormDraft(
+        key = "inspection-note:${record.id}",
+        snapshot = { mapOf("note" to note, "stageKey" to stageKey) },
+        restore = { v ->
+            note = v["note"] ?: note
+            stageKey = v["stageKey"] ?: stageKey
+        },
+    )
+
     LaunchedEffect(record.id, refreshKey, reread) {
         queued = runCatching { repository.queuedInspectionNotes(appContext, record.id) }.getOrDefault(emptyList())
     }
@@ -127,6 +139,7 @@ internal fun InspectionFeedbackPanel(
                     note = note,
                     stageKey = stageKey
                 )
+                noteDraft.discard()
                 note = ""
                 stageKey = ""
                 applied(report, kind)

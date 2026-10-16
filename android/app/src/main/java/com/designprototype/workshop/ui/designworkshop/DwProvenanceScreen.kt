@@ -31,6 +31,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.ReadCache
+import com.designprototype.workshop.data.readCacheNotice
 import com.designprototype.workshop.data.DW_PROVENANCE_ALL_MATCH
 import com.designprototype.workshop.data.DW_PROVENANCE_COLUMN_CANONICAL
 import com.designprototype.workshop.data.DW_PROVENANCE_COLUMN_FIELD
@@ -155,6 +157,8 @@ fun DwProvenanceScreen(
      */
     var registry by remember(workshopId) { mutableStateOf<SchemaResponse?>(null) }
     var loadError by remember(workshopId) { mutableStateOf<String?>(null) }
+    /** Set when the comparison on screen is this phone's saved copy — see [ReadCache]. */
+    var cachedNote by remember(workshopId) { mutableStateOf<String?>(null) }
     /**
      * This workshop exists on the SERVER — a different question from whether the server could be
      * reached just now. A workshop that has never left this phone has copied nothing from a shared
@@ -190,7 +194,13 @@ fun DwProvenanceScreen(
         runCatching { repository.designWorkshopSchema(appContext) }
             .onSuccess { registry = it }
 
-        runCatching { repository.designWorkshopProvenance(remoteId) }
+        cachedNote = null
+        // The last comparison this phone read is shown when there is no connection — see [ReadCache].
+        runCatching {
+            ReadCache.read(appContext, "provenance:$remoteId", DwProvenanceReportDto.serializer()) {
+                repository.designWorkshopProvenance(remoteId)
+            }.also { read -> cachedNote = if (read.fromCache) readCacheNotice(read.cachedAt) else null }.value
+        }
             .onSuccess {
                 report = it
                 loadError = null
@@ -251,6 +261,7 @@ fun DwProvenanceScreen(
         }
 
         val served = report
+        cachedNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
         if (served == null) {
             // THE ONLY RED ON THIS SCREEN, and it is about the REQUEST rather than about the data.
             // A failed read is a failure; a divergence is not, and the two must never share a colour

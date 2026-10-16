@@ -1,6 +1,6 @@
 # Open findings
 
-**Status: 53 open, 1 decision recorded and 0 deferrals, 113 closed.** Every count re-counted by
+**Status: 59 open, 1 decision recorded and 0 deferrals, 113 closed.** Every count re-counted by
 heading on 2026-10-10: main's 31 open and 106 closed that day (the 15 open of 2026-10-09, plus 18
 opened by the Android copy sweep, less the 2 of those closed the same day), plus the toolchain
 upgrade's 2 opened and 2 closed, merged the same day, and the design-workshop approvals' 2 opened and
@@ -61,6 +61,13 @@ closed.
 handset now carries the LiteRT-LM runtime, downloads and verifies a Gemma 4 model on demand, and
 proofreads and translates on the phone. It is under *Closed on 2026-10-10*. 31 − 1 = 30 open; 99 + 1
 = 100 closed.
+
+**The Android offline review of 2026-10-16 opened six.** Every screen of the handset was checked
+against the owner's rule that whatever a person enters or captures is kept on the phone until there is
+a signal and then sent, and that a read-only screen shows its last copy instead of failing. The matrix
+is [ANDROID_OFFLINE_AUDIT.md](ANDROID_OFFLINE_AUDIT.md); the same change built a background sync, an
+on-disk draft for every form and a cache for read-only lists, and the six it left are below, under
+*Open*, each opened 2026-10-16. Counted by heading: 53 + 6 = 59 open, and 113 closed.
 
 **The web's copy rewrite of 2026-10-10 moved 19 gaps off the screens and into this register.** The web app, its landing pages and the backend's user-facing messages used to tell people what the product could not do — "no screen and no endpoint", "coming soon", "this build", "the server refused". That copy was rewritten (branch `copy/dp-web`) so that a screen says what happened and what to do, and every missing feature or known defect it used to narrate that is still missing is recorded below, under *Open*, each opened 2026-10-10. Approval, sign-off and hand-on copy was left to the approvals branch. The gaps it found that the same day built — e-mail, Microsoft and Yahoo sign-in, the inspection list's filters, files and custom answers on an inspection read, correction suggestions on the handset, an AI layer's decision history and its text on its own, a co-designer's sign-in link and an import's links, a Regional Director's annual-plan entries and the web report offline — are not entered, nor are the join card and the 3D model viewer, built the same day, or the four the Android sweep had already recorded. Counted by heading: 34 + 19 = 53 open, and 113 closed.
 
@@ -849,6 +856,69 @@ an ubuntu:26.04 container running the deploy's own steps on 2026-10-09: the API 
 resident (VmRSS; 821 MiB with its query engine) after its first requests, inside its 1000M soft
 ceiling and close to the ~865 MB `deploy-backend.yml` estimates. The queue worker was not measured
 there, and a container is not the box.
+
+### [MEDIUM] A record form's online save that fails mid-request is not queued (android) — opened 2026-10-16
+
+When the phone reports a connection, the artisan, craft, product, tool, process, workshop and interview
+forms save online; if the request then dies (the signal drops after `isOnline` said yes), the form shows
+the error and keeps the typing — now on disk as well, see `ANDROID_OFFLINE_AUDIT.md` — but nothing is
+queued, so the designer has to press Save again once there is signal. Queuing it automatically is only
+safe when the request provably never left: a timeout after the body was sent may have created the
+record, and artisan and craft creates carry no client key, so a second create would duplicate it.
+Closing it needs the online creates to send the same `clientKey` the outbox mints (the server already
+honours it for workshop, product, tool and process) and, for artisan and craft, a server-side key; then
+a transient failure can fall through to `trySaveOffline` with that key. Files:
+`android/app/src/main/java/com/designprototype/workshop/MainActivity.kt` (each form's `submit`),
+`android/app/src/main/java/com/designprototype/workshop/data/Offline.kt` (`outboxMintsClientKey`).
+
+### [LOW] A record cannot be opened for correction with no signal (android) — opened 2026-10-16
+
+"Update existing" lists records live and the editor loads the record live, so neither opens offline,
+although a correction made on an open record is queued. Caching both would be easy with
+`android/app/src/main/java/com/designprototype/workshop/data/ReadCache.kt`, and is deliberately not
+done: a queued correction replays the whole record with no version check (the MEDIUM entry of
+2026-10-10 above), so editing a stale copy would revert a colleague's later edits to fields the
+designer never touched. Close that entry first, then route `RecordPickerScreen` and `EditScreen`
+through the read cache. File: `android/app/src/main/java/com/designprototype/workshop/MainActivity.kt`.
+
+### [LOW] Five read-only lists on the handset still fail with no signal (android) — opened 2026-10-16
+
+My activity, view data, the data browser, design review's ranking and ledger, and the sketches
+workshop chooser show an error or an offline sentence instead of the last list read. The other
+read-only screens now go through `ReadCache` and say when their copy is from. My activity and view data
+assemble their rows in the screen from several calls, so closing them means caching each underlying
+list (the DTOs are already serialisable) rather than the screen's own types. Files:
+`android/app/src/main/java/com/designprototype/workshop/MainActivity.kt` (`MyActivityScreen`,
+`ViewDataScreen`), `android/app/src/main/java/com/designprototype/workshop/ui/DataBrowserScreen.kt`,
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DesignReviewScreen.kt`,
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/SketchesAndPrototypesScreen.kt`.
+
+### [LOW] Questionnaire authoring on the handset needs a connection (android) — opened 2026-10-16
+
+Adding or editing a section or question, re-uploading a workbook and starting a sitting are direct
+calls; offline they are refused in words and a prompt being typed is held only in memory. Creating the
+questionnaire row itself is already queued. Closing it needs the outbox to thread a server-minted id
+from one queued create (the section) into the next (its questions), which `PendingEntry.targetId`
+cannot express today. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireDetailScreen.kt`.
+
+### [LOW] The designer profile and "Report something" keep their typing but send only online (android) — opened 2026-10-16
+
+Both now keep an on-disk draft, so nothing typed is lost, but neither is queued: the profile screen is
+documented as deliberately not offline-capable (it is what a report prints under a person's name, and
+the server normalises it), and a report's kind comes from a vocabulary the server serves. Closing it
+means an outbox type per write — the profile save is a whole-object PUT, so a replay is safe; the
+report needs its vocabulary cached. Files:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DesignerProfileScreen.kt`,
+`android/app/src/main/java/com/designprototype/workshop/MainActivity.kt` (`FeedbackReportSection`).
+
+### [LOW] An appearance change made offline does not reach the account (android) — opened 2026-10-16
+
+The theme and accessibility toggles apply on the device at once and are sent once; a failed send is
+not retried, and the reconcile after the next sign-in (`syncAppPreferences`) prefers the server's row,
+so the older setting comes back. Closing it needs a "not yet sent" mark beside the device copy that the
+reconcile pushes instead of pulling. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/AppearanceScreen.kt`.
 
 ---
 

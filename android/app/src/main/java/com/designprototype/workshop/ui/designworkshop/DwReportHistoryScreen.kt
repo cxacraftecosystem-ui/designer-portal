@@ -34,6 +34,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.ReadCache
+import com.designprototype.workshop.data.readCacheNotice
 import com.designprototype.workshop.data.DW_REPORT_DIFF_LIMITS_TITLE
 import com.designprototype.workshop.data.DW_REPORT_DIFF_TITLE
 import com.designprototype.workshop.data.DW_REPORT_DIFF_WRITTEN_NOT_CHANGED
@@ -181,6 +183,8 @@ fun DwReportHistoryScreen(
     var onServer by remember(workshopId) { mutableStateOf(true) }
     var leftId by remember(workshopId) { mutableStateOf("") }
     var rightId by remember(workshopId) { mutableStateOf("") }
+    /** Set when the history on screen is this phone's saved copy — see [ReadCache]. */
+    var cachedNote by remember(workshopId) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(workshopId, reload) {
         loading = true
@@ -201,7 +205,13 @@ fun DwReportHistoryScreen(
         runCatching { repository.designWorkshopSchema(appContext) }.onSuccess { registry = it }
         runCatching { repository.designWorkshopTemplates(appContext) }.onSuccess { templates = it }
 
-        runCatching { repository.designWorkshopReportHistory(remoteId) }
+        cachedNote = null
+        // The last history this phone read is shown when there is no connection — see [ReadCache].
+        runCatching {
+            ReadCache.read(appContext, "report-history:$remoteId", DwReportHistoryDto.serializer()) {
+                repository.designWorkshopReportHistory(remoteId)
+            }.also { read -> cachedNote = if (read.fromCache) readCacheNotice(read.cachedAt) else null }.value
+        }
             .onSuccess { loaded ->
                 history = loaded
                 loadError = null
@@ -261,6 +271,7 @@ fun DwReportHistoryScreen(
         }
 
         val served = history
+        cachedNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
         if (served == null) {
             // The failure is rendered IN PLACE, beside the control that can retry it, rather than
             // handed to a snackbar that slides away: this screen has exactly one request and its

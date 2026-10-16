@@ -67,7 +67,15 @@ data class PendingMedia(
      * [PendingEntry]'s replay-progress block is defaulted, and it matters for the same reason: the
      * queue on a device that has been offline for a fortnight predates the build that reads it.
      */
-    val purpose: String? = null
+    val purpose: String? = null,
+    /**
+     * The design workshop a loose ("Miscellaneous Media") upload is filed under, and the GPS fix taken
+     * with it — the two things the media screen's ONLINE upload sends that no record form's file
+     * carries. Added for that screen's offline path (2026-10-16); defaulted, so every queue file
+     * written before them decodes unchanged and replays a body byte-identical to before.
+     */
+    val designWorkshopId: String? = null,
+    val location: LocationRequest? = null,
 )
 
 /** One queued create: the record type, its serialized create request, and the media to attach after. */
@@ -543,7 +551,11 @@ data class OfflineMediaSpec(
     val linkedType: String? = null,
     val stepIndex: Int? = null,
     /** See [PendingMedia.purpose]; a form builds this from its `MediaCaptureState.purposes` map. */
-    val purpose: String? = null
+    val purpose: String? = null,
+    /** See [PendingMedia.designWorkshopId]. */
+    val designWorkshopId: String? = null,
+    /** See [PendingMedia.location]. */
+    val location: LocationRequest? = null,
 )
 
 /**
@@ -1264,6 +1276,8 @@ object OfflineOutbox {
 
     suspend fun enqueue(context: Context, entry: PendingEntry) = withContext(Dispatchers.IO) {
         mutex.withLock { write(context, read(context) + entry) }
+        // Sent the moment there is a network, even if the app is closed first. See [BackgroundSync].
+        BackgroundSync.requestSoon(context)
     }
 
     /**

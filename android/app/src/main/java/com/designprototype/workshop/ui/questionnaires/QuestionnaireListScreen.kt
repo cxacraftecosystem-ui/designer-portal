@@ -44,6 +44,8 @@ import com.designprototype.workshop.data.QFormChangeReportDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.visibleQuestionnaires
+import com.designprototype.workshop.data.ReadCache
+import com.designprototype.workshop.data.readCacheNotice
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
@@ -94,6 +96,8 @@ fun QuestionnaireListScreen(
     var rows by remember { mutableStateOf<List<CustomQuestionnaireSummaryDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var offline by remember { mutableStateOf(false) }
+    /** Set when [rows] are this phone's saved copy of the unfiltered list — see [ReadCache]. */
+    var cachedNote by remember { mutableStateOf<String?>(null) }
     var search by remember { mutableStateOf("") }
     var showDeactivated by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
@@ -144,6 +148,7 @@ fun QuestionnaireListScreen(
         // read. `reload` is a deliberate act (a create) and must not wait behind a delay.
         if (search.isNotBlank()) delay(SEARCH_DEBOUNCE_MS)
         loading = true
+        cachedNote = null
         runCatching {
             // EVERY page the server says this account may see, not the first one.
             //
@@ -154,10 +159,27 @@ fun QuestionnaireListScreen(
             // somebody else BEFORE the grant, so it is older than everything the grantee has built and
             // sorts LAST: the one row a grant exists to reveal is the one row a single page cannot
             // reach. See data/QuestionnaireListing.kt for the live reading this was written from.
-            repository.visibleQuestionnaires(
-                search = search.takeIf { it.isNotBlank() },
-                activeOnly = !showDeactivated,
-            )
+            // THE UNFILTERED LIST IS KEPT ON THIS PHONE and shown when there is no connection. A search
+            // is not: it is a question for the server, and an old answer to it would read as current.
+            if (search.isBlank()) {
+                var listing: com.designprototype.workshop.data.PagedListing<CustomQuestionnaireSummaryDto>? = null
+                val read = ReadCache.read(
+                    appContext,
+                    "questionnaires:${if (showDeactivated) "all" else "active"}",
+                    kotlinx.serialization.builtins.ListSerializer(CustomQuestionnaireSummaryDto.serializer()),
+                ) { repository.visibleQuestionnaires(activeOnly = !showDeactivated).also { listing = it }.items }
+                if (read.fromCache) {
+                    cachedNote = readCacheNotice(read.cachedAt)
+                    com.designprototype.workshop.data.PagedListing(items = read.value, total = read.value.size, truncated = false)
+                } else {
+                    listing!!
+                }
+            } else {
+                repository.visibleQuestionnaires(
+                    search = search,
+                    activeOnly = !showDeactivated,
+                )
+            }
         }.onSuccess {
             rows = it.items
             offline = false
@@ -351,6 +373,11 @@ fun QuestionnaireListScreen(
             // Said plainly rather than shown as an empty list. "You have no questionnaires" and "this
             // phone cannot reach the server" look identical on screen and mean opposite things — one
             // of them sends a designer off to build a form they have already built.
+            cachedNote != null && rows.isNotEmpty() -> {
+                Text(cachedNote.orEmpty(), color = MaterialTheme.field.warning, fontSize = 12.sp)
+                rows.forEach { row -> QuestionnaireRow(row = row, onOpen = { onOpen(row.id) }) }
+            }
+
             offline -> Text(
                 "Could not connect, so this list may be incomplete. Questionnaires are kept " +
                     "online, not on this phone. Try again where there is a signal.",

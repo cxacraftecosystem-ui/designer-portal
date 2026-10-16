@@ -46,7 +46,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import com.designprototype.workshop.data.ArtisanDto
+import com.designprototype.workshop.data.ReadCache
+import com.designprototype.workshop.data.readCacheNotice
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import kotlinx.coroutines.CancellationException
@@ -254,6 +257,9 @@ private fun ConsolidatedIndex(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
+    val appContext = LocalContext.current.applicationContext
+    /** Set when the artisans on screen are this phone's saved copy — see [ReadCache]. */
+    var cachedNote by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(scope.settled, scope.requestKey) {
         // Held until the picker has settled, or the first request goes out unscoped and is replaced a
@@ -263,9 +269,16 @@ private fun ConsolidatedIndex(
         // Cleared BEFORE the request: a failed load followed by a scope change would otherwise keep
         // the old error card over a request already in flight, which reads as the retry not happening.
         error = null
-        runCatching { repository.artisans(workshopIds = scope.workshopIds) }
-            .onSuccess {
-                artisans = it
+        runCatching {
+            ReadCache.read(
+                appContext,
+                "consolidated-artisans:${scope.requestKey}",
+                kotlinx.serialization.builtins.ListSerializer(ArtisanDto.serializer()),
+            ) { repository.artisans(workshopIds = scope.workshopIds) }
+        }
+            .onSuccess { read ->
+                artisans = read.value
+                cachedNote = if (read.fromCache) readCacheNotice(read.cachedAt) else null
                 error = null
                 loading = false
             }
@@ -293,6 +306,7 @@ private fun ConsolidatedIndex(
     }
 
     ConsolidatedCard(title = "Consolidated questionnaire", icon = Icons.Filled.Layers) {
+        cachedNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
         Text(
             "An interview is stored once per exact set of artisans, so most artisans' answers are " +
                 "spread across several entries. Pick an artisan to read everything they contributed " +
@@ -444,14 +458,25 @@ private fun ConsolidatedDocument(
     )
     var data by remember(picked.id) { mutableStateOf<ConsolidatedQuestionnaireDto?>(null) }
     var error by remember(picked.id) { mutableStateOf<String?>(null) }
+    val appContext = LocalContext.current.applicationContext
+    /** Set when the document on screen is this phone's saved copy — see [ReadCache]. */
+    var cachedNote by remember(picked.id) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(picked.id, scope.settled, scope.requestKey) {
         if (!scope.settled) return@LaunchedEffect
         error = null
         runCatching {
-            repository.consolidatedQuestionnaire(picked.id, workshopIds = scope.workshopIds)
+            ReadCache.read(
+                appContext,
+                "consolidated:${picked.id}:${scope.requestKey}",
+                ConsolidatedQuestionnaireDto.serializer(),
+            ) { repository.consolidatedQuestionnaire(picked.id, workshopIds = scope.workshopIds) }
         }
-            .onSuccess { data = it; error = null }
+            .onSuccess { read ->
+                data = read.value
+                cachedNote = if (read.fromCache) readCacheNotice(read.cachedAt) else null
+                error = null
+            }
             .onFailure { failure ->
                 if (failure is CancellationException) throw failure
                 val message = failure.apiErrorMessage("Unable to load this questionnaire.")
@@ -478,6 +503,7 @@ private fun ConsolidatedDocument(
         if (subtitle.isNotBlank()) {
             Text(subtitle, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
+        cachedNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
         if (current != null) {
             val count = current.summary.interviewCount
             val plural = if (count == 1) "" else "s"

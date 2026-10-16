@@ -35,6 +35,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.ui.FormDraftRestoredNote
+import com.designprototype.workshop.ui.rememberFormDraft
 import com.designprototype.workshop.data.CustomAnswerInputBody
 import com.designprototype.workshop.data.CustomQuestionDto
 import com.designprototype.workshop.data.CustomQuestionnaireDto
@@ -195,6 +197,30 @@ fun QuestionnaireAnswerScreen(
     val entry = loaded?.entries?.firstOrNull { it.id == entryId }
     val sections = remember(loaded) { loaded?.sections?.filter { it.isActive }.orEmpty() }
 
+    /*
+     * THE TYPING, KEPT ON DISK UNTIL IT IS SAVED. The refusal below tells a designer holding a cached
+     * copy "your typing is still here — save when you have a signal", and until 2026-10-16 that was
+     * true only while the process lived. Keyed once the sitting has loaded, so the restore lands on
+     * top of what the server holds and a draft equal to it is simply dropped. Nothing here is ever
+     * SENT by itself — answering still needs the live form (see `save`); this only means nothing typed
+     * is lost before then.
+     */
+    val draft = rememberFormDraft(
+        key = if (!loading && entry != null) "qanswers:$questionnaireId:$entryId" else null,
+        snapshot = {
+            answers.entries.associate { "a:${it.key}" to it.value } +
+                notes.entries.associate { "n:${it.key}" to it.value }
+        },
+        restore = { v ->
+            v.forEach { (k, value) ->
+                when {
+                    k.startsWith("a:") -> answers[k.removePrefix("a:")] = value
+                    k.startsWith("n:") -> notes[k.removePrefix("n:")] = value
+                }
+            }
+        },
+    )
+
     /** Is this question's box different from what the server holds? */
     fun dirty(question: CustomQuestionDto): Boolean {
         val base = baseline[question.id] ?: ("" to "")
@@ -293,6 +319,7 @@ fun QuestionnaireAnswerScreen(
     ) {
         // ABOVE THE QUESTIONS, not beside the save button. A designer who is going to be refused a
         // save has to know it before they start asking, not after a section is typed.
+        FormDraftRestoredNote(draft)
         cachedNotice?.let { notice ->
             Text(
                 notice,

@@ -17,6 +17,9 @@
 
          A NORMAL permission: not requested at runtime, not shown in the install dialog, no prompt. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Lets `BackgroundSync`'s persisted jobs survive a reboot, so work saved offline is still sent
+         when signal returns after the phone was switched off. A NORMAL permission: no prompt. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -89,6 +92,12 @@
              `exported="false"` and every data method answers null/0, so this adds no API surface. The
              authority is namespaced under the application id so two builds can be installed side by
              side without the "provider authority already in use" install failure. -->
+        <!-- Sends the offline queues while the app is closed, when the platform sees a network. See
+             `data/BackgroundSync.kt`. BIND_JOB_SERVICE means only the system can start it. -->
+        <service
+            android:name="com.designprototype.workshop.data.OutboxSyncJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
         <provider
             android:name="com.designprototype.workshop.ui.DwInductionFlushProvider"
             android:authorities="${applicationId}.inductionflush"

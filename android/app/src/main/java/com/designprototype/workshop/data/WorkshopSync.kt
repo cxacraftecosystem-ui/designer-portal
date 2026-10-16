@@ -124,8 +124,11 @@ import java.util.UUID
  * already drains its outbox from a plain coroutine at sign-in, on a periodic fallback and on the
  * connectivity callback (MainActivity.kt, around the `syncOutbox` loop). [syncDesignWorkshops] is
  * called from the tail of [WorkshopRepository.syncOutbox], so it inherits all three triggers with no
- * second timer, no second network callback and no second sign-in gate to keep in step. What that
- * does NOT buy is syncing while the app is not running; see the openIssues note for this track.
+ * second timer, no second network callback and no second sign-in gate to keep in step.
+ *
+ * AND, SINCE 2026-10-16, WHILE THE APP IS NOT RUNNING: [BackgroundSync]'s persisted platform job calls
+ * the same [WorkshopRepository.syncOutbox], so this engine is reached by a fourth trigger without a
+ * scheduler of its own — every draft write asks for that job ([WorkshopDraftStore]'s `writeLocked`).
  */
 
 // --------------------------------------------------------------------------------------

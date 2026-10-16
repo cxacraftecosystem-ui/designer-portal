@@ -339,6 +339,7 @@ fun outboxKindLabel(type: String, isUpdate: Boolean): String {
         // colleague's piece. "Rating" alone would sit in a tray beside six record types and read as
         // one more of them.
         OFFLINE_DESIGN_RATING -> "Design review rating"
+        OFFLINE_APP_FEEDBACK -> "App feedback"
         else -> type
     }
     return if (isUpdate) "$noun — a correction" else noun

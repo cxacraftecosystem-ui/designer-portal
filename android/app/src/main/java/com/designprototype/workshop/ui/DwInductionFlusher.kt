@@ -44,9 +44,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * ── AND THE HONEST LIMIT, STATED RATHER THAN LEFT FOR SOMEBODY TO FIND ────────────────────────
  *
- * **This runs only while the process is alive.** If Android kills the app before signal returns,
- * nothing is sent until the app is next opened — at which point this provider runs again and the
- * queue drains. `dwJoinQueuedMessage` says both halves out loud for that reason.
+ * **This runs only while the process is alive.** Since 2026-10-16 that is no longer the whole story:
+ * `data/BackgroundSync.kt` registers a persisted, network-constrained JobScheduler job (the platform
+ * service WorkManager itself uses, at zero APK cost) that drains this queue with the app closed and
+ * after a reboot. This file remains the fast path while the app is open.
  *
  * The mechanism that would remove that limit is `WorkManager` with a `NetworkType.CONNECTED`
  * constraint, which survives process death and reboots. It is deliberately NOT used here: it means
@@ -224,6 +225,10 @@ class DwInductionFlushProvider : ContentProvider() {
         // — and the thing being started is a best-effort background send. The old behaviour (nothing
         // is flushed until the next scan) is an acceptable fallback; failing to launch is not.
         runCatching { context?.let { DwInductionFlusher.watch(it) } }
+        // The same process-start moment registers the background sync safety net (a persisted,
+        // network-constrained periodic job), so a queue survives a swipe-away or a reboot. It reads
+        // no file and touches no network; see `data/BackgroundSync.kt`.
+        runCatching { context?.let { com.designprototype.workshop.data.BackgroundSync.ensureScheduled(it) } }
         return true
     }
 
