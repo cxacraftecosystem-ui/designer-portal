@@ -15,7 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -1845,7 +1845,7 @@ private fun DwReferenceScanPanel(
                 ) {
                     Text("Link this code")
                 }
-                if (busy) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                if (busy) FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
             }
             Text(
                 "Spaces and capitals do not matter. The four characters at the end are a check — if " +

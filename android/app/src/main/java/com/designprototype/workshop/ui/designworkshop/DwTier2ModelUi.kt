@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.LinearProgressIndicator
+import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -153,7 +153,7 @@ private fun DwTier2Row(
             val stage = models.phase
             stage?.let { Text(dwTransferHeading(it), color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp) }
             live?.percent?.let { percent ->
-                LinearProgressIndicator(progress = { percent.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth())
+                FieldLinearProgressIndicator(progress = { percent.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth())
             }
             live?.let { Text(dwTransferLine(it), color = MaterialTheme.field.body, fontSize = 12.sp) }
             if (live != null && stage != null) {

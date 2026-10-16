@@ -29,6 +29,7 @@
  * hundred suggestions into four obstacles teaches a designer to skim the whole thing.
  */
 
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowRight, CheckCircle2, FileWarning, ListChecks } from "lucide-react";
@@ -444,16 +445,11 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
                 <span className="font-medium text-ink-900">{readinessSummary(readiness)}</span>
                 <span className="shrink-0 text-ink-muted">{percent}%</span>
               </div>
-              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-field-200">
-                <div
-                  className={
-                    readiness.isSubmittable
-                      ? "h-full rounded-full bg-success-600"
-                      : "h-full rounded-full bg-purple-700"
-                  }
-                  style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
-                />
-              </div>
+              <ProgressBar
+                percent={percent}
+                tone={readiness.isSubmittable ? "done" : "brand"}
+                className="mt-1.5 h-2"
+              />
             </div>
             <p className="text-xs leading-5 text-ink-500">
               Only Basic fields are counted here, because those are the ones a stage check needs. A stage with no

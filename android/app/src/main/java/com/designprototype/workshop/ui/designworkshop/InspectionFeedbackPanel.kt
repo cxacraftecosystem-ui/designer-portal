@@ -14,7 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -269,7 +269,7 @@ internal fun InspectionFeedbackPanel(
                             onClick = { confirmSendBack = true },
                             enabled = !busy && note.isNotBlank()
                         ) { Text("Send the report back") }
-                        if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        if (busy) FieldCircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     }
                     Text(
                         "Filing a suggestion leaves the report where it is. Sending it back moves it to " +

@@ -25,7 +25,7 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -326,7 +326,7 @@ fun WorkshopCodesScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 Text("Reading this workshop…", color = MaterialTheme.field.muted, fontSize = 13.sp)
             }
             return@Column
@@ -534,7 +534,7 @@ fun WorkshopCodesScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 Text("Drawing the sheet on this device…", color = MaterialTheme.field.muted, fontSize = 13.sp)
             }
         }
@@ -868,7 +868,7 @@ private fun DwCodeLookupPanel(resolve: suspend (DwWorkshopCodeRef) -> DwLookupOu
                 ) {
                     Text("Look up")
                 }
-                if (busy) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                if (busy) FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
             }
             Text(
                 "Spaces and capitals do not matter. The four characters at the end are a check — if they do " +
@@ -1375,7 +1375,7 @@ private fun DwJoinCardsPanel(workshopId: String) {
                 ) {
                     Text("Print a join card")
                 }
-                if (busy) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                if (busy) FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
             }
 
             notice?.let {

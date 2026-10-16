@@ -56,6 +56,7 @@
  * sentence in `aria-valuetext` — `GalleryProgress` is the worked precedent.
  */
 
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Download, LayoutDashboard, Lock, RefreshCw, ShieldCheck, UserCog, Users } from "lucide-react";
@@ -1257,12 +1258,12 @@ function ProgressCell({ progress }: { progress: DesignRegisterPage["items"][numb
         with it. A progressbar whose value is also printed beside it in full is redundant semantics,
         not extra semantics.
       */}
-      <div aria-hidden className="h-1.5 w-full overflow-hidden rounded-full bg-line-200">
-        <div
-          className="h-full rounded-full bg-ministry-600 transition-[width] duration-300 ease-out dark:bg-ministry-400"
-          style={{ width: `${percent}%` }}
-        />
-      </div>
+      <ProgressBar
+        percent={percent}
+        aria-hidden
+        className="bg-ministry-200 dark:bg-ministry-900"
+        fillClassName="bg-ministry-600 transition-[width] duration-300 ease-out dark:bg-ministry-400"
+      />
       <span className="mt-1 block text-xs leading-5 tabular-nums text-ink-500">{sentence}</span>
     </div>
   );

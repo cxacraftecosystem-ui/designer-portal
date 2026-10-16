@@ -25,7 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -191,7 +191,7 @@ internal fun QuestionnaireHandoffCard(
                     modifier = Modifier.heightIn48(),
                 ) {
                     if (working) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                     } else {
                         Icon(
                             Icons.Filled.FileDownload,
@@ -478,7 +478,7 @@ internal fun ReceivedQuestionnairesCard(
                     modifier = Modifier.heightIn48(),
                 ) {
                     if (busy) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                     } else {
                         Icon(
                             Icons.Filled.FileDownload,
@@ -619,7 +619,7 @@ private fun ReceivedQuestionnaireRow(
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onAdopt, enabled = !busy, modifier = Modifier.heightIn48()) {
                     if (adopting) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(6.dp))
                     }
                     Text(

@@ -36,7 +36,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
@@ -1483,7 +1483,7 @@ private fun DwAttachmentRow(
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
                 status.percent?.let { percent ->
-                    LinearProgressIndicator(
+                    FieldLinearProgressIndicator(
                         progress = { percent / 100f },
                         modifier = Modifier
                             .fillMaxWidth()

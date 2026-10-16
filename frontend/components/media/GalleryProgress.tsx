@@ -81,10 +81,10 @@ export function GalleryProgress({
            smaller truth than the other. */
         aria-valuetext={progress.words}
         aria-labelledby={labelledBy}
-        className="h-2 overflow-hidden rounded-full bg-line-200"
+        className="progress-track h-2"
       >
         {/*
-          `bg-purple-700` — the one action colour, and the same fill `UploadProgress` uses, so the two
+          `.progress-fill` — the one action colour, and the same fill `UploadProgress` uses, so the two
           bars a designer meets in one form are one vocabulary. It deliberately does NOT turn green at
           25: `success-600` would be a second accent on a data screen (non-negotiable 1), and a
           colour change is the one way of saying "done" that is invisible to a reader in greyscale,
@@ -95,7 +95,7 @@ export function GalleryProgress({
           being the only thing standing between a theme change and a cross-fading bar.
         */}
         <div
-          className="h-full rounded-full bg-purple-700 transition-[width] duration-300 ease-out"
+          className="progress-fill transition-[width] duration-300 ease-out"
           style={{ width: `${progress.percent}%` }}
         />
       </div>

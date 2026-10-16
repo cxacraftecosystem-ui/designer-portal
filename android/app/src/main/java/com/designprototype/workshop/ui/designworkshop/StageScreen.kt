@@ -32,12 +32,12 @@ import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
@@ -1317,7 +1317,7 @@ fun StageScreen(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp))
+            FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
             Text("Opening the stage…", color = MaterialTheme.field.muted, fontSize = 13.sp)
         }
         return
@@ -1704,7 +1704,7 @@ private fun StageHeader(
         if (stage.purpose.isNotBlank()) {
             Text(stage.purpose, color = MaterialTheme.field.body, fontSize = 13.sp)
         }
-        LinearProgressIndicator(
+        FieldLinearProgressIndicator(
             progress = { percent / 100f },
             modifier = Modifier.fillMaxWidth()
         )

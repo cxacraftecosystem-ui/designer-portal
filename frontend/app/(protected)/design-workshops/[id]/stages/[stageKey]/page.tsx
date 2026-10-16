@@ -52,6 +52,7 @@
  *    banner in the protected layout says it again from anywhere in the app.
  */
 
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Fragment, Suspense, use, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -2241,12 +2242,11 @@ function DesignWorkshopStagePageBody({
                     {completeness.requiredFilled} of {completeness.requiredTotal}
                   </span>
                 </div>
-                <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-field-200">
-                  <div
-                    className={completeness.isComplete ? "h-full rounded-full bg-success-600" : "h-full rounded-full bg-purple-700"}
-                    style={{ width: `${completeness.percent}%` }}
-                  />
-                </div>
+                <ProgressBar
+                  percent={completeness.percent}
+                  tone={completeness.isComplete ? "done" : "brand"}
+                  className="mt-1.5 h-2"
+                />
                 {completeness.missing.length ? (
                   <p className="mt-2 text-xs leading-5 text-ink-500">Still needed: {completeness.missing.join(", ")}</p>
                 ) : null}

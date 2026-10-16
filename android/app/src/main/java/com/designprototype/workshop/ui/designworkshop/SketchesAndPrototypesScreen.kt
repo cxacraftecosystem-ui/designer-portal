@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -396,7 +396,7 @@ fun SketchesAndPrototypesScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                    FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                     Text("Loading your workshops…", color = MaterialTheme.field.muted, fontSize = 13.sp)
                 }
 

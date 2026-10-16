@@ -30,12 +30,12 @@ import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -434,7 +434,7 @@ fun StageIndexScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 Text("Reading progress…", color = MaterialTheme.field.muted, fontSize = 13.sp)
             }
             return@Column
@@ -449,7 +449,7 @@ fun StageIndexScreen(
             color = MaterialTheme.colorScheme.onSurface,
             fontSize = 22.sp
         )
-        LinearProgressIndicator(progress = { overall / 100f }, modifier = Modifier.fillMaxWidth())
+        FieldLinearProgressIndicator(progress = { overall / 100f }, modifier = Modifier.fillMaxWidth())
         Text(
             "$overall% overall · $done of ${stages.size} stages complete",
             color = MaterialTheme.field.muted,
@@ -1269,7 +1269,7 @@ private fun StageIndexRow(
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    LinearProgressIndicator(
+                    FieldLinearProgressIndicator(
                         progress = { stage.percent / 100f },
                         modifier = Modifier.fillMaxWidth()
                     )
