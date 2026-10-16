@@ -3,6 +3,8 @@ package com.designprototype.workshop.ui.designworkshop
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import com.designprototype.workshop.ui.RecordOpen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1386,19 +1388,31 @@ private fun WorkshopCard(
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            // THE WHOLE CARD OPENS THE WORKSHOP (owner ruling, 2026-10-16), not only its title row:
+            // the sync chip and the lines under it are part of the card a thumb lands on. Inside the
+            // card, so the ripple stops at its rounded corner. The sync actions and "Move into a
+            // workshop" are buttons and consume their own taps.
+            //
+            // NOT CLICKABLE FOR ANOTHER ACCOUNT'S DRAFT — the modifier is absent rather than the
+            // handler being a no-op, so the card does not ripple under a finger and then do
+            // nothing, which reads as the app having broken. The sentence below says why in one
+            // line; a control that reacts and refuses silently is the failure this repository
+            // already names about disabled buttons ("a control with its reason somewhere else is
+            // a control people tap repeatedly"). See [WorkshopRow.otherAccount].
+            modifier = Modifier
+                .fillMaxWidth()
+                .let {
+                    if (row.otherAccount) it
+                    else it.clickable(onClickLabel = RecordOpen.openClickLabel(row.title), role = Role.Button, onClick = onOpen)
+                }
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                // NOT CLICKABLE FOR ANOTHER ACCOUNT'S DRAFT — the modifier is absent rather than the
-                // handler being a no-op, so the row does not ripple under a finger and then do
-                // nothing, which reads as the app having broken. The sentence below says why in one
-                // line; a control that reacts and refuses silently is the failure this repository
-                // already names about disabled buttons ("a control with its reason somewhere else is
-                // a control people tap repeatedly"). See [WorkshopRow.otherAccount].
-                modifier = Modifier.fillMaxWidth().let {
-                    if (row.otherAccount) it else it.clickable(onClick = onOpen)
-                }
+                modifier = Modifier.fillMaxWidth()
             ) {
                 CompletenessRing(percent = row.percent)
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

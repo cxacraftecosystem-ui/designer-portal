@@ -95,6 +95,7 @@ import { CloudOff, DraftingCompass, Info, Plus } from "lucide-react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { EmptyState } from "@/components/EmptyState";
 import { DateRangePicker, toIsoDate } from "@/components/forms/DateTimeField";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
@@ -708,9 +709,20 @@ function DesignWorkshopsPageBody() {
     }
   }, [page, applied, status, kindFilter]);
 
+  /**
+   * Search, page, the status and kind filters and scroll, so Back from a workshop lands on the same
+   * rows. Recalled once before the first fetch — `placeRestored` holds that fetch until it has been.
+   */
+  const memory = useListMemory(
+    "design-workshops",
+    { query, applied, page, filters: { status, kind: kindFilter } },
+    data !== null
+  );
+  const [placeRestored, setPlaceRestored] = useState(false);
   useEffect(() => {
+    if (!placeRestored) return;
     load();
-  }, [load]);
+  }, [load, placeRestored]);
 
   /**
    * `?new=1` — the dashboard tile's "New workshop" button, finally doing what it says.
@@ -813,6 +825,24 @@ function DesignWorkshopsPageBody() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [query]);
+
+  // AFTER the debounce effect on purpose: effects run in declaration order, so the debounce's own
+  // first run has already spent `skipFirstDebounce`, and the flag raised here is the one that stops
+  // the restored query being debounced into a page-1 reset.
+  useEffect(() => {
+    const remembered = memory.recall();
+    if (remembered) {
+      if ((remembered.query ?? "") !== "") skipFirstDebounce.current = true;
+      setQuery(remembered.query ?? "");
+      setApplied(remembered.applied ?? "");
+      setPage(remembered.page ?? 1);
+      setStatus(remembered.filters?.status ?? "");
+      setKindFilter(remembered.filters?.kind ?? "");
+    }
+    setPlaceRestored(true);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

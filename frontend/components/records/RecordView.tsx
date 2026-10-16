@@ -195,7 +195,7 @@ export function ReadOnlyMediaGallery({ title, items, empty }: { title: string; i
                 <div className="text-xs text-ink-muted">
                   Uploaded by {media.uploadedBy?.name ?? "Unknown"} · {formatDateTime(media.createdAt)}
                 </div>
-                <TranscriptBlock media={media} />
+                <TranscriptBlock media={media} readOnly />
               </div>
             </div>
           );

@@ -2,6 +2,8 @@ package com.designprototype.workshop.ui.questionnaires
 
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import com.designprototype.workshop.ui.RecordOpen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -408,7 +410,15 @@ private fun QuestionnaireRow(row: CustomQuestionnaireSummaryDto, onOpen: () -> U
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(12.dp),
+            // The whole card opens the questionnaire, and says so to TalkBack.
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    onClickLabel = RecordOpen.openClickLabel(row.title.ifBlank { "Untitled questionnaire" }),
+                    role = Role.Button,
+                    onClick = onOpen
+                )
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(

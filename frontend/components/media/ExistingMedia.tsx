@@ -482,6 +482,7 @@ export function ExistingMedia({
                     refresh) does not put the stale transcript back on screen a moment later. */}
                 <TranscriptBlock
                   media={media}
+                  readOnly={readOnly}
                   readOnlyReason={mediaHeldReason(hold)}
                   onUpdated={(updated) =>
                     setItems((current) => (current ? current.map((item) => (item.id === updated.id ? updated : item)) : current))

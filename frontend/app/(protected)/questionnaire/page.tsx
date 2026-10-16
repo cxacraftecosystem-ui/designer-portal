@@ -53,6 +53,7 @@ import { DictationUnavailableNotice } from "@/components/richtext/DictationUnava
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
 import { EMPTY_FUNNEL, FunnelFilters, type FunnelValue } from "@/components/FunnelFilters";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { StatusBadge } from "@/components/StatusBadge";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { MultiSelectDropdown } from "@/components/ui/Dropdown";
@@ -1342,6 +1343,31 @@ function QuestionnairePageBody() {
 
   function applySearch() {
     setSearchQuery(searchInput.trim());
+    setPage(1);
+  }
+
+  /**
+   * The interview list's search, page, funnel and scroll, so Back from an interview's read-only page
+   * lands on the same rows. Applied at the funnel's FIRST answer — the moment this page learns its
+   * defaults — exactly as /products does. See `useListMemory`.
+   */
+  const listMemory = useListMemory(
+    "questionnaire-interviews",
+    { query: searchInput, applied: searchQuery, page, funnel },
+    data !== null
+  );
+  const funnelHeard = useRef(false);
+  function onFunnelChange(next: FunnelValue) {
+    const remembered = funnelHeard.current ? null : listMemory.recall();
+    funnelHeard.current = true;
+    if (remembered) {
+      setSearchInput(remembered.query ?? "");
+      setSearchQuery(remembered.applied ?? "");
+      setFunnel(remembered.funnel ?? next);
+      setPage(remembered.page ?? 1);
+      return;
+    }
+    setFunnel(next);
     setPage(1);
   }
 
@@ -3098,7 +3124,7 @@ function QuestionnairePageBody() {
         onToggle={() => megaCards.toggle("recorded")}
       >
       <div className="mb-4 grid gap-3">
-        <FunnelFilters value={funnel} onChange={(next) => { setFunnel(next); setPage(1); }} showArtisan />
+        <FunnelFilters value={funnel} onChange={onFunnelChange} showArtisan />
         <SearchInput
           value={searchInput}
           onChange={handleSearchChange}

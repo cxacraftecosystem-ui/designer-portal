@@ -26,6 +26,8 @@ export type ListMemory = {
   applied?: string;
   page?: number;
   funnel?: { workshopId: string; craftId: string; artisanId: string };
+  /** A page's other filters (a status, a kind, a toggle), by name. Strings only, so the shape stays checkable. */
+  filters?: Record<string, string>;
   scrollY?: number;
 };
 
@@ -57,6 +59,14 @@ export function parseListMemory(raw: string | null | undefined): ListMemory | nu
     typeof funnel.artisanId === "string"
   ) {
     memory.funnel = { workshopId: funnel.workshopId, craftId: funnel.craftId, artisanId: funnel.artisanId };
+  }
+  const filters = source.filters;
+  if (filters && typeof filters === "object" && !Array.isArray(filters)) {
+    const kept: Record<string, string> = {};
+    for (const [name, value] of Object.entries(filters as Record<string, unknown>)) {
+      if (typeof value === "string") kept[name] = value;
+    }
+    memory.filters = kept;
   }
   return memory;
 }

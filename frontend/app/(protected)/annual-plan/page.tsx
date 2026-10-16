@@ -588,7 +588,7 @@ export default function AnnualPlanPage() {
                           }}
                           disabled={busyId === entry.id}
                         >
-                          Edit remarks
+                          Update remarks
                         </button>
                         {manager && entry.standing === "PLANNED" ? (
                           <>

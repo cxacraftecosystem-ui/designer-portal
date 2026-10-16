@@ -256,7 +256,7 @@ const SCREENS: ReadonlyArray<{ screen: string; path: string[]; must: string[]; m
     mustNot: ["disabled={saving}", "Boolean(postRefusal)"]
   },
   {
-    screen: "Edit workshop details",
+    screen: "Update workshop details",
     path: ["app", "(protected)", "design-workshops", "[id]", "edit", "page.tsx"],
     must: [
       'useHeldPostRefusal(state?.kind === "loaded" ? state.record.id : null)',

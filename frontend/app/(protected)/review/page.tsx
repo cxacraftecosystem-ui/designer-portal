@@ -10,6 +10,7 @@ import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { ResizableTh } from "@/components/ResizableTh";
 import { ReviewEditPanel } from "@/components/review/ReviewEditPanel";
 import { reviewEditableFields } from "@/components/review/reviewEditFields";
@@ -18,6 +19,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { canEditOthersRecord, hasRank, isAdmin, roleLabel } from "@/lib/permissions";
+import { reviewRecordViewHref } from "@/lib/recordView";
 
 /**
  * One row of the review queue. The backend only returns records whose creator ranks strictly
@@ -415,9 +417,12 @@ export default function ReviewPage() {
                 {visible.map((item) => {
                   const key = rowKey(item);
                   const activeAction = active?.key === key ? active.action : null;
-                  return (
-                    <Fragment key={key}>
-                      <tr className={selected.has(key) ? "bg-purple-50/60" : undefined}>
+                  // The whole row opens the record read-only; the checkbox and the decision
+                  // buttons keep their own clicks (`ROW_OWN_CLICK_SELECTOR`).
+                  const viewHref = reviewRecordViewHref(item.recordType, item.id);
+                  const rowTone = selected.has(key) ? "bg-purple-50/60" : undefined;
+                  const cells = (
+                    <>
                         <td className="px-4 py-3 align-top">
                           {bulkEligible(item) ? (
                             <input
@@ -431,7 +436,7 @@ export default function ReviewPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="font-medium text-ink-900">
-                            {item.label}
+                            {viewHref ? <OpenableRowLink href={viewHref}>{item.label}</OpenableRowLink> : item.label}
                             {item.needsAdminApproval || item.outOfWindow ? (
                               <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                                 Out of workshop window — needs approval
@@ -497,7 +502,17 @@ export default function ReviewPage() {
                             </button>
                           </RowActions>
                         </td>
-                      </tr>
+                    </>
+                  );
+                  return (
+                    <Fragment key={key}>
+                      {viewHref ? (
+                        <OpenableRow href={viewHref} className={rowTone ?? ""}>
+                          {cells}
+                        </OpenableRow>
+                      ) : (
+                        <tr className={rowTone}>{cells}</tr>
+                      )}
                       {activeAction === "edit" ? (
                         !offersEdit(item) ? null : (
                         <tr className="bg-surface-50">

@@ -1659,10 +1659,17 @@ record's read-only page; editing is a separate, explicit **"Update"** button (ne
   `stopPropagation`, a text selection opens nothing, and a middle or modified click opens a new tab.
 - **The read-only page** is `RecordViewPage` + `RecordFieldList` (`components/records/`), fields built
   by the pure `recordFields.ts` — which prints an identity number only as "On file", because the list
-  hides the digits. Media is `ExistingMedia readOnly` (preview, play, Download; no ✕).
+  hides the digits. Media is `ExistingMedia readOnly` (preview, play, Download; no ✕) and
+  `TranscriptBlock readOnly` — a transcript re-run REPLACES the transcript, so it is an update and
+  is never drawn on a read-only page, admin or not.
+- **A record whose whole record is its row** (an account, an allow-list or roster entry, a sanction
+  order) opens `RecordDetailsDialog` (`components/records/`) through `OpenableRow`/`OpenableCard`'s
+  `onOpen`, with the name as a real `<button>`; its Update is passed only where the row's own is drawn.
 - **Update is drawn only behind `canUpdateRecord`**, the server's PATCH gate restated. Never a wider one.
-- **Back keeps the reader's place**: the six record lists remember search, page, funnel and scroll
-  through `useListMemory` (session storage, recalled in a handler or effect, never during render).
+- **Back keeps the reader's place**: every list that opens a record page — the six record lists,
+  media, the interview list, design workshops and questionnaires — remembers search, page, filters
+  and scroll through `useListMemory` (session storage, recalled in a handler or effect, never during
+  render; a page's other filters go in its `filters` bag, strings only).
 - `e2e/record-view-unit.spec.ts` holds all of it; Android's twin is `ui/RecordOpen.kt` +
   `Screen.View` (`RecordOpenTest`).
 

@@ -36,16 +36,22 @@ const DONE = new Set(["COMPLETED", "DONE", "EMPTY"]);
  * (`design_workshop_posts.refuse_a_holders_media_write`). `readOnlyReason` — the caller's, from
  * `mediaHeldReason` — disables the button and says why where "Runs immediately…" would be, as the
  * other held screens print theirs; the server's 403 still prints verbatim if one arrives anyway.
+ *
+ * `readOnly` drops the re-run altogether, for a record's read-only page: a re-run REPLACES the
+ * transcript, so it is an update, and on those pages updating is only ever behind "Update".
  */
 export function TranscriptBlock({
   media,
   onUpdated,
-  readOnlyReason = null
+  readOnlyReason = null,
+  readOnly = false
 }: {
   media: MediaFile;
   onUpdated?: (updated: MediaFile) => void;
   /** Why the re-run is held, or null when it is not. See the header. */
   readOnlyReason?: string | null;
+  /** Hide the re-run control entirely — a read-only record page. See the header. */
+  readOnly?: boolean;
 }) {
   const { user } = useAuth();
   // The transcript is hoisted into local state (Android: `remember(media.id)`) so a fresh run
@@ -95,7 +101,7 @@ export function TranscriptBlock({
   // the stored mediaType column and 400s everything else, so a DOCUMENT row carrying an `audio/*`
   // mime would render a button that can only be refused.
   const control =
-    isAdmin(user) && current.mediaType === "AUDIO" ? (
+    !readOnly && isAdmin(user) && current.mediaType === "AUDIO" ? (
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button
           type="button"

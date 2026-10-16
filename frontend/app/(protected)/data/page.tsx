@@ -41,7 +41,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { ComboBox, Dropdown } from "@/components/ui/Dropdown";
 import { DataSearchPanel } from "@/components/data/DataSearchPanel";
-import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
+import { OpenableCard, OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { API_BASE, apiFetch, buildQuery, getToken, listResource } from "@/lib/api";
 import { bytes, formatDateTime } from "@/lib/format";
 import {
@@ -1973,14 +1973,19 @@ export default function DataBrowserPage() {
                       ]
                         .filter(Boolean)
                         .join(" · ");
+                      // A stored file opens its read-only page from anywhere on the card; a
+                      // generated text file (details.txt) has no page and is drawn plainly.
+                      const fileHref = file.mediaId ? RECORD_VIEW_HREF.media(file.mediaId) : null;
                       return (
-                        <li key={file.path} className="px-4 py-3">
+                        <OpenableCard as="li" key={file.path} href={fileHref} className="px-4 py-3">
                           <div className="flex flex-wrap items-center gap-3">
                             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-purple-50 text-purple-700">
                               {fileIcon(file)}
                             </span>
                             <div className="min-w-0 flex-1">
-                              <div className="break-all text-sm font-medium text-ink-900">{file.name}</div>
+                              <div className="break-all text-sm font-medium text-ink-900">
+                                {fileHref ? <OpenableRowLink href={fileHref}>{file.name}</OpenableRowLink> : file.name}
+                              </div>
                               <div className="text-xs text-ink-500">{meta}</div>
                             </div>
                             {file.content != null ? (
@@ -2018,7 +2023,7 @@ export default function DataBrowserPage() {
                             <audio controls preload="none" src={file.url} className="mt-2 h-9 w-full max-w-md" />
                           ) : null}
                           {inlineOpen && file.content != null ? (
-                            <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-line-200 bg-surface-50 p-4 font-sans text-sm leading-6 text-ink-700">
+                            <pre data-row-ignore="" className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-line-200 bg-surface-50 p-4 font-sans text-sm leading-6 text-ink-700">
                               {file.content}
                             </pre>
                           ) : null}
@@ -2026,14 +2031,14 @@ export default function DataBrowserPage() {
                             transcriptLoading.has(selectedPath) ? (
                               <div className="mt-2 text-xs text-ink-500">Loading transcript…</div>
                             ) : transcript != null ? (
-                              <div className="mt-2">
+                              <div data-row-ignore="" className="mt-2">
                                 <TranscriptMarkdown>{transcript}</TranscriptMarkdown>
                               </div>
                             ) : (
                               <div className="mt-2 text-xs text-ink-500">No transcript content found for this file.</div>
                             )
                           ) : null}
-                        </li>
+                        </OpenableCard>
                       );
                     })}
                   </ul>

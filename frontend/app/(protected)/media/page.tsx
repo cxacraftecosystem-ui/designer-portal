@@ -22,6 +22,7 @@ import { DictationUnavailableNotice } from "@/components/richtext/DictationUnava
 import { DesignWorkshopSelect, useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
 import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
+import { useListMemory } from "@/components/hooks/useListMemory";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { LocationFields } from "@/components/forms/LocationFields";
@@ -424,11 +425,29 @@ function MediaPageBody() {
     []
   );
 
+  /**
+   * Search, page and scroll, so Back from a file's read-only page lands on the same rows. Recalled
+   * once before the first fetch — `placeRestored` holds that fetch until it has been.
+   */
+  const memory = useListMemory("media", { query: search, page }, data !== null);
+  const [placeRestored, setPlaceRestored] = useState(false);
+  useEffect(() => {
+    const remembered = memory.recall();
+    if (remembered) {
+      setSearch(remembered.query ?? "");
+      setPage(remembered.page ?? 1);
+    }
+    setPlaceRestored(true);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Live search: debounce keystrokes, reload most-recent-first from page 1.
   useEffect(() => {
+    if (!placeRestored) return;
     const timer = setTimeout(() => load(page, search), 300);
     return () => clearTimeout(timer);
-  }, [page, search, load]);
+  }, [page, search, load, placeRestored]);
 
   // Android parity: when the linked record type changes, load that type's entries
   // for the optional second dropdown.

@@ -10,6 +10,7 @@ import {
   RECORD_UPDATE_HREF,
   RECORD_VIEW_HREF,
   recordUpdateHref,
+  reviewRecordViewHref,
   rowClickIntent,
   ROW_OWN_CLICK_SELECTOR,
   type ViewableRecord
@@ -157,7 +158,7 @@ test.describe("a press on a row", () => {
   });
 
   test("the own-control selector covers every control a row carries", () => {
-    for (const selector of ["a[href]", "button", "input", "select", "textarea", "label", "summary", "[role='button']", "[data-row-ignore]"]) {
+    for (const selector of ["a[href]", "button", "input", "select", "textarea", "label", "summary", "audio", "video", "[role='button']", "[data-row-ignore]"]) {
       expect(ROW_OWN_CLICK_SELECTOR, selector).toContain(selector);
     }
   });
@@ -225,6 +226,21 @@ test.describe("Back lands where the reader left the list", () => {
     // A page below 1, a fractional page, a negative scroll and a half-formed funnel are dropped.
     expect(parseListMemory(JSON.stringify({ page: 0, scrollY: -5, funnel: { workshopId: "w1" } }))).toEqual({});
     expect(parseListMemory(JSON.stringify({ page: 2.5 }))).toEqual({});
+    // A page's other filters come back as strings only.
+    expect(parseListMemory(JSON.stringify({ filters: { status: "SUBMITTED", kind: 3, on: "1" } }))).toEqual({
+      filters: { status: "SUBMITTED", on: "1" }
+    });
+  });
+
+  test("every list that opens a record page remembers its place, not only the six field-record lists", () => {
+    for (const path of [
+      "app/(protected)/media/page.tsx",
+      "app/(protected)/questionnaire/page.tsx",
+      "app/(protected)/design-workshops/page.tsx",
+      "app/(protected)/questionnaires/page.tsx"
+    ]) {
+      expect(read(path), path).toContain("useListMemory(");
+    }
   });
 });
 
@@ -262,6 +278,51 @@ test.describe("every record list opens its rows read-only", () => {
     const list = read("app/(protected)/artisans/page.tsx");
     expect(list).not.toContain("setSelectedArtisan");
     expect(read("app/(protected)/artisans/[id]/page.tsx")).toContain("Make a tool entry");
+  });
+
+  test("the review queue opens the record it is reviewing, read-only, from anywhere on the row", () => {
+    const review = read("app/(protected)/review/page.tsx");
+    expect(review).toContain("<OpenableRow");
+    expect(review).toContain("reviewRecordViewHref(item.recordType, item.id)");
+    expect(review).toContain("<OpenableRowLink");
+    expect(reviewRecordViewHref("questionnaire", "q1")).toBe("/questionnaire/interviews/q1");
+    expect(reviewRecordViewHref("artisan", "a1")).toBe("/artisans/a1");
+    expect(reviewRecordViewHref("somethingElse", "x")).toBeNull();
+  });
+
+  test("the folder browser's file cards open the stored file's page", () => {
+    const data = read("app/(protected)/data/page.tsx");
+    expect(data).toContain('<OpenableCard as="li"');
+    expect(data).toContain("RECORD_VIEW_HREF.media(file.mediaId)");
+  });
+
+  test("sanction orders and the two rosters open a read-only view of the entry", () => {
+    for (const path of [
+      "app/(protected)/sanction-orders/page.tsx",
+      "app/(protected)/admin/access/page.tsx",
+      "app/(protected)/admin/designers/page.tsx"
+    ]) {
+      const source = read(path);
+      expect(source, path).toContain("<RecordDetailsDialog");
+      expect(source, path).toMatch(/<Openable(Row|Card)\b[^>]*onOpen=\{\(\) => setViewing\(/);
+    }
+  });
+
+  test("a read-only page never offers the transcript re-run", () => {
+    expect(read("components/media/TranscriptBlock.tsx")).toContain("!readOnly && isAdmin(user)");
+    expect(read("components/media/ExistingMedia.tsx")).toContain("readOnly={readOnly}");
+    expect(read("components/records/RecordView.tsx")).toContain("<TranscriptBlock media={media} readOnly />");
+  });
+
+  test("the forms reached through Update say Update", () => {
+    for (const [path, title] of [
+      ["app/(protected)/artisans/[id]/edit/page.tsx", 'title="Update artisan"'],
+      ["app/(protected)/products/[id]/edit/page.tsx", 'title="Update product"'],
+      ["app/(protected)/tools/[id]/edit/page.tsx", 'title="Update tool"'],
+      ["app/(protected)/design-workshops/[id]/edit/page.tsx", 'title="Update workshop details"']
+    ]) {
+      expect(read(path), path).toContain(title);
+    }
   });
 
   test("search hits, the data browser and recent submissions open the read-only page too", () => {

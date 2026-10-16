@@ -38,6 +38,20 @@ export const RECORD_VIEW_HREF: Record<ViewableRecord, (id: string) => string> = 
 };
 
 /**
+ * The read-only page for a row of the review queue, whose `recordType` is the server's review key
+ * (`_REVIEW_TYPES` in `backend/app/api/routes/review.py`). An interview is filed there as
+ * "questionnaire"; a key with no page of its own answers null, and the row is drawn plainly.
+ */
+export function reviewRecordViewHref(recordType: string, id: string): string | null {
+  const key = recordType.toLowerCase();
+  const kind: ViewableRecord | null =
+    key === "questionnaire"
+      ? "interview"
+      : (["artisan", "product", "tool", "process", "workshop", "media"] as const).find((k) => k === key) ?? null;
+  return kind ? RECORD_VIEW_HREF[kind](id) : null;
+}
+
+/**
  * Where "Update" goes. Media has no entry: a stored file has no edit form, so its page offers
  * Download and never Update.
  */
@@ -89,6 +103,9 @@ export const ROW_OWN_CLICK_SELECTOR = [
   "select",
   "textarea",
   "label",
+  // A player's own controls: a press on play or the scrubber is never a press on the card.
+  "audio",
+  "video",
   "summary",
   "[role='button']",
   "[role='link']",

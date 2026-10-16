@@ -76,9 +76,11 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { BadgeCheck, MailPlus, RotateCcw, ShieldCheck } from "lucide-react";
 
+import { OpenableRow } from "@/components/data/OpenableRow";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordDetailsDialog } from "@/components/records/RecordDetailsDialog";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RestrictedPanel } from "@/components/settings/RestrictedPanel";
@@ -213,6 +215,8 @@ function DesignerRosterPageInner() {
   const [searchPending, setSearchPending] = useState(false);
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<DesignerRosterEntry | null>(null);
+  /** The entry a press on its row opened, read-only. Update is the separate act — see `RecordDetailsDialog`. */
+  const [viewing, setViewing] = useState<DesignerRosterEntry | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -760,13 +764,19 @@ function DesignerRosterPageInner() {
                   const accountId = accounts.get(entry.email.toLowerCase());
                   const derived = isDerivedEmpanelment(entry);
                   return (
-                    <tr key={entry.id}>
+                    // The whole row opens the entry read-only; Update, Open profile and the access
+                    // buttons keep their own clicks. The name is a real button for the keyboard.
+                    <OpenableRow key={entry.id} onOpen={() => setViewing(entry)}>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-ink-900">
+                        <button
+                          type="button"
+                          onClick={() => setViewing(entry)}
+                          className="rounded-sm text-left font-medium text-ink-900 underline-offset-2 hover:underline"
+                        >
                           {/* The name is whatever the admin typed — there may be no account to read
                               one from — so its absence is stated rather than left as an empty cell. */}
                           {entry.fullName || <span className="text-ink-500">Name not recorded</span>}
-                        </div>
+                        </button>
                         <div className="text-xs text-ink-500">{entry.email}</div>
                       </td>
                       <td className="px-4 py-3 text-ink-700">{entry.institution ?? "—"}</td>
@@ -823,7 +833,7 @@ function DesignerRosterPageInner() {
                           )}
                         </RowActions>
                       </td>
-                    </tr>
+                    </OpenableRow>
                   );
                 })}
               </tbody>
@@ -832,6 +842,41 @@ function DesignerRosterPageInner() {
         )}
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
+      <RecordDetailsDialog
+        open={viewing !== null}
+        onClose={() => setViewing(null)}
+        title={viewing?.fullName || "Name not recorded"}
+        description={viewing?.email}
+        details={
+          viewing
+            ? [
+                ["Email", viewing.email],
+                ["Institution", viewing.institution ?? "Not recorded"],
+                [
+                  "May sign in",
+                  viewing.isActive
+                    ? "Yes"
+                    : `Suspended ${viewing.revokedAt ? `since ${formatDate(viewing.revokedAt)}` : "(date not recorded)"}`
+                ],
+                [
+                  "Invitation",
+                  `${rosterInvitationLabel(viewing)}${viewing.firstSeenAt ? `, ${formatDateTime(viewing.firstSeenAt)}` : ""}`
+                ],
+                ["Added", viewing.createdAt ? formatDate(viewing.createdAt) : "Not recorded"],
+                [
+                  "Added by",
+                  isDerivedEmpanelment(viewing) ? "Automatically, from Who may sign in" : (viewing.addedByName ?? null)
+                ],
+                ["Note", viewing.notes]
+              ]
+            : []
+        }
+        onUpdate={() => {
+          const target = viewing;
+          setViewing(null);
+          if (target) startEdit(target);
+        }}
+      />
     </>
   );
 }

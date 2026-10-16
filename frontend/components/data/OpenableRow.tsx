@@ -107,19 +107,22 @@ export function OpenableRow({
  */
 export function OpenableCard({
   href,
+  onOpen,
   external = false,
   as: Tag = "div",
   className = "",
   children
 }: {
   href: string | null | undefined;
+  /** A read-only view that is a dialog on this page rather than a route — see `useOpenOnClick`. */
+  onOpen?: () => void;
   external?: boolean;
   as?: "div" | "li" | "article";
   className?: string;
   children: ReactNode;
 }) {
-  const handlers = useOpenOnClick(href, external);
-  if (!href) return <Tag className={className}>{children}</Tag>;
+  const handlers = useOpenOnClick(href, external, onOpen);
+  if (!href && !onOpen) return <Tag className={className}>{children}</Tag>;
   return (
     <Tag data-openable-row="" {...handlers} className={`cursor-pointer transition-colors hover:bg-field-100 ${className}`.trim()}>
       {children}
