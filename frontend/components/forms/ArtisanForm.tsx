@@ -1649,7 +1649,7 @@ export function ArtisanForm({
           subjectLabel="the artisan"
           statedPlace={initial?.place}
         />
-        {uploadProgress ? <UploadProgress progress={uploadProgress} /> : null}
+        {uploadProgress ? <UploadProgress progress={uploadProgress} files={mediaFiles} /> : null}
         {/*
           THE HOST'S OWN QUESTIONS, AT THE BOTTOM OF THE SAME LIST OF FIELDS — see
           `InlineRecordHostProps.footerFields`. Inside the `<form>` and above the buttons, because a

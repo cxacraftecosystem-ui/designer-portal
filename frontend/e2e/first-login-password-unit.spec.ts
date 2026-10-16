@@ -194,10 +194,11 @@ test("the Android handset carries the same floor and the same first clause", () 
  * ──────────────────────────────────────────────────────────────────────────── */
 
 test("both sign-in paths check the account they were handed, not the effect", () => {
-  // Regression 1. Three call sites — the password submit, the Google callback and the Microsoft/Yahoo
-  // completion — and the effect is the belt rather than the brace.
+  // Regression 1. Four call sites — the password submit, the Google callback, the Microsoft/Yahoo
+  // completion and the end of a two-step sign-in (`finishSecondStep`) — and the effect is the belt
+  // rather than the brace.
   const guards = LOGIN.match(/if \(mustChangePassword\(account\)\) return;/g) ?? [];
-  expect(guards.length, "the password path, the Google path and the Microsoft/Yahoo path").toBe(3);
+  expect(guards.length, "the password, Google and Microsoft/Yahoo paths, and the second step").toBe(4);
 });
 
 test("the sign-in card offers only the ways in that exist", () => {
@@ -216,7 +217,7 @@ test("the sign-in card offers only the ways in that exist", () => {
 
 test("the redirect effect refuses to navigate while either gate stands", () => {
   expect(LOGIN).toMatch(
-    /if \(user && !signingIn\.current && !held && !passwordGate\) router\.replace\("\/dashboard"\)/
+    /if \(user && !signingIn\.current && !held && !passwordGate && !challenge\) router\.replace\("\/dashboard"\)/
   );
 });
 
@@ -318,8 +319,11 @@ test("the door password is written at five moments and no others", () => {
   const oidc = LOGIN.slice(LOGIN.indexOf("const callback = oidcCallback.current;"));
   expect(oidc.indexOf('setDoorPassword("")'), "emptied before the sign-in").toBeGreaterThan(-1);
   expect(oidc.indexOf('setDoorPassword("")')).toBeLessThan(oidc.indexOf("loginWithOidc("));
-  // Nothing else writes it: five empties and one set.
-  expect((LOGIN.match(/setDoorPassword\(/g) ?? []).length).toBe(6);
+  // And when a two-step challenge is abandoned for the sign-in card.
+  const cancelSecondStep = /onCancel=\{\(\) => \{[\s\S]*?\}\}/.exec(LOGIN)?.[0] ?? "";
+  expect(cancelSecondStep).toContain('setDoorPassword("")');
+  // Nothing else writes it: six empties and one set.
+  expect((LOGIN.match(/setDoorPassword\(/g) ?? []).length).toBe(7);
 });
 
 test("the box is asked for when the host has none, and again after any refusal", () => {

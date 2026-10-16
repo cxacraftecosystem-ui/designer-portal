@@ -96,9 +96,14 @@ import com.designprototype.workshop.ui.NavGroup
 import com.designprototype.workshop.ui.visibleNavItems
 import com.designprototype.workshop.ui.IslandEntry
 import com.designprototype.workshop.ui.IslandGroup
+import com.designprototype.workshop.ui.IslandScaffold
 import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.OfflineOutboxTray
+import com.designprototype.workshop.ui.MediaDownloadButton
+import com.designprototype.workshop.ui.MediaDownloadNotice
+import com.designprototype.workshop.ui.rememberMediaDownloader
+import com.designprototype.workshop.data.mediaDisplayNameOf
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.TextButton
@@ -268,6 +273,9 @@ import com.designprototype.workshop.ui.UsageConsentDoor
 import com.designprototype.workshop.ui.UsageConsentGateScreen
 import com.designprototype.workshop.ui.UsageDoorState
 import com.designprototype.workshop.ui.UsageRecordingScreen
+import com.designprototype.workshop.ui.TwoStepChallengeForm
+import com.designprototype.workshop.ui.TwoStepVerificationScreen
+import com.designprototype.workshop.data.SignInOutcome
 import com.designprototype.workshop.ui.UsageScreen
 import com.designprototype.workshop.ui.rememberUsageDoorState
 import com.designprototype.workshop.ui.usageAnswerAtTheDoor
@@ -1019,6 +1027,12 @@ private sealed interface Screen {
      */
     data object UsageRecording : Screen
     /**
+     * This account's own two-step verification — `ui/TwoStepVerification.kt`. A sub-screen of
+     * Settings exactly as [UsageRecording] is, with no `NavDestination` of its own for that one's
+     * reason, and its own TopAppBar.
+     */
+    data object TwoStepVerification : Screen
+    /**
      * The /data directory-tree browser. Its own Screen rather than a Create mode because it owns its
      * whole viewport: it draws its own top bar and lays out with a LazyColumn, which must never be
      * nested inside the scrolling Column the rest of the app renders into.
@@ -1509,6 +1523,12 @@ private fun RepositoryApp(
      * a single boolean cannot carry the second.
      */
     var pastedLink by remember { mutableStateOf("") }
+    /**
+     * The challenge token of a sign-in waiting on its second step (two-step verification), or null.
+     * Saveable: a rotation between the first factor and the code must not send the person back to the
+     * password. It is not a session and opens nothing on its own; it expires on the server in minutes.
+     */
+    var twoStepChallenge by rememberSaveable { mutableStateOf<String?>(null) }
 
     // Declared HERE rather than beside the outbox block below, because the session effect underneath
     // needs it too: `repository.logout` now clears this device's cached questionnaire forms as well as
@@ -1554,8 +1574,15 @@ private fun RepositoryApp(
                     )
                 }
                     // The Google path's one line, for the Google path's reason: the consent the door
-                    // took is recorded only if the server still says this account owes one.
-                    .onSuccess { user = usageAnswerAtTheDoor(appContext, repository, it, consentDoor) }
+                    // took is recorded only if the server still says this account owes one. A
+                    // two-step challenge signs nobody in yet: the code screen takes over.
+                    .onSuccess { outcome ->
+                        when (outcome) {
+                            is SignInOutcome.SignedIn ->
+                                user = usageAnswerAtTheDoor(appContext, repository, outcome.user, consentDoor)
+                            is SignInOutcome.TwoStepRequired -> twoStepChallenge = outcome.challengeToken
+                        }
+                    }
                     // Classified from the headers first, then the server's own sentence — a person
                     // waiting on an administrator must read that, not "sign-in failed".
                     .onFailure { failure ->
@@ -1882,6 +1909,27 @@ private fun RepositoryApp(
                     pastedLink = ""
                 }
             )
+            /*
+             * ── THE SECOND STEP, AFTER ANY FIRST FACTOR ON AN ACCOUNT THAT SWITCHED IT ON ────────
+             *
+             * In place of the sign-in card, like the link screen above: nobody is signed in until the
+             * code is accepted, so a live sign-in form underneath would only offer a second attempt
+             * at the step already passed. Its success runs the same one line every first factor's
+             * success runs — the consent taken at the door — and then the gates below take over.
+             */
+            user == null && twoStepChallenge != null -> TwoStepChallengeForm(
+                repository = repository,
+                challengeToken = twoStepChallenge!!,
+                onSignedIn = { signedIn ->
+                    user = usageAnswerAtTheDoor(appContext, repository, signedIn, consentDoor)
+                    twoStepChallenge = null
+                    if (!mustChangePasswordBlocks(user)) doorPassword = ""
+                },
+                onCancel = {
+                    twoStepChallenge = null
+                    doorPassword = ""
+                }
+            )
             user == null -> LoginScreen(
                 error = error,
                 refusal = refusal,
@@ -1928,10 +1976,17 @@ private fun RepositoryApp(
                             // throws, so a consent that does not reach the server leaves the account
                             // signed in with the gate still open, and `UsageConsentGateScreen` asks
                             // properly one screen later rather than this reading as "sign-in failed".
-                            .onSuccess {
-                                user = usageAnswerAtTheDoor(appContext, repository, it, consentDoor)
-                                // Kept only for a gate that is about to use it. See `doorPassword`.
-                                if (!mustChangePasswordBlocks(user)) doorPassword = ""
+                            .onSuccess { outcome ->
+                                when (outcome) {
+                                    is SignInOutcome.SignedIn -> {
+                                        user = usageAnswerAtTheDoor(appContext, repository, outcome.user, consentDoor)
+                                        // Kept only for a gate that is about to use it. See `doorPassword`.
+                                        if (!mustChangePasswordBlocks(user)) doorPassword = ""
+                                    }
+                                    // `doorPassword` is KEPT across the second step: the account may
+                                    // still owe a new password once the code is in.
+                                    is SignInOutcome.TwoStepRequired -> twoStepChallenge = outcome.challengeToken
+                                }
                             }
                             .onFailure { failure ->
                                 // The STATUS AND HEADERS first, then the message, and in that order:
@@ -1976,7 +2031,13 @@ private fun RepositoryApp(
                             // The same one line as the password path, and on purpose: this is the
                             // path researchers actually use, so a consent recorded only on the other
                             // one would be a consent almost nobody's account carries.
-                            .onSuccess { user = usageAnswerAtTheDoor(appContext, repository, it, consentDoor) }
+                            .onSuccess { outcome ->
+                                when (outcome) {
+                                    is SignInOutcome.SignedIn ->
+                                        user = usageAnswerAtTheDoor(appContext, repository, outcome.user, consentDoor)
+                                    is SignInOutcome.TwoStepRequired -> twoStepChallenge = outcome.challengeToken
+                                }
+                            }
                             .onFailure { failure ->
                                 // The Google path matters MORE than the password one here, and it
                                 // matters more again since the allow-list shipped. It is the path
@@ -3458,6 +3519,7 @@ private fun HomeScreen(
             is Screen.SpeechAndAi -> Screen.Appearance
             is Screen.MyAiKeys -> Screen.Appearance
             is Screen.UsageRecording -> Screen.Appearance
+            is Screen.TwoStepVerification -> Screen.Appearance
             is Screen.DataBrowser -> Screen.Dashboard
             // One level at a time: from a tool back to the tool list, and only then out. This is
             // what lets the single header arrow replace the in-page "All admin tools" button — the
@@ -3554,6 +3616,7 @@ private fun HomeScreen(
         is Screen.MyAiKeys -> null
         // Its own TopAppBar too, for the same reason.
         is Screen.UsageRecording -> null
+        is Screen.TwoStepVerification -> null
         is Screen.DataBrowser -> "Data Browser"
         // Null on all eight arms immediately below — counted by reading them: workshops, stages,
         // one stage, report, report history, codes, photos, viewers. Each of those screens draws its
@@ -3631,6 +3694,7 @@ private fun HomeScreen(
         // is the cross-account aggregate, and lighting the admin row here would tell a designer with
         // no admin rights that they are inside an administrative tool.
         is Screen.UsageRecording -> NavDestination.SETTINGS
+        is Screen.TwoStepVerification -> NavDestination.SETTINGS
         is Screen.DataBrowser -> NavDestination.VIEW_DATA
         is Screen.AdminHub -> NavDestination.SETTINGS_HUB
         // Every screen of the 22-stage record lights the one menu row that reaches it. Unlike the
@@ -3797,6 +3861,7 @@ private fun HomeScreen(
                         onOpenSpeechAndAi = { screen = Screen.SpeechAndAi },
                         onOpenMyAiKeys = { screen = Screen.MyAiKeys },
                         onOpenUsageRecording = { screen = Screen.UsageRecording },
+                        onOpenTwoStepVerification = { screen = Screen.TwoStepVerification },
                         // Through the ROUTER and not by setting the flag directly, so the settings
                         // row and the menu chip are one code path: whatever `openDestination` decides
                         // the Walkthrough means, both doors mean it. Note that this leaves the
@@ -3820,22 +3885,23 @@ private fun HomeScreen(
                         onBack = { attemptExit { goBack() } }
                     )
 
+                    is Screen.TwoStepVerification -> TwoStepVerificationScreen(
+                        repository = repository,
+                        onBack = { attemptExit { goBack() } }
+                    )
+
                     else -> {
-                // Hoisted out of the modifier so the island bar can be told how far this page has
-                // travelled. It is handed over as a lambda below, never as a number — see
-                // FieldIslandNav's `scrollOffset`.
-                //
                 // Keyed on the screen, because every destination in this branch renders through the one
                 // composition slot below and therefore shared one ScrollState: leaving a long form
                 // half-way down opened the NEXT screen already scrolled past its own first fields, with
                 // nothing on it to explain why. `key` throws the state away when the destination
                 // changes, so each page starts where a page starts.
                 val pageScroll = key(screen) { rememberScrollState() }
-                // Two Columns, and the split is the whole point: the bar lives in the OUTER one, which
-                // does not scroll, so it stays put while the page moves underneath it and can collapse
-                // in response. It used to be the first child of the scroller, which meant it simply
-                // slid off the top — a collapsing bar you cannot see collapse.
-                Column(modifier = Modifier.fillMaxSize()) {
+                // The island floats over the BOTTOM of the page (see IslandBottomNav.kt), outside the
+                // scroller so it stays put while the page moves underneath it. The scaffold measures
+                // the bar and hands the page that height as bottom padding, so the last field or
+                // button of a long form scrolls clear of it instead of ending underneath it.
+                IslandScaffold(island = { islandModifier ->
         /*
          * The island bar, the web's DynamicIslandNav on the phone.
          *
@@ -3856,25 +3922,16 @@ private fun HomeScreen(
          */
         val navItems = visibleNavItems(user, adminView)
         FieldIslandNav(
-            modifier = Modifier.fillMaxWidth(),
-            // The wordmark is a Dashboard link that is on screen even mid-form, so it goes through the
-            // router like any other chip rather than jumping home on its own.
-            onBrandClick = { navigate(NavDestination.DASHBOARD) },
+            modifier = islandModifier,
+            // The drawer: the full menu, the admin-view switch (which left the bar when it moved to
+            // the bottom) and Logout.
             onOpenDrawer = { scope.launch { drawerState.open() } },
-            // Null hides the chip outright. ADMIN (50) and MASTER_ADMIN (60) only — see
-            // [canToggleAdminView]; a professor's chrome is granted by their role, not by a switch.
-            adminMode = if (canToggleAdminView) adminView else null,
-            onToggleAdminView = { adminViewRequested = !adminView },
             // The bar highlights by label, so the label has to be looked up from the DESTINATION the
             // user is on. This used to pass `headerTitle` — a page title, matched against nav labels
             // that are written for a menu — so the Dashboard ("Design Workshop" against "Dashboard")
             // and most record forms lit nothing, while the handful whose two strings happened to
             // coincide were the only ones that worked.
             currentLabel = navItems.firstOrNull { it.destination == currentDestination }?.label,
-            // A lambda, not `pageScroll.value`: reading the offset here would make every frame of
-            // every scroll recompose this whole screen. The bar reads it inside its own derived
-            // state, where it feeds one Boolean.
-            scrollOffset = { pageScroll.value },
             roots = navItems.filter { it.group == null }
                 .map { entry -> IslandEntry(entry.label, entry.icon) { navigate(entry.destination) } },
             groups = NavGroup.entries.map { group ->
@@ -3894,11 +3951,14 @@ private fun HomeScreen(
                 )
             }
         )
+                }) { islandReserve ->
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(pageScroll),
+                .verticalScroll(pageScroll)
+                // Inside the scroller, so it is the END of the page that clears the bar.
+                .padding(bottom = islandReserve),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
@@ -4742,7 +4802,7 @@ private fun HomeScreen(
             // Rendered by the FIRST dispatcher above, which owns the destinations that draw
             // their own chrome. Listed here only to keep this `when` exhaustive.
             is Screen.Appearance, is Screen.SpeechAndAi, is Screen.MyAiKeys,
-            is Screen.UsageRecording, is Screen.DataBrowser -> Unit
+            is Screen.UsageRecording, is Screen.TwoStepVerification, is Screen.DataBrowser -> Unit
         }
 
         message?.let {
@@ -9464,7 +9524,7 @@ private fun MediaCaptureSection(
                         progress = media.stagedProgress[uri],
                         failed = uri in media.stagedFailed,
                         onRetry = { startEagerUpload(repository, context, media, uri, scope) },
-                        onDownload = { saveLocalUriToDevice(context, uri) },
+                        downloadable = true,
                         onRemove = {
                             // Drop just this file from the batch and clean up its staged object (if any).
                             val deferred = media.stagedDeferred[uri]
@@ -9580,7 +9640,7 @@ private fun AttachedUploadsCard(
                 progress = media.stagedProgress[uri],
                 failed = uri in media.stagedFailed,
                 onRetry = { startEagerUpload(repository, context, media, uri, scope) },
-                onDownload = { saveLocalUriToDevice(context, uri) },
+                downloadable = true,
                 onRemove = { onRemove(uri) }
             )
         }
@@ -16822,7 +16882,7 @@ private fun AndroidMediaForm(
                     AndroidUriPreview(
                         context = context,
                         uri = uri,
-                        onDownload = { saveLocalUriToDevice(context, uri) },
+                        downloadable = true,
                         onRemove = { selectedUris = selectedUris.filterNot { it == uri } }
                     )
                 }
@@ -17218,13 +17278,15 @@ private fun AndroidUriPreview(
     onRemove: (() -> Unit)? = null,
     progress: Float? = null,
     failed: Boolean = false,
-    // Per-file actions. [onRetry] re-runs just this file's upload (shown when it failed); [onDownload]
-    // saves a copy of the captured media straight to the device's Downloads — available regardless of
-    // upload state, so the user never loses the media even when the network is failing.
+    // Per-file actions. [onRetry] re-runs just this file's upload (shown when it failed); [downloadable]
+    // offers Download, which saves a copy of the captured media to the device's Downloads from the
+    // local handle — available regardless of upload state, so the user never loses the media even
+    // when the network is failing. See `data/MediaDownloads.kt`.
     onRetry: (() -> Unit)? = null,
-    onDownload: (() -> Unit)? = null
+    downloadable: Boolean = false
 ) {
     val mimeType = remember(uri) { context.contentResolver.getType(uri) }
+    val downloader = rememberMediaDownloader()
     val mediaType = remember(mimeType) { mediaTypeFromMime(mimeType) }
     var showViewer by remember { mutableStateOf(false) }
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -17261,7 +17323,7 @@ private fun AndroidUriPreview(
         }
         progress != null && progress >= 1f -> Text("Uploaded ✓", color = SuccessGreen, fontSize = 10.sp)
     }
-    if (onRetry != null || onDownload != null) {
+    if (onRetry != null || downloadable) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -17276,17 +17338,16 @@ private fun AndroidUriPreview(
                     Text("Retry", fontSize = 12.sp)
                 }
             }
-            if (onDownload != null) {
-                TextButton(
-                    onClick = onDownload,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Download", fontSize = 12.sp)
-                }
+            if (downloadable) {
+                MediaDownloadButton(
+                    fileName = uri.lastPathSegment.orEmpty(),
+                    onDownload = {
+                        downloader.save(uri, mediaDisplayNameOf(context, uri), mimeType)
+                    }
+                )
             }
         }
+        MediaDownloadNotice(downloader)
     }
     if (showViewer) {
         MediaViewerDialog(uri = uri, mediaType = mediaType, onDismiss = { showViewer = false })
@@ -19505,6 +19566,8 @@ private fun UserManagementForm(
      */
     var issuedLink by remember { mutableStateOf<Pair<String, IssuedPasswordLinkDto>?>(null) }
     var linkBusy by remember { mutableStateOf(false) }
+    /** The account whose two-step verification the administrator is about to turn off, awaiting a yes. */
+    var confirmTwoStepReset by remember { mutableStateOf<UserDto?>(null) }
 
     fun refreshUsers() {
         scope.launch {
@@ -19572,6 +19635,32 @@ private fun UserManagementForm(
                 onDismiss = { issuedLink = null }
             )
         }
+        confirmTwoStepReset?.let { target ->
+            AlertDialog(
+                onDismissRequest = { confirmTwoStepReset = null },
+                title = { Text("Turn off two-step verification?") },
+                text = {
+                    Text(
+                        "${target.name} will sign in with just their password or their usual sign-in, and is " +
+                            "signed out everywhere now. Their recovery codes stop working. They can turn it on " +
+                            "again from their own Settings, with a new phone."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmTwoStepReset = null
+                        scope.launch {
+                            runCatching { repository.resetTwoFactorForUser(target.id) }
+                                .onSuccess { refreshUsers() }
+                                .onFailure { onError(it.apiErrorMessage("Unable to turn off two-step verification")) }
+                        }
+                    }) { Text("Turn off") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmTwoStepReset = null }) { Text("Cancel") }
+                }
+            )
+        }
         if (loading) {
             Text("Loading users...", color = Muted)
         }
@@ -19618,6 +19707,9 @@ private fun UserManagementForm(
                                 color = Muted,
                                 fontSize = 11.sp
                             )
+                            if (appUser.twoFactorEnabled) {
+                                Text("Two-step on", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                         Text(if (expanded) "Hide ▲" else "Manage ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
@@ -19764,6 +19856,23 @@ private fun UserManagementForm(
                                 color = Muted,
                                 fontSize = 11.sp
                             )
+                        }
+                        /*
+                         * ── TURN OFF SOMEBODY'S TWO-STEP VERIFICATION — THEY LOST THEIR PHONE ───
+                         *
+                         * The password link's gate, for the password link's reason: the server asks
+                         * `assert_may_reset_credentials`, the rule every credential reset uses, and a
+                         * Ministry Admin's half of it is web-only here as account provisioning is.
+                         * Behind a confirm, because it also signs the person out everywhere.
+                         */
+                        if (actorIsAdmin && canManageTarget && appUser.twoFactorEnabled) {
+                            HorizontalDivider()
+                            OutlinedButton(
+                                onClick = { confirmTwoStepReset = appUser },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Turn off two-step verification")
+                            }
                         }
                     }
                 }
@@ -22028,57 +22137,6 @@ private fun saveTranscriptToDownloads(
                     Toast.LENGTH_LONG
                 ).show()
             }
-    }
-}
-
-/**
- * Save a locally-captured (content://) attachment straight into the device's public Downloads folder
- * by streaming its bytes from the content resolver. Unlike [saveMediaToDevice] — which hands a remote
- * URL to the system DownloadManager — this works for files that have NOT been uploaded yet (or whose
- * upload failed), so a user can always keep the media on-device while the network is unreliable.
- */
-private fun saveLocalUriToDevice(context: Context, uri: Uri) {
-    val resolver = context.contentResolver
-    val mimeType = resolver.getType(uri) ?: "application/octet-stream"
-    val rawName = run {
-        var name: String? = null
-        runCatching {
-            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (index >= 0 && cursor.moveToFirst()) name = cursor.getString(index)
-            }
-        }
-        name ?: uri.lastPathSegment ?: "field-media-${System.currentTimeMillis()}"
-    }
-    val safeName = rawName.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "field-media-${System.currentTimeMillis()}" }
-    runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, safeName)
-                put(MediaStore.Downloads.MIME_TYPE, mimeType)
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            }
-            val target = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IllegalStateException("Couldn't create a Downloads entry")
-            resolver.openOutputStream(target)?.use { out ->
-                resolver.openInputStream(uri)?.use { input -> input.copyTo(out) }
-                    ?: throw IllegalStateException("Couldn't read the media")
-            } ?: throw IllegalStateException("Couldn't open the Downloads file")
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(target, values, null, null)
-        } else {
-            @Suppress("DEPRECATION")
-            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            if (!dir.exists()) dir.mkdirs()
-            val outFile = File(dir, safeName)
-            resolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(outFile).use { out -> input.copyTo(out) }
-            } ?: throw IllegalStateException("Couldn't read the media")
-        }
-        Toast.makeText(context, "Saved \"$safeName\" to Downloads", Toast.LENGTH_SHORT).show()
-    }.onFailure {
-        Toast.makeText(context, "Couldn't save: ${it.message ?: "download failed"}", Toast.LENGTH_LONG).show()
     }
 }
 

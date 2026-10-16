@@ -60,6 +60,12 @@ Notes:
   *because* it is narrower.
 - A non-admin is refused at **issue** time, not at first use.
 - Google ID tokens are refused: that flow needs a browser, and this credential is for a process.
+- **An account with two-step verification on must send its code too** (2026-10-16): add
+  `"twoFactorCode": "123456"` (or one of its recovery codes) to the body. Without it the answer is
+  `401` "This account uses two-step verification. Send the 6-digit code from your authenticator app
+  as twoFactorCode."; a wrong code is a `401` and counts against the account's second-step failure
+  budget, which locks after ten in fifteen minutes (five for recovery codes; [SECURITY.md](SECURITY.md) §3.7). A cron job's account is usually
+  one without it, or the token is minted by a person and stored.
 - **The failure budget on this door is per ACCOUNT, and it is shared with the interactive sign-in
   door** (2026-09-03). Ten failed credential attempts for one account within five minutes, counted
   across `POST /api/datasets/token` and `POST /api/auth/login` *together*, close both. A correct
@@ -308,13 +314,15 @@ Bytes come **straight from S3**, never through the API — the web box is a sing
 | `404` | unknown dataset name — the message lists the real ones |
 | `422` | `.csv` on a dataset the field registry does not describe (`media`) |
 
-**Three more that only `POST /api/datasets/token` answers**, all of them reachable with a *correct*
+**Five more that only `POST /api/datasets/token` answers**, all of them reachable with a *correct*
 password — which is why they are tabulated separately rather than folded into the rows above:
 
 | status | when |
 |---|---|
 | `403` | A correct **ADMIN** credential whose allow-list row is `REJECTED` or `SUSPENDED`. The body carries the suspension's own sentence and the response carries the `X-Access-Status` header, the same pair the sign-in screens branch on. |
 | `503` | The account is an admin whose allow-list row is **missing or `PENDING`**, *and* the approval queue is already at `ACCESS_PENDING_MAX`, so the request could not even be recorded. **Driven by other people's traffic, not by anything about the caller's account** — a nightly mint can start failing 503 because unrelated strangers filled the queue. |
+| `401` | The account has two-step verification on and the body carries no `twoFactorCode`, or a wrong one. |
+| `429` | The account's second step is locked: ten wrong codes ([SECURITY.md](SECURITY.md) §3.7). Body: `{"detail": "Too many attempts. Try again later."}` |
 | `429` | Ten failed credential attempts for **this account** within five minutes, counted across this route and `POST /api/auth/login` together. A correct password is refunded and never counts. Body: `{"detail": "Too many failed credential attempts for this account. Wait a few minutes and try again — a correct password does not count against this limit."}` Deliberately a 429 and not a 401, so the per-network budget does not charge the same refusal a second time. |
 
 Tests: `backend/tests/test_dataset_api.py`, `backend/tests/test_dataset_token_budget.py`.

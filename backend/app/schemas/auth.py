@@ -132,3 +132,36 @@ class ChangePasswordRequest(APIModel):
 
     currentPassword: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
     newPassword: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)
+
+
+# ── TWO-STEP VERIFICATION ─────────────────────────────────────────────────────────────────────────
+#
+# snake_case, unlike every other body in this file, because the two portals implement one shared
+# spec with one wire shape and the clients are copied between them. See app/services/two_factor.py.
+
+
+class TwoFactorChallengeResponse(APIModel):
+    """What ``POST /auth/login`` answers, with a 200, when the first factor was right and the account
+    has two-step verification on. No session: the token is accepted only by
+    ``POST /auth/two-factor/verify``."""
+
+    two_factor_required: Literal[True] = True
+    challenge_token: str
+
+
+class TwoFactorCodeRequest(APIModel):
+    """A six-digit authenticator code or an ``xxxx-xxxx`` recovery code, told apart by shape. The
+    bound is a budget, like ``LoginRequest.email``'s: nothing longer is ever either."""
+
+    code: str = Field(min_length=1, max_length=64)
+
+
+class DatasetTokenRequest(LoginRequest):
+    """``POST /api/datasets/token``'s body: the sign-in body, plus the second step for an account that
+    has two-step verification on. A six-digit authenticator code or a recovery code."""
+
+    twoFactorCode: str | None = Field(default=None, max_length=64)
+
+
+class TwoFactorVerifyRequest(TwoFactorCodeRequest):
+    challenge_token: str = Field(min_length=1, max_length=2048)

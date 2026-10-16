@@ -290,9 +290,12 @@ test("AuthProvider re-reads /me on a gated refusal, one re-read at a time", () =
 test("every account the provider adopts writes the flag the background drains read", () => {
   const adopt = AUTH.slice(AUTH.indexOf("const adopt = useCallback("));
   expect(adopt.slice(0, adopt.indexOf("}, []);"))).toContain("setSessionOwesPasswordChange(mustChangePassword(next));");
-  // Sign-in on all three paths (password, Google, Microsoft/Yahoo), sign-out, a refused /me, and a
-  // re-read — all through the one door.
-  expect((AUTH.match(/adopt\(result\.user\);/g) ?? []).length, "every sign-in path").toBe(3);
+  // Sign-in on all three paths (password, Google, Microsoft/Yahoo) and the two-step verify, sign-out,
+  // a refused /me, and a re-read — all through the one door. The four sign-in answers meet in `open`,
+  // which adopts a session and leaves a two-step challenge unadopted.
+  expect((AUTH.match(/adopt\(result\.user\);/g) ?? []).length, "one adoption for every sign-in answer").toBe(1);
+  expect((AUTH.match(/return open\(\s*await apiFetch<SignInResult>\("\/auth\/login"/g) ?? []).length, "every sign-in path").toBe(3);
+  expect(AUTH).toContain("const account = open(result);");
   expect(AUTH).toContain("adopt(null);");
   expect(AUTH, "nothing sets the account around it").not.toMatch(/setUser\(result\.user\)|setUser\(me\)|setUser\(null\)/);
 });

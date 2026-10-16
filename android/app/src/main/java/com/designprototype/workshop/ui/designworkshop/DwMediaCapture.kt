@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import android.webkit.MimeTypeMap
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -66,6 +67,7 @@ import coil3.request.ImageRequest
 import com.designprototype.workshop.data.AttachedImage
 import com.designprototype.workshop.data.DW_DEFAULT_MAX_ITEMS
 import com.designprototype.workshop.data.DwFieldType
+import com.designprototype.workshop.data.DwDictationRun
 import com.designprototype.workshop.data.DwMediaUploadProgress
 import com.designprototype.workshop.data.DwPhotoGate
 import com.designprototype.workshop.data.DwQualityFlagLog
@@ -77,6 +79,10 @@ import com.designprototype.workshop.data.dwDeclaredMinItems
 import com.designprototype.workshop.data.dwEffectiveMaxItems
 import com.designprototype.workshop.ui.MediaViewerDialog
 import com.designprototype.workshop.ui.RecordingIndicator
+import com.designprototype.workshop.ui.MediaDownloadButton
+import com.designprototype.workshop.ui.MediaDownloadNotice
+import com.designprototype.workshop.ui.MediaDownloader
+import com.designprototype.workshop.ui.rememberMediaDownloader
 import com.designprototype.workshop.ui.rememberMediaImageLoader
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text. Without this import the bare
 // `Text` below resolves to Material's, inherits whatever family LocalTextStyle carries, and quietly
@@ -1390,117 +1396,180 @@ private fun DwAttachmentRow(
     val uploadState by uploadUpdates.collectAsState(initial = uploadSeed)
     val fileUri = remember(item?.absolutePath) { item?.let { Uri.fromFile(File(it.absolutePath)) } }
     val exists = remember(item?.absolutePath) { item?.let { File(it.absolutePath).exists() } ?: false }
+    val downloader = rememberMediaDownloader()
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
-            .padding(start = 8.dp, end = 2.dp, top = 6.dp, bottom = 6.dp)
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier
-                .size(52.dp)
-                .background(MaterialTheme.field.surface50, RoundedCornerShape(8.dp))
-                // `onClickLabel` because the words "tap to play" left the line below when it was
-                // given the upload state to carry. The hint was the only thing announcing that this
-                // thumbnail opens the file, and a screen reader had never had it at all — the label
-                // is now spoken as the action ("double tap to play") rather than buried in a
-                // sentence, and the displaced affordance is not simply gone.
-                .then(if (exists) Modifier.clickable(onClickLabel = "play", onClick = onOpen) else Modifier)
+                .fillMaxWidth()
+                .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
+                .padding(start = 8.dp, end = 2.dp, top = 6.dp, bottom = 6.dp)
         ) {
-            when {
-                !exists || fileUri == null -> Text("?", color = MaterialTheme.field.muted, fontSize = 16.sp)
-                item?.mediaType.equals("IMAGE", ignoreCase = true) -> AsyncImage(
-                    model = fileUri,
-                    contentDescription = item?.displayName,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-                item?.mediaType.equals("VIDEO", ignoreCase = true) -> {
-                    // The video-frame decoder from ui/MediaPlayers.kt: a still lifted out of the clip
-                    // itself, so a designer with nine loom videos can tell them apart without opening
-                    // each one. A generic film icon on all nine makes the list unusable.
-                    AsyncImage(
-                        model = ImageRequest.Builder(context).data(fileUri).build(),
-                        imageLoader = loader,
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(52.dp)
+                    .background(MaterialTheme.field.surface50, RoundedCornerShape(8.dp))
+                    // `onClickLabel` because the words "tap to play" left the line below when it was
+                    // given the upload state to carry. The hint was the only thing announcing that this
+                    // thumbnail opens the file, and a screen reader had never had it at all — the label
+                    // is now spoken as the action ("double tap to play") rather than buried in a
+                    // sentence, and the displaced affordance is not simply gone.
+                    .then(if (exists) Modifier.clickable(onClickLabel = "play", onClick = onOpen) else Modifier)
+            ) {
+                when {
+                    !exists || fileUri == null -> Text("?", color = MaterialTheme.field.muted, fontSize = 16.sp)
+                    item?.mediaType.equals("IMAGE", ignoreCase = true) -> AsyncImage(
+                        model = fileUri,
                         contentDescription = item?.displayName,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White)
-                }
-                else -> Icon(
-                    Icons.Filled.PlayArrow,
-                    contentDescription = null,
-                    tint = MaterialTheme.field.muted
-                )
-            }
-        }
-        val status = dwAttachmentStatus(
-            mediaType = item?.mediaType ?: "",
-            sizeBytes = item?.sizeBytes ?: 0L,
-            bytesPresent = item != null && exists,
-            backedUp = !item?.remoteMediaId.isNullOrBlank(),
-            state = uploadState,
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                item?.displayName ?: "Missing file",
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1
-            )
-            Text(
-                status.line,
-                color = when (status.tone) {
-                    DwAttachmentTone.WARNING -> MaterialTheme.colorScheme.error
-                    DwAttachmentTone.PROGRESS -> MaterialTheme.colorScheme.primary
-                    DwAttachmentTone.NEUTRAL -> MaterialTheme.field.muted
-                },
-                fontSize = 11.sp,
-                // Four lines, not two. A refusal now carries the reason it was refused, and the
-                // reasons are sentences — "the file store refused it with HTTP 413. This is a
-                // setting on the store rather than your connection…". Clipped at two lines, the
-                // half that says what to do about it is the half that disappears.
-                maxLines = 4,
-                // Announced when it changes rather than only when the row is next focused. A
-                // designer using TalkBack gets the same account of a transfer as one watching the
-                // bar, which is the point of drawing it at all.
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-            )
-            status.percent?.let { percent ->
-                LinearProgressIndicator(
-                    progress = { percent / 100f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp, end = 4.dp),
-                )
-            }
-            // ONLY where nothing happens unless a person acts — see [dwAttachmentStatus]. `enabled`
-            // is honoured as well as `canRetry`: a read-only stage must not offer an action that
-            // writes to the draft.
-            if (status.canRetry && onRetry != null) {
-                TextButton(
-                    onClick = onRetry,
-                    enabled = enabled,
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) {
-                    Text(
-                        "Try this file again",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
+                    item?.mediaType.equals("VIDEO", ignoreCase = true) -> {
+                        // The video-frame decoder from ui/MediaPlayers.kt: a still lifted out of the clip
+                        // itself, so a designer with nine loom videos can tell them apart without opening
+                        // each one. A generic film icon on all nine makes the list unusable.
+                        AsyncImage(
+                            model = ImageRequest.Builder(context).data(fileUri).build(),
+                            imageLoader = loader,
+                            contentDescription = item?.displayName,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White)
+                    }
+                    else -> Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = null,
+                        tint = MaterialTheme.field.muted
                     )
                 }
             }
+            val status = dwAttachmentStatus(
+                mediaType = item?.mediaType ?: "",
+                sizeBytes = item?.sizeBytes ?: 0L,
+                bytesPresent = item != null && exists,
+                backedUp = !item?.remoteMediaId.isNullOrBlank(),
+                state = uploadState,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    item?.displayName ?: "Missing file",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
+                )
+                Text(
+                    status.line,
+                    color = when (status.tone) {
+                        DwAttachmentTone.WARNING -> MaterialTheme.colorScheme.error
+                        DwAttachmentTone.PROGRESS -> MaterialTheme.colorScheme.primary
+                        DwAttachmentTone.NEUTRAL -> MaterialTheme.field.muted
+                    },
+                    fontSize = 11.sp,
+                    // Four lines, not two. A refusal now carries the reason it was refused, and the
+                    // reasons are sentences — "the file store refused it with HTTP 413. This is a
+                    // setting on the store rather than your connection…". Clipped at two lines, the
+                    // half that says what to do about it is the half that disappears.
+                    maxLines = 4,
+                    // Announced when it changes rather than only when the row is next focused. A
+                    // designer using TalkBack gets the same account of a transfer as one watching the
+                    // bar, which is the point of drawing it at all.
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+                status.percent?.let { percent ->
+                    LinearProgressIndicator(
+                        progress = { percent / 100f },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, end = 4.dp),
+                    )
+                }
+                // ONLY where nothing happens unless a person acts — see [dwAttachmentStatus]. `enabled`
+                // is honoured as well as `canRetry`: a read-only stage must not offer an action that
+                // writes to the draft.
+                // Under the status line, in the same place on every row, while the file uploads and after.
+                DwAttachmentDownload(item = item, exists = exists, fileUri = fileUri, downloader = downloader)
+                if (status.canRetry && onRetry != null) {
+                    TextButton(
+                        onClick = onRetry,
+                        enabled = enabled,
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                    ) {
+                        Text(
+                            "Try this file again",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+            IconButton(onClick = onRemove, enabled = enabled) {
+                Icon(Icons.Filled.Close, contentDescription = "Remove attachment", tint = MaterialTheme.field.muted)
+            }
         }
-        IconButton(onClick = onRemove, enabled = enabled) {
-            Icon(Icons.Filled.Close, contentDescription = "Remove attachment", tint = MaterialTheme.field.muted)
-        }
+        MediaDownloadNotice(downloader, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+/**
+ * Download for one attachment row — from the file in this workshop's media directory, which is
+ * there from the moment it is attached, so it works while [WorkshopSyncEngine] is still sending it
+ * and after. NOT gated on [enabled]: saving a copy writes nothing to the draft, so a read-only stage
+ * may still offer it.
+ *
+ * Only when those bytes have been released to free space does it fall back to the server's copy,
+ * through the data browser's download route; and only when there is neither is it disabled, with
+ * the reason beside it.
+ */
+@Composable
+private fun DwAttachmentDownload(item: DwMediaItem?, exists: Boolean, fileUri: Uri?, downloader: MediaDownloader) {
+    val context = LocalContext.current
+    val name = item?.displayName ?: "attachment"
+    val mime = remember(item?.displayName, item?.absolutePath, item?.mediaType) { item?.let { dwAttachmentMimeType(it) } }
+    val remoteId = item?.remoteMediaId?.takeIf { it.isNotBlank() }
+    when {
+        item != null && exists && fileUri != null -> MediaDownloadButton(
+            fileName = name,
+            onDownload = { downloader.save(fileUri, item.displayName, mime) },
+        )
+        remoteId != null -> MediaDownloadButton(
+            fileName = name,
+            onDownload = {
+                val repository = DwDictationRun.repository()
+                if (repository != null) {
+                    downloader.saveFromServer(name, mime) {
+                        val location = repository.downloadDataMedia(context, remoteId, name)
+                        repository.shareUriForSavedFile(context, location)
+                    }
+                }
+            },
+            unavailableReason = if (DwDictationRun.repository() == null) DW_DOWNLOAD_GONE else null,
+        )
+        else -> MediaDownloadButton(fileName = name, onDownload = {}, unavailableReason = DW_DOWNLOAD_GONE)
+    }
+}
+
+private const val DW_DOWNLOAD_GONE = "This copy is no longer on this device."
+
+/**
+ * The mime type to save an attachment under. The row carries no mime column, so it is read off the
+ * file's extension, and failing that from the kind: the recorder writes AAC in an MPEG-4 container.
+ */
+private fun dwAttachmentMimeType(item: DwMediaItem): String {
+    val ext = (item.displayName.substringAfterLast('.', "").ifBlank { item.absolutePath.substringAfterLast('.', "") })
+        .lowercase()
+    MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
+    return when (item.mediaType.uppercase()) {
+        "AUDIO" -> "audio/mp4"
+        "VIDEO" -> "video/mp4"
+        "IMAGE" -> "image/jpeg"
+        "PDF" -> "application/pdf"
+        else -> "application/octet-stream"
     }
 }
 
