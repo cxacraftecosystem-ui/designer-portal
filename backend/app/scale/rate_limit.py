@@ -291,14 +291,60 @@ _forgot_password_buckets = _TokenBuckets(
 )
 
 
+#: THE WHOLE PROCESS'S "Forgot your password?" allowance (2026-10-17): thirty a minute, whoever asks.
+#: The per-client bucket above trusts an address; this one trusts nothing, so a caller who can vary
+#: the address (a botnet, or anybody who reaches the origin without CloudFront) still cannot turn the
+#: route into a mail cannon. Every address-dependent effect is already silent, so the only cost of
+#: meeting it is a 429 about the connection.
+FORGOT_PASSWORD_GLOBAL_PER_MINUTE = 30
+
+_forgot_password_global = _TokenBuckets(
+    capacity=FORGOT_PASSWORD_GLOBAL_PER_MINUTE,
+    refill_per_second=FORGOT_PASSWORD_GLOBAL_PER_MINUTE / 60.0,
+)
+
+
+def _forwarded_entries(scope: Scope) -> list[str]:
+    entries: list[str] = []
+    for name, value in scope.get("headers", []):
+        if name == b"x-forwarded-for":
+            entries.extend(
+                part.strip().decode("latin-1") for part in value.split(b",") if part.strip()
+            )
+    return entries
+
+
 def client_address(scope: Scope) -> str:
-    """The network address a request came from, as the limiter keys it (never a bearer digest)."""
-    return _identity(scope, ignore_bearer=True)
+    """The network address a request came from, for the ANONYMOUS limits — never a bearer digest,
+    and never the left-most ``X-Forwarded-For`` entry.
+
+    **COUNTED FROM THE RIGHT (2026-10-17).** Every proxy APPENDS to ``X-Forwarded-For``, so only the
+    entries our own proxies wrote can be trusted, and those are the right-most ones; anything to their
+    left is what the caller sent. ``FORWARDED_CLIENT_HOPS`` (``Settings.forwarded_client_hops``) says
+    how many entries from the right the client sits: 1 behind nginx alone (the address nginx
+    appended), 2 behind CloudFront -> nginx, as production is. A chain shorter than that — a request
+    that did not come through the expected proxies — is keyed on the socket peer, which nobody can
+    forge. The courtesy limiter (``_identity``) keeps its own reading: it is not a security control.
+    """
+    from app.core.config import get_settings
+
+    hops = max(1, int(get_settings().forwarded_client_hops or 1))
+    entries = _forwarded_entries(scope)
+    if len(entries) >= hops:
+        return "ip:" + entries[-hops]
+    client = scope.get("client")
+    return f"ip:{client[0]}" if client else "ip:unknown"
 
 
 def forgot_password_attempt(scope: Scope) -> tuple[bool, float]:
-    """Spend one "Forgot your password?" request from this client. ``(allowed, retry_after_seconds)``."""
-    return _forgot_password_buckets.take(f"forgot:{client_address(scope)}")
+    """Spend one "Forgot your password?" request from this client AND from the whole process.
+
+    ``(allowed, retry_after_seconds)``. The per-client bucket is taken first, so one noisy client is
+    refused without spending everybody's allowance."""
+    allowed, retry = _forgot_password_buckets.take(f"forgot:{client_address(scope)}")
+    if not allowed:
+        return allowed, retry
+    return _forgot_password_global.take("forgot:all")
 
 
 def reset_account_credential_budget() -> None:
@@ -312,6 +358,7 @@ def reset_account_credential_budget() -> None:
     """
     _account_buckets._buckets.clear()  # noqa: SLF001 - the module owns this object
     _forgot_password_buckets._buckets.clear()  # noqa: SLF001 - and this one
+    _forgot_password_global._buckets.clear()  # noqa: SLF001 - and the process-wide one
 
 
 class RateLimitMiddleware:

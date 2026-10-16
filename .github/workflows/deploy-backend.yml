@@ -1692,6 +1692,18 @@ jobs:
           # rather than in somebody's inbox.
           grep -qxF 'NEXT_PUBLIC_APP_URL=https://designer-repository.vercel.app' .env || { echo "link origin did not land on its own line"; exit 1; }
           echo "link origin pinned"
+
+          # ── WHICH X-Forwarded-For ENTRY IS THE CLIENT — 2026-10-17 ──────────────────────────────
+          #
+          # "Forgot your password?" limits per client address (backend/app/scale/rate_limit.py,
+          # `client_address`), counted from the RIGHT of X-Forwarded-For because the left is
+          # whatever the caller typed. Production is CloudFront -> nginx -> uvicorn: CloudFront
+          # appends the viewer, nginx appends the CloudFront edge, so the client is 2nd from the
+          # right. The code's default (1, nginx alone) would key every visitor on a shared edge.
+          sed -i '/^FORWARDED_CLIENT_HOPS=/d' .env
+          printf 'FORWARDED_CLIENT_HOPS=%s\n' '2' >> .env
+          grep -qxF 'FORWARDED_CLIENT_HOPS=2' .env || { echo "forwarded hops did not land on their own line"; exit 1; }
+          echo "forwarded client hops pinned"
           REMOTE
 
       # The sender address and SES region are Actions VARIABLES, not lines inside BACKEND_ENV: they

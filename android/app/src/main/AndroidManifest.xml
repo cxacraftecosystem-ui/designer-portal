@@ -125,38 +125,20 @@
               and `takePasswordLink` in `MainActivity.kt` drops the whole URL into that box so the
               check fires immediately.
 
-              ⚠ THIS IS A PLAIN FILTER AND **NOT** A VERIFIED APP LINK. There is no
-              `android:autoVerify="true"` below and the absence is deliberate, not an oversight:
+              A VERIFIED APP LINK (2026-10-16, security review B5). `android:autoVerify="true"` below asks
+              Android to check `https://designer-repository.vercel.app/.well-known/assetlinks.json` at
+              install time; the file is `frontend/public/.well-known/assetlinks.json`, served by the web
+              app as `application/json` with no redirect, and it names `com.designprototype.workshop` and
+              the SHA-256 of the RELEASE signing certificate, read off the published v0.0.16 APK with
+              `keytool -printcert -jarfile` (no keystore material is in the tree). Verified, a tap on a
+              set-password link opens this app on Android 12 and later without the chooser, and no other
+              app can claim the link. Unverified (an old install, a debug-signed build), the filter
+              still works as before: the chooser up to Android 11, the browser plus the paste box after.
 
-                WHAT IS SHIPPED, AND WHAT IT DOES ON ANDROID 12 AND LATER. Up to Android 11 a tap
-                shows a disambiguation dialog — this app beside the browser — and the person
-                chooses. From Android 12 (API 31, every app, whatever it targets) a generic web
-                intent reaches an app only if it is approved for the domain: a verified App Link,
-                or the person turning the domain on under Settings › Apps › this app › Open by
-                default. Neither is in place here, so on those phones the tap opens the BROWSER and
-                pasting the link into the sign-in card's "I have a set-password link" is the way in
-                (developer.android.com/about/versions/12/behavior-changes-all, read 2026-10-09).
-                Nothing is taken away from the browser, which still works and is still the route
-                for anybody who does not have the app.
-
-                WHAT A VERIFIED LINK WOULD OWE, and every item is a DEPLOYMENT obligation rather
-                than a code change here:
-
-                 1. `https://<the web origin>/.well-known/assetlinks.json`, served from that exact
-                    host over HTTPS, 200, `Content-Type: application/json`, with NO redirect —
-                    Google's verifier follows none — naming `com.designprototype.workshop` and the
-                    SHA-256 fingerprint of the certificate the installed APK is signed with.
-                 2. THAT FINGERPRINT CANNOT BE WRITTEN DOWN FROM THIS REPOSITORY. The release
-                    keystore is supplied through a local property and is not in the tree (see
-                    `android/app/build.gradle.kts`), so the value has to come from `keytool -list -v`
-                    on the actual keystore, or from Play's App Signing page if Play ever re-signs.
-                    A file listing the wrong fingerprint does not fail loudly: verification simply
-                    does not happen and the link silently degrades to this chooser.
-                 3. EVERY FINGERPRINT, not one. A fleet running APKs signed with the debug key
-                    (`debugSignRelease=true` builds one) needs that certificate in the file too, or
-                    those handsets are the ones that do not verify.
-                 4. Verification is attempted at INSTALL time. Publishing the file after the fleet has
-                    updated verifies nothing until the next install.
+                WHAT STILL HOLDS: verification runs at INSTALL time, so handsets verify on their next
+                install or update after the file is live; a re-keyed release needs its new fingerprint
+                added to the file BEFORE it ships; a fleet on debug-signed APKs needs that
+                certificate listed too.
 
                 AND THE HOST BELOW IS THE PART TO CHECK FIRST IF A TAP DOES NOT OFFER THE APP.
                 `credential_links.link_for` builds every link from the backend's `NEXT_PUBLIC_APP_URL`,
@@ -174,7 +156,7 @@
               not `pathPrefix`: this is one screen, and a prefix would put the app on the chooser for
               any longer path that happens to start with these characters.
             -->
-            <intent-filter>
+            <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />

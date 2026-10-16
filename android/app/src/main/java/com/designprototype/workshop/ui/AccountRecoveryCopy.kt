@@ -78,6 +78,13 @@ fun providerLabel(authProvider: String?): String = when (authProvider?.trim()?.u
 
 const val SIGN_IN_AGAIN_ACTION = "Sign out and sign in again"
 
+/** Setting a first password on an account with two-step verification on needs a current code. */
+fun firstPasswordNeedsCode(hasPassword: Boolean, user: UserDto?): Boolean =
+    !hasPassword && user?.twoFactorEnabled == true
+
+const val FIRST_PASSWORD_CODE_LABEL = "Code from your authenticator app"
+const val FIRST_PASSWORD_CODE_NOTE = "Two-step verification is on for your account. A recovery code works here too."
+
 // ── Users → Help them back in ───────────────────────────────────────────────────────────────────
 
 const val HELP_THEM_BACK_IN_HEADING = "Help them back in"

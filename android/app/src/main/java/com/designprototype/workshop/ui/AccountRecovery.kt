@@ -43,6 +43,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.SignInAgainRequired
+import com.designprototype.workshop.data.TwoFactorCodeRequired
+import com.designprototype.workshop.data.FIRST_PASSWORD_CODE_MISSING
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.accountHasPassword
@@ -209,6 +211,8 @@ fun AccountPasswordCard(repository: WorkshopRepository, onSignOut: () -> Unit) {
     var current by remember { mutableStateOf("") }
     var next by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    val askCode = firstPasswordNeedsCode(hasPassword, user)
     var reveal by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -260,6 +264,18 @@ fun AccountPasswordCard(repository: WorkshopRepository, onSignOut: () -> Unit) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth()
             )
+            if (askCode) {
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it; error = null; saved = null },
+                    label = { Text(FIRST_PASSWORD_CODE_LABEL) },
+                    supportingText = { Text(FIRST_PASSWORD_CODE_NOTE) },
+                    singleLine = true,
+                    enabled = !busy,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             saved?.let {
                 Text(
                     it,
@@ -289,23 +305,32 @@ fun AccountPasswordCard(repository: WorkshopRepository, onSignOut: () -> Unit) {
                         error = problem
                         return@Button
                     }
+                    if (askCode && code.isBlank()) {
+                        error = FIRST_PASSWORD_CODE_MISSING
+                        return@Button
+                    }
                     scope.launch {
                         busy = true
                         error = null
                         signInAgain = false
                         val hadPassword = hasPassword
-                        runCatching { repository.saveOwnPassword(if (hadPassword) current else null, next) }
+                        runCatching { repository.saveOwnPassword(if (hadPassword) current else null, next, if (askCode) code else null) }
                             .onSuccess {
                                 saved = passwordSavedLine(hadPassword)
                                 current = ""
                                 next = ""
                                 confirm = ""
+                                code = ""
                                 user = repository.cachedUser()
                             }
                             .onFailure { failure ->
                                 if (failure is SignInAgainRequired) {
                                     error = failure.message
                                     signInAgain = true
+                                } else if (failure is TwoFactorCodeRequired) {
+                                    // Only the code is emptied: the passwords were not refused.
+                                    error = failure.message
+                                    code = ""
                                 } else {
                                     error = failure.apiErrorMessage(PASSWORD_CHANGE_NOT_SENT)
                                 }

@@ -345,6 +345,13 @@ class Settings(BaseSettings):
         default="http://localhost:3000", alias="NEXT_PUBLIC_APP_URL"
     )
     backend_cors_origins: str = Field(default="http://localhost:3000", alias="BACKEND_CORS_ORIGINS")
+    # WHICH ``X-Forwarded-For`` ENTRY IS THE CLIENT, COUNTED FROM THE RIGHT (2026-10-17). The
+    # anonymous limits (``rate_limit.client_address``, "Forgot your password?") key on it, and the
+    # left-most entry is whatever the caller typed. 1 is the entry the nearest proxy appended — nginx
+    # facing the internet. Production is CloudFront -> nginx -> uvicorn: CloudFront appends the viewer
+    # and nginx then appends the CloudFront edge, so the client is the 2nd from the right and the
+    # deploy pins FORWARDED_CLIENT_HOPS=2 (.github/workflows/deploy-backend.yml). Never 0.
+    forwarded_client_hops: int = Field(default=1, ge=1, le=5, alias="FORWARDED_CLIENT_HOPS")
 
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
     google_android_client_id: str | None = Field(default=None, alias="GOOGLE_ANDROID_CLIENT_ID")

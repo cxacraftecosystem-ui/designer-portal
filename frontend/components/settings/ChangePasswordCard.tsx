@@ -44,8 +44,10 @@ import {
   PASSWORD_CHANGE_SESSIONS,
   canSetFirstPassword,
   currentPasswordRefused,
+  firstPasswordNeedsCode,
   newPasswordProblem,
-  signInAgainRequired
+  signInAgainRequired,
+  twoFactorCodeRequired
 } from "@/lib/passwordChange";
 import {
   MAX_PASSWORD_LENGTH,
@@ -66,6 +68,9 @@ export function ChangePasswordCard() {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
+  /** The code from the authenticator app — asked for only when a first password is set on an
+   *  account with two-step verification on, so a session alone cannot add a password. */
+  const [code, setCode] = useState("");
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +89,7 @@ export function ChangePasswordCard() {
   if (!user) return null;
   // No password of its own: the same card asks only for the new one. Decided after every hook.
   const settingFirst = canSetFirstPassword(user);
+  const askCode = settingFirst && firstPasswordNeedsCode(user);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -98,15 +104,20 @@ export function ChangePasswordCard() {
       setError(problem);
       return;
     }
+    if (askCode && !code.trim()) {
+      setError("Enter the code from your authenticator app to set a password.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const fresh = settingFirst ? await setFirstPassword(next) : await changeOwnPassword(current, next);
+      const fresh = settingFirst ? await setFirstPassword(next, askCode ? code : undefined) : await changeOwnPassword(current, next);
       // Emptied, all three: a form still holding both passwords after it worked is a form somebody
       // walks away from with the secret sitting in it.
       setCurrent("");
       setNext("");
       setConfirm("");
+      setCode("");
       setShow(false);
       if (fresh) {
         // THE TOKEN THIS TAB HOLDS WAS JUST RETIRED with every other session of the account — the
@@ -128,6 +139,9 @@ export function ChangePasswordCard() {
     } catch (err) {
       if (settingFirst && signInAgainRequired(err)) {
         setNeedsSignIn(true);
+      } else if (settingFirst && twoFactorCodeRequired(err)) {
+        // The code was missing or wrong. Only the code is emptied: the passwords were not refused.
+        setCode("");
       } else if (!settingFirst && currentPasswordRefused(err)) {
         // Emptied because what was in it is wrong. The new password and its repeat are kept: nothing
         // was said against them, and retyping a long one twice is how a typo gets saved.
@@ -261,6 +275,28 @@ export function ChangePasswordCard() {
             className="field-input mt-1.5"
           />
         </div>
+
+        {askCode ? (
+          <div>
+            <label htmlFor="settings-two-factor-code" className="field-label">
+              Code from your authenticator app
+            </label>
+            <input
+              id="settings-two-factor-code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              required
+              maxLength={64}
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              className="field-input mt-1.5"
+            />
+            <p className="mt-1 text-xs leading-5 text-ink-500">
+              Two-step verification is on for your account. A recovery code works here too.
+            </p>
+          </div>
+        ) : null}
 
         {/* The gate's sentence, from the same function and the same constant: a change ends every
             session of the account but the one it hands back (`PASSWORD_CHANGE_SESSIONS`). */}

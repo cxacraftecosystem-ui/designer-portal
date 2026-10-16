@@ -107,9 +107,13 @@ data class ForgotPasswordRequest(val email: String)
 @Serializable
 data class ForgotPasswordAnswer(val message: String = "")
 
-/** No `currentPassword` key at all: there is none to send, and the server reads its absence. */
+/**
+ * No `currentPassword` key at all: there is none to send, and the server reads its absence.
+ * [twoFactorCode] is sent only for an account with two-step verification on, which the server
+ * requires before a session alone may add a password; null is left out of the body.
+ */
 @Serializable
-data class FirstPasswordRequest(val newPassword: String)
+data class FirstPasswordRequest(val newPassword: String, val twoFactorCode: String? = null)
 
 @Serializable
 data class PasswordLinkDeliveryRequest(
@@ -139,6 +143,18 @@ const val SIGN_IN_AGAIN_HEADER = "X-Sign-In-Again"
 
 /** Thrown by `WorkshopRepository.saveOwnPassword` for the [SIGN_IN_AGAIN_HEADER] refusal. */
 class SignInAgainRequired(message: String) : Exception(message)
+
+/**
+ * The header a refused first-password answer carries when the account has two-step verification on
+ * and the code was missing or wrong. The server's sentence says which.
+ */
+const val TWO_FACTOR_REQUIRED_HEADER = "X-Two-Factor-Required"
+
+/** The server's sentence for a missing code, also said by the form before it sends anything. */
+const val FIRST_PASSWORD_CODE_MISSING = "Enter the code from your authenticator app to set a password."
+
+/** Thrown by `WorkshopRepository.saveOwnPassword` for the [TWO_FACTOR_REQUIRED_HEADER] refusal. */
+class TwoFactorCodeRequired(message: String) : Exception(message)
 
 /**
  * Does this account hold a password of its own?
