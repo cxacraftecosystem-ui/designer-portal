@@ -59,7 +59,7 @@ export function AadhaarUserBadge({
     <span className="mt-1 flex flex-wrap items-center gap-1.5">
       <AadhaarStatusChip summary={{ status: columns.aadhaarVerifyStatus }} />
       {mayDecide ? (
-        <button type="button" className="text-xs font-medium text-purple-700 underline" onClick={() => setOpen(true)}>
+        <button type="button" className="text-xs font-medium text-purple-700 dark:text-purple-300 underline" onClick={() => setOpen(true)}>
           Review
         </button>
       ) : null}

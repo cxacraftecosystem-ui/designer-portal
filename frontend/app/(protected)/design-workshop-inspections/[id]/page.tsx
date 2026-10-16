@@ -731,7 +731,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
           Save on it looks the same as a screen whose Save has not loaded yet. */}
       {detail && readOnly ? (
         <p className="mb-4 rounded-md border border-purple-300 bg-purple-50 px-3 py-2 text-xs leading-5 text-ink-700">
-          <span className="font-semibold text-purple-700">Read-only.</span> Every stage below is shown as the designers
+          <span className="font-semibold text-purple-700 dark:text-purple-300">Read-only.</span> Every stage below is shown as the designers
           recorded it, with who wrote each field. Nothing here can be edited, submitted or deleted, including the
           photographs, recordings and attachments.
         </p>
@@ -779,7 +779,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
           */}
           {mayOpenTheWorkshop ? (
             <p className="mb-4 text-sm">
-              <Link className="text-purple-700 underline-offset-2 hover:underline" href={`/design-workshops/${id}`}>
+              <Link className="text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline" href={`/design-workshops/${id}`}>
                 Open this workshop
               </Link>
             </p>

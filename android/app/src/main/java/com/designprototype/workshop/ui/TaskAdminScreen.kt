@@ -168,12 +168,13 @@ private val ROLE_LABELS = mapOf(
 )
 
 /**
- * The server's own 422 for a scope with no work in it, mirrored verbatim so the client rejection and
- * the server rejection say the same thing rather than two different things about one rule.
+ * What a reader is told when a task has no work in it. It used to mirror the server's 422 verbatim —
+ * "pass recordTypes (any of ['artisan', …]) and/or sectionIds" — which is an API's parameter list,
+ * not a sentence for a person (UX audit 2026-10-16, DA-10). It is the same sentence the summary's
+ * warning line already prints.
  */
 private const val EMPTY_SCOPE_MESSAGE =
-    "A task needs work in it: pass recordTypes " +
-        "(any of ['artisan', 'product', 'process', 'tool', 'questionnaire', 'media']) and/or sectionIds."
+    "Pick at least one record type or questionnaire section — a task with no work in it cannot be created."
 
 /** The label the server gives this role, falling back to the local table for an unknown one. */
 private fun roleLabelOf(role: String?): String = ROLE_LABELS[role] ?: role.orEmpty()
@@ -1788,7 +1789,8 @@ private fun PersonChip(user: TaskUserDto, onRemove: () -> Unit) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
-        IconButton(onClick = onRemove, modifier = Modifier.size(20.dp)) {
+        // The IconButton's own 48dp target (DA-23): a 20dp remove on a chip was a mis-tap waiting to happen.
+        IconButton(onClick = onRemove) {
             Icon(
                 Icons.Filled.Close,
                 contentDescription = "Remove ${user.name}",

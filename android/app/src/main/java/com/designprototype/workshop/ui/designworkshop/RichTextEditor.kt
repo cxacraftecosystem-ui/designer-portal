@@ -1064,7 +1064,7 @@ private fun InlinePhotograph(
                 IconButton(
                     onClick = { onWidthStep(-IMAGE_WIDTH_STEP_PCT) },
                     enabled = block.widthPct > IMAGE_MIN_WIDTH_PCT,
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier.size(48.dp),
                 ) {
                     Icon(
                         Icons.Filled.Remove,
@@ -1075,7 +1075,7 @@ private fun InlinePhotograph(
                 IconButton(
                     onClick = { onWidthStep(IMAGE_WIDTH_STEP_PCT) },
                     enabled = block.widthPct < IMAGE_MAX_WIDTH_PCT,
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier.size(48.dp),
                 ) {
                     Icon(
                         Icons.Filled.Add,
@@ -1083,7 +1083,9 @@ private fun InlinePhotograph(
                         modifier = Modifier.size(16.dp),
                     )
                 }
-                IconButton(onClick = onRemove, modifier = Modifier.size(30.dp)) {
+                // 48dp, and set apart from the harmless steppers so a near-miss is not a deletion (DA-24).
+                Spacer(Modifier.width(16.dp))
+                IconButton(onClick = onRemove, modifier = Modifier.size(48.dp)) {
                     Icon(
                         Icons.Filled.Close,
                         // "Remove photograph", not "Remove": the caption goes with it, and a screen

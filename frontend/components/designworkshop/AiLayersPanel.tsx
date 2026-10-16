@@ -593,7 +593,7 @@ export function AiLayersPanel({
     <section className="grid gap-5">
       <div className="panel grid gap-3 p-4">
         <div className="flex items-start gap-3">
-          <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600">
+          <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600 dark:text-purple-300">
             <Layers className="h-4 w-4" aria-hidden />
           </span>
           <div className="min-w-0">
@@ -626,7 +626,7 @@ export function AiLayersPanel({
             <span
               className={
                 verbAllowance.aiVerbsRemaining !== null && verbAllowance.aiVerbsRemaining <= AI_VERB_COUNTDOWN_FROM
-                  ? "font-medium text-amber-800"
+                  ? "font-medium text-amber-800 dark:text-amber-100"
                   : "text-ink-700"
               }
             >
@@ -1654,11 +1654,11 @@ function WithdrawForm({
   const [note, setNote] = useState("");
   return (
     <div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2">
-      <p className="text-xs leading-5 text-amber-800">
+      <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
         Withdrawing doesn&apos;t delete the layer or change reports already generated. Say why, if there is a reason worth
         keeping.
       </p>
-      <label className="grid gap-1 text-xs font-medium text-amber-800">
+      <label className="grid gap-1 text-xs font-medium text-amber-800 dark:text-amber-100">
         Why (optional)
         <textarea
           className="field-input min-h-16"
@@ -1678,7 +1678,7 @@ function WithdrawForm({
         </button>
         <button
           type="button"
-          className="inline-flex items-center gap-1 text-xs font-medium text-amber-800 underline"
+          className="inline-flex items-center gap-1 text-xs font-medium text-amber-800 dark:text-amber-100 underline"
           disabled={busy}
           onClick={onCancel}
         >
@@ -1835,7 +1835,7 @@ function RegisterPanel({
                   {busyMediaId === item.mediaId ? "Registering…" : "Register its transcript"}
                 </button>
               ) : (
-                <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-800">
+                <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-800 dark:text-amber-100">
                   <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
                   Waiting for transcription
                 </span>

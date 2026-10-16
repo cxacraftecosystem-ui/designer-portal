@@ -260,7 +260,7 @@ export function AiVerbSelectionMenu({ workshopId, disabled, selectionChars, read
   return (
     <div className="grid gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
-        <Sparkles className="h-3.5 w-3.5 text-purple-700" aria-hidden />
+        <Sparkles className="h-3.5 w-3.5 text-purple-700 dark:text-purple-300" aria-hidden />
         {running ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-500">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -299,7 +299,7 @@ export function AiVerbSelectionMenu({ workshopId, disabled, selectionChars, read
         )}
         {/* THE COUNTDOWN, AND ONLY WHERE THERE IS A CEILING TO COUNT DOWN FROM. */}
         {allowance && allowance.aiVerbsRemaining !== null && allowance.aiVerbsRemaining <= AI_VERB_COUNTDOWN_FROM ? (
-          <span className="text-xs font-medium text-amber-800">
+          <span className="text-xs font-medium text-amber-800 dark:text-amber-100">
             {allowance.aiVerbsRemaining} run{allowance.aiVerbsRemaining === 1 ? "" : "s"} left today (
             {allowance.aiVerbDay})
           </span>
@@ -355,7 +355,7 @@ export function AiVerbSelectionMenu({ workshopId, disabled, selectionChars, read
           {consent.ready && !granted ? (
             <>
               {" "}
-              <Link href={`/design-workshops/${workshopId}`} className="font-medium text-purple-700 underline">
+              <Link href={`/design-workshops/${workshopId}`} className="font-medium text-purple-700 dark:text-purple-300 underline">
                 Open the workshop&apos;s own screen
               </Link>
               .

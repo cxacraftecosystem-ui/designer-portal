@@ -79,7 +79,7 @@ export function AppearanceCard() {
               />
               <span className="flex-1">
                 <span className="flex items-center gap-1.5 text-sm font-medium text-ink-900">
-                  <option.Icon className="h-4 w-4 text-purple-700" aria-hidden />
+                  <option.Icon className="h-4 w-4 text-purple-700 dark:text-purple-300" aria-hidden />
                   {option.label}
                 </span>
                 <span className="block text-xs leading-5 text-ink-500">{option.helper}</span>

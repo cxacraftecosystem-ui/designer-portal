@@ -661,7 +661,7 @@ function ChooseWorkshopThenSketches() {
       <div>
         {header}
         <section className="panel px-4 py-6" aria-live="polite">
-          <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-field-200 text-field-600">
+          <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-field-200 text-field-600 dark:text-purple-300">
             <CloudOff className="h-5 w-5" aria-hidden />
           </div>
           <h2 className="text-base font-medium text-ink">{CHOOSER_OFFLINE_TITLE}</h2>
@@ -838,7 +838,7 @@ function ChooseWorkshopThenSketches() {
           page's summary of them.
         */
         <section className="panel px-4 py-6" aria-live="polite">
-          <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-field-200 text-field-600">
+          <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-field-200 text-field-600 dark:text-purple-300">
             <CloudOff className="h-5 w-5" aria-hidden />
           </div>
           <h2 className="text-base font-medium text-ink">That workshop couldn&apos;t be checked</h2>

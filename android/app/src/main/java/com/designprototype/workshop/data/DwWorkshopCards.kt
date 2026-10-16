@@ -349,7 +349,7 @@ fun renderWorkshopCard(spec: DwCardSpec): DwCardRender {
     } catch (e: DwQrEncodeException) {
         // The encoder's own sentence, which is the web's word for word. Two spellings of one refusal
         // read as two different faults to a designer holding both sheets.
-        DwCardRender.Refused(spec, e.message ?: "This code could not be drawn.")
+        DwCardRender.Refused(spec, e.userMessage("This code could not be drawn."))
     }
 }
 

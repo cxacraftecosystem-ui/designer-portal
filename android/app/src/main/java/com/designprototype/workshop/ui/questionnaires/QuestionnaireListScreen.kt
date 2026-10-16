@@ -276,11 +276,9 @@ fun QuestionnaireListScreen(
                     }
                 )
                 Text(
-                    "Send it to a computer to type your questions into — a spreadsheet with forty " +
-                        "rows is not a thing a phone is good at. Then bring the filled-in file back " +
-                        "and upload it here, or upload it from the website.",
+                    "Prefer a spreadsheet? Download the pro-forma, fill it in, then upload it here.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    fontSize = 12.sp
                 )
 
                 HorizontalDivider(color = MaterialTheme.field.hairline)

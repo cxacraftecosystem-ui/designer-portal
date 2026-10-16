@@ -462,7 +462,7 @@ export function UsageBarRows({ rows, unit, ariaLabel }: { rows: BarRow[]; unit: 
               x={labelW + barMax + 8}
               y={y + 14}
               fontSize={11}
-              className={withheld ? "text-ink-300" : "text-ink-900"}
+              className={withheld ? "text-ink-500" : "text-ink-900"}
               fill="currentColor"
             >
               {withheld ? "—" : tickText(row.value ?? 0, unit)}
@@ -587,7 +587,7 @@ export function UsagePercentileRows({ rows, ariaLabel }: { rows: PercentileRow[]
               x={labelW + barMax + 8}
               y={y + 14}
               fontSize={11}
-              className={unusable ? "text-ink-300" : "text-ink-900"}
+              className={unusable ? "text-ink-500" : "text-ink-900"}
               fill="currentColor"
             >
               {unusable ? "—" : tickText(row.p99 as number, "ms")}

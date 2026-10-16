@@ -81,7 +81,7 @@ const STATUS_TONE: Record<TaskStatus, string> = {
   OPEN: "border-line-200 bg-surface-50 text-ink-500",
   IN_PROGRESS: "border-amber-500/30 bg-amber-100 text-amber-800",
   DONE: "border-success-600/25 bg-success-100 text-success-600",
-  CANCELLED: "border-error-600/25 bg-error-100 text-error-600"
+  CANCELLED: "border-error-600/25 bg-error-100 text-red-800"
 };
 
 const STATUS_TEXT: Record<TaskStatus, string> = {
@@ -170,7 +170,7 @@ export function ScopeChips({
       ) : null}
       {(sections ?? []).map((section) => (
         <span key={section.id} title={section.title} className={cn(CHIP, "border-line-200 bg-card text-ink-700")}>
-          <ClipboardList className="h-3.5 w-3.5 text-purple-700" aria-hidden />
+          <ClipboardList className="h-3.5 w-3.5 text-purple-700 dark:text-purple-300" aria-hidden />
           Section {section.code}
         </span>
       ))}
@@ -255,7 +255,7 @@ export function ProgressGapMeter({
         </span>
         <span className="text-xs text-ink-500">In repository</span>
         {derived === null || derived === undefined ? (
-          <span className="text-xs text-ink-300">not counted for this page</span>
+          <span className="text-xs text-ink-500">not counted for this page</span>
         ) : (
           <Bar value={derived} denominator={denominator} className="bg-ink-500" />
         )}
@@ -266,7 +266,7 @@ export function ProgressGapMeter({
       </div>
       <GapChip reported={reported} derived={derived} />
       {!hasTarget ? (
-        <p className="text-xs text-ink-300">No target count on this task — the bars compare the two figures to each other.</p>
+        <p className="text-xs text-ink-500">No target count on this task — the bars compare the two figures to each other.</p>
       ) : null}
     </div>
   );
@@ -290,7 +290,7 @@ export function StatTile({
     <div className="rounded-md border border-line-200 bg-card px-4 py-3">
       <div className={cn("font-display text-2xl font-bold tabular-nums", valueTone)}>{value}</div>
       <div className="mt-0.5 text-xs font-medium text-ink-500">{label}</div>
-      {hint ? <div className="mt-0.5 text-xs text-ink-300">{hint}</div> : null}
+      {hint ? <div className="mt-0.5 text-xs text-ink-500">{hint}</div> : null}
     </div>
   );
 }

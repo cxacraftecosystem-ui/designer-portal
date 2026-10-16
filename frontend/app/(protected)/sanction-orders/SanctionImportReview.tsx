@@ -224,7 +224,7 @@ export function SanctionImportReview({
       </div>
 
       {outstanding > 0 ? (
-        <p className="mt-3 flex items-start gap-2 text-sm leading-6 text-amber-800">
+        <p className="mt-3 flex items-start gap-2 text-sm leading-6 text-amber-800 dark:text-amber-100">
           <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
           {outstanding} row{outstanding === 1 ? " is" : "s are"} ticked to record and still missing a
           name or an address. {outstanding === 1 ? "It" : "They"} will be left out and listed in the
@@ -410,7 +410,7 @@ export function SanctionImportReview({
       {preview.refused.length > 0 ? (
         <div className="mt-4">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-            <span className="grid h-6 w-6 place-items-center rounded-md bg-error-100 text-error-600">
+            <span className="grid h-6 w-6 place-items-center rounded-md bg-error-100 text-red-800">
               <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
             </span>
             Cannot be recorded ({preview.refused.length})

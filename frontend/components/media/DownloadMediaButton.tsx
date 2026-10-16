@@ -38,7 +38,7 @@ export function DownloadMediaButton({
         }}
         aria-label={`Download ${name}`}
         title={unavailable ? undefined : `Download ${name}`}
-        className="inline-flex items-center gap-1 rounded-sm border border-line-200 bg-card px-2 py-0.5 text-xs font-semibold text-purple-700 transition enabled:hover:border-purple-300 enabled:hover:bg-purple-50 disabled:cursor-not-allowed disabled:text-ink-500 disabled:opacity-60"
+        className="inline-flex items-center gap-1 rounded-sm border border-line-200 bg-card px-2 py-0.5 text-xs font-semibold text-purple-700 dark:text-purple-300 transition enabled:hover:border-purple-300 enabled:hover:bg-purple-50 disabled:cursor-not-allowed disabled:text-ink-500 disabled:opacity-60"
       >
         <Download className="h-3.5 w-3.5" aria-hidden />
         Download

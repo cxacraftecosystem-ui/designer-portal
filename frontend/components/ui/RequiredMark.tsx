@@ -44,8 +44,16 @@
  * follows an element — the same trap `StageDocumentPreview`'s `{" "}` exists for. So the space lives
  * INSIDE this span rather than being left to the caller to remember, and `Label *` cannot become
  * `Label*` by somebody tidying a template literal.
+ *
+ * ── IT IS DRIVEN BY THE FIELD'S REQUIRED STATE, AND ABSENT MEANS NOT REQUIRED ───────────────────
+ *
+ * This was `{ when = true }` until 2026-10-16 (UX audit DW-02). A default parameter turns an
+ * explicit `undefined` into the default, so `Field`'s `<RequiredMark when={required} />` starred
+ * every one of the ~96 fields written without a `required` prop — "Note (optional) *", an
+ * artisan's email and phone drawn as compulsory, and a researcher invited to invent values. The prop
+ * is now mandatory and only a literal `true` draws the mark: a caller has to say what it means.
  */
-export function RequiredMark({ when = true }: { when?: boolean }) {
-  if (!when) return null;
+export function RequiredMark({ when }: { when: boolean | undefined }) {
+  if (when !== true) return null;
   return <span className="text-error-600 dark:text-red-400"> *</span>;
 }

@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from pydantic import Field, ValidationError
 
@@ -181,8 +182,105 @@ def _creator_summary(creator: Any) -> dict[str, Any] | None:
     }
 
 
+# The largest page a client may ask the PAGED queue for. Same number as the unpaged cap, so asking
+# for a page can never read more rows per record type than the old answer already did.
+PENDING_PAGE_MAX = 200
+
+
+def _decode_before(before: str | None) -> tuple[datetime, str] | None:
+    """``nextBefore`` back into the ``(createdAt, id)`` it was built from, or a 422.
+
+    The cursor is opaque to the clients (they pass back what they were handed) and is the last
+    row's ``createdAt`` and ``id`` joined by ``|``. ``id`` breaks ties: two records created in the
+    same instant would otherwise both sit on the page boundary and one of them would be skipped.
+    """
+    if not before:
+        return None
+    stamp, sep, record_id = before.rpartition("|")
+    try:
+        if not sep or not record_id:
+            raise ValueError(before)
+        return datetime.fromisoformat(stamp), record_id
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="That page of the review queue could not be found. Reload the queue.",
+        ) from exc
+
+
+def _encode_before(item: dict[str, Any]) -> str:
+    return f"{item.get('createdAt') or ''}|{item.get('id') or ''}"
+
+
+def _queue_item(record_type: str, row: Any, label_fields: tuple[str, ...]) -> dict[str, Any]:
+    creator = get_value(row, "createdBy")
+    return {
+        "recordType": record_type,
+        "id": get_value(row, "id"),
+        "label": _label_for(row, label_fields),
+        "place": get_value(row, "place"),
+        "createdAt": jsonable_encoder(get_value(row, "createdAt")),
+        "createdBy": _creator_summary(creator),
+        "needsAdminApproval": record_needs_admin_approval(row),
+    }
+
+
+async def _pending_page(where: dict[str, Any], page_size: int, before: str | None) -> dict[str, Any]:
+    """One page of the queue across all six record types, newest first, older than ``before``.
+
+    Each source is read ``page_size + 1`` rows past the cursor; the merged list is sorted and cut at
+    ``page_size``. That is exact: the newest ``page_size`` rows of the union are necessarily among
+    the newest ``page_size`` of each source. ``truncated`` is then a fact — either a row was left on
+    the merge floor or a source returned the extra row — never an inference from the arithmetic.
+    """
+    cursor = _decode_before(before)
+    page_where: dict[str, Any] = where
+    if cursor is not None:
+        stamp, record_id = cursor
+        page_where = {
+            "AND": [
+                where,
+                {"OR": [{"createdAt": {"lt": stamp}}, {"createdAt": stamp, "id": {"lt": record_id}}]},
+            ]
+        }
+    reads = await gather_reads(
+        *(
+            delegate.find_many(
+                where=page_where,
+                include={"createdBy": True},
+                order=[{"createdAt": "desc"}, {"id": "desc"}],
+                take=page_size + 1,
+            )
+            for _record_type, delegate, _label_fields in _PENDING_SOURCES
+        ),
+        *(delegate.count(where=where) for _record_type, delegate, _label_fields in _PENDING_SOURCES),
+    )
+    row_sets = reads[: len(_PENDING_SOURCES)]
+    total = sum(reads[len(_PENDING_SOURCES) :])
+    merged = [
+        _queue_item(record_type, row, label_fields)
+        for (record_type, _delegate, label_fields), rows in zip(_PENDING_SOURCES, row_sets, strict=True)
+        for row in rows
+    ]
+    merged.sort(key=lambda item: (item.get("createdAt") or "", item.get("id") or ""), reverse=True)
+    items = merged[:page_size]
+    more = len(merged) > page_size
+    return {
+        "items": items,
+        "shown": len(items),
+        "total": total,
+        "cap": page_size,
+        "truncated": more,
+        "nextBefore": _encode_before(items[-1]) if more and items else None,
+    }
+
+
 @router.get("/pending")
-async def list_pending_reviews(reviewer: Any = Depends(require_reviewer)) -> dict[str, Any]:
+async def list_pending_reviews(
+    reviewer: Any = Depends(require_reviewer),
+    pageSize: int | None = Query(None, ge=1, le=PENDING_PAGE_MAX),
+    before: str | None = Query(None, max_length=200),
+) -> dict[str, Any]:
     """Records still awaiting review (status == PENDING), newest first, across record types.
 
     Filtered by the peer-review hierarchy IN THE QUERY: only records whose creator ranks strictly
@@ -190,6 +288,10 @@ async def list_pending_reviews(reviewer: Any = Depends(require_reviewer)) -> dic
     newest rows this reviewer can act on rather than the newest rows overall. Each item carries
     ``needsAdminApproval``: true means it was submitted outside its workshop's dates, so only an
     admin can approve it.
+
+    **PAGED WHEN ASKED.** With ``pageSize`` the answer is one newest-first page across all six
+    types plus ``nextBefore``, the cursor for the next older page (null on the last one), and
+    ``total`` counts every reviewable pending row. Without it, the capped answer described below.
 
     **THE ANSWER SAYS WHETHER IT WAS CUT, AND ``total`` IS A REAL TOTAL.** This used to return
     ``{"items": items, "total": len(items)}`` — the length of the already-capped list under the
@@ -217,10 +319,20 @@ async def list_pending_reviews(reviewer: Any = Depends(require_reviewer)) -> dic
         # Spelled with every key the full answer carries, because a client that reads ``truncated``
         # or ``shown`` off one shape and finds it missing on the other is a client that has to
         # defend against this branch existing at all.
-        return {"items": [], "shown": 0, "total": 0, "cap": PENDING_TAKE, "truncated": False}
+        empty: dict[str, Any] = {"items": [], "shown": 0, "total": 0, "cap": pageSize or PENDING_TAKE,
+                                 "truncated": False}
+        if pageSize is not None:
+            empty["nextBefore"] = None
+        return empty
     where: dict[str, Any] = {"status": "PENDING"}
     if roles is not None:
         where["createdBy"] = {"is": {"role": {"in": roles}}}
+
+    if pageSize is not None:
+        # THE PAGED QUEUE (2026-10-16, UX audit DW-06 / DA-09). Both clients ask for a page and walk
+        # older with "Load older", so no pending record is ever out of reach. Additive: a caller
+        # that sends no ``pageSize`` gets the capped answer below, byte for byte.
+        return await _pending_page(where, pageSize, before)
 
     items: list[dict[str, Any]] = []
     total = 0
@@ -277,19 +389,7 @@ async def list_pending_reviews(reviewer: Any = Depends(require_reviewer)) -> dic
             total += counted[index]
         else:
             total += len(rows)
-        for row in rows:
-            creator = get_value(row, "createdBy")
-            items.append(
-                {
-                    "recordType": record_type,
-                    "id": get_value(row, "id"),
-                    "label": _label_for(row, label_fields),
-                    "place": get_value(row, "place"),
-                    "createdAt": jsonable_encoder(get_value(row, "createdAt")),
-                    "createdBy": _creator_summary(creator),
-                    "needsAdminApproval": record_needs_admin_approval(row),
-                }
-            )
+        items.extend(_queue_item(record_type, row, label_fields) for row in rows)
     items.sort(key=lambda item: item.get("createdAt") or "", reverse=True)
     return {
         "items": items,

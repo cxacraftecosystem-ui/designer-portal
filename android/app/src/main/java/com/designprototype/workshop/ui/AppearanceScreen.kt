@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.userMessage
+
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -478,7 +480,7 @@ fun AppearanceScreen(
         saveJob = scope.launch {
             saving = true
             runCatching { repository.savePreferences(next.toBody()) }
-                .onFailure { error = it.message ?: "Unable to save preferences" }
+                .onFailure { error = it.userMessage("Unable to save preferences") }
             saving = false
         }
     }

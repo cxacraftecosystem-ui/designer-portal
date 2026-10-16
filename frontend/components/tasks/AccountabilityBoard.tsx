@@ -47,7 +47,7 @@ function AssigneeRow({ row }: { row: TaskProgressAssignee }) {
               {row.statusCounts.DONE} done
             </span>
             {row.overdueCount > 0 ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-error-600/25 bg-error-100 px-2.5 py-1 font-medium text-error-600">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-error-600/25 bg-error-100 px-2.5 py-1 font-medium text-red-800">
                 <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
                 {row.overdueCount} overdue
               </span>
@@ -55,7 +55,7 @@ function AssigneeRow({ row }: { row: TaskProgressAssignee }) {
           </div>
           <button
             type="button"
-            className="inline-flex w-fit items-center gap-1.5 text-xs font-semibold text-purple-700"
+            className="inline-flex w-fit items-center gap-1.5 text-xs font-semibold text-purple-700 dark:text-purple-300"
             aria-expanded={open}
             aria-controls={panelId}
             onClick={() => setOpen((prev) => !prev)}

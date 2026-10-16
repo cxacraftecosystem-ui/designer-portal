@@ -350,7 +350,7 @@ export function RecordCodeCard({
   return (
     <section className={`panel p-4 ${className ?? ""}`} aria-labelledby={`record-code-${recordType}`}>
       <div className="mb-3 flex items-start gap-3">
-        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600" aria-hidden>
+        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-field-200 text-field-600 dark:text-purple-300" aria-hidden>
           <QrCode className="h-4 w-4" />
         </span>
         <div className="min-w-0">

@@ -200,7 +200,7 @@ export function ReviewEditPanel({
             // It does not filter the screen it sits on, so advancing to the next field on select is
             // the ordinary, wanted behaviour here.
           />
-          {dirty ? <span className="text-xs font-semibold text-purple-700">changed</span> : null}
+          {dirty ? <span className="text-xs font-semibold text-purple-700 dark:text-purple-300">changed</span> : null}
         </FieldBlock>
       );
     }
@@ -209,7 +209,7 @@ export function ReviewEditPanel({
         <span className="field-label">
           {field.label}
           <RequiredMark when={field.required} />
-          {dirty ? <span className="ml-1.5 font-semibold normal-case text-purple-700">changed</span> : null}
+          {dirty ? <span className="ml-1.5 font-semibold normal-case text-purple-700 dark:text-purple-300">changed</span> : null}
         </span>
         {field.multiline ? (
           <textarea

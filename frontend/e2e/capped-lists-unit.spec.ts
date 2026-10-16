@@ -9,7 +9,7 @@ import {
   LIST_PAGE_CEILING,
   listCut,
   mergeById,
-  queueCutNotice,
+  queuePageNotice,
   type ListCut
 } from "@/components/data/cappedList";
 import { craftChangeClearsArtisan, craftsChangeClearsArtisans } from "@/components/forms/recordPickers";
@@ -178,44 +178,16 @@ test("a total the wire did not carry says nothing rather than claiming a cut of 
  * The review queue — a cut nothing on screen can reach past
  * ──────────────────────────────────────────────────────────────────────────── */
 
-test("a review queue that was not cut says nothing at all", () => {
-  // The flag is the server's answer, decided by reading one row beyond the cap. Arithmetic that
-  // merely looks like a cut is not one, and a standing notice over a whole queue teaches a reviewer
-  // to ignore the notice.
-  expect(queueCutNotice(false, cutOf(200, 340, "pending records"), 200)).toBe("");
-  expect(queueCutNotice(undefined, cutOf(200, 340, "pending records"), 200)).toBe("");
-});
-
-test("a cut review queue never sends the reviewer to a search box or a pager", () => {
-  // `GET /review/pending` takes no `page`, `pageSize` or search parameter — `list_pending_reviews`
-  // says so and says why — so both of `CutReach`'s endings would name a way out that does not
-  // exist. The pager on that screen walks the rows already downloaded, which is the worse of the
-  // two errors: it is a control the reader can see, doing something other than what it was said to
-  // do. Telling somebody to narrow an unnarrowable list is what the viewer-picker finding cost.
-  const sentence = queueCutNotice(true, cutOf(200, 340, "pending records"), 200);
-  expect(sentence).toContain("200");
-  expect(sentence).toContain("340");
-  expect(sentence, "the rows behind the cap are the oldest — that is the fact").toContain("oldest");
-  expect(sentence).not.toContain("search");
-  expect(sentence).not.toContain("narrow");
-  expect(sentence).not.toContain("pager");
-});
-
-test("a cut review queue is still stated when the numbers are missing or contradictory", () => {
-  // Both states a live server denies, and both must still ANNOUNCE the cut: silence beside a true
-  // flag is an unstated cut, which is the defect this module exists to close. `cap: 0` is what a
-  // deployment predating that key sends, and the sentence must not claim a ceiling of zero.
-  const noCap = queueCutNotice(true, cutOf(200, 340, "pending records"), 0);
-  expect(noCap).toContain("not shown");
-  expect(noCap).not.toContain("0 of each");
-  const noArithmetic = queueCutNotice(true, cutOf(200, 200, "pending records"), 200);
-  expect(noArithmetic).toContain("not shown");
-  expect(noArithmetic).not.toContain("Showing 200 of 200");
-  // A cut answer can never carry an EMPTY list — the cut is by count alone — but "Showing 0 of 340"
-  // would be a contradiction on screen, so that arm is worded rather than computed.
-  const nothing = queueCutNotice(true, cutOf(0, 340, "pending records"), 200);
-  expect(nothing).toContain("this is not an empty queue");
-  expect(nothing).not.toContain("Showing 0");
+test("the review queue's count line is a number and never an admission", () => {
+  // UX audit DW-06 / DA-09 (2026-10-16): the queue is paged now, so the line says how far down the
+  // reader is and nothing about limits, and says nothing at all once every record is on screen.
+  expect(queuePageNotice(50, 766, true)).toBe("Showing 50 of 766 waiting, newest first.");
+  expect(queuePageNotice(50, 50, false)).toBe("");
+  expect(queuePageNotice(50, undefined, undefined)).toBe("");
+  expect(queuePageNotice(50, undefined, true)).toBe("Showing the newest 50 waiting.");
+  for (const sentence of [queuePageNotice(50, 766, true), queuePageNotice(50, undefined, true)]) {
+    expect(sentence).not.toMatch(/oldest|at most|limit|holds|cannot|not shown/);
+  }
 });
 
 test("the review screen reads the envelope it used to throw away", () => {
@@ -226,7 +198,9 @@ test("the review screen reads the envelope it used to throw away", () => {
   // from rows the server had already cut.
   expect(source).toContain("apiFetch<PendingEnvelope>");
   expect(source).toContain("<CappedListNotice");
-  expect(source).toContain("queueCutNotice(queue.truncated");
+  expect(source).toContain("queuePageNotice(items.length, queue.total, queue.more)");
+  // Paged: the button that reaches the older records is on the page, not described in a sentence.
+  expect(source).toContain("Load older");
   // The count on screen is the server's total, not the length of the page.
   expect(source).toContain("total={queue.total}");
   expect(source, "the length of a capped list is the one figure that is certainly wrong")

@@ -128,7 +128,7 @@ export function DeadEndPanel({
       <div
         className={
           tone === "alert"
-            ? "mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-error-100 text-error-600"
+            ? "mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-error-100 text-red-800"
             : "mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-purple-50 text-purple-700"
         }
       >

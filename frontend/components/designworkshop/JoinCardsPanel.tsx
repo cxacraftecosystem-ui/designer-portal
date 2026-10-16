@@ -301,7 +301,7 @@ export function JoinCardsPanel({
                 <path d={symbol.path} />
               </svg>
             ) : (
-              <p className="text-sm text-amber-800">
+              <p className="text-sm text-amber-800 dark:text-amber-100">
                 The card was made but its symbol could not be drawn. The line of characters below is the whole card and can be
                 typed in instead.
               </p>

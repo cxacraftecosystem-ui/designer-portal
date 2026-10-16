@@ -1372,7 +1372,7 @@ export function MirroredFieldsDisclosure({
     <div className="border-t border-line-200 pt-4">
       <button
         type="button"
-        className="inline-flex items-center gap-2 text-sm font-medium text-purple-700 transition hover:text-purple-800"
+        className="inline-flex items-center gap-2 text-sm font-medium text-purple-700 dark:text-purple-300 transition hover:text-purple-800 dark:hover:text-purple-200"
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((current) => !current)}
@@ -1381,7 +1381,7 @@ export function MirroredFieldsDisclosure({
         Filled in from the linked record
         <span className="rounded-full bg-field-200 px-2 py-0.5 text-xs font-medium text-ink-700">{count}</span>
         {refused ? (
-          <span className="rounded-full bg-error-100 px-2 py-0.5 text-xs font-medium text-error-600">
+          <span className="rounded-full bg-error-100 px-2 py-0.5 text-xs font-medium text-red-800">
             {refused} to fix
           </span>
         ) : null}

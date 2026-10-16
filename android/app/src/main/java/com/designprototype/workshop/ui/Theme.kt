@@ -941,3 +941,20 @@ val Hairline: Color get() = legacyPalette.value.scheme.outline
 
 /** Dark brand chip (was near-black; now purple-800/900). Content: [FieldTokens.onBrandTile]. */
 val DarkSurface: Color get() = legacyPalette.value.tokens.brandTile
+
+/**
+ * Status ink for the legacy MainActivity screens that cannot reach `MaterialTheme` from where they
+ * declare a colour (UX audit 2026-10-16, DA-20). They used fixed hex — `#2E7D32` green is under 3:1 on
+ * the dark card — so these follow the theme like [Body] and [Muted] do.
+ */
+val StatusSuccess: Color get() = legacyPalette.value.tokens.success
+val StatusError: Color get() = legacyPalette.value.scheme.error
+val StatusWarning: Color get() = legacyPalette.value.tokens.warning
+val OnStatusSuccess: Color get() = legacyPalette.value.tokens.onSuccess
+val OnStatusError: Color get() = legacyPalette.value.scheme.onError
+val OnStatusWarning: Color get() = legacyPalette.value.tokens.onWarning
+/** The "nothing here yet" fill for a status grid: a themed neutral, never a fixed beige. */
+val StatusEmpty: Color get() = legacyPalette.value.tokens.surface200
+/** The warning container pair, for file-level colour constants that cannot read `MaterialTheme`. */
+internal fun legacyWarningContainer(): Color = legacyPalette.value.tokens.warningContainer
+internal fun legacyOnWarningContainer(): Color = legacyPalette.value.tokens.onWarningContainer

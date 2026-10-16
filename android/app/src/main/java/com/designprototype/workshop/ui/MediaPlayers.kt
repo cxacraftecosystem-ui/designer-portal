@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
@@ -244,6 +245,8 @@ private fun formatMs(ms: Int): String {
  */
 @Composable
 fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, paused: Boolean = false) {
+    // Reduced motion gets a steady dot, and "Paused" never fades below readable (UX audit DA-22).
+    val reduceMotion = LocalAppPreferences.current.reducedMotion
     val transition = rememberInfiniteTransition(label = "rec")
     val blink by transition.animateFloat(
         initialValue = 1f,
@@ -254,7 +257,7 @@ fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, p
     // Dedicated slow blink for the "Paused" cue (~1.1s per half-cycle).
     val pausedBlink by transition.animateFloat(
         initialValue = 1f,
-        targetValue = 0.1f,
+        targetValue = 0.6f,
         animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Reverse),
         label = "pausedBlink"
     )
@@ -285,8 +288,8 @@ fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, p
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        val dotColor = if (paused) Color(0xFF9AA0A6) else Color(0xFFD13438)
-        val dotAlpha = if (paused) pausedBlink else blink
+        val dotColor = if (paused) MaterialTheme.field.muted else MaterialTheme.colorScheme.error
+        val dotAlpha = if (reduceMotion) 1f else if (paused) pausedBlink else blink
         Box(
             modifier = Modifier
                 .size(12.dp)
@@ -294,11 +297,13 @@ fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, p
         )
         if (paused) {
             // Slowly blinking "Paused" label, with the (frozen) elapsed time alongside.
-            Text("Paused", color = Body.copy(alpha = pausedBlink), fontSize = 12.sp)
+            Text("Paused", color = Body.copy(alpha = if (reduceMotion) 1f else pausedBlink), fontSize = 12.sp)
             Text(formatMs(elapsedMs.toInt()), color = Body, fontSize = 12.sp)
         } else {
             Text("Recording  ${formatMs(elapsedMs.toInt())}", color = Body, fontSize = 12.sp)
         }
+        // The app's one accent, not the logo's coral as a second one.
+        val waveColor = MaterialTheme.colorScheme.primary
         Canvas(
             modifier = Modifier
                 .weight(1f)
@@ -312,7 +317,7 @@ fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, p
                 val h = (level.coerceIn(0.05f, 1f)) * size.height
                 val x = i * (barWidth + gap)
                 drawRoundRect(
-                    color = Color(0xFFCC785C),
+                    color = waveColor,
                     topLeft = androidx.compose.ui.geometry.Offset(x, (size.height - h) / 2f),
                     size = androidx.compose.ui.geometry.Size(barWidth, h),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2f, barWidth / 2f)
@@ -351,7 +356,9 @@ fun MediaThumb(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color(0xFF181715), RoundedCornerShape(10.dp))
+            // Themed (UX audit 2026-10-16, DA-13): a fixed near-black row under Canvas-coloured text read
+            // as nothing in dark mode, where Canvas is itself near-black.
+            .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -381,9 +388,9 @@ fun MediaThumb(
             }
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = Canvas, fontSize = 12.sp, maxLines = 1)
-            subtitle?.let { Text(it, color = SurfaceCard, fontSize = 11.sp, maxLines = 1) }
+            Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            subtitle?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
-        TextButton(onClick = onOpen) { Text("Open", color = Color(0xFFE0C9B0)) }
+        TextButton(onClick = onOpen) { Text("Open") }
     }
 }

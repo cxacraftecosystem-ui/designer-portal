@@ -221,7 +221,7 @@ export function StageGeoField({
         {recordingPlace ? (
           <button
             type="button"
-            className="text-xs font-medium text-purple-700 underline"
+            className="text-xs font-medium text-purple-700 dark:text-purple-300 underline"
             disabled={disabled}
             onClick={() => {
               setLat(String(recordingPlace.lat));

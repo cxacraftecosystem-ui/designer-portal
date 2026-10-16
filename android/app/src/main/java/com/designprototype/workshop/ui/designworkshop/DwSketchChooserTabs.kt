@@ -228,7 +228,7 @@ internal fun DwSketchChooserTabStrip(
                             // HOUSE RULE 4, ON SCREEN. The filled tab is not the only thing saying
                             // which tab is showing; this word says it too, and survives greyscale.
                             if (isSelected) {
-                                Text("showing", fontSize = 10.sp, color = MaterialTheme.field.muted)
+                                Text("showing", fontSize = 11.sp, color = MaterialTheme.field.muted)
                             }
                         }
                     },

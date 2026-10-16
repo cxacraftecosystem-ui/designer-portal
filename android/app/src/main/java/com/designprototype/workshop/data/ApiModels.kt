@@ -1020,7 +1020,12 @@ data class PendingReviewListDto(
     /** The per-record-type ceiling the server applied. */
     val cap: Int = 0,
     /** True when at least one record type overflowed [cap] and its oldest rows were not sent. */
-    val truncated: Boolean = false
+    val truncated: Boolean = false,
+    /**
+     * Where the next, older page starts: pass it back verbatim as `before`. Null when nothing older
+     * is waiting, and always null from a server that predates paging (UX audit 2026-10-16, DA-09).
+     */
+    val nextBefore: String? = null
 )
 
 /** Optional reviewer notes sent with approve/reject; MANDATORY on "send for revision" (422 without). */

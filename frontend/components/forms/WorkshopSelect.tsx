@@ -763,7 +763,7 @@ export function WorkshopSelect({
         </p>
       ) : null}
       {late && !blocked ? (
-        <p className="text-xs font-medium text-amber-800">
+        <p className="text-xs font-medium text-amber-800 dark:text-amber-100">
           {endLabel === "-" ? "This workshop has already ended." : `This workshop ended on ${endLabel}.`}{" "}
           {check?.needsAdminApproval || !check
             ? "Saving now counts as a late submission and needs an admin's approval."
