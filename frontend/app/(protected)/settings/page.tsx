@@ -14,6 +14,7 @@ import { GrievanceRedressalCard } from "@/components/settings/GrievanceRedressal
 import { PublishAppUpdatePanel } from "@/components/settings/PublishAppUpdatePanel";
 import { MyAiKeysPanel } from "@/components/settings/MyAiKeysPanel";
 import { AccessibilityCard, AppearanceCard } from "@/components/settings/PersonalSettingsCards";
+import { TwoStepVerificationCard } from "@/components/settings/TwoStepVerificationCard";
 import { UsageConsentCard } from "@/components/settings/UsageConsentCard";
 import { WorkshopAccessRequestPanel } from "@/components/settings/WorkshopAccessRequestPanel";
 import { isAdmin, isMasterAdmin } from "@/lib/permissions";
@@ -187,6 +188,11 @@ export default function SettingsPage() {
           the app download, which every account opens once.
         */}
         <ChangePasswordCard />
+
+        {/* Every account, every role: a second sign-in step is the account's own choice, and an
+            account that signs in with Google is asked for the code too. Beside the password card
+            because both are about getting in. */}
+        <TwoStepVerificationCard />
 
         {/* Everyone sees this: the two apps are one product and each is better at half the job. */}
         <GetTheAppPanel />

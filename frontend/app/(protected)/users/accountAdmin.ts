@@ -87,6 +87,11 @@ export type RowOffers = {
   passwordLink: boolean;
   requirePasswordChange: boolean;
   temporaryPassword: boolean;
+  /**
+   * "Turn off two-step verification" — they lost their phone. The password-reset rule exactly (the
+   * server's `assert_may_reset_credentials`), and only for an account that has it on.
+   */
+  resetTwoFactor: boolean;
   /** Delete — an admin's alone. */
   remove: boolean;
   /** The capability checkboxes — an admin's alone, and only below Professor, where they mean something. */
@@ -119,6 +124,7 @@ export function rowOffers(viewer: User | null | undefined, target: User, powers:
     // Google-only account a password, which is the decision the old "no link for Google" rule was
     // protecting — taken here explicitly rather than refused.
     temporaryPassword: provision,
+    resetTwoFactor: provision && target.twoFactorEnabled === true,
     remove: managed && powers.admin,
     grants: managed && powers.admin && !hasRank(target, "PROFESSOR")
   };

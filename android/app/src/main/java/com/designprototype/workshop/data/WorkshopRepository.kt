@@ -3882,27 +3882,67 @@ class WorkshopRepository(
         }
     }
 
-    suspend fun login(email: String, password: String): UserDto {
-        val response = api.login(LoginRequest(email = email.trim(), password = password))
-        tokenStore.setToken(response.accessToken)
-        tokenStore.setUser(response.user)
-        return response.user
-    }
+    suspend fun login(email: String, password: String): SignInOutcome =
+        open(api.login(LoginRequest(email = email.trim(), password = password)))
 
-    suspend fun loginWithGoogle(idToken: String): UserDto {
-        val response = api.googleLogin(GoogleLoginRequest(googleIdToken = idToken))
-        tokenStore.setToken(response.accessToken)
-        tokenStore.setUser(response.user)
-        return response.user
-    }
+    suspend fun loginWithGoogle(idToken: String): SignInOutcome =
+        open(api.googleLogin(GoogleLoginRequest(googleIdToken = idToken)))
 
     /** Microsoft or Yahoo, once AppAuth has brought the code back. The backend redeems it. */
-    suspend fun loginWithOidc(body: OidcLoginRequest): UserDto {
-        val response = api.oidcLogin(body)
+    suspend fun loginWithOidc(body: OidcLoginRequest): SignInOutcome = open(api.oidcLogin(body))
+
+    /**
+     * A sign-in's answer, taken. A session is stored and its account returned; a TWO-STEP CHALLENGE
+     * stores NOTHING — no token, no cached profile — because nobody is signed in until
+     * [verifyTwoStep] turns it into a session. An answer that is neither is a server this build does
+     * not understand, and is refused as one rather than read as a sign-in.
+     */
+    private fun open(response: SignInResponse): SignInOutcome {
+        val token = response.accessToken
+        val user = response.user
+        if (token != null && user != null) {
+            tokenStore.setToken(token)
+            tokenStore.setUser(user)
+            return SignInOutcome.SignedIn(user)
+        }
+        val challenge = response.challengeToken
+        if (response.twoFactorRequired && challenge != null) return SignInOutcome.TwoStepRequired(challenge)
+        throw IllegalStateException("The server's answer could not be read. Try again.")
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════════════════════════
+     * TWO-STEP VERIFICATION. See data/TwoFactorApi.kt. Asked only at an ONLINE sign-in: a cached
+     * session on this handset keeps working offline exactly as before, because the second step is a
+     * property of opening a session, not of using one.
+     * ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+    private val twoFactorApi: TwoFactorApi by lazy {
+        ApiClient.retrofit(tokenStore).create(TwoFactorApi::class.java)
+    }
+
+    /** Trade a challenge and a 6-digit or recovery code for the session. Throws the server's refusal. */
+    suspend fun verifyTwoStep(challengeToken: String, code: String): UserDto {
+        val response = twoFactorApi.verify(TwoFactorVerifyRequest(challengeToken = challengeToken, code = code.trim()))
         tokenStore.setToken(response.accessToken)
         tokenStore.setUser(response.user)
         return response.user
     }
+
+    suspend fun twoFactorStatus(): TwoFactorStatusDto = twoFactorApi.status()
+
+    suspend fun beginTwoFactorSetup(): TwoFactorSetupDto = twoFactorApi.setup()
+
+    suspend fun enableTwoFactor(code: String): List<String> =
+        twoFactorApi.enable(TwoFactorCodeRequest(code.trim())).recoveryCodes
+
+    suspend fun disableTwoFactor(code: String) {
+        twoFactorApi.disable(TwoFactorCodeRequest(code.trim()))
+    }
+
+    suspend fun makeNewRecoveryCodes(code: String): List<String> =
+        twoFactorApi.recoveryCodes(TwoFactorCodeRequest(code.trim())).recoveryCodes
+
+    suspend fun resetTwoFactorForUser(userId: String): UserDto = twoFactorApi.resetForUser(userId)
 
     /**
      * End the session AND forget what this device remembered on that person's behalf.

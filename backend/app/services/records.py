@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 
 from app.core.db import db
+from app.core.user_fields import SECRET_USER_FIELDS
 from app.services.artisan_identity import mask_aadhaar
 from app.services.concurrency import gather_reads
 
@@ -22,7 +23,9 @@ from prisma import Json
 
 # Keys that must never leave the API, no matter how deeply nested inside an embedded relation
 # (e.g. a media file's ``uploadedBy`` user, or a record's ``createdBy``).
-_SENSITIVE_KEYS = {"passwordHash"}
+# ``app/core/user_fields.SECRET_USER_FIELDS`` — the password hash and every second-factor secret,
+# hash, counter and lock — because an embedded ``createdBy`` is a whole User row.
+_SENSITIVE_KEYS = frozenset(SECRET_USER_FIELDS)
 
 # Regulated identity numbers. Unlike a password hash these are MASKED rather than dropped: a
 # researcher still has to be able to confirm they are looking at the right person, and

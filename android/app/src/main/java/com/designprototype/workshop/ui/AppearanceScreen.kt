@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 // leads to a CONSENT and its withdrawal — the figures behind it are the smaller half. A chart glyph
 // here would read as the admin's aggregate, which is a different screen at a different rank.
 import androidx.compose.material.icons.filled.Policy
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.CardDefaults
@@ -408,6 +409,8 @@ fun AppearanceScreen(
      * near the bottom of this screen for why a settings page carries it at all.
      */
     onOpenUsageRecording: () -> Unit,
+    /** Open this account's own two-step verification. */
+    onOpenTwoStepVerification: () -> Unit,
     /**
      * Re-open the first-run walkthrough. See the row at the bottom of this screen for why a settings
      * page carries it at all.
@@ -613,6 +616,20 @@ fun AppearanceScreen(
          * consent stands at the moment they came here to check it. So it says what the screen IS, and
          * the screen itself says what the answer is and whether it could reach the server to find out.
          */
+        /*
+         * ---- TWO-STEP VERIFICATION ------------------------------------------------------------------
+         *
+         * The ACCOUNT's, like the two rows around it: once on, every sign-in to this account — here,
+         * on another phone, on the web — asks for the code. Its summary says what it is rather than
+         * whether it is on, for the usage row's reason: the state is a network read.
+         */
+        SettingsRow(
+            icon = Icons.Filled.Security,
+            title = "Two-step verification",
+            summary = "A code from an authenticator app each time you sign in",
+            onClick = onOpenTwoStepVerification,
+        )
+
         SettingsRow(
             icon = Icons.Filled.Policy,
             title = "Usage recording",
