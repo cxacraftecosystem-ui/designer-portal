@@ -22,6 +22,7 @@
 
 import {
   createContext,
+  memo,
   useCallback,
   useContext,
   useEffect,
@@ -46,7 +47,13 @@ import type { DwImageRef, DwRun } from "@/lib/designWorkshops";
 import type { MediaFile } from "@/lib/types";
 import { ReportChartSvg } from "@/components/designworkshop/report/ReportChart";
 import {
+  noteImageDimensions,
+  probeImageDimensions,
+  useImageDimensions
+} from "@/components/designworkshop/report/imageDimensions";
+import {
   countCodeSpans,
+  galleryColumns,
   rasterSource,
   type DwChartBlock,
   type DwMapBlock,
@@ -288,43 +295,150 @@ export function MediaUrlProvider({
  * every portrait photograph on its side — and a designer would then "fix" a rotation that is
  * already correct in the generated file, which is the worse outcome of the two.
  */
+/**
+ * The page geometry a block is drawn against, and whether this copy is the off-screen MEASURING
+ * copy. `ReportSheets` provides it; a caller without one gets A4 at the default margin.
+ *
+ * Images need the first half: `report_pdf._image_box` fits a photograph into a box whose height is
+ * a FRACTION OF THE TEXT COLUMN (0.62 for a photograph, 0.30 for a gallery cell), and a grid's
+ * column count depends on the column's width (`_block_image_grid` drops a column while a cell would
+ * be narrower than 45 mm). The second half lets the measuring copy draw a photograph's box without
+ * downloading it: the box is sized from the dimensions the payload already carries, so the bytes
+ * cannot change the height and there is nothing for the measurement to wait for.
+ */
+export type ReportGeometry = { textWidthMm: number; bodyHeightMm: number; measuring: boolean };
+
+const DEFAULT_GEOMETRY: ReportGeometry = { textWidthMm: 160, bodyHeightMm: 297 - 50 - 16, measuring: false };
+
+const GeometryContext = createContext<ReportGeometry>(DEFAULT_GEOMETRY);
+
+export function ReportGeometryProvider({ value, children }: { value: ReportGeometry; children: ReactNode }) {
+  return <GeometryContext.Provider value={value}>{children}</GeometryContext.Provider>;
+}
+
+/**
+ * Width over height after the EXIF quarter turn — `ImageRef.aspect` in `report_model.py`. A ref
+ * with no dimensions falls back to 4:3, which is `_image_box`'s own `width * 0.75`.
+ */
+export function displayAspect(image: DwImageRef): number {
+  const turned = image.rotation_deg === 90 || image.rotation_deg === 270;
+  const w = turned ? image.height_px : image.width_px;
+  const h = turned ? image.width_px : image.height_px;
+  return w > 0 && h > 0 ? w / h : 4 / 3;
+}
+
+/**
+ * A photograph the report references, drawn from its media id, in the BOX the file gives it.
+ *
+ * `ImageRef.source` IS A MEDIA ID, NOT A URL — every media route is bearer-authenticated and an
+ * `<img>` sends no Authorization header, so the id is exchanged for `MediaFile.url` first (see
+ * `useReportMediaUrls`) and a row with no `url` is a stated placeholder rather than a broken frame.
+ *
+ * THE BOX IS DECIDED BEFORE A BYTE ARRIVES, which is the whole of this component. It is
+ * `report_pdf._image_box`: the photograph's display aspect, as wide as the space allows and no
+ * taller than `maxHeightFraction` of the text column. The pending state, the loaded photograph and
+ * the "cannot be shown" state are all that same box, so a photograph arriving never moves a line
+ * of text and never moves a page break — the preview used to draw a 4:3 grey slab, then let the
+ * picture take its natural height, then re-paginate the whole document under the reader.
+ *
+ * THE ROTATION IS APPLIED HERE AND ONLY HERE: `image-orientation: none` stops the browser from also
+ * applying the EXIF tag, which is the double turn a portrait photograph would otherwise get, and the
+ * quarter turn the payload carries is what both file writers apply to the raw pixels.
+ */
 function ReportImage({
   image,
   alt,
-  className,
-  style
+  maxHeightFraction,
+  maxHeightMm,
+  maxWidth = "100%",
+  className
 }: {
   image: DwImageRef;
   alt: string;
+  /** Of the text column's usable height: 0.62 for a photograph, 0.30 for a gallery cell. */
+  maxHeightFraction?: number;
+  /** An absolute cap instead — the cover's 62 mm hero and 22 mm logo. */
+  maxHeightMm?: number;
+  /** A CSS length the box may not exceed, before the height cap. */
+  maxWidth?: string;
   className?: string;
-  style?: CSSProperties;
 }) {
   const urls = useContext(MediaUrlContext);
+  const { bodyHeightMm, measuring } = useContext(GeometryContext);
   const url = urls[image.source];
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  /*
+    THE PAYLOAD'S OWN SIZE WHEN IT HAS ONE, the photograph's measured size when it does not. A media
+    row uploaded from a browser carries no dimensions (see `imageDimensions`), and the file writers
+    read the real size off the bytes; until it is learned the box holds a 4:3 placeholder.
+    With the payload's size the quarter turn is the payload's too and the browser is told to apply
+    nothing of its own; without it the browser's own reading of the file is the size and the
+    orientation, so the two can never disagree.
+  */
+  const learned = useImageDimensions(image.source);
+  const hasOwn = image.width_px > 0 && image.height_px > 0;
+  const aspect = hasOwn ? displayAspect(image) : learned ? learned.width / learned.height : 4 / 3;
+  const turned = hasOwn && (image.rotation_deg === 90 || image.rotation_deg === 270);
+  const rotation = hasOwn ? image.rotation_deg : 0;
+  const box: CSSProperties = {
+    width: `min(${maxWidth}, ${((maxHeightMm ?? bodyHeightMm * (maxHeightFraction ?? 0.62)) * aspect).toFixed(3)}mm)`,
+    aspectRatio: String(aspect)
+  };
+  const picture: CSSProperties = turned
+    ? {
+        width: `${100 / aspect}%`,
+        height: `${100 * aspect}%`,
+        transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+        imageOrientation: "none"
+      }
+    : {
+        width: "100%",
+        height: "100%",
+        transform: rotation ? `translate(-50%, -50%) rotate(${rotation}deg)` : undefined,
+        imageOrientation: hasOwn ? "none" : "from-image"
+      };
 
-  if (url === undefined) {
-    return <span className={`rp-photo-pending ${className ?? ""}`} aria-hidden />;
-  }
-  if (url === null) {
-    return (
-      <span className={`rp-photo-missing ${className ?? ""}`}>
-        <ImageOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        This photograph can&rsquo;t be shown here — it will still be included in the generated file if it can be read.
-      </span>
-    );
-  }
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      alt={alt}
-      loading="lazy"
-      className={className}
-      style={{
-        ...style,
-        transform: image.rotation_deg ? `rotate(${image.rotation_deg}deg)` : undefined
-      }}
-    />
+    <span className={`rp-photo ${className ?? ""}`} style={box} data-state={url === null ? "missing" : undefined}>
+      {url === null ? (
+        <span className="rp-photo-missing">
+          <ImageOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          This photograph can&rsquo;t be shown here — it will still be included in the generated file if it can be read.
+        </span>
+      ) : url && !measuring ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          data-loaded={loadedUrl === url ? "true" : undefined}
+          onLoad={(event) => {
+            setLoadedUrl(url);
+            if (!hasOwn) noteImageDimensions(image.source, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight);
+          }}
+          style={picture}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function ReportGallery({ block }: { block: Extract<PreviewBlock, { type: "IMAGEGRID" }> }) {
+  const { textWidthMm } = useContext(GeometryContext);
+  const columns = galleryColumns(block.columns, textWidthMm);
+  return (
+    <figure className="rp-figure">
+      <div className="rp-grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }} data-requested-columns={block.columns}>
+        {block.images.map(([image, caption], index) => (
+          <figure key={index} className="rp-grid-cell">
+            <ReportImage image={image} alt={caption || `Photograph ${index + 1}`} maxHeightFraction={0.3} />
+            {caption ? <figcaption className="rp-grid-caption">{caption}</figcaption> : null}
+          </figure>
+        ))}
+      </div>
+      {block.caption ? <figcaption className="rp-caption">{block.caption}</figcaption> : null}
+    </figure>
   );
 }
 
@@ -341,19 +455,25 @@ function ReportImage({
  * would 404 and be reported to the designer as a photograph that could not be included.
  */
 export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<string, string | null> {
-  const ids = useMemo(() => {
+  // In DOCUMENT order, not sorted: the sizes are probed in this order, so the first pages settle first.
+  const { ids, sized } = useMemo(() => {
     const found = new Set<string>();
+    const withSize = new Set<string>();
+    const take = (image: DwImageRef) => {
+      found.add(image.source);
+      if (image.width_px > 0 && image.height_px > 0) withSize.add(image.source);
+    };
     for (const block of blocks ?? []) {
       if (block.type === "COVER") {
-        if (block.logo) found.add(block.logo.source);
-        if (block.hero_image) found.add(block.hero_image.source);
+        if (block.logo) take(block.logo);
+        if (block.hero_image) take(block.hero_image);
       } else if (block.type === "IMAGE") {
-        found.add(block.image.source);
+        take(block.image);
       } else if (block.type === "IMAGEGRID") {
-        for (const [image] of block.images) found.add(image.source);
+        for (const [image] of block.images) take(image);
       }
     }
-    return [...found].sort();
+    return { ids: [...found], sized: withSize };
   }, [blocks]);
 
   const [urls, setUrls] = useState<Record<string, string | null>>({});
@@ -400,6 +520,16 @@ export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<s
       );
       if (cancelled) return;
       setUrls((current) => ({ ...current, ...Object.fromEntries(resolved) }));
+      // Learn the size of every photograph whose payload does not carry one, in document order, so
+      // the boxes settle top first and before the reader scrolls to them.
+      probeImageDimensions(
+        unresolved
+          .filter((mediaId) => !sized.has(mediaId))
+          .flatMap((mediaId) => {
+            const url = resolved.find(([id]) => id === mediaId)?.[1];
+            return url ? [[mediaId, url] as [string, string]] : [];
+          })
+      );
     })();
     return () => {
       cancelled = true;
@@ -856,7 +986,11 @@ const CALLOUT_CLASS: Record<string, string> = {
   SUCCESS: "rp-callout rp-callout-success"
 };
 
-export function ReportBlock({ block, blockKey }: { block: PreviewBlock; blockKey?: string }) {
+/**
+ * Memoised on the block OBJECT: the live preview shares unchanged blocks between rebuilds
+ * (`stageSlice.stableBlocks`), so a keystroke re-renders the paragraph it changed and nothing else.
+ */
+export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { block: PreviewBlock; blockKey?: string }) {
   switch (block.type) {
     case "COVER":
       return (
@@ -867,12 +1001,14 @@ export function ReportBlock({ block, blockKey }: { block: PreviewBlock; blockKey
                 {line}
               </p>
             ))}
-            {block.logo ? <ReportImage image={block.logo} alt="" className="rp-cover-logo" /> : null}
+            {block.logo ? (
+              <ReportImage image={block.logo} alt="" maxHeightMm={22} className="rp-cover-logo" />
+            ) : null}
           </div>
           <h2 className="rp-cover-title">{block.title}</h2>
           {block.subtitle ? <p className="rp-cover-subtitle">{block.subtitle}</p> : null}
           {block.hero_image ? (
-            <ReportImage image={block.hero_image} alt={block.title} className="rp-cover-hero" />
+            <ReportImage image={block.hero_image} alt={block.title} maxHeightMm={62} maxWidth="80%" className="rp-cover-hero" />
           ) : null}
           {block.info_rows.length ? (
             <dl className="rp-cover-info">
@@ -1019,36 +1155,15 @@ export function ReportBlock({ block, blockKey }: { block: PreviewBlock; blockKey
     case "IMAGE":
       return (
         <figure className="rp-figure" style={figureStyle(block.width_pct, block.align)}>
-          <ReportImage
-            image={block.image}
-            alt={block.caption || "Workshop photograph"}
-            className="rp-figure-img"
-          />
+          <ReportImage image={block.image} alt={block.caption || "Workshop photograph"} maxHeightFraction={0.62} />
           {block.caption ? <figcaption className="rp-caption">{block.caption}</figcaption> : null}
         </figure>
       );
 
     case "IMAGEGRID":
-      return (
-        <figure className="rp-figure">
-          <div
-            className="rp-grid"
-            // `columns` is a request, not a guarantee — the file writers drop to fewer columns
-            // when a cell would fall below a legible width. The same idea in CSS, so a narrow
-            // sheet shows a readable grid rather than four unreadable slivers.
-            style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${Math.max(24, 100 / Math.max(1, block.columns) - 2)}%, 1fr))` }}
-            data-requested-columns={block.columns}
-          >
-            {block.images.map(([image, caption], index) => (
-              <figure key={index}>
-                <ReportImage image={image} alt={caption || `Photograph ${index + 1}`} className="rp-grid-img" />
-                {caption ? <figcaption className="rp-caption">{caption}</figcaption> : null}
-              </figure>
-            ))}
-          </div>
-          {block.caption ? <figcaption className="rp-caption">{block.caption}</figcaption> : null}
-        </figure>
-      );
+      // `columns` is a request, not a guarantee — see `galleryColumns`, which is the file
+      // writers' own fallback rather than a CSS approximation of it.
+      return <ReportGallery block={block} />;
 
     case "METRICROW":
       return (
@@ -1117,4 +1232,4 @@ export function ReportBlock({ block, blockKey }: { block: PreviewBlock; blockKey
       // unhandled type.
       return null;
   }
-}
+});

@@ -69,6 +69,7 @@
 
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -82,6 +83,7 @@ import {
   MediaUrlProvider,
   ReportBlock,
   ReportFigureModeProvider,
+  ReportGeometryProvider,
   type ReportFigureModes
 } from "@/components/designworkshop/report/ReportBlock";
 import { ReportPaletteProvider } from "@/components/designworkshop/report/ReportChart";
@@ -176,6 +178,9 @@ function documentStyles(
      and not a measurement of this preview's own running head. */
   --rp-head-clear: ${HEAD_CLEARANCE_MM}mm;
   --rp-foot-reserve: ${FOOT_RESERVE_MM}mm;
+  /* What a block may fill on an ordinary page: '(self.top - self.bottom)' in report_pdf, which is
+     the column the 0.62 and 0.30 image caps are fractions of. */
+  --rp-body-h: calc(var(--rp-text-h) - var(--rp-head-clear) - var(--rp-foot-reserve));
   --rp-base: 10.5pt;
   /* The eight colours of the document, derived from ONE accent by lib/reportTheme — the port of
      the server's report_theme.py, so what is interpolated here is what the .docx will be written
@@ -277,9 +282,16 @@ function documentStyles(
    the column ('foot_y + 4 * MM' where 'foot_y = self.margin - 4 * MM') with its type below it.
    A head or foot long enough to wrap now grows into the margin and off the sheet, as it does in
    the file, instead of eating a line of the body. */
+/* POSITIONED AGAINST THE SHEET'S PADDING BOX, which is the whole sheet: an absolutely positioned
+   box resolves 'top'/'bottom' against the padding edge, not the content edge. These two rules used
+   to read 'bottom: calc(100% + …)' and 'top: calc(100% + …)' as though the containing block were
+   the text column — which put the running head ABOVE the top edge of the paper and the running foot
+   BELOW its bottom edge, both drawn over the "Page break" mark between two sheets (measured
+   2026-10-16). So: the head's rule 2.6 mm above the top of the text column, the foot's rule on its
+   bottom, both inset by the margin to the column's own width — '_draw_furniture' exactly. */
 .rp-runhead {
-  position: absolute; left: 0; right: 0;
-  bottom: calc(100% + var(--rp-head-clear) + 2.6mm);
+  position: absolute; left: var(--rp-margin); right: var(--rp-margin);
+  bottom: calc(100% - var(--rp-margin) + 2.6mm);
   display: flex; justify-content: flex-end;
   font-size: 7.8pt; color: var(--rp-muted);
   border-bottom: 0.5pt solid var(--rp-rule);
@@ -287,8 +299,8 @@ function documentStyles(
   min-height: 4mm;
 }
 .rp-runfoot {
-  position: absolute; left: 0; right: 0;
-  top: calc(100% + var(--rp-foot-reserve));
+  position: absolute; left: var(--rp-margin); right: var(--rp-margin);
+  top: calc(100% - var(--rp-margin));
   display: flex; justify-content: space-between; gap: 8mm;
   font-size: 7.8pt; color: var(--rp-muted);
   border-top: 0.5pt solid var(--rp-rule);
@@ -416,13 +428,29 @@ function documentStyles(
   text-decoration: underline; text-underline-offset: 2px;
 }
 
-.rp-grid { display: grid; gap: 3mm; }
-.rp-grid-img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
-.rp-photo-pending { display: block; width: 100%; aspect-ratio: 4 / 3; background: var(--rp-zebra); }
+/* A gallery: the columns are '_block_image_grid's own count (see galleryColumns), each cell is
+   padded 2 mm a side as the writer insets it, and the rows are 3 mm apart as its row height adds.
+   The photograph is FITTED into the cell, never cropped — the file preserves the aspect ratio. */
+.rp-grid { display: grid; column-gap: 0; row-gap: 3mm; }
+.rp-grid-cell { margin: 0; padding: 0 2mm; min-width: 0; }
+.rp-grid-caption { margin: 1.2mm 0 0; font-size: 7.6pt; line-height: 1.25; font-style: italic; color: var(--rp-muted); text-align: center; }
+
+/* One photograph's BOX. Its width and aspect ratio are set inline from the dimensions the payload
+   carries, so it is the same size before the picture loads, after it loads and if it never does —
+   see ReportImage. The picture fades in over a quiet ground rather than popping, and the global
+   reduced-motion rules zero the transition. */
+.rp-photo { display: block; position: relative; overflow: hidden; margin: 0 auto; max-width: 100%; background: var(--rp-zebra); }
+.rp-photo > img {
+  position: absolute; left: 50%; top: 50%; max-width: none; object-fit: contain;
+  transform: translate(-50%, -50%);
+  image-orientation: none;
+  opacity: 0; transition: opacity 180ms ease-out;
+}
+.rp-photo > img[data-loaded] { opacity: 1; }
+.rp-photo[data-state="missing"] { background: var(--rp-zebra); outline: 0.5pt dashed var(--rp-rule); outline-offset: -0.5pt; }
 .rp-photo-missing {
-  display: flex; align-items: flex-start; gap: 1.6mm; padding: 3mm;
-  font-size: calc(var(--rp-base) - 2pt); color: var(--rp-muted);
-  border: 0.5pt dashed var(--rp-rule); background: var(--rp-zebra);
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 1.6mm; padding: 3mm;
+  text-align: center; font-size: calc(var(--rp-base) - 2pt); color: var(--rp-muted);
 }
 
 .rp-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(28mm, 1fr)); gap: 3mm; }
@@ -455,10 +483,19 @@ function documentStyles(
 .rp-cover { flex: 1 1 auto; display: flex; flex-direction: column; text-align: center; min-height: 100%; }
 .rp-cover-head { display: grid; gap: 3mm; justify-items: center; margin-top: 8mm; }
 .rp-cover-org { margin: 0; font-size: calc(var(--rp-base) + 0.5pt); color: var(--rp-muted); letter-spacing: 0.04em; }
-.rp-cover-logo { display: block; max-height: 22mm; width: auto; }
+.rp-cover-logo { background: transparent; }
 .rp-cover-title { margin: 14mm 0 0; font-size: 26pt; line-height: 1.18; font-weight: 700; color: var(--rp-accent); }
 .rp-cover-subtitle { margin: 3mm 0 0; font-size: 14pt; color: var(--rp-accent-soft); }
-.rp-cover-hero { display: block; margin: 8mm auto 0; max-height: 62mm; max-width: 80%; width: auto; object-fit: contain; }
+/* THE HERO ABSORBS WHATEVER THE COVER HAS LEFT, which is '_block_cover's rule: it measures the
+   rest of the page first so the closing line can never be pushed onto a second, blank page. So the
+   cover is laid out at exactly one page's height (see the measuring flow) and the photograph's box
+   is the one thing in it that may shrink, fitted rather than cropped. Before this the cover was
+   measured taller than the paper and the whole title page was drawn shrunk, every time. */
+.rp-cover-hero { margin-top: 8mm; flex: 0 1 auto; min-height: 0; background: transparent; }
+/* The cover's body: the text column less the foot reserve, less the sheet's two 1px borders, which
+   the border-box sheet takes out of its content box too — the same box the cover probe measures. */
+.rp-block-cover { height: calc(var(--rp-text-h) - var(--rp-foot-reserve) - 2px); overflow: hidden; }
+.rp-block-cover > .rp-cover, .rp-slice-cover > .rp-block > .rp-cover { height: 100%; min-height: 0; }
 .rp-cover-info { margin: 8mm auto 0; display: grid; gap: 0; width: 100%; max-width: 120mm; text-align: left; }
 .rp-cover-info > div { display: flex; gap: 4mm; padding: 1mm 0; border-bottom: 0.4pt solid var(--rp-rule); }
 .rp-cover-info dt { flex: none; width: 45%; color: var(--rp-muted); }
@@ -558,6 +595,7 @@ function documentStyles(
     break-after: page; page-break-after: always;
   }
   .rp-sheet:last-child { break-after: auto; page-break-after: auto; }
+  .rp-photo > img { opacity: 1 !important; transition: none !important; }
 
   /* Colour is meaning in this document — a table header reversed out of navy, an amber warning
      callout — and browsers drop backgrounds when printing unless told not to. */
@@ -774,6 +812,13 @@ function breakOffsetsFor(rule: BlockRule, wrapper: HTMLElement): number[] {
 
 type Measurement = {
   /**
+   * The blocks these numbers were taken from. The visible sheets draw THESE, never the newest
+   * prop: a rebuilt document is measured off screen first and swapped in only once its pages are
+   * known, so a sheet can never show one document's text inside another document's page breaks —
+   * which is what a keystroke used to do for a frame, as a visible flicker on every page.
+   */
+  blocks: PreviewBlock[];
+  /**
    * The content box of an ordinary page: the text column less the writer's head clearance and foot
    * reserve, read off a probe sheet that carries the real running furniture.
    *
@@ -814,6 +859,7 @@ type Measurement = {
  * flag is the ordinary "do not set state after unmount" one.
  */
 function useMeasuredFlow(
+  blocks: PreviewBlock[],
   planned: PlannedBlock[],
   geometry: PageGeometry,
   figureModes: Record<string, boolean>
@@ -835,6 +881,7 @@ function useMeasuredFlow(
     const read = () => {
       frame = 0;
       if (!alive) return;
+
       const entries = planned;
       const children = Array.from(flow.children) as HTMLElement[];
       // The measurer renders one wrapper per planned block, so a mismatch means the DOM this
@@ -866,6 +913,7 @@ function useMeasuredFlow(
       });
 
       const next: Measurement = {
+        blocks,
         contentPx: bodyProbe.getBoundingClientRect().height,
         coverContentPx: coverProbe.getBoundingClientRect().height,
         items
@@ -901,7 +949,7 @@ function useMeasuredFlow(
     // what a measuring pass has to key off. A flattened string key was the alternative and it would
     // have had to encode every block's CONTENT to be correct: two documents with the same block
     // types can have different row boundaries at the same total height, and nothing would fire.
-  }, [planned, figureModes, geometry.widthMm, geometry.heightMm, geometry.marginMm]);
+  }, [blocks, planned, figureModes, geometry.widthMm, geometry.heightMm, geometry.marginMm]);
 
   return { flowRef, bodyProbeRef, coverProbeRef, measurement };
 }
@@ -909,6 +957,9 @@ function useMeasuredFlow(
 /** Cheap structural equality, so an observer that fires with nothing changed does not re-render. */
 function sameMeasurement(a: Measurement | null, b: Measurement): boolean {
   if (!a) return false;
+  // A rebuilt document whose heights all came out the same is still a different document: the
+  // words changed. Keeping the old object would keep drawing the old words.
+  if (a.blocks !== b.blocks) return false;
   if (Math.abs(a.contentPx - b.contentPx) > 0.5) return false;
   if (Math.abs(a.coverContentPx - b.coverContentPx) > 0.5) return false;
   if (a.items.length !== b.items.length) return false;
@@ -1016,9 +1067,26 @@ export type ReportSheetsProps = {
    * template's own accent is not on the preview wire, so an unchosen palette is a guess.
    */
   paletteChosen?: boolean;
+  /**
+   * Show only the pages that carry blocks `[start, end)` — the stage a designer is typing into —
+   * instead of every page. The whole document is still laid out, so the pages shown are the real
+   * pages with their real numbers; a five-block slice paginated on its own would draw a mostly empty
+   * sheet and imply breaks the file does not have.
+   */
+  focusRange?: [number, number] | null;
+  /**
+   * For a narrow pane beside a form: the page count, the zoom and any warning chip stay; the two
+   * standing explanations (what the count is worth, which palette) are left to the report screen,
+   * which says them in full.
+   */
+  compact?: boolean;
 };
 
-export function ReportSheets({
+/**
+ * Memoised: on the stage screen the form beside it re-renders on every keystroke, and the sheets'
+ * props only change when a rebuilt document is ready.
+ */
+export const ReportSheets = memo(function ReportSheets({
   blocks,
   pageSize,
   marginMm,
@@ -1026,7 +1094,9 @@ export function ReportSheets({
   footerText,
   mediaUrls,
   palette = REPORT_PALETTE,
-  paletteChosen = false
+  paletteChosen = false,
+  focusRange = null,
+  compact = false
 }: ReportSheetsProps) {
   const geometry = useMemo(() => pageGeometry(pageSize, marginMm), [pageSize, marginMm]);
   const css = useMemo(
@@ -1054,6 +1124,7 @@ export function ReportSheets({
   );
 
   const { flowRef, bodyProbeRef, coverProbeRef, measurement } = useMeasuredFlow(
+    blocks,
     planned,
     geometry,
     figureModes
@@ -1132,7 +1203,32 @@ export function ReportSheets({
   // `backend/tests/test_report_parity.py` from the other side of the repository — so that a page
   // label fixed on one of the five renderers and not the others is caught by a read rather than by
   // a ministry officer holding two documents. Renaming the binding would quietly unpin both.
-  const sheets = packed?.pages ?? [];
+  const sheets = useMemo(() => packed?.pages ?? [], [packed]);
+  /** The document the drawn sheets belong to — see `Measurement.blocks`. */
+  const shownBlocks = measurement?.blocks ?? blocks;
+
+  /**
+   * The pages to draw. All of them, or — with a focus — the run of pages that carries any piece of
+   * a block in the range. The range is in terms of `blocks`, the newest document; once a rebuild has
+   * been measured the two are the same document, and in the frame before that the previous pages
+   * stay up, which is the point.
+   */
+  const visibleSheets = useMemo(() => {
+    if (!focusRange) return sheets;
+    const [start, end] = focusRange;
+    const hit = sheets.filter((sheet) => sheet.slices.some((slice) => slice.blockIndex >= start && slice.blockIndex < end));
+    return hit.length ? hit : sheets;
+  }, [sheets, focusRange]);
+
+  const geometryValue = useMemo(
+    () => ({
+      textWidthMm: geometry.widthMm - 2 * geometry.marginMm,
+      bodyHeightMm: geometry.heightMm - 2 * geometry.marginMm - HEAD_CLEARANCE_MM - FOOT_RESERVE_MM
+    }),
+    [geometry]
+  );
+  const drawGeometry = useMemo(() => ({ ...geometryValue, measuring: false }), [geometryValue]);
+  const measureGeometry = useMemo(() => ({ ...geometryValue, measuring: true }), [geometryValue]);
 
   /**
    * The drawn pages, checked against the arithmetic that produced them.
@@ -1169,8 +1265,8 @@ export function ReportSheets({
     return Array.from(seen).sort((a, b) => a - b);
   }, [packed]);
 
-  const renderBlock = (blockIndex: number) => (
-    <ReportBlock block={blocks[blockIndex]} blockKey={String(blockIndex)} />
+  const renderBlock = (blockIndex: number, from: PreviewBlock[] = shownBlocks) => (
+    <ReportBlock block={from[blockIndex]} blockKey={String(blockIndex)} />
   );
 
   const renderSlice = (slice: PageSlice, key: number, isCover = false) => (
@@ -1193,6 +1289,7 @@ export function ReportSheets({
            fill — the hero is capped at 62 mm — so this only moves the closing line, and only when
            the cover was not scaled down to fit in the first place. */
         className={isCover && slice.scale === 1 ? "rp-slice rp-slice-cover" : "rp-slice"}
+        data-rp-focus={focusRange && slice.blockIndex === focusRange[0] && slice.part === 0 ? "start" : undefined}
         style={{
           height: isCover && slice.scale === 1 ? "100%" : slice.heightPx * slice.scale,
           marginTop: slice.repeatHeaderPx > 0 ? 0 : slice.gapBeforePx
@@ -1212,10 +1309,12 @@ export function ReportSheets({
     </Fragment>
   );
 
-  const providers = (children: React.ReactNode) => (
+  const providers = (children: React.ReactNode, measuring = false) => (
     <ReportPaletteProvider palette={palette}>
       <MediaUrlProvider urls={mediaUrls}>
-        <ReportFigureModeProvider value={modes}>{children}</ReportFigureModeProvider>
+        <ReportGeometryProvider value={measuring ? measureGeometry : drawGeometry}>
+          <ReportFigureModeProvider value={modes}>{children}</ReportFigureModeProvider>
+        </ReportGeometryProvider>
       </MediaUrlProvider>
     </ReportPaletteProvider>
   );
@@ -1226,7 +1325,14 @@ export function ReportSheets({
 
       <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-ink-500" data-rp-noprint>
         <span>
-          {packed ? `${sheets.length} page${sheets.length === 1 ? "" : "s"}` : "Measuring the pages…"} ·{" "}
+          {packed
+            ? visibleSheets !== sheets && visibleSheets.length
+              ? `${visibleSheets.length === 1 ? "Page" : "Pages"} ${visibleSheets[0].pageNumber}${
+                  visibleSheets.length > 1 ? `–${visibleSheets[visibleSheets.length - 1].pageNumber}` : ""
+                } of ${sheets.length}`
+              : `${sheets.length} page${sheets.length === 1 ? "" : "s"}`
+            : "Measuring the pages…"}{" "}
+          ·{" "}
           {geometry.label}
           {/* The margin decides the text column and the text column decides every line break, so an
               assumed one is an assumption about where the pages fall. Said here rather than left in
@@ -1244,12 +1350,12 @@ export function ReportSheets({
             that disagrees about a line can disagree about a page. Making the preview trustworthy
             raises the cost of overclaiming rather than removing it, so the sentence gets more
             precise rather than going away. */}
-        <span>
+        <span className={compact ? "hidden" : undefined}>
           Pages are measured in this browser, so a line that wraps differently in Word or in the
           generated .pdf can move a break: treat the &ldquo;of {sheets.length}&rdquo; in each running foot below as a
           close estimate of the file&rsquo;s own page count.
         </span>
-        {scale < 0.995 || scale > 1.005 ? (
+        {!compact && (scale < 0.995 || scale > 1.005) ? (
           <span>
             Shown at {Math.round(scale * 100)}% of the paper&rsquo;s size; printing uses full size.
           </span>
@@ -1291,7 +1397,7 @@ export function ReportSheets({
             template's own accent is not on the preview wire, so the default case is a guess and
             has to say so, while the chosen case is exact and is worth saying too — it is the
             reason the designer can trust what they are looking at. */}
-        <span>
+        <span className={compact ? "hidden" : undefined}>
           {paletteChosen
             ? "Drawn in the accent colour chosen above — the same colour the .docx and .pdf will be written in."
             : "Drawn in the default report palette; each template writes its own accent colour into the file. Choose a colour above to see the document in it."}
@@ -1376,10 +1482,11 @@ export function ReportSheets({
             <div className="rp-body" ref={flowRef}>
               {providers(
                 planned.map((entry) => (
-                  <div className="rp-block" key={entry.blockIndex}>
-                    {renderBlock(entry.blockIndex)}
+                  <div className={entry.rule.isCover ? "rp-block rp-block-cover" : "rp-block"} key={entry.blockIndex}>
+                    {renderBlock(entry.blockIndex, blocks)}
                   </div>
-                ))
+                )),
+                true
               )}
             </div>
           </div>
@@ -1400,7 +1507,7 @@ export function ReportSheets({
           >
             <div ref={pagesRef} className="rp-pages">
               {providers(
-                sheets.map((sheet, index) => (
+                visibleSheets.map((sheet, index) => (
                   <Fragment key={sheet.pageNumber}>
                     {index > 0 ? (
                       <div className="rp-break" aria-hidden>
@@ -1475,4 +1582,4 @@ export function ReportSheets({
       )}
     </div>
   );
-}
+});
