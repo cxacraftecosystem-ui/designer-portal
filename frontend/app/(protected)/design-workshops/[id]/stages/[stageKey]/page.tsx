@@ -78,7 +78,12 @@ import {
   type StageRecordingPlace
 } from "@/components/designworkshop/StageRecordingPlace";
 import { PageHeader } from "@/components/PageHeader";
-import { StageDocumentPreview } from "@/components/designworkshop/report/StageDocumentPreview";
+import {
+  StageDocumentPreview,
+  StagePreviewLayout,
+  useStagePreviewOpen
+} from "@/components/designworkshop/report/StageDocumentPreview";
+import type { LiveStage } from "@/components/designworkshop/report/liveDocument";
 import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { UploadTray } from "@/components/media/UploadTray";
 import { UploadsProvider } from "@/lib/uploads";
@@ -348,6 +353,14 @@ function DesignWorkshopStagePageBody({
    * the server's field list" on every save of every workshop that has a custom section.
    */
   const [custom, setCustom] = useState<DwEntryData>({});
+  /**
+   * The form's values as one object, for the live document preview — rebuilt only when one of the
+   * three changes, so the preview's debounce sees a new value exactly once per edit.
+   */
+  const liveStage = useMemo(
+    () => ({ singleton: singleton as LiveStage["singleton"], collections: collections as LiveStage["collections"], custom: custom as LiveStage["singleton"] }),
+    [singleton, collections, custom]
+  );
   /** The definition's sections for this stage, and how this browser came to hold them. */
   const [customSections, setCustomSections] = useState<DwCustomSection[]>([]);
   const [customSource, setCustomSource] = useState<CustomDefinitionSource>("unknown");
@@ -393,6 +406,8 @@ function DesignWorkshopStagePageBody({
    * opened. See the comment beside the increment for why it is a counter and not a flag.
    */
   const [previewToken, setPreviewToken] = useState(0);
+  /** Whether the live document preview is open — remembered in this browser across stages. */
+  const [previewOpen, setPreviewOpen] = useStagePreviewOpen();
   /**
    * The id the REPOSITORY knows this workshop by, for the document preview above the form.
    *
@@ -2057,12 +2072,23 @@ function DesignWorkshopStagePageBody({
         `?? id` fallback is never fetched against, because it is reached only where `localOnly` is not
         false.
       */}
-      <StageDocumentPreview
-        workshopId={serverId ?? id}
-        stageTitle={stage?.title ?? ""}
-        refreshToken={previewToken}
-        localOnly={serverId === undefined ? null : serverId === null}
-      />
+      <StagePreviewLayout
+        open={previewOpen}
+        preview={
+          <StageDocumentPreview
+            workshopId={serverId ?? id}
+            draftId={id}
+            stageKey={stageKey}
+            stageTitle={stage?.title ?? ""}
+            refreshToken={previewToken}
+            localOnly={serverId === undefined ? null : serverId === null}
+            // What the form holds right now: the preview is rebuilt from it between keystrokes.
+            live={loading ? null : liveStage}
+            open={previewOpen}
+            onOpenChange={setPreviewOpen}
+          />
+        }
+      >
 
       {loading ? (
         <div className="panel p-4 text-sm text-ink-700">
@@ -2302,6 +2328,7 @@ function DesignWorkshopStagePageBody({
           </nav>
         </div>
       )}
+      </StagePreviewLayout>
     </>
   );
 }

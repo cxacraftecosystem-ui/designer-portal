@@ -53,6 +53,7 @@ from app.services import (
     two_factor,
     usage,
 )
+from app.services.aadhaar import flags as aadhaar_flags
 from app.services.account_provisioning import (
     GOOGLE_ONLY_LINK_DETAIL,
     assert_may_reset_credentials,
@@ -220,6 +221,9 @@ def _hint_headers(hint: str) -> dict[str, str]:
 #: is a contract living in three files; this is the one the two of them are copied from.
 USAGE_CONSENT_GATE_KEY = "usageConsentGate"
 
+#: The optional-feature switches, beside the account's own columns. Same answer as GET /api/features.
+FEATURES_KEY = "features"
+
 
 def serialize_user(user: Any) -> dict[str, Any]:
     """The account as every client reads it: every column except the password hash, plus the one
@@ -256,7 +260,11 @@ def serialize_user(user: Any) -> dict[str, Any]:
     # Derived, because the hash itself never leaves: the account screen offers "Change password" or
     # "Set a password" on it, and the users screen whether a link or a temporary password makes sense.
     payload[HAS_PASSWORD_KEY] = getattr(user, "passwordHash", None) is not None
-    return payload
+    # The optional features this deployment has switched on, so a client can draw (or not draw)
+    # them from the payload it already holds — and a handset can keep the answer offline. While
+    # both Aadhaar switches are off the verification columns are withheld too (services/aadhaar).
+    payload[FEATURES_KEY] = aadhaar_flags.features()
+    return aadhaar_flags.hide_columns(payload)
 
 
 def enum_value(value: Any) -> str:

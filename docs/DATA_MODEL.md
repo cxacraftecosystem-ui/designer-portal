@@ -823,6 +823,19 @@ download against before handing the file to the installer; Android's own signatu
 decides whether the file may be installed at all. The publish workflow's body now carries the field,
 which imposes a deploy ordering — see [CI.md](CI.md) §1.4.
 
+### Aadhaar verification columns — added 2026-10-16
+
+**`User` and `Artisan` carry the same nullable `aadhaarVerif*` result columns** (status, method, when,
+last four digits, the name UIDAI signed, year of birth, gender, the document's own timestamp, UIDAI's
+txn, the name verdict, who verified and which admin decided), plus `Artisan.aadhaarVerifyDob` because
+that row already stores a date of birth. No column can hold an Aadhaar number, a VID, a photograph,
+an address, a share code or a signed payload; `aadhaarVerifyLast4` is `CHECK`-constrained to four
+digits. They are written only by `services/aadhaar/records.py`, never ride on a record payload
+(`records._AADHAAR_RESULT_KEYS`), and are withheld from `/me` and `/users` while both Aadhaar flags
+are off. **`AadhaarOtpThrottle`** holds one row per OTP request — the caller, an HMAC of the number
+under a server secret, and a time — and nothing else. Every attempt is audited as a `RecordRevision`.
+The whole argument is [AADHAAR.md](AADHAAR.md) §3.
+
 ---
 
 ## 7. Enums
@@ -843,6 +856,8 @@ Every enum, and the thing to know about each. The list of names is generated int
 | `DataAccessTier` | `DOWNLOAD` < `COMMENT` < `EDIT` | ordered; each includes the ones below |
 | `DataAccessStatus` | pending, granted, denied, revoked | only `GRANTED` confers anything |
 | `ProductType`, `MarketDemand`, `MakerType`, `TraditionType` | field vocabularies | |
+| `AadhaarVerifyStatus` | `VERIFIED`, `NAME_MISMATCH`, `REJECTED` | the result of an Aadhaar verification on a `User` or an `Artisan`; `NAME_MISMATCH` waits for an admin — [AADHAAR.md](AADHAAR.md) §3 |
+| `AadhaarVerifyMethod` | `SECURE_QR`, `OFFLINE_XML`, `ONLINE_OTP`, `ONLINE_EKYC` | the two online values exist only once the Ministry's AUA licence is configured |
 
 Note that two ordered ladders — `WorkshopAssignment.accessLevel` and `AssignedTask.status` — are
 **plain `String` columns, not enums**, for client compatibility. Treat them as enums in code; the

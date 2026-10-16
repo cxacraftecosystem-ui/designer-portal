@@ -97,6 +97,22 @@ import com.designprototype.workshop.ui.visibleNavItems
 import com.designprototype.workshop.ui.IslandEntry
 import com.designprototype.workshop.ui.IslandGroup
 import com.designprototype.workshop.ui.IslandScaffold
+import com.designprototype.workshop.ui.APP_SEARCH_NAME
+import com.designprototype.workshop.ui.AppMenuFocusEffect
+import com.designprototype.workshop.ui.AppSearchHeader
+import com.designprototype.workshop.ui.AppSearchItem
+import com.designprototype.workshop.ui.AppSearchPanel
+import com.designprototype.workshop.ui.AppSearchSettingTarget
+import com.designprototype.workshop.ui.appMenuBleed
+import com.designprototype.workshop.ui.appMenuHidesPage
+import com.designprototype.workshop.ui.appMenuShowing
+import com.designprototype.workshop.ui.appSearchCachedItems
+import com.designprototype.workshop.ui.appSearchRemoteItems
+import com.designprototype.workshop.ui.appSearchScreenItems
+import com.designprototype.workshop.ui.appSearchSettingItems
+import com.designprototype.workshop.ui.closeAppMenu
+import com.designprototype.workshop.ui.openAppMenu
+import com.designprototype.workshop.ui.WorkshopLogo
 import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.OfflineOutboxTray
@@ -280,6 +296,11 @@ import com.designprototype.workshop.ui.ForgotPasswordScreen
 import com.designprototype.workshop.ui.HelpThemBackInActions
 import com.designprototype.workshop.ui.AddPersonCard
 import com.designprototype.workshop.data.SignInOutcome
+import com.designprototype.workshop.ui.aadhaar.AadhaarSelfScreen
+import com.designprototype.workshop.ui.aadhaar.AadhaarUserBadge
+import com.designprototype.workshop.ui.aadhaar.AadhaarVerifyCard
+import com.designprototype.workshop.data.AadhaarFeatures
+import com.designprototype.workshop.data.AadhaarSubject
 import com.designprototype.workshop.ui.UsageScreen
 import com.designprototype.workshop.ui.rememberUsageDoorState
 import com.designprototype.workshop.ui.usageAnswerAtTheDoor
@@ -1038,6 +1059,12 @@ private sealed interface Screen {
     data object TwoStepVerification : Screen
     /** Settings → Password: change it, or set a first one — `ui/AccountRecovery.kt`. */
     data object AccountPassword : Screen
+    /**
+     * THIS ACCOUNT's Aadhaar verification, one level below [Appearance] beside [UsageRecording] —
+     * the web's card on /settings. Reachable only while the server has an Aadhaar method switched on
+     * (`UserDto.features`); the Settings row that opens it is not drawn otherwise.
+     */
+    data object Aadhaar : Screen
     /**
      * The /data directory-tree browser. Its own Screen rather than a Create mode because it owns its
      * whole viewport: it draws its own top bar and lays out with a LazyColumn, which must never be
@@ -3108,6 +3135,10 @@ private fun HomeScreen(
      */
     var craftRegister by remember { mutableStateOf(RegisterLoad()) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    // The reduced-motion switch, which the menu now honours when it opens and closes.
+    val reducedMotion = preferences.reducedMotion
+    // The search panel the page header opens. See AppSearch.kt.
+    var searchOpen by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     // Every gate below mirrors one backend dependency (see the capability block near ROLE_RANK).
     // Do not re-derive a rule inline here: this screen used to hard-code admin-only variants of half
@@ -3522,7 +3553,7 @@ private fun HomeScreen(
         // Closing the sheet is not the navigation and must not wait on the answer: a drawer left open
         // behind the dialog is still open after "Keep editing", covering the form the user chose to
         // stay on.
-        scope.launch { drawerState.close() }
+        scope.launch { drawerState.closeAppMenu(reducedMotion) }
         if (destination == NavDestination.WALKTHROUGH || destination == NavDestination.TERMS) {
             // The two destinations that are not departures — both draw OVER the page you are already
             // on (see the branches above), so there is nothing to save or discard, and prompting
@@ -3552,6 +3583,7 @@ private fun HomeScreen(
             is Screen.UsageRecording -> Screen.Appearance
             is Screen.TwoStepVerification -> Screen.Appearance
             is Screen.AccountPassword -> Screen.Appearance
+            is Screen.Aadhaar -> Screen.Appearance
             is Screen.DataBrowser -> Screen.Dashboard
             // One level at a time: from a tool back to the tool list, and only then out. This is
             // what lets the single header arrow replace the in-page "All admin tools" button — the
@@ -3650,6 +3682,7 @@ private fun HomeScreen(
         is Screen.UsageRecording -> null
         is Screen.TwoStepVerification -> null
         is Screen.AccountPassword -> null
+        is Screen.Aadhaar -> null
         is Screen.DataBrowser -> "Data Browser"
         // Null on all eight arms immediately below — counted by reading them: workshops, stages,
         // one stage, report, report history, codes, photos, viewers. Each of those screens draws its
@@ -3729,6 +3762,7 @@ private fun HomeScreen(
         is Screen.UsageRecording -> NavDestination.SETTINGS
         is Screen.TwoStepVerification -> NavDestination.SETTINGS
         is Screen.AccountPassword -> NavDestination.SETTINGS
+        is Screen.Aadhaar -> NavDestination.SETTINGS
         is Screen.DataBrowser -> NavDestination.VIEW_DATA
         is Screen.AdminHub -> NavDestination.SETTINGS_HUB
         // Every screen of the 22-stage record lights the one menu row that reaches it. Unlike the
@@ -3812,18 +3846,54 @@ private fun HomeScreen(
         }
     }
 
-    BackHandler(enabled = drawerState.isOpen) {
-        scope.launch { drawerState.close() }
+    // The search panel's sources (ui/AppSearchSources.kt). Screens are this account's own menu,
+    // so a search offers nothing the menu would not; every opener goes through the same router,
+    // and the same unsaved-changes guard, as a menu tap.
+    fun searchLocalItems(): List<AppSearchItem> =
+        appSearchScreenItems(visibleNavItems(user, adminView), ::navigate) +
+            appSearchSettingItems { target ->
+                attemptExit {
+                    message = null
+                    screen = when (target) {
+                        AppSearchSettingTarget.APPEARANCE -> Screen.Appearance
+                        AppSearchSettingTarget.SPEECH_AND_AI -> Screen.SpeechAndAi
+                        AppSearchSettingTarget.AI_KEYS -> Screen.MyAiKeys
+                        AppSearchSettingTarget.USAGE_RECORDING -> Screen.UsageRecording
+                        AppSearchSettingTarget.TWO_STEP -> Screen.TwoStepVerification
+                    }
+                }
+            } +
+            appSearchCachedItems(artisans, crafts) { type, id -> attemptExit { openSearchRecord(type, id) } }
+
+    suspend fun searchRemote(query: String): List<AppSearchItem> =
+        appSearchRemoteItems(
+            repository = repository,
+            query = query,
+            includeCustomQuestionnaires = FieldPermissions.canRunDesignWorkshops(user),
+            openRecord = { type, id -> attemptExit { openSearchRecord(type, id) } },
+            openCustomQuestionnaire = { id -> attemptExit { message = null; screen = Screen.QuestionnaireDetail(id) } }
+        )
+
+    // `appMenuShowing` and not `isOpen`, which stays false for the whole opening slide: Back pressed
+    // while the menu is still arriving closes it instead of navigating the page underneath.
+    BackHandler(enabled = drawerState.appMenuShowing) {
+        scope.launch { drawerState.closeAppMenu(reducedMotion) }
     }
-    BackHandler(enabled = drawerState.isClosed && screen !is Screen.Dashboard) {
+    BackHandler(enabled = !drawerState.appMenuShowing && screen !is Screen.Dashboard) {
         attemptExit { goBack() }
     }
+    AppMenuFocusEffect(drawerState)
 
     // Right-anchored drawer: wrap in RTL so the sheet slides in from the right (web parity),
     // then flip drawer + page content back to LTR so their own layout reads normally.
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         ModalNavigationDrawer(
             drawerState = drawerState,
+            // Through the root's 16dp padding, so the scrim and the sheet reach the screen edges.
+            modifier = Modifier.appMenuBleed(16.dp),
+            // Swipe to CLOSE only. Swipe-to-open listened to the whole page and pulled the menu
+            // across sketch canvases and sliders; the hamburger is the way in.
+            gesturesEnabled = drawerState.appMenuShowing,
             drawerContent = {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                     /*
@@ -3841,7 +3911,7 @@ private fun HomeScreen(
                         pushingUpdate = pushingUpdate,
                         onToggleAdminView = { adminViewRequested = !adminView },
                         onPushUpdate = {
-                            scope.launch { drawerState.close() }
+                            scope.launch { drawerState.closeAppMenu(reducedMotion) }
                             if (!pushingUpdate) {
                                 pushingUpdate = true
                                 Toast.makeText(context, "Publishing this version as the update for everyone…", Toast.LENGTH_SHORT).show()
@@ -3863,7 +3933,7 @@ private fun HomeScreen(
                                 }
                             }
                         },
-                        onLogout = { scope.launch { drawerState.close() }; onLogout() }
+                        onLogout = { scope.launch { drawerState.closeAppMenu(reducedMotion) }; onLogout() }
                     )
                 }
             }
@@ -3872,6 +3942,9 @@ private fun HomeScreen(
                 LocalLayoutDirection provides LayoutDirection.Ltr,
                 LocalUnsavedGuard provides unsavedGuard
             ) {
+            // The page gets back the 16dp the drawer bleeds through, and leaves the accessibility
+            // tree while the menu is over it. See AppMenuDrawer.kt.
+            Box(modifier = Modifier.padding(16.dp).appMenuHidesPage(drawerState.appMenuShowing)) {
                 /*
                  * Two hosting shapes. Almost everything renders into the scrolling Column below,
                  * under the app's own header. The two screens branched off here own
@@ -3897,6 +3970,12 @@ private fun HomeScreen(
                         onOpenUsageRecording = { screen = Screen.UsageRecording },
                         onOpenTwoStepVerification = { screen = Screen.TwoStepVerification },
                         onOpenPassword = { screen = Screen.AccountPassword },
+                        // Null — no row at all — unless the server has an Aadhaar method switched on.
+                        onOpenAadhaar = if (AadhaarFeatures.of(user).enabled) {
+                            { screen = Screen.Aadhaar }
+                        } else {
+                            null
+                        },
                         // Through the ROUTER and not by setting the flag directly, so the settings
                         // row and the menu chip are one code path: whatever `openDestination` decides
                         // the Walkthrough means, both doors mean it. Note that this leaves the
@@ -3912,6 +3991,11 @@ private fun HomeScreen(
 
                     is Screen.MyAiKeys -> MyAiKeysScreen(
                         repository = repository,
+                        onBack = { attemptExit { goBack() } }
+                    )
+
+                    is Screen.Aadhaar -> AadhaarSelfScreen(
+                        viewer = user,
                         onBack = { attemptExit { goBack() } }
                     )
 
@@ -3966,7 +4050,9 @@ private fun HomeScreen(
             modifier = islandModifier,
             // The drawer: the full menu, the admin-view switch (which left the bar when it moved to
             // the bottom) and Logout.
-            onOpenDrawer = { scope.launch { drawerState.open() } },
+            onOpenDrawer = { scope.launch { drawerState.openAppMenu(reducedMotion) } },
+            // Out of the way while the search panel is over the page.
+            visible = !searchOpen,
             // The bar highlights by label, so the label has to be looked up from the DESTINATION the
             // user is on. This used to pass `headerTitle` — a page title, matched against nav labels
             // that are written for a menu — so the Dashboard ("Design Workshop" against "Dashboard")
@@ -4002,6 +4088,14 @@ private fun HomeScreen(
                 .padding(bottom = islandReserve),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+
+        // The app's name and logo, FIRST INSIDE THE SCROLLER so it scrolls away with the page and is
+        // back at the top; tapping it opens the search panel drawn over the page below. AppSearch.kt.
+        AppSearchHeader(
+            appName = APP_SEARCH_NAME,
+            logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 7.dp) },
+            onOpenSearch = { searchOpen = true }
+        )
 
         // The dashboard is the root of every path, so only the screens below it get a back arrow —
         // and it is also the only screen with no title of its own, so on the dashboard this whole
@@ -4844,13 +4938,23 @@ private fun HomeScreen(
             // their own chrome. Listed here only to keep this `when` exhaustive.
             is Screen.Appearance, is Screen.SpeechAndAi, is Screen.MyAiKeys,
             is Screen.UsageRecording, is Screen.TwoStepVerification, is Screen.AccountPassword,
-            is Screen.DataBrowser -> Unit
+            is Screen.Aadhaar, is Screen.DataBrowser -> Unit
         }
 
         message?.let {
             Text(it, color = Body, modifier = Modifier.padding(bottom = 24.dp))
         }
 
+                }
+                // Over the page, under nothing: the page keeps its scroll and any half-filled form.
+                if (searchOpen) {
+                    AppSearchPanel(
+                        appName = APP_SEARCH_NAME,
+                        logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 7.dp) },
+                        localItems = searchLocalItems(),
+                        remoteSearch = { q -> searchRemote(q) },
+                        onClose = { searchOpen = false }
+                    )
                 }
                 }
                 }
@@ -5036,6 +5140,7 @@ private fun HomeScreen(
                         }
                     )
                 }
+            }
             }
         }
     }
@@ -16411,6 +16516,13 @@ private fun ViewDataDetail(
             // from every interview they belong to (alone, in a subset, or a larger set), so a group
             // recording surfaces here for this artisan to be validated individually.
             ArtisanQuestionnaireData(repository = repository, artisanId = recordId)
+            // Field staff verify an artisan by scanning the card's QR. Draws nothing unless the
+            // server has an Aadhaar method switched on; the server decides who may verify.
+            AadhaarVerifyCard(
+                subject = AadhaarSubject.Artisan(recordId),
+                viewer = repository.cachedUser(),
+                recordName = v.name,
+            )
         }
         EntryMode.PRODUCT -> {
             var d by remember(recordId) { mutableStateOf<ProductDetailDto?>(null) }
@@ -19757,6 +19869,8 @@ private fun UserManagementForm(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(appUser.name, display = true, fontWeight = FontWeight.SemiBold)
                             Text("${appUser.email} · ${roleLabel(appUser.role)}", color = Muted, fontSize = 12.sp)
+                            // Nothing unless the server has an Aadhaar method switched on.
+                            AadhaarUserBadge(account = appUser, viewer = repository.cachedUser())
                             Text(
                                 if (isMaster) "All privileges (master admin)"
                                 else "$grantedCount of 4 privileges granted",

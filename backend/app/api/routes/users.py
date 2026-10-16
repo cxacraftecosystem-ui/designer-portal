@@ -24,6 +24,7 @@ from app.core.security import hash_password
 from app.core.user_fields import HAS_PASSWORD_KEY, SECRET_USER_FIELDS
 from app.schemas.users import UserCreate, UserUpdate
 from app.services import access_roster, credential_links, two_factor
+from app.services.aadhaar import flags as aadhaar_flags
 
 # THE RULES OF WHO MAY DO WHAT TO WHOSE ACCOUNT, imported rather than defined here. ``assert_role``
 # and ``assert_can_manage_target`` lived in this module until 2026-10-09; the password-link routes
@@ -104,7 +105,8 @@ def serialize_user(user: Any) -> dict[str, Any]:
     for field in SECRET_USER_FIELDS:
         payload.pop(field, None)
     payload[HAS_PASSWORD_KEY] = getattr(user, "passwordHash", None) is not None
-    return payload
+    # The Aadhaar result columns ride out only while a verification feature is switched on.
+    return aadhaar_flags.hide_columns(payload)
 
 
 def assert_not_demoting_master(

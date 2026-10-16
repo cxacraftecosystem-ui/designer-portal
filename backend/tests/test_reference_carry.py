@@ -315,6 +315,8 @@ ARTISAN_CARRIED = {
     # the id itself still does not.
     "workshopId": "participant.documentedAtWorkshop (Workshop.title, via the relation)",
 }
+_AADHAAR_VERIFICATION = "not carried — an Aadhaar verification result, never copied off the record"
+
 ARTISAN_NOT_CARRIED = {
     "status": _MUTABLE_VERDICT,
     "reviewNotes": "bookkeeping — internal moderation",
@@ -338,6 +340,23 @@ ARTISAN_NOT_CARRIED = {
     # distinction this ledger exists to keep visible. If a workshop stage or report ever needs the
     # finer figure, that is a new field with its own decision, not a silent default for this one.
     "experienceMonths": "no carry target — record_fields.py's Experience cell is whole-years only",
+    # Added 2026-10-16 (docs/AADHAAR.md). The Aadhaar VERIFICATION result is never carried into a
+    # workshop: it is regulated identity data the record encoder strips from every payload, and a
+    # copy hydrated into a stage entry at save time would outlive a withdrawal of the verification.
+    "aadhaarVerifyStatus": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyMethod": _AADHAAR_VERIFICATION,
+    "aadhaarVerifiedAt": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyLast4": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyName": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyBirthYear": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyDob": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyGender": _AADHAAR_VERIFICATION,
+    "aadhaarVerifySignedAt": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyTxn": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyNameMatch": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyById": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyDecidedById": _AADHAAR_VERIFICATION,
+    "aadhaarVerifyDecidedAt": _AADHAAR_VERIFICATION,
 }
 
 # ONE LEDGER ROW, THREE REFERENCING MODELS, AND THE TARGETS ARE NAMED IN FULL FOR A REASON. `Location`

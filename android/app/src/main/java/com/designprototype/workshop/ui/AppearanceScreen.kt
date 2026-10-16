@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.DarkMode
 // row `Icons.Filled.Explore`, and a settings row that led to the same place behind a different
 // picture would be a second sign on one door.
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Palette
@@ -419,6 +420,11 @@ fun AppearanceScreen(
      * page carries it at all.
      */
     onOpenWalkthrough: () -> Unit,
+    /**
+     * Open this account's Aadhaar verification. NULL — and then no row is drawn at all — unless the
+     * server has an Aadhaar method switched on; see `ui/aadhaar/AadhaarVerification.kt`.
+     */
+    onOpenAadhaar: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -646,6 +652,15 @@ fun AppearanceScreen(
             summary = "What is recorded about how you use this app, what is held, and how to withdraw",
             onClick = onOpenUsageRecording,
         )
+
+        if (onOpenAadhaar != null) {
+            SettingsRow(
+                icon = Icons.Filled.VerifiedUser,
+                title = "Aadhaar verification",
+                summary = "Confirm that this account belongs to you by checking it against your Aadhaar",
+                onClick = onOpenAadhaar,
+            )
+        }
 
         /*
          * ---- READ THE WALKTHROUGH AGAIN ---------------------------------------------------------

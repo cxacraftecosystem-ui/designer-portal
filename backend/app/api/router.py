@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    aadhaar,
     access,
     ai_keys,
     analytics,
@@ -56,6 +57,8 @@ api_router.add_api_route("/me", auth.me, methods=["GET"], tags=["auth"])
 # /verify ends in auth.open_session, so a sign-in finished there answers exactly as /login does.
 api_router.include_router(two_factor.router)
 api_router.include_router(users.router)
+api_router.include_router(aadhaar.router)
+api_router.include_router(aadhaar.features_router)
 # The platform allow-list — who may sign in AT ALL — and the queue of people asking to. Mounted next
 # to users because it is the other half of "who has an account here", and BEFORE designers because
 # the designer roster is now the narrower of the two lists: it says who is empanelled, this one says
