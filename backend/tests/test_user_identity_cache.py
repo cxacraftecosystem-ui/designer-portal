@@ -312,6 +312,10 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         # (scripts/provision_account.py, which writes no User row of its own) and the route share one
         # writer. It invalidates exactly as the route did.
         "app/services/account_provisioning.py",
+        # Aadhaar verification writes the verified identity onto the account inside its own
+        # transaction (``tx``) and invalidates after it. It arrived with the Aadhaar work and was
+        # missing from this register once the sweep learned to see ``tx`` writes (found 2026-10-17).
+        "app/services/aadhaar/records.py",
         # The sanction register creates a designer's account inside its own transaction
         # (``create_from_sanction``, through ``tx``) and invalidates after the commit.
         "app/services/sanction_orders.py",

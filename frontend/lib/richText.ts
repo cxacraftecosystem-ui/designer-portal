@@ -977,8 +977,23 @@ export function richSummary(raw: unknown, limit = 160): string {
 export function isStoredRichTextEmpty(raw: unknown): boolean {
   if (raw === null || raw === undefined) return true;
   if (typeof raw === "string") return !raw.trim();
-  return isEmptyDoc(fromStored(raw));
+  if (typeof raw !== "object") return isEmptyDoc(fromStored(raw));
+  /*
+    REMEMBERED PER DOCUMENT OBJECT. The stage form scores every required field on every keystroke,
+    and a stage with eighteen narratives re-parsed all eighteen documents to answer "is it empty" for
+    the seventeen nobody touched — measured as the largest item left in a keystroke's profile. A stored
+    value is never edited in place (an editor emits a NEW document object), so an object that has been
+    asked once has the same answer for as long as it exists; the cache holds it weakly, so it lives no
+    longer than the document does.
+  */
+  const known = emptinessByDocument.get(raw);
+  if (known !== undefined) return known;
+  const empty = isEmptyDoc(fromStored(raw));
+  emptinessByDocument.set(raw, empty);
+  return empty;
 }
+
+const emptinessByDocument = new WeakMap<object, boolean>();
 
 /**
  * A stable string identifying a stored value's DOCUMENT, independent of how it was spelled.

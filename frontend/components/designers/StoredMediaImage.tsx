@@ -21,7 +21,7 @@
 import { useEffect, useState } from "react";
 import { ImageOff } from "lucide-react";
 
-import { apiFetch } from "@/lib/api";
+import { fetchMediaRow } from "@/lib/mediaRows";
 import type { MediaFile } from "@/lib/types";
 
 type Resolution = { state: "loading" } | { state: "missing" } | { state: "ready"; file: MediaFile };
@@ -41,7 +41,7 @@ export function StoredMediaImage({
   useEffect(() => {
     let cancelled = false;
     setResolution({ state: "loading" });
-    apiFetch<MediaFile>(`/media/${mediaId}`)
+    fetchMediaRow(mediaId)
       .then((file) => {
         if (!cancelled) setResolution({ state: "ready", file });
       })

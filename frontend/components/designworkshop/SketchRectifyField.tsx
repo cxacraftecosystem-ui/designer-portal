@@ -41,7 +41,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, Scan, SquareDashedBottom, Wand2, X } from "lucide-react";
 
-import { apiFetch } from "@/lib/api";
+import { fetchMediaRow } from "@/lib/mediaRows";
 import { isLocalMediaRef, readLocalMedia } from "@/lib/designWorkshopStore";
 import { greyToRgba } from "@/lib/sketchRectify";
 import {
@@ -130,7 +130,7 @@ async function loadSourceBlob(ref: string): Promise<{ blob: Blob; name: string }
   }
   let media: MediaFile;
   try {
-    media = await apiFetch<MediaFile>(`/media/${ref}`);
+    media = await fetchMediaRow(ref);
   } catch {
     return { reason: "That photograph couldn't be loaded just now. It can be straightened later, or re-attach it here." };
   }

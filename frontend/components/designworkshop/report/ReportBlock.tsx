@@ -39,7 +39,7 @@ import { ImageOff, Map as MapIcon, Table2 } from "lucide-react";
 
 import { IndiaMap } from "@/components/map/IndiaMap";
 import type { MapCounts, MapPoint } from "@/components/map/types";
-import { apiFetch } from "@/lib/api";
+import { fetchMediaRow } from "@/lib/mediaRows";
 import { draftSessionUserId, isLocalMediaRef } from "@/lib/designWorkshopStore";
 import { mediaBlob } from "@/lib/offlineReport/images";
 import { hasMedia, putMedia } from "@/lib/offlineReport/reportCache";
@@ -504,7 +504,7 @@ export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<s
           */
           if (!isLocalMediaRef(mediaId)) {
             try {
-              const file = await apiFetch<MediaFile>(`/media/${mediaId}`);
+              const file = await fetchMediaRow(mediaId);
               if (file.url) void keepForOffline(mediaId, file.url, userId);
               return [mediaId, file.url ?? null] as const;
             } catch {

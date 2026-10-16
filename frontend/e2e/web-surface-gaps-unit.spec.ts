@@ -324,7 +324,9 @@ test("the record form mounts the tracing panel, not only the Sketches workspace"
     `components/sketches/upload/` before this.
   */
   const form = read(FIELD_INPUT);
-  expect(form).toContain('import { SketchTraceField } from "@/components/sketches/upload/SketchTraceField";');
+  // Loaded on demand since 2026-10-17 (the tracing engine is heavy and few fields offer it), so the
+  // mount is a `dynamic` import of the same component rather than a static one.
+  expect(form).toContain('import("@/components/sketches/upload/SketchTraceField").then((m) => m.SketchTraceField)');
   expect(form).toContain("<SketchTraceField targetLabel={field.label} disabled={disabled} onAttach={attach} />");
 });
 

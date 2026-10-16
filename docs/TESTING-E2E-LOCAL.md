@@ -241,6 +241,17 @@ In order, cheapest first:
    perfectly healthy to it, so this stays on the list.
 5. Only then read the failures.
 
+## Measuring the stage form's speed
+
+`frontend/e2e/stage-form-speed.spec.ts` is the instrument the stage form's speed work was done with
+(2026-10-17). It is skipped unless `E2E_STAGE_SPEED=1`, because it seeds a 22-stage workshop with 40
+photographs, and it is not a pass/fail gate: it prints and writes `test-results/stage-form-speed.json`
+— open time cold and warm, requests, script size, and the work and the time-to-paint of every
+keystroke. Run it against a `next build`, never `next dev`, and run it more than once: on a shared
+laptop the spread between runs is wider than most of the differences worth measuring. The file header
+lists the variables, including the one that re-measures an already-seeded workshop so a before and an
+after read the same rows.
+
 ---
 
 ## How this document is kept true

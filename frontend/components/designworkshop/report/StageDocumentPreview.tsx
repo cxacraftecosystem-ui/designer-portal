@@ -42,11 +42,12 @@
  * loading line once there are pages to show.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, FileText, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 
 import { useReportMediaUrls } from "@/components/designworkshop/report/ReportBlock";
 import { ReportSheets } from "@/components/designworkshop/report/ReportSheet";
+import { PreviewDisclosureButton } from "@/components/designworkshop/report/StagePreviewLayout";
 import { buildLiveDocument, stageMediaIds, type LiveStage } from "@/components/designworkshop/report/liveDocument";
 import type { PreviewBlock } from "@/components/designworkshop/report/previewModel";
 import {
@@ -55,7 +56,7 @@ import {
   stableBlocks,
   stageBlockRange
 } from "@/components/designworkshop/report/stageSlice";
-import { apiFetch } from "@/lib/api";
+import { fetchMediaRow } from "@/lib/mediaRows";
 import {
   fetchReportSources,
   previewDesignWorkshopReport,
@@ -80,6 +81,8 @@ import { isUnreachable } from "@/lib/failureTriage";
 import type { MediaFile } from "@/lib/types";
 
 export { sliceStageBlocks };
+// Re-exported from the light module the stage page now imports them from — see `StagePreviewLayout.tsx`.
+export { StagePreviewLayout, useStagePreviewOpen } from "@/components/designworkshop/report/StagePreviewLayout";
 
 const EMPTY_BLOCKS: PreviewBlock[] = [];
 
@@ -100,68 +103,6 @@ export function useStableBlocks(next: PreviewBlock[]): PreviewBlock[] {
  * is one rebuild, short enough that the page answers before the designer's eyes reach it.
  */
 export const LIVE_DEBOUNCE_MS = 250;
-
-/** Per-viewer convenience: whether the preview was left open. Never state anything depends on. */
-const OPEN_KEY = "dw_stage_preview_open";
-
-/**
- * Whether the preview is open, remembered in this browser — a designer who works with the paper
- * beside the form should not have to reopen it on every one of 22 stages. Closed by default: the
- * first open of every stage by every designer must not pay for building the whole document.
- */
-export function useStagePreviewOpen(): [boolean, (next: boolean) => void] {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    try {
-      if (window.localStorage.getItem(OPEN_KEY) === "1") setOpen(true);
-    } catch {
-      // Blocked storage: the panel simply starts closed.
-    }
-  }, []);
-  const set = useCallback((next: boolean) => {
-    setOpen(next);
-    try {
-      window.localStorage.setItem(OPEN_KEY, next ? "1" : "0");
-    } catch {
-      // Not remembered; nothing else changes.
-    }
-  }, []);
-  return [open, set];
-}
-
-/**
- * The stage form and the paper, side by side from `lg` up while the preview is open.
- *
- * Two independently scrolling panes, the house pattern for two views of one thing (the map page,
- * §10.3): the form scrolls with the page, the paper is `sticky` and scrolls inside itself with
- * `overscroll-contain`, so reaching the end of the paper never lurches the form. Below `lg` there is
- * no room for two panes and the preview sits above the form as before.
- */
-export function StagePreviewLayout({ open, preview, children }: { open: boolean; preview: ReactNode; children: ReactNode }) {
-  return (
-    <div
-      className={
-        open
-          ? "lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-start lg:gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,32rem)]"
-          : undefined
-      }
-    >
-      <div
-        className={
-          open
-            ? // A BOUNDED pane that does not itself scroll: the preview inside it pins its controls
-              // and scrolls only the paper (`ReportSheets`' `scrollPages`), so nothing a designer
-              // needs to reach — the page count, the zoom, "Show every page" — ever scrolls away.
-              "lg:sticky lg:top-24 lg:order-2 lg:flex lg:h-[calc(100dvh-7.5rem)] lg:flex-col"
-            : undefined
-        }
-      >
-        {preview}
-      </div>
-      <div className={open ? "min-w-0 lg:order-1" : undefined}>{children}</div>
-    </div>
-  );
-}
 
 type Base = { blocks: PreviewBlock[]; warnings: string[]; meta: DwPreview["meta"]; fromServer: boolean };
 
@@ -202,7 +143,7 @@ function useProbedImageRefs(ids: string[], known: Record<string, unknown> | unde
             blob = local?.blob ?? null;
             mime = local?.mimeType ?? mime;
           } else {
-            const file = await apiFetch<MediaFile>(`/media/${id}`);
+            const file = await fetchMediaRow(id);
             if (file.url) {
               const response = await fetch(file.url);
               if (response.ok) blob = await response.blob();
@@ -485,23 +426,7 @@ export function StageDocumentPreview({
       className={pane ? "panel mb-5 lg:mb-0 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col" : "panel mb-5"}
       data-stage-preview
     >
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-4 py-3 text-left"
-        aria-expanded={isOpen}
-        onClick={() => setOpen(!isOpen)}
-      >
-        {isOpen ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-ink-500" aria-hidden />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-ink-500" aria-hidden />
-        )}
-        <FileText className="h-4 w-4 shrink-0 text-field-600 dark:text-purple-300" aria-hidden />
-        <span className="min-w-0 flex-1 text-sm font-medium text-ink-900">
-          Document preview
-          <span className="ml-2 font-normal text-ink-500">— how this stage prints in the report</span>
-        </span>
-      </button>
+      <PreviewDisclosureButton open={isOpen} onToggle={() => setOpen(!isOpen)} />
 
       {isOpen ? (
         <div className={pane ? "border-t border-line-200 p-3 sm:p-4 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col" : "border-t border-line-200 p-3 sm:p-4"}>

@@ -1455,7 +1455,8 @@ has the rules and rule 5 the full lists.
 > **That is fail-closed and PRE-EXISTING**, unchanged by the 2026-08-27 widening, and it is recorded
 > rather than fixed: both clients are already typed to the absence (`MediaProcessingJob.mediaFile`
 > in `frontend/lib/media.ts` is a `Pick<>` with no `url`), and the bytes have their own surfaces in
-> `GET /media` and `GET /media/{id}`. It is recorded HERE because a reader checking this table
+> `GET /media` and `GET /media/{id}` (and `GET /media/batch`, which is that read for many ids through
+> the same encoder). It is recorded HERE because a reader checking this table
 > against the media-jobs panel would otherwise find the row wrong, with no way to tell a deliberate
 > refusal from a bug — which is the same failure this whole §4.4.1 note exists to end, pointing the
 > other way. `public_encode(interview.media or [])` in `backend/app/api/routes/artisans.py` has the

@@ -66,7 +66,7 @@ import { useEffect, useState } from "react";
 import { Download, FileText, FileWarning } from "lucide-react";
 
 import { ModelViewer } from "@/components/media/ModelViewer";
-import { apiFetch } from "@/lib/api";
+import { fetchMediaRow } from "@/lib/mediaRows";
 import { modelFormatOf } from "@/lib/modelFormats";
 import type { MediaFile } from "@/lib/types";
 
@@ -169,7 +169,7 @@ export function DocumentPreview({
     if (!mediaId) return;
     let cancelled = false;
     setResolution({ state: "loading" });
-    apiFetch<MediaFile>(`/media/${mediaId}`)
+    fetchMediaRow(mediaId)
       .then((file) => {
         if (!cancelled) setResolution({ state: "ready", file });
       })

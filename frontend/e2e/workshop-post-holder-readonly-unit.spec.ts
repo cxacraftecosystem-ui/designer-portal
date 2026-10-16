@@ -796,7 +796,8 @@ test("the identity decision is held by the stage form's lock, which covers the p
   expect(field.slice(field.indexOf("<IdentityCardReader")).slice(0, 400)).toContain("disabled={disabled}");
   const stage = read("app", "(protected)", "design-workshops", "[id]", "stages", "[stageKey]", "page.tsx");
   expect(stage).toContain("const locked = saving || writesHeld(postRefusal) || frozenReason !== null;");
-  expect(stage.slice(stage.indexOf("<EntityForm")).slice(0, 600)).toContain("disabled={locked}");
+  // The page mounts `EntityForm` through its memoised wrapper (2026-10-17); the prop is the same.
+  expect(stage.slice(stage.indexOf("<MemoEntityForm")).slice(0, 600)).toContain("disabled={locked}");
 });
 
 test("every record form hands its attached files the stored workshop's answer", () => {

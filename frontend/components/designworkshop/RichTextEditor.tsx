@@ -123,7 +123,7 @@
  * in it, so a library could be dropped in beneath it without any stored value changing.
  */
 
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Bold,
   Code,
@@ -175,7 +175,7 @@ import { AiVerbSelectionMenu } from "@/components/designworkshop/AiVerbSelection
 // `readSelectedPassage`. It lives in `lib/aiVerbs.ts` rather than in the document model because it
 // is a verb's idea of a source passage, not the editor's idea of a selection.
 import { selectedPassage } from "@/lib/aiVerbs";
-import { apiFetch } from "@/lib/api";
+import { fetchMediaRow } from "@/lib/mediaRows";
 import { uploadMediaBatch } from "@/lib/media";
 import { lockPageScroll, unlockPageScroll } from "@/lib/scrollLock";
 import type { MediaFile } from "@/lib/types";
@@ -500,9 +500,12 @@ function blockElement(
       for (let column = 0; column < width; column += 1) {
         // The first row is the header — the same reading the server and the phone give it.
         const cell = document.createElement(rowIndex === 0 ? "th" : "td");
+        // `bg-field-200` and `line-200` are real rungs of the palette. This read `bg-ink-800 … text-white`
+        // and `border-line-300` until 2026-10-17 — neither exists, so neither compiled, and the header
+        // row drew white text on the card: a table whose column names nobody could read.
         cell.className = cn(
-          "border border-line-300 px-2 py-1 align-top",
-          rowIndex === 0 ? "bg-ink-800 text-left font-semibold text-white" : ""
+          "border border-line-200 px-2 py-1 align-top",
+          rowIndex === 0 ? "bg-field-200 text-left font-semibold text-ink-900" : ""
         );
         const spans = row[column] ?? [];
         if (!spans.length) cell.appendChild(document.createElement("br"));
@@ -989,6 +992,19 @@ const TOOL_BUTTON_BASE =
 const TOOL_BUTTON_IDLE = "border-transparent hover:border-purple-300 hover:bg-purple-50 hover:text-ink-900";
 const TOOL_BUTTON_ACTIVE = "border-purple-300 bg-purple-50 text-purple-700";
 
+/** Do two toolbar states light exactly the same buttons? */
+function sameToolbarState(a: RichToolbarState, b: RichToolbarState): boolean {
+  return (
+    a.kind === b.kind &&
+    a.level === b.level &&
+    a.align === b.align &&
+    a.canIndent === b.canIndent &&
+    a.canOutdent === b.canOutdent &&
+    a.marks.length === b.marks.length &&
+    a.marks.every((mark, index) => mark === b.marks[index])
+  );
+}
+
 /**
  * The contextual bar.
  *
@@ -1095,6 +1111,9 @@ function Toolbar({
     </div>
   );
 }
+
+/** The bar, skipped on a keystroke that changes no button — see `sameToolbarState`. */
+const MemoToolbar = memo(Toolbar);
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The component
@@ -1406,7 +1425,18 @@ export function RichTextEditor({
     setChrome((current) =>
       current.signature === signature
         ? current
-        : { signature, bar, counts, canUndo, canRedo, showPlaceholder, selectionChars }
+        : {
+            signature,
+            // THE TOOLBAR'S OWN STATE KEEPS ITS IDENTITY WHEN ONLY A COUNT MOVED. Every keystroke changes
+            // the character count, so the chrome is replaced on every key; a fresh `bar` object with the
+            // same marks and kind would then rebuild every toolbar button and its icon for nothing.
+            bar: sameToolbarState(current.bar, bar) ? current.bar : bar,
+            counts,
+            canUndo,
+            canRedo,
+            showPlaceholder,
+            selectionChars
+          }
     );
 
     // The find bar's tally has to follow the document, not just the query: replacing one of six
@@ -1486,7 +1516,7 @@ export function RichTextEditor({
       void (async () => {
         let url: string | null = null;
         try {
-          url = (await apiFetch<MediaFile>(`/media/${id}`)).url ?? null;
+          url = (await fetchMediaRow(id)).url ?? null;
         } catch {
           // Not entitled to it, deleted since it was placed, or simply no connection. All three
           // are the same answer to the designer standing here, and none of them is a reason to
@@ -2781,7 +2811,7 @@ export function RichTextEditor({
 
   const toolbar =
     disabled || !active ? null : (
-      <Toolbar items={items} editorId={editorId} onDismiss={dismissToolbar} containerRef={toolbarRef} />
+      <MemoToolbar items={items} editorId={editorId} onDismiss={dismissToolbar} containerRef={toolbarRef} />
     );
 
   /* ── Render ─────────────────────────────────────────────────────────────── */

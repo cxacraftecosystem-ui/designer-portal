@@ -38,18 +38,20 @@ import {
   useCallback,
   useContext,
   useEffect,
+  memo,
   useId,
+  useInsertionEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore
 } from "react";
+import dynamic from "next/dynamic";
 import type { DwFieldStamp } from "@/lib/designWorkshops";
 import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
 import { Paperclip, X } from "lucide-react";
 
 import { DictationButton } from "@/components/designworkshop/Dictation";
-import { IdentityCardReader } from "@/components/designworkshop/IdentityCardReader";
 import { MediaAiVerbs } from "@/components/designworkshop/MediaAiVerbs";
 import { RichTextEditor } from "@/components/designworkshop/RichTextEditor";
 import { deriveValue, isDerived } from "@/lib/derivedFields";
@@ -80,11 +82,8 @@ import {
   formatShownByControl,
   isAadhaarMaskValue
 } from "@/components/designworkshop/stageFieldFormats";
-import { PhotoMeasureField } from "@/components/designworkshop/PhotoMeasureField";
-import { SketchRectifyField, type SketchSource } from "@/components/designworkshop/SketchRectifyField";
-import { SketchTraceField } from "@/components/sketches/upload/SketchTraceField";
+import type { SketchSource } from "@/components/designworkshop/SketchRectifyField";
 import { SearchInput } from "@/components/SearchInput";
-import { SignaturePad } from "@/components/SignaturePad";
 import { StageAddressField } from "@/components/designworkshop/StageAddressField";
 import { StageGeoField } from "@/components/designworkshop/StageGeoField";
 import { StageMediaNoteField } from "@/components/designworkshop/StageMediaNoteField";
@@ -142,6 +141,7 @@ import { NumberedListField } from "@/components/forms/NumberedListInput";
 import { PhoneField } from "@/components/forms/PhoneField";
 import { Dropdown, MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { apiFetch } from "@/lib/api";
+import { fetchMediaRow } from "@/lib/mediaRows";
 import {
   DW_DEFAULT_MAX_ITEMS,
   inputValue,
@@ -174,6 +174,39 @@ import { downloadLocalMedia, downloadMediaUrl } from "@/lib/localMediaDownload";
 import { isTransient } from "@/lib/offline";
 import { loadStageReferences } from "@/lib/referenceCache";
 import type { MediaFile, MediaType } from "@/lib/types";
+
+/*
+  THE FIVE TOOLS A PHOTOGRAPH OR SIGNATURE FIELD CAN OFFER ARE LOADED WHEN ONE IS FIRST SHOWN.
+
+  The signature pad, the identity-card reader, the measure-from-photo panel and the two sketch tools
+  (straighten, trace) each appear on a handful of fields in the whole registry, yet as static imports
+  they — the tracing engine above all — were part of the script every stage waited for before it could
+  be typed into. Each is drawn only inside a branch that already decided the field needs it, so loading
+  it there changes nothing but when its script arrives. The placeholder keeps a line of height so the
+  form does not jump when the tool appears.
+*/
+function ToolLoading() {
+  return <p className="min-h-10 text-xs leading-5 text-ink-500">Getting this tool ready…</p>;
+}
+const SignaturePad = dynamic(() => import("@/components/SignaturePad").then((m) => m.SignaturePad), {
+  loading: ToolLoading
+});
+const IdentityCardReader = dynamic(
+  () => import("@/components/designworkshop/IdentityCardReader").then((m) => m.IdentityCardReader),
+  { loading: ToolLoading }
+);
+const PhotoMeasureField = dynamic(
+  () => import("@/components/designworkshop/PhotoMeasureField").then((m) => m.PhotoMeasureField),
+  { loading: ToolLoading }
+);
+const SketchRectifyField = dynamic(
+  () => import("@/components/designworkshop/SketchRectifyField").then((m) => m.SketchRectifyField),
+  { loading: ToolLoading }
+);
+const SketchTraceField = dynamic(
+  () => import("@/components/sketches/upload/SketchTraceField").then((m) => m.SketchTraceField),
+  { loading: ToolLoading }
+);
 
 /** A `dwlocal:` reference read out of the draft store: what its tile draws, and the bytes to save. */
 type StagedTile = {
@@ -677,6 +710,12 @@ export function FieldInput({
    * here for as long as this branch has existed. The comment claiming otherwise is corrected below.
    */
   const formatProblem = fieldFormatError(field, value);
+  /**
+   * Where a photograph placed inside rich text is filed — see the RICH_TEXT branch. Held here, at the
+   * top, because hooks cannot sit in a branch: a fresh object on every render rebuilt the editor's
+   * whole toolbar on every keystroke.
+   */
+  const richTextUpload = useMemo(() => ({ recordType: DW_MEDIA_RECORD_TYPE, recordId: workshopId }), [workshopId]);
   /**
    * True when the mounted control prints that sentence itself, so this wrapper must not repeat it.
    *
@@ -1357,7 +1396,7 @@ export function FieldInput({
             picture button at all, which is the honest state for a caller that cannot say which
             record an upload belongs to.
           */
-          upload={{ recordType: DW_MEDIA_RECORD_TYPE, recordId: workshopId }}
+          upload={richTextUpload}
         />
       );
 
@@ -1873,6 +1912,128 @@ export function FieldInput({
       );
     }
   }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * One keystroke, one field — the memoised mount the stage form uses
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * DOES THIS FIELD'S CONTROL READ ANY OTHER BOX OF THE RECORD IT SITS ON?
+ *
+ * `FieldInput` is handed the whole record (`row`) because a handful of controls need a sibling's
+ * value: the address lists cascade, the workshop-name list narrows on the type chosen beside it, the
+ * media note counts the linked record's files, a derived number shows what it computes to, a date
+ * range keeps its two ends in order, a reference narrows on its parent and hydrates its siblings, and
+ * three photograph tools read the boxes they measure into or draw from. EVERY OTHER CONTROL IGNORES IT.
+ *
+ * That matters because a keystroke in one box hands every box of the record a new `row`, and a stage
+ * singleton is thirty-odd boxes: re-drawing all of them — rich-text editors and photo galleries
+ * included — for a letter typed into one was most of what a keystroke cost (measured by
+ * `e2e/stage-form-speed.spec.ts`). {@link StageFieldInput} therefore skips a field whose own props
+ * did not change and whose control does not read `row`.
+ *
+ * KEEP THIS IN STEP WITH THE SWITCH ABOVE. It answers branch by branch, from the same predicates the
+ * branches use, and it answers TRUE for anything it is not sure of — a field that re-draws needlessly
+ * costs a millisecond, a field that misses a sibling's change shows a stale answer. A new branch that
+ * reads `row` must be added here; `e2e/stage-field-memo-unit.spec.ts` checks that every `row` read in
+ * this file sits in a branch this function names.
+ */
+export function fieldReadsRow(entity: DwEntity, field: DwField): boolean {
+  switch (field.type) {
+    case "PHONE":
+    case "LONG_TEXT":
+    case "RICH_TEXT":
+    case "TIME":
+    case "BOOL":
+    case "ENUM":
+    case "TAGS":
+    case "GEO":
+      return false;
+    case "TEXT":
+    case "URL":
+    case "EMAIL":
+      return (
+        (field.type === "TEXT" && (addressListRole(entity, field) !== null || recordMediaNoteRole(entity, field) !== null)) ||
+        Boolean(ownWorkshopTitleRole(field))
+      );
+    case "INT":
+    case "DECIMAL":
+    case "PERCENT":
+    case "MONEY":
+      return isDerived(field);
+    case "DATE":
+      return dateRangePartner(entity, field) !== null;
+    case "IMAGE":
+    case "IMAGE_LIST":
+    case "FILE":
+    case "AUDIO":
+    case "VIDEO":
+      return offersIdentityOcr(entity, field) || offersPhotoMeasure(entity, field) || offersSketchRectify(entity, field);
+    default:
+      // MULTI_ENUM and REF read their siblings; anything unknown is assumed to.
+      return true;
+  }
+}
+
+/**
+ * Equal props, for {@link MemoFieldInput}: every prop by identity, except that `row` is ignored for a
+ * control {@link fieldReadsRow} says never reads it. The callbacks and the two small objects are made
+ * stable by {@link StageFieldInput} before they get here, so identity is the right test for them.
+ */
+function sameFieldInputProps(previous: FieldInputProps, next: FieldInputProps): boolean {
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]) as Set<keyof FieldInputProps>;
+  for (const key of keys) {
+    if (Object.is(previous[key], next[key])) continue;
+    if (key === "row" && next.entity === previous.entity && next.field === previous.field && !fieldReadsRow(next.entity, next.field)) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+const MemoFieldInput = memo(FieldInput, sameFieldInputProps);
+
+/**
+ * `FieldInput` as the stage form mounts it: re-drawn only when something it shows has changed.
+ *
+ * THE CALLBACKS ARE STABLE AND ALWAYS CALL THE LATEST ONES. The grids hand every field fresh
+ * closures on every render — a collection row's writer is built over that render's rows — so a
+ * memoised field cannot simply keep the closure it was first given: it would write a later edit on top
+ * of rows that no longer exist. Instead the field is given one function for its whole life that calls
+ * whatever the newest render passed. The newest props are recorded in an insertion effect, which runs
+ * before any layout effect, passive effect or event handler of the same commit can call back.
+ *
+ * `place` and `caption` are rebuilt from their parts for the same reason the callbacks are held: they
+ * are small objects the grids build afresh on every render, and a new object is a changed prop.
+ */
+export function StageFieldInput(props: FieldInputProps) {
+  const latest = useRef(props);
+  useInsertionEffect(() => {
+    latest.current = props;
+  });
+  const onChange = useCallback((value: DwValue) => latest.current.onChange(value), []);
+  const onPatch = useCallback((values: Record<string, DwValue>) => latest.current.onPatch(values), []);
+  const onCaptionChange = useCallback((value: DwValue) => latest.current.caption?.onChange(value), []);
+
+  const captionField = props.caption?.field;
+  const captionValue = props.caption?.value;
+  const caption = useMemo(
+    () => (captionField ? { field: captionField, value: captionValue, onChange: onCaptionChange } : undefined),
+    [captionField, captionValue, onCaptionChange]
+  );
+
+  const hasPlace = props.place !== undefined;
+  const stageKey = props.place?.stageKey;
+  const entityKey = props.place?.entityKey;
+  const rowKey = props.place?.rowKey;
+  const place = useMemo(
+    () => (hasPlace ? { stageKey, entityKey, rowKey } : undefined),
+    [hasPlace, stageKey, entityKey, rowKey]
+  );
+
+  return <MemoFieldInput {...props} onChange={onChange} onPatch={onPatch} caption={caption} place={place} />;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -3355,7 +3516,7 @@ function MediaField({
       const resolved = await Promise.all(
         unknown.map(async (id) => {
           try {
-            return [id, await apiFetch<MediaFile>(`/media/${id}`)] as const;
+            return [id, await fetchMediaRow(id)] as const;
           } catch {
             // A media row the caller is not entitled to read, one deleted out from under this stage,
             // or simply no connection. The id stays in the value — dropping it would silently
@@ -4250,6 +4411,7 @@ function MediaField({
                     alt={local ? local.name : file?.caption || file?.originalFilename || ""}
                     className="h-10 w-10 shrink-0 rounded-sm object-cover"
                     loading="lazy"
+                    decoding="async"
                   />
                 ) : (
                   <span className="grid h-10 w-10 shrink-0 place-items-center rounded-sm bg-field-200 text-field-600 dark:text-purple-300">

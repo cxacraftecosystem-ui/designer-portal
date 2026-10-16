@@ -1487,6 +1487,45 @@ def _relink_delegate(record_type: str) -> Any:
     }.get(record_type)
 
 
+#: The most ids one ``GET /media/batch`` answers. A stage form holds at most a few dozen photographs
+#: on screen at once, and the web client splits anything longer into several calls.
+MEDIA_BATCH_MAX = 100
+
+
+@router.get("/batch")
+async def get_media_batch(
+    ids: str = Query(..., description="Comma-separated media ids, at most MEDIA_BATCH_MAX of them."),
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Several ``GET /media/{id}`` answers in one request (additive, 2026-10-17).
+
+    WHY IT EXISTS. A stage of a design workshop holds forty photographs, and every one of them was
+    resolved by its own ``GET /media/{id}`` — forty authenticated requests, six at a time over one
+    HTTP/1.1 origin, before the gallery could draw a single name. Measured on a seeded 22-stage
+    workshop, that queue was the longest serial chain on the stage form's open.
+
+    IT ANSWERS EXACTLY WHAT THE SINGLE READ ANSWERS, row for row: the same ``INCLUDE``, the same
+    ``_public`` encoder (so the ``url`` travels to exactly the callers the single read hands it to —
+    ``_public`` computes that entitlement once for the whole list, which is the point), in the order
+    the ids were asked for. An id with no row is listed under ``missing`` rather than failing the
+    batch: the single read answers it with a 404, and the client turns ``missing`` back into that
+    same 404 for the one caller who asked about it.
+    """
+    wanted = list(dict.fromkeys(part.strip() for part in ids.split(",") if part.strip()))
+    if len(wanted) > MEDIA_BATCH_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Ask for at most {MEDIA_BATCH_MAX} files at a time.",
+        )
+    if not wanted:
+        return {"items": [], "missing": []}
+    rows = await db.mediafile.find_many(where={"id": {"in": wanted}}, include=INCLUDE)
+    by_id = {row.id: row for row in rows}
+    found = [by_id[media_id] for media_id in wanted if media_id in by_id]
+    items = await _public(found, current_user) if found else []
+    return {"items": items, "missing": [media_id for media_id in wanted if media_id not in by_id]}
+
+
 @router.get("/orphans")
 async def list_orphan_media(current_user: Any = Depends(require_admin)) -> list[dict[str, Any]]:
     """Admin-only recovery list: media still tagged to a record type/id whose parent no longer exists

@@ -244,6 +244,17 @@ baseline that a redeploy has to be re-measured against:
 | `export.py::dataset_manifest` | 12.98 trips MEASURED | the six tables in one wave; the media read stays a second wave because `media_or` is built out of their ids. The two visibility predicates above them were gathered too, but see the note below — that pair is one query either way |
 | `data_browser.py::_report_records` (`/data/report`) | 19.01 trips MEASURED | the eight root reads in one wave; in the workshop branch products/tools/interviews (all keyed off the artisan ids alone) in one wave, with `processes` still below them because it needs the product ids. **Two corrections, 2026-09-03** — "the eight root reads in one wave" is no longer true *on the deployment*: `gather_reads` is bounded by `pool_width()`, `DATABASE_CONNECTION_LIMIT` is **5** in production ([ENVIRONMENT.md](ENVIRONMENT.md), recorded 2026-09-02), so eight coroutines land as **5 + 3**. And the design-workshop second wave is now **three** reads, not one: the stage entries plus two bounded `group_by` counts — see §5.2 |
 | `media.py::list_media` | `count`, then `find_many`, then `_interview_labels`, then `media_url_scope`, in series | `count`+`find_many` in one wave; `_interview_labels`+`media_url_scope` in the next, inside the shared `_public`, so `GET /media/{id}` and `GET /media/orphans` inherit it |
+| `design_workshops.py::get_stage` (2026-10-17) | the stage's entries, then the custom definition, then the authors' names, then the transcripts, in series | entries + definition in one wave; names + transcripts in the next. It is on the critical path of every stage open |
+| `sanction_orders.py::awaiting_count` (2026-10-17) | one stage-1 read PER SANCTION ORDER (75 trips for 74 orders), on every page an officer or admin opens | one read for every order's stage 1 (`_stage_one_singletons`), scored by the same scorer; measured 1.5 s → 0.36 s locally. The officer's list still reads per row |
+
+**And a round trip the CLIENT was paying per photograph (2026-10-17).** A stage form resolved every
+photograph on it through its own `GET /media/{id}` — forty authenticated requests on a busy stage,
+six at a time over one HTTP/1.1 origin. `GET /media/batch?ids=…` answers up to 100 of them in one
+request through the same `_public` encoder (so the `url` entitlement is computed once for the list,
+row for row what the single read answers), and `frontend/lib/mediaRows.ts` coalesces every lookup
+made in one task into it, falling back to the single read against a server that predates the route.
+Measured before and after by `frontend/e2e/stage-form-speed.spec.ts`; the numbers are in
+`docs/UX_AUDIT_2026-10-16.md` under DW-21.
 
 `data_browser.py::_scope_for` was gathered with them, and **it is the one conversion in this
 list that buys nothing measurable**, which is worth saying rather than leaving to be discovered.
