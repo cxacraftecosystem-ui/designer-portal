@@ -310,6 +310,9 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         # (scripts/provision_account.py, which writes no User row of its own) and the route share one
         # writer. It invalidates exactly as the route did.
         "app/services/account_provisioning.py",
+        # Two-step verification (2026-10-16): the secret, the recovery codes, the last step and the
+        # failure budgets. Every budget write invalidates; the routes invalidate after the rest.
+        "app/services/two_factor.py",
         "scripts/seed_admin.py",
         "scripts/seed_test_accounts.py",
         # The sessionsValidFrom backfill (2026-09-03) writes User rows from OUTSIDE any serving

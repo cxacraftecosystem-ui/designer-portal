@@ -83,7 +83,10 @@ _EXEMPT_PREFIXES = ("/health",)
 # caller can reach at all. So the checklist for the next password check anybody adds is two items
 # and not one: add the path here if it is anonymous, and take the account budget in the handler.
 # Neither is inferred from the other and nothing checks that you did both.
-_CREDENTIAL_PREFIXES = ("/api/auth/login", "/api/datasets/token")
+#
+# `/api/auth/two-factor/verify` (2026-10-16) is the second half of the sign-in and is reached the
+# same anonymous way, so it is on the list; its handler takes the account budget as well.
+_CREDENTIAL_PREFIXES = ("/api/auth/login", "/api/auth/two-factor/verify", "/api/datasets/token")
 
 # Failed sign-ins allowed per address before the door closes, and the window they refill over.
 #

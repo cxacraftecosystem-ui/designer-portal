@@ -1730,28 +1730,28 @@ a `recordHref` or a `RECORD_HREF` entry whose signature takes an `id`, use it.
 - `describeTrouble` writes its own sentence per HTTP status because FastAPI's 404 body is the literal
   string "Not Found". **A failed load must not empty the screen** — the built-in default stays visible,
   explicitly labelled as not the live ranking.
-- **The report, previewed from the screen where the words are typed:
-  `components/designworkshop/report/StageDocumentPreview.tsx`** — a disclosure on the stage page,
-  added 2026-08-25. **It is not a fifth renderer and that is the constraint everything about it bends
-  around.** `GET /report/preview` builds the same `ReportDocument` the .docx writer, the server .pdf
-  writer and the two on-device Kotlin writers consume; this component fetches it and hands the blocks
-  to the same `ReportBlock` the full report page uses, and reconstructs nothing. Rendering the preview
-  from the LOCAL DRAFT is the tempting alternative — it would update on every keystroke with no round
-  trip — and it is refused outright: there are already four renderers of a document a ministry
-  receives that must agree line for line, and a fifth built in the browser from the form's own state
-  would be the only one nobody ever opens a file to check, drifting silently on the one screen a
-  designer trusts *precisely so that* they need not open the file.
-  Three consequences to keep, each of which is rule 10 wearing a different hat. **"Live" follows the
-  SAVES, not the keystrokes**, and the strip at the top of the panel says so in those words — a
-  preview that silently lagged the form would have the designer read the absence of their last edit
-  as the report dropping it. **The stage's slice is LOCATED, never re-derived:** the payload is the
-  whole document and its blocks carry no stage identity (`HeadingBlock.bookmark` exists on the
-  dataclass and the builder never assigns it), so the slice runs from the heading whose text is this
-  stage's title to the next heading at the same level or above; when that match fails it **shows the
-  whole document and says why**. And **it is closed until asked for**: building the document loads
-  every stage, resolves the media rows and rasterises the figures, which is the right cost for a
-  designer who wants to see the document and the wrong one to pay on every stage open by every
-  designer on a village connection. It refreshes on a token the save path bumps.
+- **The report, previewed LIVE from the screen where the words are typed:
+  `components/designworkshop/report/StageDocumentPreview.tsx`** — rebuilt 2026-10-16. It is still
+  **not a fifth renderer**: the document is built by `lib/offlineReport`'s port of the server's
+  builder (held to the server block for block by `offline-report-parity-unit.spec.ts`) from the draft
+  with the stage form's UNSAVED values laid over it (`report/liveDocument.buildLiveDocument`), and
+  only that stage's blocks are spliced into the server's last-saved document
+  (`report/stageSlice.spliceStageBlocks`), so every other page keeps the server's content and real
+  page numbers. The first version refused to build from the draft; that argument ended when the
+  parity-tested device builder existed. It is drawn by the same `ReportSheets` as the report page,
+  focused on the pages the stage falls on (`focusRange`), and from `lg` up it is a sticky second pane
+  beside the form (`StagePreviewLayout`, the §10.3 two-pane rule). Rules that keep it smooth, each a
+  bug it used to have: rebuild on a `LIVE_DEBOUNCE_MS` (250) debounce, never per keystroke; keep
+  unchanged block OBJECTS across rebuilds (`stableBlocks` / `useStableBlocks`, `ReportBlock` is
+  `memo`); `ReportSheets` draws `measurement.blocks`, never the newest prop, so a rebuild is measured
+  off screen and swapped in whole (no frame of new text in old breaks); photographs are boxed from
+  `width_px`/`height_px`/`rotation_deg` exactly as `report_pdf._image_box` boxes them (0.62 of the
+  column for a photograph, 0.30 for a gallery cell, `galleryColumns`' 45 mm floor), so a picture
+  loading never moves a break, and the measuring copy never downloads one; never replace pages with a
+  loading line once there are pages. The stage's slice is LOCATED by its heading title, never
+  re-derived; when the heading is missing it shows the whole document and says why. Closed until asked
+  for, open state remembered per browser. Android's twin is `DwStagePreview.kt` over `DwStageSlice.kt`
+  (same function names, same `shared/report-parity/stage-slice-vectors.json`).
 - ⚠ The explicit `{" "}` after `<strong>not</strong>` is load-bearing: the JSX transform drops the
   leading space of a text node following an inline element, so without it the sentence reads
   "does notapprove it".

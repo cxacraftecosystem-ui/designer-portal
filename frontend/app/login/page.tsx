@@ -10,6 +10,7 @@ import { useAuth } from "@/components/AuthProvider";
 // The form itself, which `AppShell` renders too — the same component, so the two hosts cannot
 // come to enforce different password rules. See its header.
 import { FirstPasswordGate } from "@/components/FirstPasswordGate";
+import { TwoStepChallengeForm } from "@/components/TwoStepChallengeForm";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { GLASS_PANEL, GlassSurface } from "@/components/ui/GlassSurface";
 import { useToast } from "@/components/ui/Toast";
@@ -49,6 +50,7 @@ import {
   type UsageConsentGate,
   type UsageConsentNotice
 } from "@/lib/usage";
+import { isTwoFactorChallenge } from "@/lib/twoFactor";
 import type { User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -336,6 +338,13 @@ function StandingRefusal({ gate, onContinue }: { gate: UsageConsentGate; onConti
 function LoginView() {
   const router = useRouter();
   const { login, loginWithGoogle, loginWithOidc, logout, markPasswordChanged, refreshMe, user } = useAuth();
+  /**
+   * The challenge token of a sign-in that passed its first factor on an account with two-step
+   * verification on, or null. While it is set nobody is signed in, the card shows
+   * `TwoStepChallengeForm` instead of the sign-in controls, and the redirect effect stands down —
+   * `verifyTwoFactor` adopts the account a moment before `finishSecondStep` has settled consent.
+   */
+  const [challenge, setChallenge] = useState<string | null>(null);
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -440,8 +449,8 @@ function LoginView() {
   const passwordGate = mustChangePassword(user) ? user : null;
 
   useEffect(() => {
-    if (user && !signingIn.current && !held && !passwordGate) router.replace("/dashboard");
-  }, [held, passwordGate, router, user]);
+    if (user && !signingIn.current && !held && !passwordGate && !challenge) router.replace("/dashboard");
+  }, [challenge, held, passwordGate, router, user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -651,7 +660,13 @@ function LoginView() {
           setRefusal(null);
           signingIn.current = true;
           try {
-            const account = await loginWithGoogle(response.credential);
+            const outcome = await loginWithGoogle(response.credential);
+            if (isTwoFactorChallenge(outcome)) {
+              signingIn.current = false;
+              setChallenge(outcome.challenge_token);
+              return;
+            }
+            const account = outcome;
             const standing = await gateNow.current.settleConsent(account);
             signingIn.current = false;
             if (standing) {
@@ -718,6 +733,28 @@ function LoginView() {
     return () => observer.disconnect();
   }, [renderGoogleButton]);
 
+  /**
+   * THE REST OF A SIGN-IN, once the second step has been proved — exactly what the three first-factor
+   * paths do after their own `login` call: the consent settled, then the password gate read off the
+   * ACCOUNT, then the dashboard. `held` is set BEFORE the challenge is dropped, so the redirect effect
+   * never sees a signed-in account with neither standing.
+   */
+  async function finishSecondStep(account: User) {
+    signingIn.current = true;
+    try {
+      const standing = await settleConsent(account);
+      if (standing) {
+        setHeld(standing);
+        return;
+      }
+      if (mustChangePassword(account)) return;
+      router.replace("/dashboard");
+    } finally {
+      signingIn.current = false;
+      setChallenge(null);
+    }
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // The submit button is already disabled while `blocked`, so this cannot normally be reached —
@@ -734,7 +771,12 @@ function LoginView() {
     // order matters — and taken back in the catch below if the attempt is refused.
     setDoorPassword(password);
     try {
-      const account = await login(email, password);
+      const outcome = await login(email, password);
+      if (isTwoFactorChallenge(outcome)) {
+        setChallenge(outcome.challenge_token);
+        return;
+      }
+      const account = outcome;
       const standing = await settleConsent(account);
       if (standing) {
         setHeld(standing);
@@ -823,7 +865,13 @@ function LoginView() {
     signingIn.current = true;
     void (async () => {
       try {
-        const account = await loginWithOidc(loginBody(pending, code));
+        const outcome = await loginWithOidc(loginBody(pending, code));
+        if (isTwoFactorChallenge(outcome)) {
+          signingIn.current = false;
+          setChallenge(outcome.challenge_token);
+          return;
+        }
+        const account = outcome;
         const standing = await settleConsent(account);
         signingIn.current = false;
         if (standing) {
@@ -911,7 +959,7 @@ function LoginView() {
             <WorkshopLogo className="h-12 w-12 rounded-xl shadow-sm lg:hidden" />
             <h1 className="font-display text-2xl font-bold text-ink-900">Welcome back</h1>
             <p className="text-sm text-ink-500">
-              {held || passwordGate ? "One thing before you go on" : "Sign in to your account"}
+              {held || passwordGate || challenge ? "One thing before you go on" : "Sign in to your account"}
             </p>
           </div>
 
@@ -952,6 +1000,17 @@ function LoginView() {
                 setDoorPassword("");
                 setPassword("");
                 logout().catch(() => undefined);
+              }}
+            />
+          ) : challenge ? (
+            <TwoStepChallengeForm
+              challengeToken={challenge}
+              onSignedIn={finishSecondStep}
+              onCancel={() => {
+                // Nobody was signed in, so there is nothing to sign out of: the challenge is dropped
+                // and the sign-in controls come back. A password still in the box stays there.
+                setChallenge(null);
+                setDoorPassword("");
               }}
             />
           ) : (

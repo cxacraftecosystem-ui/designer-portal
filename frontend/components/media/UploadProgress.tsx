@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { FileText, Headphones, Image as ImageIcon, Video } from "lucide-react";
 
+import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
 import { MediaLightbox, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { bytes } from "@/lib/format";
+import { downloadLocalMedia, downloadMediaUrl } from "@/lib/localMediaDownload";
 import type { BatchProgress } from "@/lib/media";
 import { useUploads, type CompletedUpload } from "@/lib/uploads";
 import type { MediaType } from "@/lib/types";
@@ -50,23 +52,44 @@ export function UploadedMediaChips({ items, showSection = false }: { items: Comp
     <>
       <div className="flex flex-wrap gap-2">
         {items.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => setActive(toPreview(item))}
-            title={`Preview ${item.file.originalFilename}`}
-            className="inline-flex max-w-full items-center gap-2 rounded-md border border-line-200 bg-card px-2.5 py-1.5 text-left text-xs text-ink-700 transition hover:border-purple-300 hover:bg-purple-50"
-          >
-            <span className="shrink-0 text-purple-700">{iconFor(item.file.mediaType)}</span>
-            <span className="max-w-56 truncate font-medium text-ink-900">{item.file.originalFilename}</span>
-            {showSection ? <span className="shrink-0 text-ink-500">· {item.sectionLabel}</span> : null}
-            <span className="shrink-0 text-ink-500">{bytes(item.file.sizeBytes)}</span>
-          </button>
+          <span key={item.key} className="inline-flex max-w-full items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setActive(toPreview(item))}
+              title={`Preview ${item.file.originalFilename}`}
+              className="inline-flex max-w-full items-center gap-2 rounded-md border border-line-200 bg-card px-2.5 py-1.5 text-left text-xs text-ink-700 transition hover:border-purple-300 hover:bg-purple-50"
+            >
+              <span className="shrink-0 text-purple-700">{iconFor(item.file.mediaType)}</span>
+              <span className="max-w-56 truncate font-medium text-ink-900">{item.file.originalFilename}</span>
+              {showSection ? <span className="shrink-0 text-ink-500">· {item.sectionLabel}</span> : null}
+              <span className="shrink-0 text-ink-500">{bytes(item.file.sizeBytes)}</span>
+            </button>
+            {/* Uploaded now, so the server's copy is the one saved. Absent only where the server sent
+                no URL for this reader — the chip still opens the preview, which says why. */}
+            {item.file.url ? (
+              <DownloadMediaButton
+                name={item.file.originalFilename}
+                onDownload={() => void downloadMediaUrl(item.file.url!, item.file.originalFilename, item.file.mimeType)}
+              />
+            ) : null}
+          </span>
         ))}
       </div>
       {active ? <MediaLightbox item={active} onClose={() => setActive(null)} /> : null}
     </>
   );
+}
+
+/**
+ * The local File behind the row's "current file", matched by NAME. Never guessed by position alone:
+ * some forms rename a file before sending it (`STAGE_STEP_<n>_…`) or send two fields' files as one
+ * batch, and saving the wrong photograph is worse than offering no button on this row — the tile
+ * above it still carries one.
+ */
+function fileInFlight(files: readonly File[], progress: BatchProgress): File | null {
+  const named = files.filter((file) => file.name === progress.currentFileName);
+  if (named.length === 1) return named[0];
+  return null;
 }
 
 /**
@@ -78,11 +101,17 @@ export function UploadProgress({
   progress,
   sectionId,
   label,
+  files,
   className = ""
 }: {
   progress: BatchProgress | null;
   sectionId?: string;
   label?: string;
+  /**
+   * The files this batch is sending, as the page holds them. When given, the running row offers
+   * Download for the file in flight, read from this local copy rather than from the server.
+   */
+  files?: readonly File[];
   /** Extra classes for the wrapper — grid parents pass their column span here. */
   className?: string;
 }) {
@@ -110,6 +139,7 @@ export function UploadProgress({
   const done = sectionId ? completed.filter((item) => item.sectionId === sectionId) : [];
   if (!progress && !done.length) return null;
   const percent = progress ? Math.round(progress.fraction * 100) : 100;
+  const current = progress && files ? fileInFlight(files, progress) : null;
 
   return (
     <div className={`grid gap-2 ${className}`}>
@@ -124,8 +154,12 @@ export function UploadProgress({
           <div className="h-2 overflow-hidden rounded-full bg-line-200">
             <div className="h-full rounded-full bg-purple-700 transition-all" style={{ width: `${percent}%` }} />
           </div>
-          <div className="truncate text-xs text-ink-500" title={progress.currentFileName}>
-            {progress.currentFileName} · {bytes(progress.uploadedBytes)} of {bytes(progress.totalBytes)} · {formatEta(progress.etaSeconds)}
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <div className="min-w-0 truncate text-xs text-ink-500" title={progress.currentFileName}>
+              {progress.currentFileName} · {bytes(progress.uploadedBytes)} of {bytes(progress.totalBytes)} ·{" "}
+              {formatEta(progress.etaSeconds)}
+            </div>
+            {current ? <DownloadMediaButton name={current.name} onDownload={() => downloadLocalMedia(current)} /> : null}
           </div>
         </div>
       ) : null}

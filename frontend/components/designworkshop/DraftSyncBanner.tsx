@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { CloudOff, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -155,8 +156,46 @@ export function outstanding(draft: DwDraft) {
   };
 }
 
+/**
+ * The workshop whose stage form is on screen, read off the route — `/design-workshops/{id}/stages/…`.
+ *
+ * Exported for the tests.
+ */
+export function editingWorkshopId(pathname: string | null): string | null {
+  const match = /^\/design-workshops\/([^/]+)\/stages\/[^/]+/.exec(pathname ?? "");
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * Whether a draft's row belongs on the banner while `editing` is the workshop whose stage form is
+ * open. A row whose ONLY news is unsent stage edits is left off for that one workshop: the stage form
+ * already says so in place ("Saved on this device only", beside its own Save), and the banner used
+ * to appear above the page header 800 ms after the first keystroke — 128 px of panel inserted above
+ * the caret, mid-sentence, which the browser answered by scrolling the page under the designer.
+ * Anything that needs action — a refusal, a held stage, a fold warning, a workshop never sent —
+ * still shows, here as everywhere.
+ */
+export function bannerRowWanted(
+  draft: Pick<DwDraft, "localId" | "remoteId">,
+  state: ReturnType<typeof outstanding>,
+  editing: string | null
+): boolean {
+  const wanted =
+    state.stages > 0 ||
+    state.neverSent ||
+    state.headerOnly ||
+    state.refusals.length > 0 ||
+    state.held.length > 0 ||
+    state.folds.length > 0;
+  if (!wanted) return false;
+  const thisOne = editing !== null && (draft.localId === editing || draft.remoteId === editing);
+  if (!thisOne) return true;
+  return state.neverSent || state.headerOnly || state.refusals.length > 0 || state.held.length > 0 || state.folds.length > 0;
+}
+
 export function DesignWorkshopDraftBanner() {
   const drafts = useSyncExternalStore(subscribeDrafts, getDraftsSnapshot, getServerDraftsSnapshot);
+  const editing = editingWorkshopId(usePathname());
   /**
    * Whether IndexedDB is answering at all — subscribed through the SAME publish the drafts use, so
    * the two snapshots can never describe different moments. See `DwStoreHealth` for why a store that
@@ -324,15 +363,7 @@ export function DesignWorkshopDraftBanner() {
 
   const rows = drafts
     .map((draft) => ({ draft, state: outstanding(draft) }))
-    .filter(
-      ({ state }) =>
-        state.stages > 0 ||
-        state.neverSent ||
-        state.headerOnly ||
-        state.refusals.length > 0 ||
-        state.held.length > 0 ||
-        state.folds.length > 0
-    );
+    .filter(({ draft, state }) => bannerRowWanted(draft, state, editing));
 
   /*
     "THIS DEVICE CANNOT TELL YOU WHAT IS HERE" IS NOT "THERE IS NOTHING HERE", AND THEY USED TO

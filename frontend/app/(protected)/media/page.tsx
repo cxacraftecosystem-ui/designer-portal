@@ -781,7 +781,7 @@ function MediaPageBody() {
             recogniser. Both boxes above pass `explainWhenUnavailable={false}`. */}
         <DictationUnavailableNotice />
         <LocationFields />
-        <UploadProgress progress={progress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} />
+        <UploadProgress progress={progress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} files={selectedFiles} />
         {/* Why Upload is held, beside it — mounted from the first paint, so the answer that arrives a
             round trip after a workshop is chosen is announced. See `uploadHold`. */}
         <HeldPostNotice refusal={uploadHold} id={uploadNoticeId} className="" sayPending />

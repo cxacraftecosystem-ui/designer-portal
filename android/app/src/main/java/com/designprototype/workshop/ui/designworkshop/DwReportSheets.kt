@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -424,6 +425,11 @@ internal fun DwReportSheets(
     /** The same resolver [DwReportPreview] takes, handed on unchanged to the same block renderer. */
     resolveImage: (String) -> File?,
     modifier: Modifier = Modifier,
+    /**
+     * Show only the pages carrying this stage's blocks — see [stageBlockRange]. The whole document is
+     * still laid out, so the pages shown are the real pages with their real numbers. Null shows all.
+     */
+    focusStageTitle: String? = null,
 ) {
     val geometry = remember(document.meta.pageSize, document.meta.marginMm) {
         // THE PAYLOAD'S GEOMETRY, NEVER THIS SCREEN'S. `PdfWriter.kt:190-197` sizes its canvas from
@@ -479,16 +485,46 @@ internal fun DwReportSheets(
         }
     }
 
+    /*
+      THE LAST MEASURED DOCUMENT STAYS ON SCREEN UNTIL THE NEW ONE IS MEASURED.
+
+      A new document gets a new probe, and a new probe has no measurement for a frame or two — which
+      used to drop the sheets, flash "Laying the document out onto pages…" and throw away the zoom on
+      every rebuild. Fed from a stage form between keystrokes, that is a flicker per word. So the pair
+      that was last packed together is kept and drawn until its successor is ready: a sheet never shows
+      one document's text inside another document's page breaks, and never shows nothing.
+     */
+    var shown by remember { mutableStateOf<Pair<ReportDocument, PackedDocument>?>(null) }
+    if (packed != null && shown?.first !== document) {
+        SideEffect { shown = document to packed }
+    }
+    val drawDocument = if (packed != null) document else shown?.first ?: document
+    val drawPacked = packed ?: shown?.second
+    val focusPages = remember(drawPacked, drawDocument, focusStageTitle) {
+        val pages = drawPacked?.pages.orEmpty()
+        val range = focusStageTitle?.let { stageBlockRange(drawDocument.blocks, it) }
+        if (range == null) pages else pages.filter { page -> page.slices.any { it.blockIndex in range } }.ifEmpty { pages }
+    }
+
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (drawPacked != null && focusPages.size < drawPacked.pages.size) {
+            Text(
+                (if (focusPages.size == 1) "Page ${focusPages.first().pageNumber}" else "Pages ${focusPages.first().pageNumber}–${focusPages.last().pageNumber}") +
+                    " of ${drawPacked.pages.size} — where this stage falls in the document",
+                color = chrome,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+            )
+        }
         DwSheetStrip(
-            packed = packed,
+            packed = drawPacked,
             geometry = geometry,
-            document = document,
+            document = drawDocument,
             fontScaleOverridden = deviceDensity.fontScale != 1f,
             color = chrome,
         )
 
-        if (packed == null) {
+        if (drawPacked == null) {
             Text(
                 "Laying the document out onto pages…",
                 color = chrome,
@@ -497,8 +533,9 @@ internal fun DwReportSheets(
             )
         } else {
             DwSheetStage(
-                document = document,
-                packed = packed,
+                document = drawDocument,
+                packed = drawPacked,
+                pages = focusPages,
                 geometry = geometry,
                 accent = accent,
                 resolveImage = resolveImage,
@@ -689,6 +726,8 @@ private fun DwSheetStrip(
 private fun DwSheetStage(
     document: ReportDocument,
     packed: PackedDocument,
+    /** The pages to draw — all of [packed]'s, or the focused run of them. */
+    pages: List<PackedPage>,
     geometry: DwPageGeometry,
     accent: Color?,
     resolveImage: (String) -> File?,
@@ -816,7 +855,7 @@ private fun DwSheetStage(
             ) {
                 CompositionLocalProvider(LocalDensity provides paperDensity) {
                     DwPaperPalette {
-                        packed.pages.forEach { page ->
+                        pages.forEach { page ->
                             DwSheet(
                                 document = document,
                                 page = page,

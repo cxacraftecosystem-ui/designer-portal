@@ -90,6 +90,11 @@ export type User = {
   /** ISO-8601. Null alongside a Google account means "never had a password", which is the
    *  distinction this column was added to make; see schema.prisma. */
   passwordSetAt?: string | null;
+  /** Two-step verification is on for this account. Drives the "Two-step on" badge on /users; the
+   *  account's own card reads `GET /auth/two-factor` instead. Absent from a server that predates it. */
+  twoFactorEnabled?: boolean;
+  /** ISO-8601, when it was last switched on; null while it is off. */
+  twoFactorEnabledAt?: string | null;
   /**
    * ISO-8601. The first time this account actually got IN, by either credential — stamped once at
    * sign-in and never moved. Null means no sign-in has been recorded: an account nobody has used

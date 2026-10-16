@@ -1270,7 +1270,7 @@ export function ProductForm({
           description="Attach or capture product images, videos, audio notes, and documents. Photo details (date, place, camera) are kept and summarised in remarks."
         />
         <LocationFields initial={initialLocation} onDirty={markDirty} />
-        {uploadProgress ? <UploadProgress progress={uploadProgress} /> : null}
+        {uploadProgress ? <UploadProgress progress={uploadProgress} files={mediaFiles} /> : null}
         {/*
           THE HOST'S OWN QUESTIONS, AT THE BOTTOM OF THE SAME LIST OF FIELDS — see
           `InlineRecordHostProps.footerFields`. Inside the `<form>` and above the buttons, so a

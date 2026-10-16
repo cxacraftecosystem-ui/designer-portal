@@ -126,7 +126,9 @@ data class UserDto(
      * which decides whether an administrator is offered a set-password link for the account — the
      * provider alone was the wrong proxy, because a Google sign-in keeps a password the account has.
      */
-    val passwordSetAt: String? = null
+    val passwordSetAt: String? = null,
+    /** Two-step verification is on. Drives the "Two-step on" badge and the administrator's reset. */
+    val twoFactorEnabled: Boolean = false
 )
 
 /**

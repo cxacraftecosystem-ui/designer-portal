@@ -46,7 +46,10 @@ logger = logging.getLogger(__name__)
 PASSWORD_LINK = "PASSWORD_LINK"
 REVIEW_SUGGESTION = "REVIEW_SUGGESTION"
 REVIEW_SENT_BACK = "REVIEW_SENT_BACK"
-KINDS = frozenset({PASSWORD_LINK, REVIEW_SUGGESTION, REVIEW_SENT_BACK})
+#: Somebody got past the password and then entered too many wrong verification codes. A security
+#: notice: always sent (no opt-out), carries no code and no address, only when the pause ends.
+SECOND_FACTOR_LOCKED = "SECOND_FACTOR_LOCKED"
+KINDS = frozenset({PASSWORD_LINK, REVIEW_SUGGESTION, REVIEW_SENT_BACK, SECOND_FACTOR_LOCKED})
 
 PRODUCT_NAME = "Design Prototype Workshop"
 
@@ -175,6 +178,12 @@ def format_moment(value: Any) -> str:
     return f"{local.day} {local.strftime('%B %Y')}, {hour}:{local.minute:02d} {suffix} IST"
 
 
+def locked_until_words(value: Any) -> str:
+    """When a two-step pause ends, in words: the documentation portal's helper, by name, in this
+    product's own clock (:func:`format_moment`, India Standard Time)."""
+    return format_moment(value) if value else "later today"
+
+
 def _greeting(name: Any) -> str:
     first = str(name or "").strip()
     return f"Dear {first}," if first else "Hello,"
@@ -228,6 +237,8 @@ def subject_for(kind: str, params: dict[str, Any]) -> str:
         return f"A correction was suggested on “{title}”"
     if kind == REVIEW_SENT_BACK:
         return f"“{title}” has been sent back for corrections"
+    if kind == SECOND_FACTOR_LOCKED:
+        return f"Someone used your {PRODUCT_NAME} password"
     raise ValueError(f"Unknown e-mail kind {kind!r}")
 
 
@@ -264,6 +275,27 @@ def render(
             button=(_e(label), _e(secret)),
         )
         return Rendered(subject, text, body)
+
+    if kind == SECOND_FACTOR_LOCKED:
+        until = locked_until_words(params.get("lockedUntil"))
+        lead = (
+            f"Someone entered your {PRODUCT_NAME} password and then several wrong verification codes. "
+            f"To protect your account, two-step sign-in is paused until {until}."
+        )
+        act = (
+            "If this was not you, change your password now — or ask an administrator to change it — "
+            "because whoever did this knows it. If you sign in with Google, Microsoft or Yahoo, change "
+            "the password of that account."
+        )
+        # Only the six-digit pause leaves a way in; a recovery-code pause says nothing it cannot keep.
+        later = ["Your recovery codes still work while the pause lasts."] if params.get("codeKind") != "recovery" else []
+        link = app_url("/login", settings)
+        text = "\n\n".join([greeting, lead, act, *later, sign_off]) + "\n"
+        return Rendered(
+            subject,
+            text,
+            _html([_e(greeting), _e(lead), _e(act), *(_e(line) for line in later)], button=("Open the sign-in page", _e(link))),
+        )
 
     if kind in (REVIEW_SUGGESTION, REVIEW_SENT_BACK):
         title = str(params.get("workshopTitle") or "your design workshop")

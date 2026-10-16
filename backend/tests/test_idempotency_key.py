@@ -292,6 +292,10 @@ def test_routes_off_the_create_allow_list_are_never_stored():
     assert idempotency.is_create_route("/api/questionnaires/q1/sections/s1/questions")
     assert not idempotency.is_create_route("/api/auth/login")
     assert not idempotency.is_create_route("/api/users/me/password")
+    # Two-step verification (2026-10-16 merge): its setup answers a secret, its verify a token.
+    for path in ("/api/auth/two-factor/setup", "/api/auth/two-factor/verify",
+                 "/api/auth/two-factor/recovery-codes", "/api/auth/two-factor/enable"):
+        assert not idempotency.is_create_route(path), path
 
 
 def test_keys_are_kept_thirty_days():

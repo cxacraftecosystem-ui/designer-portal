@@ -365,3 +365,13 @@ export const PX_PER_MM = 96 / 25.4;
  * unqualified total in the one artefact a designer emails is the number that gets quoted.
  */
 
+
+/**
+ * How many columns a gallery is drawn in: `_block_image_grid`'s own rule — the template's request,
+ * clamped to 1–4, then one fewer while a cell would be narrower than 45 mm.
+ */
+export function galleryColumns(requested: number, textWidthMm: number): number {
+  let columns = Math.max(1, Math.min(4, Math.trunc(requested) || 1));
+  while (columns > 1 && textWidthMm / columns < 45) columns -= 1;
+  return columns;
+}

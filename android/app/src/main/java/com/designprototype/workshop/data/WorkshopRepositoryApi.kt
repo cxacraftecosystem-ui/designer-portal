@@ -27,14 +27,14 @@ import kotlinx.serialization.json.JsonObject
 
 interface WorkshopRepositoryApi {
     @POST("auth/login")
-    suspend fun login(@Body body: LoginRequest): TokenResponse
+    suspend fun login(@Body body: LoginRequest): SignInResponse
 
     @POST("auth/login")
-    suspend fun googleLogin(@Body body: GoogleLoginRequest): TokenResponse
+    suspend fun googleLogin(@Body body: GoogleLoginRequest): SignInResponse
 
     /** Microsoft or Yahoo: an authorization code for the backend to redeem. See `OidcSignIn.kt`. */
     @POST("auth/login")
-    suspend fun oidcLogin(@Body body: OidcLoginRequest): TokenResponse
+    suspend fun oidcLogin(@Body body: OidcLoginRequest): SignInResponse
 
     @GET("me")
     suspend fun me(): UserDto

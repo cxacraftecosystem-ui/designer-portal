@@ -1,0 +1,83 @@
+{
+  "_comment": "Where one stage sits inside a whole report document, and how a live copy of it is put back. Read by frontend/e2e/stage-slice-unit.spec.ts (components/designworkshop/report/stageSlice.ts) and by android/app/src/test/.../DwStageSliceTest.kt (ui/designworkshop/DwStageSlice.kt), so the laptop and the handset cannot disagree about which pages belong to the stage being typed into. A block is written as a short string: 'H<level>:<text>' is a heading, anything else is a paragraph with that text. Expected ranges are [start, end) or null.",
+  "range": [
+    {
+      "name": "a stage runs to the next heading at its own level",
+      "blocks": ["H1:1. Workshop setup", "a", "b", "H1:2. Introductory documentation", "c"],
+      "title": "Workshop setup",
+      "expected": [0, 3]
+    },
+    {
+      "name": "its own sub-headings stay inside it",
+      "blocks": ["H1:Cluster, Area & Craft Background", "a", "H2:Dye bath log", "b", "H1:Traditional process", "c"],
+      "title": "Cluster, Area & Craft Background",
+      "expected": [0, 4]
+    },
+    {
+      "name": "a shallower heading ends it too",
+      "blocks": ["H1:Part A", "H2:Market survey", "a", "H1:Part B", "b"],
+      "title": "Market survey",
+      "expected": [1, 3]
+    },
+    {
+      "name": "the last stage runs to the end",
+      "blocks": ["H1:Setup", "a", "H1:Follow-up", "b", "c"],
+      "title": "Follow-up",
+      "expected": [2, 5]
+    },
+    {
+      "name": "case, spacing and a leading section number are ignored",
+      "blocks": ["COVER", "H1:4.  Cluster,   area & craft BACKGROUND", "a"],
+      "title": "Cluster, Area & Craft Background",
+      "expected": [1, 3]
+    },
+    {
+      "name": "a stage with no heading is null, never empty",
+      "blocks": ["H1:Setup", "a"],
+      "title": "Design brief",
+      "expected": null
+    },
+    {
+      "name": "an empty title finds nothing",
+      "blocks": ["H1:Setup", "a"],
+      "title": "",
+      "expected": null
+    },
+    {
+      "name": "a paragraph that reads like the title is not a heading",
+      "blocks": ["Design brief", "H1:Design brief", "a"],
+      "title": "Design brief",
+      "expected": [1, 3]
+    }
+  ],
+  "splice": [
+    {
+      "name": "the live stage replaces the saved one and nothing else moves",
+      "base": ["COVER", "H1:Setup", "old setup", "H1:Brief", "brief"],
+      "live": ["COVER", "H1:Setup", "new setup", "another line", "H1:Brief", "stale brief"],
+      "title": "Setup",
+      "expected": ["COVER", "H1:Setup", "new setup", "another line", "H1:Brief", "brief"]
+    },
+    {
+      "name": "a stage that shrank",
+      "base": ["H1:Setup", "a", "b", "c", "H1:Brief", "d"],
+      "live": ["H1:Setup", "a", "H1:Brief", "x"],
+      "title": "Setup",
+      "expected": ["H1:Setup", "a", "H1:Brief", "d"]
+    },
+    {
+      "name": "a stage missing from the saved document cannot be placed",
+      "base": ["H1:Setup", "a", "H1:Follow-up", "b"],
+      "live": ["H1:Setup", "a", "H1:Brief", "new", "H1:Follow-up", "b"],
+      "title": "Brief",
+      "expected": null
+    },
+    {
+      "name": "a stage missing from the live document cannot be placed",
+      "base": ["H1:Setup", "a", "H1:Brief", "b"],
+      "live": ["H1:Setup", "a"],
+      "title": "Brief",
+      "expected": null
+    }
+  ]
+}
