@@ -372,6 +372,8 @@ model User {
   preferences UserPreference? @relation("UserPreferenceUser")
   /// Every e-mail queued for this account. See `EmailMessage`.
   emailMessages EmailMessage[] @relation("EmailMessageRecipient")
+  /// C15: the ministry stage-data exports this account asked for.
+  ministryDataExports MinistryDataExport[] @relation("MinistryDataExportRequester")
   sectionStatusesSet QuestionnaireSectionStatus[] @relation("SectionStatusSetBy")
   workshopAssignments     WorkshopAssignment[] @relation("WorkshopAssignmentUser")
   workshopAssignmentsMade WorkshopAssignment[] @relation("WorkshopAssignmentAssignedBy")
@@ -6906,4 +6908,36 @@ model AadhaarOtpThrottle {
   @@index([userId, createdAt])
   @@index([uidHash, createdAt])
   @@index([createdAt])
+}
+
+/// C15 (owner decision, 2026-10-17): the Ministry dashboard's stage-data export, run in the
+/// background by the queue worker. One spreadsheet, a sheet per record type, across the workshops
+/// the requester's filters and scope select, with every identity number masked. The finished file
+/// is held here (not in object storage) for EXPORT_TTL_DAYS and then purged by the worker; only the
+/// account that asked may download it.
+model MinistryDataExport {
+  id            String    @id @default(cuid())
+  requestedById String?
+  requestedBy   User?     @relation("MinistryDataExportRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  /// The dashboard's narrowing at request time: search, standing, attention, state.
+  filters       Json?
+  /// QUEUED -> RUNNING -> READY | FAILED. A string, like EmailMessage.status.
+  status        String    @default("QUEUED")
+  attempts      Int       @default(0)
+  lockedAt      DateTime?
+  lockedBy      String?
+  workshopCount Int?
+  rowCount      Int?
+  fileName      String?
+  fileSizeBytes Int?
+  content       Bytes?
+  error         String?
+  createdAt     DateTime  @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  expiresAt     DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([requestedById, createdAt])
 }
