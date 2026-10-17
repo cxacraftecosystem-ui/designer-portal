@@ -497,10 +497,10 @@ resource "aws_iam_user_policy" "media" {
         Resource = "${aws_s3_bucket.media.arn}/backups/*"
       },
       {
-        Sid       = "BackupVerifyByListingOnly"
-        Effect    = "Allow"
-        Action    = "s3:ListBucket"
-        Resource  = aws_s3_bucket.media.arn
+        Sid      = "BackupVerifyByListingOnly"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.media.arn
         Condition = {
           StringLike = {
             "s3:prefix" = ["backups/*"]
@@ -521,7 +521,7 @@ data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical
   filter {
-    name   = "name"
+    name = "name"
     # UBUNTU 26.04 (resolute) SINCE 2026-10-09; it was 24.04 (noble). `ami` is in
     # `ignore_changes` on the instance, so this decides only what a REBUILD or a
     # second box is created from — the running box keeps its noble image. The
