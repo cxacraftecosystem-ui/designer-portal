@@ -234,10 +234,12 @@ export function TwoStepVerificationCard() {
   const view = twoStepSwitchView(status, phase);
 
   function onSwitch(next: boolean) {
-    if (next) {
-      void startSetup();
-    } else if (step.kind === "setup") {
+    // While setting up the switch reads off, so a press arrives as "on": it means back out, not
+    // start again — a fresh key would orphan the authenticator entry just scanned.
+    if (step.kind === "setup") {
       void leaveSetup();
+    } else if (next) {
+      void startSetup();
     } else if (status?.enabled) {
       go({ kind: "disable" });
       requestAnimationFrame(() => entryBox.current?.focus());

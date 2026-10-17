@@ -1857,6 +1857,26 @@ jobs:
             echo "::warning::TWO_FACTOR_ENCRYPTION_KEY is not set; the box keeps the legacy two-step key"
             exit 0
           fi
+          # Shape-check on the runner, before anything reaches the box: a malformed key would only
+          # fail at app start, after the release is already switched in, leaving the API down.
+          for name in TWO_FACTOR_ENCRYPTION_KEY TWO_FACTOR_PREVIOUS_KEYS; do
+            value="${!name}"
+            [ -z "$value" ] && continue
+            KEYS="$value" python3 - "$name" <<'PY' || exit 1
+          import base64, binascii, os, sys
+          for i, entry in enumerate(e.strip() for e in os.environ["KEYS"].split(",")):
+              if not entry:
+                  continue
+              text = entry.split(":", 1)[-1]
+              try:
+                  raw = base64.b64decode(text + "=" * (-len(text) % 4), validate=False) if "-" not in text and "_" not in text else base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+              except (binascii.Error, ValueError):
+                  raw = b""
+              if len(raw) != 32:
+                  print(f"::error::{sys.argv[1]} entry {i + 1} is not 32 bytes of base64; nothing was deployed.")
+                  sys.exit(1)
+          PY
+          done
           frag="TWO_FACTOR_ENCRYPTION_KEY=$TWO_FACTOR_ENCRYPTION_KEY"$'\n'"TWO_FACTOR_KEY_REQUIRED=true"$'\n'
           if [ -n "$TWO_FACTOR_PREVIOUS_KEYS" ]; then
             frag+="TWO_FACTOR_PREVIOUS_KEYS=$TWO_FACTOR_PREVIOUS_KEYS"$'\n'
