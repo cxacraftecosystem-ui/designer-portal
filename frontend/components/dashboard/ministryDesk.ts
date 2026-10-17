@@ -265,3 +265,95 @@ export function awaitingApprovalSentence(count: number): string {
   return count === 1 ? "1 report is waiting for approval" : `${count} reports are waiting for approval`;
 }
 
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * THE PHONE SUMMARY — what the desk says while it is folded below `sm`.
+ *
+ * On a phone the full desk is about a screen and a half, and it sits above the reader's own work.
+ * So below `sm` the card folds to its title, the counts that need someone to act, and a "Show all"
+ * control; from `sm` up nothing changes. The judgement — which counts, in which order, and when the
+ * card may say "Nothing waiting" — is here so `e2e/ministry-desk-collapse-unit.spec.ts` can call it.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** One count on the folded card: a number, the words beside it, and the row it opens. */
+export type MinistryDeskCount = {
+  href: string;
+  count: number;
+  /** The words after the number, plural-correct ("reports waiting for approval"). */
+  label: string;
+  /** The whole sentence for a screen reader — the badge's own, so the two never differ. */
+  sentence: string;
+};
+
+/**
+ * What the folded card shows.
+ *
+ * - `waiting`: at least one count is above zero; only those are listed, in desk order.
+ * - `clear`: every count this desk carries has ANSWERED, and every one is zero.
+ * - `unknown`: a count is still loading or failed, and none is above zero. The card then claims
+ *   nothing — "Nothing waiting" over a count that never arrived would be the silent-emptiness bug.
+ */
+export type MinistryDeskSummary =
+  | { kind: "waiting"; counts: MinistryDeskCount[] }
+  | { kind: "clear" }
+  | { kind: "unknown" };
+
+/** Counts as the two stores report them: `null` is "not known", never zero. */
+export type MinistryDeskCountValues = { awaitingSanction: number | null; awaitingApproval: number | null };
+
+export function ministryDeskCountLabel(href: string, count: number): string {
+  if (href === AWAITING_APPROVAL_BADGE_HREF) {
+    return count === 1 ? "report waiting for approval" : "reports waiting for approval";
+  }
+  return count === 1 ? "sanction order awaiting details" : "sanction orders awaiting details";
+}
+
+export function ministryDeskSummary(
+  open: readonly Pick<MinistryDestination, "href">[],
+  values: MinistryDeskCountValues
+): MinistryDeskSummary {
+  const sources: { href: string; value: number | null; sentence: (count: number) => string }[] = [
+    { href: AWAITING_SANCTION_BADGE_HREF, value: values.awaitingSanction, sentence: awaitingSanctionSentence },
+    { href: AWAITING_APPROVAL_BADGE_HREF, value: values.awaitingApproval, sentence: awaitingApprovalSentence }
+  ];
+  const order = open.map((destination) => destination.href);
+  const carried = sources
+    .filter((source) => order.includes(source.href))
+    .sort((a, b) => order.indexOf(a.href) - order.indexOf(b.href));
+
+  const counts = carried
+    .filter((source) => typeof source.value === "number" && source.value > 0)
+    .map((source) => ({
+      href: source.href,
+      count: source.value as number,
+      label: ministryDeskCountLabel(source.href, source.value as number),
+      sentence: source.sentence(source.value as number)
+    }));
+  if (counts.length > 0) return { kind: "waiting", counts };
+  if (carried.length > 0 && carried.every((source) => source.value === 0)) return { kind: "clear" };
+  return { kind: "unknown" };
+}
+
+/** The per-browser memory of the reader's choice. Absent means folded. */
+export const MINISTRY_DESK_EXPANDED_KEY = "field_repo_ministry_desk_expanded";
+
+/** Read the stored choice. Never throws: blocked storage reads as folded. */
+export function readMinistryDeskExpanded(storage: Pick<Storage, "getItem"> | null | undefined): boolean {
+  try {
+    return storage?.getItem(MINISTRY_DESK_EXPANDED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Store the choice. Never throws: a browser that refuses storage simply forgets it. */
+export function writeMinistryDeskExpanded(
+  storage: Pick<Storage, "setItem"> | null | undefined,
+  expanded: boolean
+): void {
+  try {
+    storage?.setItem(MINISTRY_DESK_EXPANDED_KEY, expanded ? "1" : "0");
+  } catch {
+    /* forgotten, not fatal */
+  }
+}
