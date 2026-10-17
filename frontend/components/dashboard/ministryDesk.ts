@@ -2,6 +2,7 @@ import {
   Binoculars,
   CalendarRange,
   DraftingCompass,
+  FileSearch,
   FileSignature,
   LayoutDashboard,
   Stamp,
@@ -12,6 +13,7 @@ import {
 import {
   canApproveDesignWorkshops,
   canAssignWorkshopOversight,
+  canInspectDesignWorkshops,
   canReadAnnualPlan,
   canReadWorkshopOversight,
   canRunDesignWorkshops,
@@ -134,6 +136,18 @@ export const MINISTRY_DESK: readonly MinistryDestination[] = [
     icon: Binoculars,
     note: "Workshops you supervise",
     can: canReadWorkshopOversight
+  },
+  {
+    /*
+      THE INSPECTION A MINISTRY ADMIN OR AN ADMIN MAY BE NAMED TO (2026-10-18), before the sign-off it
+      feeds. Its badge counts the reader's own handed-in inspections. An Assistant or Regional
+      Director cannot hold an inspection, so `canInspectDesignWorkshops` keeps the row off their desk.
+    */
+    label: "Workshops to inspect",
+    href: "/design-workshop-inspections",
+    icon: FileSearch,
+    note: "Reports handed in for your review",
+    can: canInspectDesignWorkshops
   },
   {
     /*
@@ -263,5 +277,17 @@ export const AWAITING_APPROVAL_BADGE_HREF = "/design-workshop-approvals";
 /** The whole sentence the approval badge is given, in both plurals. */
 export function awaitingApprovalSentence(count: number): string {
   return count === 1 ? "1 report is waiting for approval" : `${count} reports are waiting for approval`;
+}
+
+/* THE THIRD BADGE (2026-10-18) — how many of the reader's own inspections are handed in and waiting
+ * for them. The same pill and the same sentence shape; the number is
+ * `components/hooks/useAwaitingInspectionCount.ts`, scoped by the reader's inspection rows. */
+
+/** The destination the inspection count rides on — the nav entry "Workshops to inspect". */
+export const AWAITING_INSPECTION_BADGE_HREF = "/design-workshop-inspections";
+
+/** The whole sentence the inspection badge is given, in both plurals. */
+export function awaitingInspectionSentence(count: number): string {
+  return count === 1 ? "1 report is waiting for your review" : `${count} reports are waiting for your review`;
 }
 

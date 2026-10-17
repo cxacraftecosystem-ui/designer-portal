@@ -207,6 +207,11 @@ export const MAX_DESIGN_WORKSHOP_INSPECTORS = 25;
  * Everyone assigned to inspect this workshop. A Ministry Admin, an admin or the master admin,
  * server-side (`require_workshop_assigner`).
  */
+/** How many of this inspector's workshops are handed in and waiting for review (2026-10-18). */
+export function fetchAwaitingInspectionCount() {
+  return apiFetch<{ awaiting: number }>("/design-workshop-inspections/awaiting-count");
+}
+
 export function listDesignWorkshopInspectors(workshopId: string) {
   return apiFetch<DwInspectorList>(`/design-workshop-inspections/${workshopId}/inspectors`);
 }

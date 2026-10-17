@@ -53,13 +53,16 @@ import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import {
   AWAITING_APPROVAL_BADGE_HREF,
+  AWAITING_INSPECTION_BADGE_HREF,
   AWAITING_SANCTION_BADGE_CLASS,
   AWAITING_SANCTION_BADGE_HREF,
   awaitingApprovalSentence,
+  awaitingInspectionSentence,
   awaitingSanctionSentence
 } from "@/components/dashboard/ministryDesk";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { useAwaitingApprovalCount } from "@/components/hooks/useAwaitingApprovalCount";
+import { useAwaitingInspectionCount } from "@/components/hooks/useAwaitingInspectionCount";
 import { useAwaitingSanctionCount } from "@/components/hooks/useAwaitingSanctionCount";
 import { useOpenTaskCount } from "@/components/hooks/useOpenTaskCount";
 import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
@@ -225,6 +228,22 @@ function AwaitingApprovalBadge({ count }: { count: number }) {
       <span aria-hidden>{count}</span>
       <span aria-hidden className="font-medium">
         waiting
+      </span>
+      <span className="sr-only">{sentence}</span>
+    </span>
+  );
+}
+
+/** HOW MANY OF THE READER'S INSPECTIONS ARE WAITING FOR THEM — the badge on "Workshops to inspect"
+ * (2026-10-18). The approval badge's pill and shape; one store shared with the desk's row. */
+function AwaitingInspectionBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const sentence = awaitingInspectionSentence(count);
+  return (
+    <span title={sentence} className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}>
+      <span aria-hidden>{count}</span>
+      <span aria-hidden className="font-medium">
+        to review
       </span>
       <span className="sr-only">{sentence}</span>
     </span>
@@ -927,6 +946,9 @@ export function DynamicIslandNav() {
   /** The reports waiting for a decision — gated on the badged entry being drawn, as the three above. */
   const approvalEntryVisible = visibleItems.some((item) => item.href === AWAITING_APPROVAL_BADGE_HREF);
   const awaitingApprovalCount = useAwaitingApprovalCount(approvalEntryVisible) ?? 0;
+  /** The reader's handed-in inspections — gated on "Workshops to inspect" being drawn. */
+  const inspectionEntryVisible = visibleItems.some((item) => item.href === AWAITING_INSPECTION_BADGE_HREF);
+  const awaitingInspectionCount = useAwaitingInspectionCount(inspectionEntryVisible) ?? 0;
 
   if (!user) return null;
 
@@ -1031,6 +1053,9 @@ export function DynamicIslandNav() {
                             ) : null}
                             {item.href === AWAITING_APPROVAL_BADGE_HREF ? (
                               <AwaitingApprovalBadge count={awaitingApprovalCount} />
+                            ) : null}
+                            {item.href === AWAITING_INSPECTION_BADGE_HREF ? (
+                              <AwaitingInspectionBadge count={awaitingInspectionCount} />
                             ) : null}
                           </span>
                         </HoveredLink>
@@ -1138,6 +1163,9 @@ export function DynamicIslandNav() {
                     ) : null}
                     {item.href === AWAITING_APPROVAL_BADGE_HREF ? (
                       <AwaitingApprovalBadge count={awaitingApprovalCount} />
+                    ) : null}
+                    {item.href === AWAITING_INSPECTION_BADGE_HREF ? (
+                      <AwaitingInspectionBadge count={awaitingInspectionCount} />
                     ) : null}
                   </Link>
                 ))}

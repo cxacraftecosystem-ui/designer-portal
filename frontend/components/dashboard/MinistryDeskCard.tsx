@@ -8,11 +8,14 @@ import {
   AWAITING_SANCTION_BADGE_CLASS,
   AWAITING_SANCTION_BADGE_HREF,
   awaitingApprovalSentence,
+  AWAITING_INSPECTION_BADGE_HREF,
+  awaitingInspectionSentence,
   awaitingSanctionSentence,
   ministryDeskFor
 } from "@/components/dashboard/ministryDesk";
 import { useAuth } from "@/components/AuthProvider";
 import { useAwaitingApprovalCount } from "@/components/hooks/useAwaitingApprovalCount";
+import { useAwaitingInspectionCount } from "@/components/hooks/useAwaitingInspectionCount";
 import { useAwaitingSanctionCount } from "@/components/hooks/useAwaitingSanctionCount";
 import { canSeeMinistryDesk } from "@/lib/permissions";
 
@@ -125,6 +128,9 @@ export function MinistryDeskCard() {
      on the row being drawn, which folds in `canApproveDesignWorkshops`. */
   const awaitingApprovalCount =
     useAwaitingApprovalCount(open.some((destination) => destination.href === AWAITING_APPROVAL_BADGE_HREF)) ?? 0;
+  /* The reader's own handed-in inspections, on "Workshops to inspect" — gated the same way. */
+  const awaitingInspectionCount =
+    useAwaitingInspectionCount(open.some((destination) => destination.href === AWAITING_INSPECTION_BADGE_HREF)) ?? 0;
 
   if (!audience) return null;
 
@@ -239,6 +245,18 @@ export function MinistryDeskCard() {
                       waiting
                     </span>
                     <span className="sr-only">{awaitingApprovalSentence(awaitingApprovalCount)}</span>
+                  </span>
+                ) : null}
+                {destination.href === AWAITING_INSPECTION_BADGE_HREF && awaitingInspectionCount > 0 ? (
+                  <span
+                    title={awaitingInspectionSentence(awaitingInspectionCount)}
+                    className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}
+                  >
+                    <span aria-hidden>{awaitingInspectionCount}</span>
+                    <span aria-hidden className="font-medium">
+                      to review
+                    </span>
+                    <span className="sr-only">{awaitingInspectionSentence(awaitingInspectionCount)}</span>
                   </span>
                 ) : null}
               </span>
