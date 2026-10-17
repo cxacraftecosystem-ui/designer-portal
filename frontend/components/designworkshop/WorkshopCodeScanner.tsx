@@ -84,6 +84,7 @@ import {
   redeemJoinCard
 } from "@/lib/joinCards";
 import { decodeWorkshopCode, type WorkshopCodeRef } from "@/lib/workshopCodes";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * Refusals that mean "not from THIS frame" rather than "not from this card".
@@ -489,7 +490,7 @@ export function WorkshopCodeScanner({
         the browser said when it is pressed; the upload works on every browser that can open a
         picture at all.
       */}
-      <div className="flex flex-wrap items-center gap-2">
+      <ActionGroup align="start">
         <button
           type="button"
           className="field-button"
@@ -510,6 +511,8 @@ export function WorkshopCodeScanner({
           <ImageUp className="h-4 w-4" aria-hidden />
           Upload a picture
         </button>
+      </ActionGroup>
+      <div className="flex flex-wrap items-center gap-2 empty:hidden">
         <input
           ref={fileInputRef}
           type="file"

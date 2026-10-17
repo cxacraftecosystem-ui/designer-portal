@@ -344,9 +344,7 @@ export function MapPlaceList({
           {/* A place quietly missing from a map is indistinguishable from a place with no records,
               so what could not be placed is named here rather than dropped. */}
           <p className="mt-1 text-xs leading-5 text-ink-700">
-            These records carry no state on their location and no place name the atlas can resolve, so
-            there is nothing to place them by. They are counted in the totals but have no pin. Adding a
-            state — and ideally a district — to the record puts it on the map.
+            No state on these records, so they have no pin. Add a state (and district) to map them.
           </p>
           <ul className="mt-2 grid gap-1">
             {unplaced.map((entry) => (

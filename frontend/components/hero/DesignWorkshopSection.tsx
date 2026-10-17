@@ -6,7 +6,6 @@ import { Plus } from "lucide-react";
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 import {
   arcRangeLabel,
-  STAGE_COUNT_WORD,
   STAGE_COUNT_WORD_LOWER,
   WORKSHOP_ARC
 } from "@/components/hero/workshopArc";
@@ -98,9 +97,8 @@ export default function DesignWorkshopSection() {
           product where a workshop belongs to one person.
         */}
         <motion.p variants={item} className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
-          An administrator opens the workshop for a cluster and names the designers it is for, and
-          they do the work inside it. The finished document is submitted under one named
-          designer&rsquo;s name, and their profile is copied onto its cover.
+          An administrator opens it for a cluster and its designers. It is submitted under one
+          lead designer&rsquo;s name.
         </motion.p>
 
         {/* THE ARC. The same four-up grid as the record-types section above, on purpose: this page
@@ -218,11 +216,8 @@ export default function DesignWorkshopSection() {
             what a reader assumes from a completeness percentage. Said next to the readiness chip
             above, where the assumption is formed. */}
         <motion.p variants={item} className="mt-8 max-w-2xl text-sm leading-relaxed text-ink-500">
-          A workshop is submitted when the designer says it is. An empty field never blocks it: a
-          readiness screen lists what is still outstanding, ranked, and works from the draft on the
-          device, so it can be checked in the courtyard with no signal. Only a stage&rsquo;s own
-          &ldquo;Save and check required fields&rdquo; stops at an empty required field, and only for
-          that stage. {STAGE_COUNT_WORD} empty stages are a valid record on day one.
+          You submit when you&rsquo;re ready — empty fields never block it. A readiness screen lists
+          what&rsquo;s missing, even offline.
         </motion.p>
       </motion.div>
     </section>

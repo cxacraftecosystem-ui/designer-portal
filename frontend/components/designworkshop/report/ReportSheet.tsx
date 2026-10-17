@@ -1454,7 +1454,8 @@ export const ReportSheets = memo(function ReportSheets({
       </div>
 
       {/* The zoom control. Real buttons in DOM order, themed like every other piece of chrome —
-          nothing here is paper. `aria-pressed` on Fit because it is a mode, not an action. */}
+          nothing here is paper. `aria-pressed` on Fit because it is a mode, not an action. A toolbar,
+          not an action row, so it is deliberately not an ActionGroup. */}
       <div className="mb-3 flex flex-wrap items-center gap-2" data-rp-noprint>
         <button
           type="button"

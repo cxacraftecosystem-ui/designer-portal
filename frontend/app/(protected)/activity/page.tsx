@@ -226,7 +226,7 @@ export default function MyActivityPage() {
     <>
       <PageHeader
         title="My Activity"
-        description="Everything documented — artisans, products, tools, processes, workshops, crafts, interviews and media. Reviewers can also inspect the activity of contributors they oversee."
+        description="Everything you've documented."
         icon={<Activity className="h-5 w-5" aria-hidden />}
       />
       {error ? (

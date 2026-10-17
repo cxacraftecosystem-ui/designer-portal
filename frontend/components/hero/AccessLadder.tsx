@@ -203,11 +203,8 @@ export default function AccessLadder() {
             alone, Professor and above — see `can_manage_crafts` in `deps.py`), so a visitor was
             promised two grants that change nothing. */}
         <motion.p variants={item} className="mt-4 max-w-2xl text-base leading-relaxed text-ink-500">
-          An administrator admits your address to the platform first; the ladder then decides what
-          the account may do. Newly admitted accounts start at the bottom unless the admitting
-          administrator chose otherwise, and are raised by an admin from there. Individual
-          capabilities — dataset download, review, the questionnaire builder — can also be granted
-          one at a time by an admin, without moving anyone up the ladder.
+          An administrator approves your address, then sets your role. Single permissions — download,
+          review, the questionnaire builder — can be granted without changing it.
         </motion.p>
         {/* THE ONE PLACE THE LADDER IS NOT A LADDER, said here because the heading above promises
             that every tier inherits the last. Running a design & prototype workshop is decided by a
@@ -219,9 +216,8 @@ export default function AccessLadder() {
             three directorate posts joined the set (2026-09-14); its wording now follows the route
             guard's own sentence for /design-workshops in that file. */}
         <motion.p variants={item} className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
-          One power is an exception. Running a design &amp; prototype workshop belongs to designers, the
-          Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin.
-          Professors and inspectors do not run workshops.
+          One exception: design &amp; prototype workshops are run by designers, ministry officers and
+          admins. Professors and inspectors do not run workshops.
         </motion.p>
 
         <ol className="mt-12 space-y-2.5">

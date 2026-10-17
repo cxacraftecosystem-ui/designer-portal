@@ -1112,11 +1112,9 @@ export function FramePanel({ pixels, disabled, onEdited }: FramePanelProps) {
           >
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>
-              Sharpening runs on frames up to {(SHARPEN_MAX_PIXELS / 1_000_000).toFixed(1)} megapixels
-              on this device, and this frame is {(cropped / 1_000_000).toFixed(1)}. Crop it smaller —
-              the frame above is what does that — or leave this at 0 and use the “Sharpen amount”
-              control in the Sharpening group, which works on the smaller plane the trace itself runs
-              at.
+              Too large to sharpen here ({(cropped / 1_000_000).toFixed(1)} of{" "}
+              {(SHARPEN_MAX_PIXELS / 1_000_000).toFixed(1)} MP max). Crop smaller, or use “Sharpen
+              amount” instead.
             </span>
           </p>
         ) : null}

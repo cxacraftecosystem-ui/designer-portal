@@ -478,14 +478,11 @@ export function MyAiKeysPanel() {
           go hunting for and not find is the same lie as printing it on a model's row, told earlier
           and to somebody who has not yet decided whether to hand over a credential. */}
       <p className="mt-1.5 text-sm leading-6 text-ink-500">
-        Bring your own key and the AI work you ask for — proofreading, expanding, translating,
-        transcribing and photo descriptions — runs on your account with your provider, at your
-        choice of model, and is billed to you. Leave this empty and everything works as it does now,
-        using the portal&apos;s own key.
+        Optional. With your own key, the AI work you ask for runs and bills on your account.
+        Leave empty to use the portal&apos;s key.
       </p>
       <p className="mt-1.5 text-xs leading-5 text-ink-500">
-        Your key is stored encrypted, is used only for work you personally ask for, and is never
-        shown to anyone — including administrators. Background jobs are never billed to you.
+        Stored encrypted and never shown to anyone, including admins. Background jobs never use it.
       </p>
       <ul className="mt-4 space-y-3">
         {catalogue.providers.map((provider) => {

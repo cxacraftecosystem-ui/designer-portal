@@ -407,16 +407,14 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
         */}
         <p className="leading-6">
           Everything saved on this device
-          {stageCount ? ` (${stageCount} stage${stageCount === 1 ? "" : "s"}, with their photographs and recordings)` : ""} is
-          sent into the workshop you choose, on the next sync. Nothing is deleted and nothing is retyped: answers already in
-          that workshop are kept, and where both have the same box, this device’s answer wins.
+          {stageCount ? ` (${stageCount} stage${stageCount === 1 ? "" : "s"}, with their photographs and recordings)` : ""} moves
+          into the workshop you choose on the next sync. Nothing is deleted: answers already in that workshop are kept, and
+          where both have the same box, this device’s answer wins.
         </p>
 
         {nothingToMoveInto ? (
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-            No design workshop is open to you, so there&rsquo;s nothing to move this into. Ask an admin to create the
-            workshop for this cluster and name you as one of its designers, then come back here. Your work stays safe on
-            this device in the meantime.
+            No design workshop is open to you yet. Ask an admin to add you to one — your work stays safe here.
           </p>
         ) : (
           <>
@@ -456,8 +454,8 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
             — the reasoning lives on {@link verified}, not on screen.
           */
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-            You&rsquo;re offline, so this lists only the workshops already on this device and can&rsquo;t check whether
-            you&rsquo;re still on them. You can move it once you&rsquo;re back online; your work stays safe here until then.
+            Offline — showing workshops on this device; we can&rsquo;t check whether you&rsquo;re still on them.
+            You can move it once you&rsquo;re back online.
           </p>
         ) : null}
 

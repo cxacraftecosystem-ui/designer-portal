@@ -1237,10 +1237,8 @@ function UsersScreen() {
           password an administrator has required a change of — and invited a needless temporary
           password, which WOULD have made a shared secret. */}
       <p className="mt-2 text-xs text-ink-muted">
-        “{ACCOUNT_STATUS_LABEL.MUST_CHOOSE_NEW_PASSWORD}” means the account must replace its password at its next
-        sign-in — either because a provisioner typed it (a temporary password somebody else knows) or because a
-        change was required of the owner&apos;s own. “{ACCOUNT_STATUS_LABEL.NEVER_SIGNED_IN}” means no sign-in has been
-        recorded for the account.
+        “{ACCOUNT_STATUS_LABEL.MUST_CHOOSE_NEW_PASSWORD}”: a new password is required at next sign-in — because a provisioner typed it, or because a change was
+        required of the owner&apos;s own. “{ACCOUNT_STATUS_LABEL.NEVER_SIGNED_IN}”: no sign-in yet.
       </p>
       {masterControls ? (
         <section className="panel mt-6 p-4">

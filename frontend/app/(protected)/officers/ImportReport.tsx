@@ -148,10 +148,8 @@ export function ImportReport({ report }: { report: ArtisanImportReport }) {
       ) : null}
 
       <p className="mt-4 text-xs leading-5 text-ink-500">
-        Nobody was added twice and nothing was overwritten. Artisans already on record were added to
-        this workshop’s participant list and their existing records were left as they are, even where
-        the spreadsheet says something different. This upload is listed under Earlier uploads with
-        the counts above and the rows it could not read. The file itself was not kept.
+        No duplicates, nothing overwritten — existing artisans were added as they are. Listed under
+        Earlier uploads; the file wasn’t kept.
       </p>
     </section>
   );

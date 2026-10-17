@@ -700,7 +700,7 @@ export function oversightEmptyState(
   const posts = oversightPostsUserMayHold(user).map((post) => CAPACITY_LABELS[post]);
   return {
     title: `You do not hold any ${posts.length ? posts.join(" or ") : "Assistant Director or Regional Director"} posts`,
-    body: "A Ministry Admin, an Admin or the Master Admin names each workshop's Assistant Director and Regional Director on Workshop oversight. The workshops you are named on will appear here."
+    body: "Workshops you're named on will appear here. An admin names officers on Workshop oversight."
   };
 }
 

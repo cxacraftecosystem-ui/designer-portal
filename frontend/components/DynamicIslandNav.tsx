@@ -1147,6 +1147,8 @@ export function DynamicIslandNav() {
                   </Link>
                 ))}
               </div>
+              {/* The menu's account footer (toggle · who you are · sign out), not an action row —
+                  deliberately not an ActionGroup. */}
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line-200 pt-4">
                 {canAdmin ? (
                   <button type="button" onClick={toggleAdminView} aria-pressed={adminMode} className="field-button-secondary">

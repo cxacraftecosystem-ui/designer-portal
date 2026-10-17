@@ -160,7 +160,7 @@ const SURFACES = [
     icon: QrCode,
     title: "One workshop, joined by scanning",
     copy:
-      "A real workshop is run by two designers alongside a master craftsperson and a reviewing officer, and all of them have to read the same stages — the card is scanned and read on the phone itself, with no signal needed.",
+      "Designers, the master craftsperson and the reviewing officer join one workshop by scanning a card — no signal needed.",
     points: [
       "A printed card admits a colleague to that workshop: they can read it and fill in its stages, but never delete anything or give access to anyone else",
       "Single-use by default; only an administrator can print one that lets a whole group in",

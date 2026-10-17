@@ -779,6 +779,7 @@ function DesignReview() {
           </ul>
         )}
         {pool && pool.pages > 1 ? (
+          // A pager (Previous · page · Next), not an action row — it stays out of ActionGroup.
           <div className="flex items-center gap-2 text-xs text-ink-500">
             <button
               type="button"
@@ -1000,7 +1001,7 @@ function DesignReview() {
               workshop picker in the app prints; the rest is the part only this list can say.
             */
             <p id="design-review-truncation" className="text-xs leading-5 text-ink-500">
-              {workshopCut} Showing the {set.drawn} added most recently. Paste a link below, or use{" "}
+              {workshopCut} The {set.drawn} added most recently, sorted by workshop date. Paste a link below, or use{" "}
               <Link href="/design-workshops" className="underline">
                 Design workshops
               </Link>

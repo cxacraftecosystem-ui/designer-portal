@@ -281,8 +281,7 @@ export function GridMeasurement({
                 <p className="field-label">Read from the photo — not filled in yet</p>
                 <p className="font-display text-xl font-bold text-ink-900">{gridProposalLabel(proposal)}</p>
                 <p className="text-xs leading-5 text-ink-500">
-                  A vision model estimated this from the grid squares. Check it against the object before you accept
-                  it — nothing is written into a field until you press the button.
+                  Estimated from the grid. Check it before you accept — nothing is saved until you do.
                   {proposal.selfReportedConfidence !== null ? (
                     <>
                       {" "}

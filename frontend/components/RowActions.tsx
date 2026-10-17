@@ -48,5 +48,9 @@ export function rowAction(tone: RowActionTone = "neutral", extra?: string): stri
 
 /** A row's action buttons, laid out by the shared `ActionGroup` rule. */
 export function RowActions({ children }: { children: ReactNode }) {
-  return <ActionGroup align="end">{children}</ActionGroup>;
+  return (
+    <ActionGroup align="end" inline>
+      {children}
+    </ActionGroup>
+  );
 }

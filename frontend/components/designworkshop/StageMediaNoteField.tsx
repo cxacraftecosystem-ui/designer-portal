@@ -446,8 +446,8 @@ export function StageMediaNoteField({
           this listing does.
         */}
         <p className="text-xs text-ink-500">
-          The files attached to the {role.subject} record could not be listed, so this is a plain box. The sentence still
-          fills itself in from the record when this stage is saved; reload the page to try the list again.
+          The {role.subject} record&apos;s files could not be listed, so this is a plain box. It still fills in on save —
+          reload to retry.
         </p>
       </div>
     );
@@ -590,10 +590,10 @@ export function StageMediaNoteField({
           deleted parent leaves behind (`media.py` SET NULLs the FK and leaves the tag).
         */
         <p className="text-xs text-ink-500">
-          No files are listed against the {role.subject} record{gridFrames > 0 ? ", other than grid frames" : ""}, so
-          there is nothing to point at. {gridSentence}
+          No files are listed against the {role.subject} record{gridFrames > 0 ? ", other than grid frames" : ""}.{" "}
+          {gridSentence}
           {claim
-            ? " The box text is from the last save and may be out of date."
+            ? " Box text is from the last save — files may have been removed or aren't listed here."
             : ""}
         </p>
       )}

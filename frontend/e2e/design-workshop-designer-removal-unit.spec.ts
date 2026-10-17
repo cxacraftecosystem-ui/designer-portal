@@ -265,7 +265,7 @@ test.describe("the panel's own intro says what is now true", () => {
       "While other designers stay ticked, the lead cannot simply be dropped"
     );
     expect(PROSE, "the intro does not say that emptying the workshop is allowed").toContain(
-      "You can also untick everybody"
+      "also untick everybody"
     );
     // And it keeps the one refusal that is not about the selection at all.
     expect(PROSE).toContain("If the report has already been handed in, saving isn&apos;t allowed");

@@ -507,7 +507,7 @@ export function encodeWorkshopCode(ref: {
       ok: false,
       reason: "ID_IS_DEVICE_LOCAL",
       message:
-        "This workshop exists only on this device, so there is nothing for anybody else to scan yet — a code for it would open nothing on their phone. It gets a shareable code once it has uploaded: connect this device, let it sync, and print the code then."
+        "Not uploaded yet — sync, then print its code."
     };
   }
 
@@ -614,7 +614,7 @@ export function decodeWorkshopCode(input: string | null | undefined): DecodeResu
       ok: false,
       reason: "DEVICE_LOCAL",
       message:
-        "That code names a workshop that had not been shared yet when it was written down — it only ever meant anything on the device that made it. Ask whoever created the workshop to sync their device and send you the code it prints then."
+        "This code was made before the workshop uploaded. Ask its creator to sync and send a new code."
     };
   }
   if (!ID_PATTERN.test(id)) {
@@ -699,7 +699,7 @@ export function unresolvedWorkshopCodeMessage(recordType: WorkshopRecordType): s
       themselves on a workshop even with a perfect connection. The honest instruction is to ask an
       admin, and any UI over this must not dress that up as a submitted request.
     */
-    return "No design workshop you can open matches that code. If a colleague has just shared it with you, the workshop is there and you have not been added to it yet — only an admin can do that, so send them the code and ask to be put on it. Everything you have already recorded on this device stays where it is.";
+    return "No workshop you can open matches this code. Ask an admin to add you — your work here is kept.";
   }
   const noun = TYPE_LABEL[recordType].toLowerCase();
   return `No ${noun} you can open matches. Search by name instead.`;

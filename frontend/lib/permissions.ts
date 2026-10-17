@@ -639,7 +639,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     ministry: true,
     title: "Ministry access required",
     message:
-      "The ministry dashboard gathers every design & prototype workshop and every other workshop on the platform, with each designer's progress, for the ministry's own posts — Assistant Director, Regional Director and Ministry Administrator — and the master admin. Admins see the same workshops on Cross-workshop analytics in the settings hub; designers see their own workshops on Design workshops."
+      "For Assistant Directors, Regional Directors, Ministry Admins and the master admin. Admins: use Cross-workshop analytics. Designers: use Design workshops."
   },
   {
     /*
@@ -992,7 +992,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     ministry: true,
     title: "Ministry officer access required",
     message:
-      "Recording a sanction order is a ministry officer's act — Assistant Director and above. It opens a workshop, creates the designer's account and issues their sign-in link, so it is not something a designer or a professor can do for themselves. Ask the officer who holds the order to record it; the workshop will appear in your list as soon as they do."
+      "Only an Assistant Director or above records sanction orders. Ask the officer holding yours — the workshop appears in your list once they do."
   },
   {
     path: "/design-workshops",

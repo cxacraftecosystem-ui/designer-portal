@@ -417,10 +417,8 @@ export function SanctionImportReview({
             Cannot be recorded ({preview.refused.length})
           </h3>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
-            There is nothing to decide about these. An address an administrator has barred, an
-            empanelment an administrator has ended, an account that is not a designer&apos;s, your own
-            address, or a row the sheet did not give enough of. Correct the sheet, or the roster, and
-            upload again.
+            Barred or ended addresses, non-designer accounts, your own address, or incomplete rows.
+            Fix the sheet or roster and upload again.
           </p>
           <ul className="mt-2 rounded-md border border-line-200 bg-surface-50">
             {preview.refused.map((row) => (

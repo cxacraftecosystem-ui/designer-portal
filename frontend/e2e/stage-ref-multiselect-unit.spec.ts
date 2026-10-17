@@ -209,9 +209,10 @@ test("an unanswered cascade names the box to answer first, and never blames the 
 test("an empty repository says what has to exist first, and names the field that cannot be answered", () => {
   const line = notice({ payload: answer({ scopedToWorkshop: false }) });
   expect(line).toContain("Target product categories");
-  expect(line).toContain("Create the record first, then link it here");
-  // And it does not offer a create this control does not have — see the four things
-  // `ReferenceMultiSelect` deliberately does not do, in its own header.
+  expect(line).toContain("then link it here");
+  // And it says creating happens elsewhere, rather than offering a create this control does not
+  // have — see the four things `ReferenceMultiSelect` deliberately does not do, in its own header.
+  expect(line).toContain("Create the record elsewhere first");
   expect(line).not.toContain("Create one here");
 });
 
@@ -220,7 +221,7 @@ test("the linked-workshop sentence is the server's own, said once and never doub
   // `scopeNoticeLines` owns this sentence; the arm imports it rather than writing a second copy.
   expect(line).toContain("linked workshop yet");
   // Two explanations of one empty list would be the form arguing with itself.
-  expect(line).not.toContain("Create the record first, then link it here");
+  expect(line).not.toContain("then link it here");
 });
 
 test("a typed term replaces the scope's empty-list claim instead of stacking on it", () => {

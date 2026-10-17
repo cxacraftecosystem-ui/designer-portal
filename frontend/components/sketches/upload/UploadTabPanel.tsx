@@ -272,7 +272,8 @@ export function UploadTabPanel({
     <div className="grid gap-4">
       {/* Two sections rather than one long column, because a designer arrives holding either a sheet
           of paper or an object, never both, and the half they did not come for is noise. Real buttons
-          with `aria-pressed`, so the choice is reachable by keyboard and announced. */}
+          with `aria-pressed`, so the choice is reachable by keyboard and announced. A segmented
+          toggle, not an action row, so it is deliberately not an ActionGroup. */}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"

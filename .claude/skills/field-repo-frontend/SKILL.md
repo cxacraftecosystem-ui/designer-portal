@@ -2589,6 +2589,11 @@ label already says it. Calm and plain — a careful product designer, not a chat
 - **Offer the next step as a control, not a paragraph.** A refusal that names a fix gets a link or a
   button with that fix as its label.
 - Rule 10 still holds — a cap or a truncation is stated — in a few words ("Showing the latest 200.").
+- **Shorten, never drop, the fact a test pins.** When a spec's comment says why a clause matters
+  (which date orders a list, that counted files may not be listed, that a refusal comes from an
+  admin-only gate), keep the clause in short form and keep the assertion. A sentence that is held
+  byte-for-byte against the server or Android (route-guard refusals, §3.5's list-state sentences,
+  §2.8's cap notices) changes on every side in one commit, or not at all.
 
 | Before | After |
 |---|---|
@@ -2607,16 +2612,21 @@ and `false` ignored) and lays them out:
 | Buttons | Phone (< `sm`, 640px) | `sm` and up |
 |---|---|---|
 | 1 | centred (`fill` spans the line — a pinned form primary) | centred |
-| 2 | one line, equal halves; a label wraps inside its button, never past it | one line, content width, at `align` |
+| 2 | one line, equal halves; a label wraps inside its button, never past it | one line, content width, at `align`; still wraps inside the buttons in a narrow card or cell |
 | 3+ | stacked one under another, full width | one row of pills (`rounded-full`), wrapping only when it must |
 
 - **Destructive actions go last and set apart:** mark the child `data-danger` (every
   `rowAction("danger")` and `field-danger` button carries it). The group orders it last and spaces it.
 - `align` (`start` · `center` · `end`) places a group of two or more from `sm` up; a lone button is
-  always centred. `PageHeader` actions, `RowActions` and `FieldDialog` footers already route through
+  centred. `PageHeader` actions, `RowActions` and `FieldDialog` footers already route through
   it with `align="end"` — never hand-style a button row on a screen.
+- `inline` is for a list row or table cell: a lone action then follows `align`, so a column of row
+  actions stays aligned whether a row has one action or three. `RowActions` passes it.
 - In a row that also holds a status line, wrap only the buttons:
   `<ActionGroup className="max-sm:w-full">…</ActionGroup>` and keep the status outside it.
 - Not a button row, and left alone: a single button aligned to the bottom of a form grid cell
-  (`flex items-end`), toolbars, toggles, selects, segmented tabs and the calendar.
-- Android's twin is `ActionRow` (window size class), with the same three rules.
+  (`flex items-end`), toolbars, toggles, selects, segmented tabs and the calendar. Say so in a
+  one-line comment at the row ("a pager, not an action row") so the next sweep does not re-flag it.
+- Android's twin is `ActionRow` (`ui/ActionRow.kt`), with the same three rules: compact means the
+  row's own width is under 600dp (measured, not the window size class); mark destructive actions
+  with `Modifier.destructiveAction()`, and put only the buttons inside it — status text stays outside.

@@ -37,6 +37,7 @@ import { LocateFixed, MapPinned } from "lucide-react";
 
 import { MapPointPicker, mapPickerAvailable } from "@/components/forms/MapPointPicker";
 import { resolvePoint, type PointAddress } from "@/components/forms/LocationFields";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 import { geoValue, readNumber, type DwGeoValue, type DwValue } from "@/lib/designWorkshops";
 
 /** Shorter than the location card's own hunt: somebody is standing there with a finger on a button. */
@@ -197,7 +198,9 @@ export function StageGeoField({
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      {/* The two real buttons go through the shared row rule; the text links and the accuracy note
+          sit on their own line under them, so they never count as buttons in the row. */}
+      <ActionGroup align="start">
         <button type="button" className="field-button-secondary" disabled={disabled || busy} onClick={useDeviceFix}>
           <LocateFixed className="h-4 w-4" aria-hidden />
           {busy ? "Getting a fix…" : "Use current GPS"}
@@ -217,7 +220,9 @@ export function StageGeoField({
             {mapOpen ? "Hide the map" : "Pick on map"}
           </button>
         ) : null}
+      </ActionGroup>
 
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 empty:hidden">
         {recordingPlace ? (
           <button
             type="button"

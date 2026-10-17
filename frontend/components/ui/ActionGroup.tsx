@@ -13,21 +13,24 @@ export function ActionGroup({
   children,
   align = "center",
   fill = false,
+  inline = false,
   className,
   ref,
   ...rest
 }: {
   children: ReactNode;
-  /** Where a group of two or more sits from `sm` up. A single button is always centred. */
+  /** Where a group of two or more sits from `sm` up. A single button is centred unless `inline`. */
   align?: ActionGroupAlign;
   /** A lone primary action that should span the line on a phone. */
   fill?: boolean;
+  /** Inside a list row or table cell: a lone action follows `align`, so the action column lines up. */
+  inline?: boolean;
   className?: string;
   ref?: React.Ref<HTMLDivElement>;
 } & Omit<React.HTMLAttributes<HTMLDivElement>, "children" | "className">) {
   const count = countActions(children);
   if (count === 0) return null;
-  const layout = actionGroupClass(count, align, fill);
+  const layout = actionGroupClass(count, align, fill, inline);
   return (
     <div ref={ref} className={className ? `${layout} ${className}` : layout} {...rest}>
       {children}

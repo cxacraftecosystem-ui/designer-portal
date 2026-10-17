@@ -46,8 +46,8 @@ export default function ApiKeysPage() {
       title="API keys"
       description={
         master
-          ? "The provider keys the portal uses. A key changed here takes effect everywhere immediately."
-          : "Which speech-to-text provider transcribes field recordings first. You can test whether each provider's key works; the keys themselves are held by the master admin."
+          ? "Provider keys. Changes apply everywhere immediately."
+          : "Choose the transcription provider and test its key."
       }
       icon={<KeyRound className="h-5 w-5" aria-hidden />}
     />

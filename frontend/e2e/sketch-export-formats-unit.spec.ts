@@ -207,8 +207,9 @@ test("the table itself is usable copy: unique ids, unique labels, a sentence for
   for (const entry of EXPORT_FORMATS) {
     // THE AUDIENCE IS A DESIGNER, NOT A DEVELOPER. A button that says "DXF" and nothing else asks the
     // person pressing it to already know what a DXF is for; the hint is the half that answers that,
-    // so an empty or bare one is a regression even though nothing would break.
-    expect(entry.hint.length, `${entry.id} needs a sentence saying what it is FOR`).toBeGreaterThan(60);
+    // so an empty or bare one is a regression even though nothing would break. Short is the house
+    // style (one line, what it is for); bare is not.
+    expect(entry.hint.length, `${entry.id} needs a sentence saying what it is FOR`).toBeGreaterThan(30);
     expect(entry.hint.trim().endsWith("."), `${entry.id}'s hint should be a sentence`).toBe(true);
     expect(entry.download.toLowerCase()).toContain("download");
   }

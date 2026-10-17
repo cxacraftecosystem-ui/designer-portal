@@ -193,8 +193,7 @@ export function WorkshopAccessRequestPanel() {
         <h2 className="font-display font-bold text-ink-900">Request workshop access</h2>
       </div>
       <p className="mt-1.5 text-sm leading-6 text-ink-500">
-        Some workshops are restricted to the researchers assigned to them. Pick every workshop you need and ask once — an
-        admin approves or declines, and the outcome appears below.
+        Pick the workshops you need. An admin will decide; the outcome appears below.
       </p>
 
       {error ? (

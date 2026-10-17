@@ -132,8 +132,8 @@ export function QuestionRow({
             <p className="text-sm text-ink-700 line-through decoration-ink-300">{question.prompt}</p>
             <p className="mt-1 text-xs leading-5 text-ink-500">
               {question.supersededById
-                ? "Retired and replaced by the question that follows it. Its original wording and the answers given under it are kept — an answer means what it meant when it was given."
-                : "Retired. It is no longer asked, and the answers recorded against it are still in the record."}
+                ? "Retired — replaced by the next question. Its wording and answers are kept."
+                : "Retired. Its answers are kept."}
             </p>
           </div>
         </div>
@@ -149,9 +149,8 @@ export function QuestionRow({
             // Shown while the box is still EMPTY of changes, not after Save. amber-100/amber-800 are
             // the brand rungs; amber-50 and amber-200 are stock Tailwind and do not pair with them.
             <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-              This question already has answers. Changing its wording will keep the original question and its answers, and
-              add your new wording as a NEW question in the same place — nothing is overwritten. Help text and the required
-              flag can be changed freely.
+              Already answered. New wording becomes a new question here; the original and its answers are kept. Help text
+              and Required can change freely.
             </p>
           ) : null}
           <label className="grid gap-1">

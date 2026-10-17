@@ -263,10 +263,8 @@ export function canRecordSanctionOrders(user: User | null | undefined) {
  * different next move depending on where you met it is not a rule, it is three rumours.
  */
 export const SANCTION_ORDER_REFUSAL =
-  "Recording a sanction order is a ministry officer's act — Assistant Director and above. It " +
-  "opens a workshop, creates the designer's account and issues their sign-in link, so it is not " +
-  "something a designer or a professor can do for themselves. Ask the officer who holds the " +
-  "order to record it; the workshop will appear in your list as soon as they do.";
+  "Only an Assistant Director or above records sanction orders. Ask the officer holding yours " +
+  "— the workshop appears in your list once they do.";
 
 /**
  * A decimal string as Indian rupees, with the lakh/crore grouping.

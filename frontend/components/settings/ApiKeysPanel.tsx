@@ -305,6 +305,7 @@ export function ApiKeysPanel() {
                       </td>
 
                       <td className="px-4 py-3">
+                        {/* Icon controls beside the value (reveal, copy) — a cell toolbar, not an action row. */}
                         <div className="flex items-start gap-2">
                           {plaintext ? (
                             <code className="max-w-[18rem] break-all rounded-md bg-surface-50 px-2 py-1 font-mono text-xs text-ink-900">

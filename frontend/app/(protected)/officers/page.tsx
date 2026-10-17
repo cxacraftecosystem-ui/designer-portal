@@ -1165,14 +1165,9 @@ function DesignerPanel({
         first. See this panel's header for why the control is composed rather than forked.
       */}
       <p className="mt-1 text-xs leading-5 text-ink-500">
-        Everybody ticked below can open this workshop and fill in its stages; unticking somebody
-        removes their access when you save. One of them — the lead, chosen in the box under the
-        picker — is the designer whose profile is copied into stages 1 and 3 and whose name the
-        report carries. While other designers stay ticked, the lead cannot simply be dropped: choose
-        a different lead instead. You can also untick everybody — the workshop is then left with no
-        named designer, its report names nobody on the cover, and what has already been copied into
-        stages 1 and 3 stays as it is. If the report has already been handed in, saving isn&apos;t
-        allowed and the message says what to do instead.
+        Ticked designers can work on this workshop; the lead&apos;s name goes on the report. While
+        other designers stay ticked, the lead cannot simply be dropped — pick another lead. You can
+        also untick everybody. If the report has already been handed in, saving isn&apos;t allowed.
       </p>
 
       {refusal ? (
@@ -1274,10 +1269,9 @@ function DesignerPanel({
             </p>
           ) : emptiesTheWorkshop ? (
             <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
-              Saving now will leave this workshop with no named designer. Only an admin and whoever
-              created it will be able to open it, and its report will name nobody on the cover. The
-              designer details already copied into stages 1 and 3 stay exactly as they are; only the
-              name is cleared. You can tick a designer here again at any time.
+              Saving will leave this workshop with no named designer: only admins and its creator can
+              open it, and its report will name nobody on the cover. Details copied into stages 1 and 3
+              stay exactly as they are.
             </p>
           ) : null}
 

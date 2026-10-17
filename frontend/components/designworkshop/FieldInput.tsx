@@ -2449,7 +2449,7 @@ export function referenceMultiNotice({
       );
     } else if (!scopeExplainsEmpty) {
       lines.push(
-        `Nothing to link for ${field.label} yet. Create the record first, then link it here.`
+        `Nothing to link for ${field.label} yet. Create the record elsewhere first, then link it here.`
       );
     }
   }

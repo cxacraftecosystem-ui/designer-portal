@@ -519,11 +519,8 @@ export default function MinistryDashboardPage() {
           </div>
           <h1 className="font-display text-xl font-bold tracking-tight text-ink-900">Ministry access required</h1>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-ink-500">
-            The ministry dashboard gathers every design &amp; prototype workshop and every other
-            workshop on the platform, with each designer&apos;s progress, for the ministry&apos;s own
-            posts — Assistant Director, Regional Director and Ministry Admin — and the Master Admin.
-            Admins see the same workshops on Cross-workshop analytics in Settings; designers open the
-            workshops they are on from Design workshops.
+            For Assistant Directors, Regional Directors, Ministry Admins and the Master Admin. Admins:
+            use Cross-workshop analytics. Designers: use Design workshops.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
@@ -799,7 +796,7 @@ export default function MinistryDashboardPage() {
       */}
       <p className="mb-4 text-xs leading-5 text-ink-500">
         “Download workshops” exports this table, with no stage content. “Download beneficiaries” exports every
-        artisan, with identity numbers masked to the last four characters.
+        artisan, identity numbers masked to the last four characters.
         {entitlements && !entitlements.beneficiaries ? (
           <span className="mt-1 block font-medium text-ink-700">{entitlements.beneficiariesRefusal}</span>
         ) : null}

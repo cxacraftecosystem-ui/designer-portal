@@ -124,12 +124,11 @@ export default function TasksPage() {
 
       {assigner ? (
         <p className="mb-4 rounded-md border border-purple-200 bg-surface-50 px-4 py-3 text-sm leading-6 text-ink-700">
-          Handing work out happens on the{" "}
+          Assign work from the{" "}
           <Link href="/settings/tasks" className="font-semibold text-purple-700 dark:text-purple-300 underline">
             assignment board
           </Link>
-          : one scope — record types, an artisan subset, questionnaire sections, a target count — given to several
-          people at once, with the accountability rollup beside it.
+          .
         </p>
       ) : null}
 
@@ -174,7 +173,7 @@ export default function TasksPage() {
           body={
             statusFilter
               ? "Nothing in this state right now. Try another filter."
-              : "When an admin assigns you documentation work it appears here with everything it covers — the workshop, the artisans, the questionnaire sections — plus its due date and your progress."
+              : "Work an admin assigns you will appear here."
           }
         />
       ) : (

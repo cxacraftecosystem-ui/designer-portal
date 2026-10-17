@@ -1696,8 +1696,8 @@ function QuestionnairePageBody() {
   async function offerMergeIntoHolder(sourceId: string, holder: { id: string; title: string }): Promise<boolean> {
     const ok = await confirm({
       title: `“${holder.title}” already covers this set of artisans`,
-      body: `There is one questionnaire entry per set of artisans, so this edit cannot be saved as a second one. Move this interview's answers and recordings into “${holder.title}” instead?`,
-      note: "Nothing is thrown away: every answer and every recording moves onto that interview, and this one is removed once they have. Where the two sittings answer the same question differently, nothing is moved and you will be told which questions they are.",
+      body: `Move this interview's answers and recordings into “${holder.title}”?`,
+      note: "Nothing is lost — this interview is removed only after everything moves. If both answer a question differently, nothing moves and you'll see which.",
       confirmLabel: "Move into that interview",
       tone: "warning"
     });
@@ -4506,28 +4506,35 @@ function QuestionTile({
                 <input type="checkbox" checked={isActive} onChange={(event) => setIsActive(event.target.checked)} />
                 Active
               </label>
-              <button type="button" className="field-button-secondary" onClick={handleSave} disabled={savingTile || disabled}>
-                <Save className="h-4 w-4" aria-hidden />
-                {savingTile ? "Saving..." : "Save"}
-              </button>
-              <button
-                type="button"
-                className="text-sm font-semibold text-ink-muted"
-                onClick={() => {
-                  setPrompt(question.prompt);
-                  setIsActive(question.isActive);
-                  setEditing(false);
-                }}
-              >
-                Cancel
-              </button>
+              <ActionGroup align="start">
+                <button type="button" className="field-button-secondary" onClick={handleSave} disabled={savingTile || disabled}>
+                  <Save className="h-4 w-4" aria-hidden />
+                  {savingTile ? "Saving..." : "Save"}
+                </button>
+                <button
+                  type="button"
+                  className="field-button-secondary"
+                  onClick={() => {
+                    setPrompt(question.prompt);
+                    setIsActive(question.isActive);
+                    setEditing(false);
+                  }}
+                >
+                  Cancel
+                </button>
+              </ActionGroup>
             </>
           ) : (
             <>
-              <button type="button" className="field-button-secondary" onClick={() => setEditing(true)} disabled={disabled}>
-                <Pencil className="h-4 w-4" aria-hidden />
-                Update
-              </button>
+              <ActionGroup align="start">
+                <button type="button" className="field-button-secondary" onClick={() => setEditing(true)} disabled={disabled}>
+                  <Pencil className="h-4 w-4" aria-hidden />
+                  Update
+                </button>
+                <button type="button" data-danger className="field-danger" onClick={onRemove} disabled={disabled}>
+                  Remove
+                </button>
+              </ActionGroup>
               {otherSections.length ? (
                 <label className="flex items-center gap-1.5 text-xs text-ink-muted">
                   <span>Move to</span>
@@ -4553,9 +4560,6 @@ function QuestionTile({
                   </span>
                 </label>
               ) : null}
-              <button type="button" className="text-sm font-semibold text-red-700 dark:text-red-400" onClick={onRemove} disabled={disabled}>
-                Remove
-              </button>
             </>
           )}
         </div>

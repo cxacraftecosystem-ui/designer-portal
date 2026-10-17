@@ -533,7 +533,7 @@ test("the truncation sentence names the date that actually does the sorting", ()
   const notice = between(source, 'id="design-review-truncation"', "</p>");
   expect(notice).not.toContain("newest first");
   expect(notice).toContain("added most recently");
-  
+  expect(notice, "and names the date that orders the rows").toContain("sorted by workshop date");
   expect(notice, "no developer vocabulary in the notice").not.toContain("repository");
 });
 

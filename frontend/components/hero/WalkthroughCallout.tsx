@@ -86,12 +86,7 @@ export default function WalkthroughCallout() {
             what they are for instead, which is what a reader on a landing page can act on anyway.
           */}
           <p className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
-            Every account gets a guided tour of the part of the process it works — a ministry post
-            opens on the annual plan and the sanction register, an inspector on the workshops assigned
-            to them. The chapters below are the designer&rsquo;s: what each record type is for, what
-            makes a good interview, how work travels from the field to an approved, exportable
-            dataset, and how a design &amp; prototype workshop runs from its first stage to a
-            submitted report.
+            Every account gets a guided tour of its own work. Below is the designer&rsquo;s.
           </p>
           <ul className="mt-6 grid gap-2 sm:grid-cols-2">
             {CHAPTERS.map((chapter) => (

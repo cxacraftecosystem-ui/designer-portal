@@ -380,7 +380,10 @@ test("the three states a fetched list has are each answered in words", () => {
   // NOTHING ATTACHED: said out loud, and with the FK-versus-tag disagreement named rather than left
   // as an inexplicable blank beside a filled box.
   expect(source).toContain("No files are listed against the");
-  expect(source).toContain("The box text is from the last save and may be out of date.");
+  expect(source, "stale text").toContain("Box text is from the last save");
+  expect(source, "and the FK-versus-tag case: counted files this list does not show").toContain(
+    "aren't listed here"
+  );
   // AND A FAILED FETCH IS NOT AN EMPTY LIST. "This record has no media" and "we could not ask" are
   // different facts and only one is a reason to stop looking.
   expect(source).toContain("could not be listed, so this is a plain box");

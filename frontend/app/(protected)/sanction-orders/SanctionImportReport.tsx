@@ -243,7 +243,7 @@ export function SanctionImportReport({
 
       <ProblemBlock
         title="Rows that were not recorded"
-        body="Nothing was written for these. Correct them in the sheet and upload it again — every order already recorded will be reported as a duplicate rather than recorded twice."
+        body="Not saved. Fix them and upload again — orders already recorded won't be duplicated."
         tone="error"
         problems={errors}
       />

@@ -129,11 +129,11 @@ export async function parseModel(buffer: ArrayBuffer, format: ModelFormat): Prom
   } catch {
     if (format === "gltf") {
       throw new ModelViewerError(
-        "This glTF file could not be drawn. A .gltf usually keeps its mesh and textures in separate files, and only this one file is stored — export the model as .glb, which holds everything in one file, and attach that instead."
+        "Can't show this .gltf — export the model as .glb and attach that."
       );
     }
     throw new ModelViewerError(
-      "This file could not be drawn as a 3D model — it may be damaged, or saved in a variant of the format this viewer does not read. It is still stored and can be downloaded and opened in a 3D program."
+      "Can't show this model. It's still saved — download it to open in a 3D program."
     );
   }
   throw new ModelViewerError("This kind of file cannot be drawn as a 3D model.");

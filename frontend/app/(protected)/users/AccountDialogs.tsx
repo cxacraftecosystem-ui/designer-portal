@@ -335,8 +335,8 @@ export function RequirePasswordChangeDialog({
             sign-in must choose a new password before they can do anything else.
           </p>
           <p className="text-sm leading-6 text-ink-700">
-            Their current password still works once, to reach the screen where they choose a new one.
-            Somebody who signs in with Google is asked for it too; if they do not know it, they need a password link.
+            Their current password works once, to set a new one. Somebody who signs in with Google is asked for it too;
+            if they don&apos;t know it, they need a password link.
           </p>
           <label className="flex items-start gap-2 text-sm text-ink-700">
             <input

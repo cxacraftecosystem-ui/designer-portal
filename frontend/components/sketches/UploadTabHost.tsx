@@ -941,8 +941,8 @@ export function UploadTabHost({
         // is, so only the sending is what this sentence is about.
         setNotice(
           isUnreachable(error)
-            ? `${what(took)} is saved on this device. It will upload when you're back online, and the copy here is kept until the upload is confirmed.`
-            : `${what(took)} is saved on this device, but it didn't finish uploading. It will upload with the next sync — the banner at the top of the page shows its progress — and the copy here is kept until the upload is confirmed.`
+            ? `${what(took)} is saved on this device and will upload when you're back online.`
+            : `${what(took)} is saved on this device and will upload on the next sync.`
         );
       }
       /*

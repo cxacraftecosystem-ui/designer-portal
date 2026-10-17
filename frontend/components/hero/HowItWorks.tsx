@@ -62,25 +62,25 @@ const STEPS = [
     icon: Mic,
     title: "Capture in the field",
     copy:
-      "Record interviews, photograph products and tools, and log GPS positions on the Android app or the web — with or without a signal. A microphone on every narrative box, so a long description can be spoken instead of typed on a phone; in the browser's record forms the words are written on the device and no recording is kept. Nothing waits for a connection."
+      "Record interviews, photos and GPS on Android or the web, with or without signal. Dictate into any long answer instead of typing."
   },
   {
     icon: Languages,
     title: "Transcribe & translate automatically",
     copy:
-      "Every recording is transcribed automatically and arrives as clean English text, linked to its artisan, craft, and workshop. Each interview also records the language it was held in, picked from the same list of twenty-three languages, plus Other, on the phone and on the web."
+      "Recordings become clean English text, linked to their artisan, craft and workshop."
   },
   {
     icon: ClipboardCheck,
     title: "Review & approve up the ladder",
     copy:
-      "Reviewers approve, reject, or send work back for revision with comments. Each role reviews the work of the roles below it, so quality climbs the same ladder as access."
+      "Reviewers approve, reject or send work back with comments. Each role reviews the roles below it."
   },
   {
     icon: FolderDown,
     title: "Explore & export the dataset",
     copy:
-      "Browse the whole repository like folders on a computer, give collaborators download, comment or edit access, and — from Professor upwards, or with an explicit grant — export research-ready records, media, and transcripts."
+      "Browse everything like folders, share with collaborators, and export records, media and transcripts."
   }
 ];
 

@@ -252,9 +252,8 @@ export function ReviewEditPanel({
       <p className="text-xs text-ink-500">
         {/* The explicit {" "} is load-bearing: the JSX transform drops the leading space of the text
             node that follows an inline element, so without it this reads "does notapprove it". */}
-        Fix the values here instead of bouncing the record back. Saving does <strong>not</strong>{" "}
-        approve it — the status stays pending and the change is recorded against your name in the edit history. Status,
-        workshop, location and linked records are changed from the record&apos;s own edit screen.
+        Fix values here instead of sending it back. Saving does <strong>not</strong>{" "}
+        approve it; the edit is logged under your name.
       </p>
       {/* ABOVE THE BOXES IT HOLDS, unlike the error below: a held field is greyed before anything is
           typed, and the reason has to be where the eye lands on it. Mounted from the first paint, so

@@ -458,7 +458,7 @@ function PlatformAccessScreen() {
         refusal neither screen explained. The sentence now names the credential, and the link under
         it carries the address and the tier to the form that makes a password account.
       */
-      const message = `${created.email} may sign in with Google. They join as ${roleLabel(created.admitRole) || "the default role"}, and the account is created the first time they sign in with Google.`;
+      const message = `${created.email} may sign in with Google, as ${roleLabel(created.admitRole) || "the default role"}. The account is created the first time they sign in with Google.`;
       setNotice(message);
       setPasswordAccount({
         notice: message,
@@ -497,7 +497,7 @@ function PlatformAccessScreen() {
       // The middle clause became true on 2026-10-09: approving promotes an account that already
       // exists, and one still holding a temporary password is not promoted — see `heldPromotion`.
       note:
-        "If they already have an account with a lower role, it is raised to match — unless it still has to replace a temporary password, in which case you are told how to finish the promotion. Approving never lowers anybody's role.",
+        "An existing lower role is raised to match — unless it still has to replace a temporary password, in which case you are told how. Approving never lowers a role.",
       confirmLabel: "Approve",
       tone: "warning"
     });

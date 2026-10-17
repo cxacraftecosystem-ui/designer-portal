@@ -1378,9 +1378,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             Open a stage to correct something the preview shows
           </summary>
           <p className="mt-2 text-xs leading-5 text-ink-500">
-            The pages below print each stage&rsquo;s own saved answers, not the artisan or product records they were
-            copied from — so a value that is filled in but wrong is corrected on its stage, and a report already
-            handed over is never changed by editing an artisan or a product afterwards.
+            The report prints each stage&rsquo;s saved answers, not the artisan or product records they were copied
+            from — so correct a wrong value on its stage.
           </p>
           <ul className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
             {(registry?.stages ?? []).map((stage) => (

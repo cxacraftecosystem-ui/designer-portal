@@ -30,6 +30,13 @@ test("one button is centred, and a pinned primary may span a phone's width", () 
   expect(actionGroupClass(1)).not.toContain("w-full");
 });
 
+test("in a list row or table cell a lone action follows the column's alignment", () => {
+  // RowActions is right-aligned; a row with one action must not sit centred beside rows of three.
+  expect(actionGroupClass(1, "end", false, true)).toContain("justify-end");
+  expect(actionGroupClass(1, "end", false, true)).not.toContain("justify-center");
+  expect(actionGroupClass(1, "start", false, true)).toContain("justify-start");
+});
+
 test("two buttons share one line and never wrap", () => {
   const two = actionGroupClass(2);
   expect(two).toContain("flex-nowrap");
@@ -37,6 +44,10 @@ test("two buttons share one line and never wrap", () => {
   expect(two).toContain("max-sm:[&>*]:flex-1");
   expect(two).toContain("max-sm:[&>*]:min-w-0");
   expect(actionGroupClass(2, "end")).toContain("justify-end");
+  // From sm up too, a long pair in a narrow card wraps inside its buttons instead of overflowing.
+  expect(two).toContain(" [&>*]:min-w-0 ");
+  expect(two).toContain("[&>*]:whitespace-normal");
+  expect(two).toContain("max-w-full");
 });
 
 test("three or more stack on a phone and become pills from sm up, danger last", () => {
@@ -51,7 +62,7 @@ test("three or more stack on a phone and become pills from sm up, danger last", 
 
 test("the shared row surfaces route through ActionGroup", () => {
   expect(read("components/PageHeader.tsx")).toContain('<ActionGroup align="end">{actions}</ActionGroup>');
-  expect(read("components/RowActions.tsx")).toContain('<ActionGroup align="end">{children}</ActionGroup>');
+  expect(read("components/RowActions.tsx")).toContain('<ActionGroup align="end" inline>');
   expect(read("components/dialogs/FieldDialog.tsx")).toContain('<ActionGroup align="end" className="mt-5">{footer}</ActionGroup>');
 });
 

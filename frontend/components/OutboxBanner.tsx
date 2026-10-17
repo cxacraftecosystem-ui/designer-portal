@@ -123,13 +123,13 @@ export function outboxOutcome(result: SyncResult): {
       tone: result.credentialExpired ? "error" : "success",
       title: `${result.synced} saved ${result.synced === 1 ? "entry" : "entries"} sent`,
       description: result.credentialExpired
-        ? `Your sign-in expired before everything was sent. ${result.remaining} ${
+        ? `Your sign-in expired. ${result.remaining} ${
             result.remaining === 1 ? "entry is" : "entries are"
-          } still on this device and nothing has been thrown away. Sign in again, then use Sync now.`
+          } safe on this device — sign in, then Sync now.`
         : result.passwordChangeRequired
-          ? `The rest will send once you've chosen a new password — ${result.remaining} ${
+          ? `Set a new password to send the rest — ${result.remaining} ${
               result.remaining === 1 ? "entry is" : "entries are"
-            } still on this device and nothing has been thrown away.`
+            } safe on this device.`
           : unfiled.length
           ? unfiled.join(" ")
           : result.remaining
