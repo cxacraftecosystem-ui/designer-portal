@@ -158,7 +158,7 @@ from app.core.deps import (
     role_value,
 )
 from app.core.security import hash_password
-from app.services import access_roster, credential_links, designers
+from app.services import access_roster, annual_plan, credential_links, designers
 from app.services.account_provisioning import is_master_email
 from app.services.design_workshops import (
     attach_the_named_designer,
@@ -1309,6 +1309,13 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
 
     await _refuse_if_number_taken(key)
 
+    # THE PLANNED WORKSHOP, IF THE OFFICER PICKED ONE (owner decision C1, 2026-10-17). A READ, so
+    # it belongs here with the other refusals and not inside the transaction. One planned row is one
+    # workshop: a row already opened or withdrawn is refused before anything is written, and the
+    # row is stamped inside the transaction below so a race leaves one workshop or none.
+    planned_id = getattr(payload, "annualPlanEntryId", None)
+    planned = await annual_plan.plan_row_for_sanction(planned_id) if planned_id else None
+
     team: list[NamedDesigner] = []
     for name, address in named_team_of(payload):
         resolved = await resolve_named_designer(name, address, officer=officer, note=note)
@@ -1512,7 +1519,11 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
                 # it, and would make a required field read as filled when nobody has filled it.
                 # Left unseeded, ``workshopTitle`` correctly appears in ``missingMandatory`` and the
                 # designer's first stage-1 save promotes the real title over this string.
-                "title": f"Sanctioned workshop {stored_no}",
+                "title": (
+                    annual_plan.promotion_title(planned)
+                    if planned is not None
+                    else f"Sanctioned workshop {stored_no}"
+                ),
                 "templateId": "DCH_STANDARD",
                 "createdById": getattr(officer, "id", None),
                 "schemaVersion": registry_version(),
@@ -1601,6 +1612,14 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
             )
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
 
+        # 1.7b THE PLANNED ROW, STAMPED WITH THIS WORKSHOP — the compare-and-set promotion uses,
+        # through the transaction client. Zero rows means somebody else opened it a moment ago; the
+        # 409 rolls the whole order back with it.
+        if planned is not None:
+            await annual_plan.claim_for_sanction(
+                planned.id, workshop.id, actor_id=getattr(officer, "id", None), client=tx
+            )
+
         # 1.8 WHO THE ORDER NAMES — one row per designer, the lead at position 0.
         #
         # ``create_many`` AND NOT A LOOP OF ``create``: one statement, and the list is bounded by
@@ -1637,7 +1656,13 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
     # overwrite the one before, and the name on the ministry's document would be decided by whichever
     # of them the loop reached last. Several people may OPEN it; one name is ON it.
     await _seed_the_report_copy(
-        workshop, officer, lead.userId, stored_no, payload.sanctionOrderDate
+        workshop,
+        officer,
+        lead.userId,
+        stored_no,
+        payload.sanctionOrderDate,
+        amount=payload.sanctionAmount,
+        planned=annual_plan.plan_stage_one_values(planned) if planned is not None else None,
     )
 
     credential_links_out: list[dict[str, Any]] = []
@@ -1692,7 +1717,14 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
 
 
 async def _seed_the_report_copy(
-    workshop: Any, officer: Any, designer_id: str, stored_no: str, order_date: date
+    workshop: Any,
+    officer: Any,
+    designer_id: str,
+    stored_no: str,
+    order_date: date,
+    *,
+    amount: Any = None,
+    planned: Mapping[str, Any] | None = None,
 ) -> None:
     """Put the sanction number and date into stage 1, ONCE, as the report's own copy.
 
@@ -1711,9 +1743,15 @@ async def _seed_the_report_copy(
             workshop,
             officer,
             designer_id=designer_id,
+            # THE PLAN'S VALUES FIRST, THE ORDER'S OWN FACTS OVER THEM. A picked planned row
+            # fills the cover the plan already holds (``annual_plan.plan_stage_one_values``), and
+            # the sanctioned amount prints on the cover (owner decision C1) — a MONEY field stores
+            # a fixed-2 decimal string, never a float.
             extra={
+                **dict(planned or {}),
                 "sanctionOrderNo": stored_no,
                 "sanctionOrderDate": order_date.isoformat(),
+                **({"sanctionAmount": f"{amount:.2f}"} if amount is not None else {}),
             },
         )
     except Exception:  # pragma: no cover - the seed's own contract is that it never fails a create
@@ -2041,6 +2079,7 @@ async def sanction_payload(
     officer: Any | None = None,
     team: Sequence[Any] | None = None,
     stage_one: Mapping[str, dict[str, Any]] | None = None,
+    planned_rows: Mapping[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The wire form of one sanction order. HAND-BUILT, and never ``jsonable_encoder(row)``.
 
@@ -2063,10 +2102,15 @@ async def sanction_payload(
         singleton = stage_one.get(workshop_id) if workshop_id else None
         score = stage_completeness(stage(STAGE_ONE_KEY), singleton or {}, {})
 
+    if planned_rows is None:
+        planned_rows = await annual_plan.planned_rows_for_workshops([workshop_id] if workshop_id else [])
+
     order_date = getattr(row, "sanctionOrderDate", None)
     return {
         "id": row.id,
         "sanctionOrderNo": row.sanctionOrderNo,
+        # The planned workshop this order opened (owner decision C1), or None. Additive.
+        "plannedWorkshop": planned_rows.get(workshop_id) if workshop_id else None,
         "sanctionOrderDate": (
             order_date.date().isoformat() if isinstance(order_date, datetime) else None
         ),
@@ -2116,6 +2160,10 @@ async def sanction_payload(
         # by widening the census. ``sanction_orders_xlsx`` and ``sanction_import`` cite the annual
         # plan twenty-odd times between them without naming it once; this is the same discipline.
         # See the note beside ``ALLOWED_MENTION_MODULES`` for why the widening was rejected.
+        # SINCE C1 (2026-10-17) AN ORDER DOES LINK TO A PLAN ROW — ``plannedWorkshop`` above — and it
+        # still never names the table: every read and the one write go through the annual plan's
+        # own module (``annual_plan.plan_row_for_sanction``, ``claim_for_sanction``,
+        # ``planned_rows_for_workshops``).
         "sourceFilename": getattr(row, "sourceFilename", None),
         "sheetRow": getattr(row, "sheetRow", None),
     }
@@ -2127,8 +2175,12 @@ async def sanction_payloads(rows: Sequence[Any]) -> list[dict[str, Any]]:
     The officer's list used to build each row with its own stage-1 read — a query per order, the
     same N+1 the badge had (``awaiting_count``). Same rows, same pick, same scorer.
     """
-    stage_one = await _stage_one_singletons([getattr(row, "designWorkshopId", None) for row in rows])
-    return [await sanction_payload(row, stage_one=stage_one) for row in rows]
+    workshop_ids = [getattr(row, "designWorkshopId", None) for row in rows]
+    stage_one = await _stage_one_singletons(workshop_ids)
+    planned_rows = await annual_plan.planned_rows_for_workshops([w for w in workshop_ids if w])
+    return [
+        await sanction_payload(row, stage_one=stage_one, planned_rows=planned_rows) for row in rows
+    ]
 
 
 def _iso(value: Any) -> str | None:

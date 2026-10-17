@@ -128,6 +128,11 @@ class SanctionOrderCreate(APIModel):
     coDesigners: list[SanctionOrderCoDesigner] = Field(
         default_factory=list, max_length=MAX_SANCTION_DESIGNERS - 1
     )
+    #: The planned workshop this order is for (owner decision C1, 2026-10-17): the id of a row
+    #: answered by ``GET /sanction-orders/planned-workshops``, which matches the number EXACTLY.
+    #: Optional and additive — a body without it is the body every deployed client sends, and opens
+    #: the workshop with only the order's own facts, exactly as before.
+    annualPlanEntryId: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class SanctionOrderUpdate(APIModel):

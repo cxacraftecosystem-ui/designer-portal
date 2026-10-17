@@ -85,6 +85,7 @@ import { PromoteDialog } from "./PromoteDialog";
 import { RegionalStatesPanel } from "./RegionalStatesPanel";
 import { UploadPlanDialog } from "./UploadPlanDialog";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { formatSanctionAmount } from "@/lib/sanctionOrders";
 
 /**
  * The label under which the standing column reads, plus the tone it is drawn in.
@@ -574,6 +575,12 @@ export default function AnnualPlanPage() {
                         >
                           {entry.designWorkshopTitle ?? "Open the workshop"}
                         </Link>
+                      ) : null}
+                      {entry.sanction ? (
+                        <span className="mt-1 block text-xs text-ink-700">
+                          Sanction {entry.sanction.sanctionOrderNo} ·{" "}
+                          {formatSanctionAmount(entry.sanction.sanctionAmount)}
+                        </span>
                       ) : null}
                     </td>
                     <td className="px-4 py-3">

@@ -134,7 +134,45 @@ export type SanctionOrder = {
   sourceFilename: string | null;
   /** The 1-based Excel gutter row, so an officer holding the sheet can find the line. */
   sheetRow: number | null;
+  /** The annual-plan row this order opened, when the officer picked one (owner decision C1). */
+  plannedWorkshop?: PlannedWorkshopRef | null;
 };
+
+/** The planned row an order names — enough to say which line of the annual plan it was. */
+export type PlannedWorkshopRef = {
+  id: string;
+  workshopNo: string;
+  planYear: number;
+  planYearLabel: string;
+  plannedTitle: string | null;
+};
+
+/** One exact match from `GET /sanction-orders/planned-workshops`. */
+export type PlannedWorkshopCandidate = {
+  id: string;
+  planYear: number;
+  planYearLabel: string;
+  workshopNo: string;
+  plannedTitle: string | null;
+  workshopKindLabel: string | null;
+  craftName: string | null;
+  clusterName: string | null;
+  state: string | null;
+  district: string | null;
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
+  standing: "PLANNED" | "PROMOTED" | "WITHDRAWN" | string;
+  /** False for a row already opened or withdrawn; `reason` is the server's sentence. */
+  pickable: boolean;
+  reason: string | null;
+};
+
+/** The plan rows whose number is EXACTLY `workshopNo` — the server folds only invisible differences. */
+export async function findPlannedWorkshops(workshopNo: string) {
+  return apiFetch<{ items: PlannedWorkshopCandidate[]; truncated: boolean }>(
+    `/sanction-orders/planned-workshops${buildQuery({ workshopNo })}`
+  );
+}
 
 /**
  * One designer named on one order, from the server's `SanctionOrderDesigner` join.
@@ -395,6 +433,8 @@ export async function recordSanctionOrder(body: {
    * a client that sends it twice is a client whose author believed something untrue about it.
    */
   coDesigners?: { name: string; email: string }[];
+  /** The picked planned workshop. Omitted when none was picked — the body every client sent before. */
+  annualPlanEntryId?: string;
 }) {
   return apiFetch<SanctionOrderCreated>("/sanction-orders", {
     method: "POST",

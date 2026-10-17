@@ -464,6 +464,22 @@ STAGE_1 = StageSpec(
                     max_length=120,
                 ),
                 f("sanctionOrderDate", "Sanction order date", DATE, S, report_role=COVER),
+                # THE SANCTIONED AMOUNT, ON THE COVER (owner decision C1, 2026-10-17). A COPY of the
+                # register's ``SanctionOrder.sanctionAmount``, seeded once when the order opens the
+                # workshop — exactly as the number and date above are — and allowed to drift for the
+                # same reason: a designer correcting their own cover is legitimate, and the register
+                # reports the disagreement instead of blocking it. Standard tier and not required,
+                # so no existing workshop's completeness moves (percent counts required fields).
+                f(
+                    "sanctionAmount",
+                    "Sanctioned amount",
+                    MONEY,
+                    S,
+                    report_role=COVER,
+                    unit="INR",
+                    min_value=0,
+                    help="Filled from the sanction order.",
+                ),
                 f(
                     "workshopCode",
                     "Workshop ID",

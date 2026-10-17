@@ -72,6 +72,7 @@ from app.schemas.annual_plan import (
     AnnualPlanPromoteRequest,
     RegionalDirectorStatesIn,
 )
+from app.services import annual_plan
 from app.services.annual_plan import (
     ANNUAL_PLAN_REFUSAL,
     apply_parsed_plan,
@@ -604,7 +605,13 @@ async def list_annual_plan(
         take=clean_size,
         include={"designWorkshop": True},
     )
-    payload = page_payload([entry_payload(row) for row in rows], total, clean_page, clean_size)
+    sanctions = await annual_plan.sanctions_for_rows(list(rows))
+    payload = page_payload(
+        [entry_payload(row, sanction=sanctions.get(row.id)) for row in rows],
+        total,
+        clean_page,
+        clean_size,
+    )
     payload["regionalStates"] = scope
     return payload
 
@@ -650,7 +657,9 @@ async def get_annual_plan_entry(
     entry_id: str, current_user: Any = Depends(require_annual_plan_reader)
 ) -> dict[str, Any]:
     """One planned row, with the title of the workshop it became when it became one."""
-    return entry_payload(await _entry_in_scope_or_404(entry_id, current_user))
+    row = await _entry_in_scope_or_404(entry_id, current_user)
+    sanctions = await annual_plan.sanctions_for_rows([row])
+    return entry_payload(row, sanction=sanctions.get(row.id))
 
 
 @router.patch("/{entry_id}")

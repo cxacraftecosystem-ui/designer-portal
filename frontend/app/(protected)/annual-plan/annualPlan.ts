@@ -134,6 +134,14 @@ export type AnnualPlanEntry = {
   designWorkshopId: string | null;
   designWorkshopTitle: string | null;
   promotedAt: string | null;
+  /** The sanction order that opened this row's workshop, if one did (owner decision C1). */
+  sanction?: {
+    id: string;
+    sanctionOrderNo: string;
+    sanctionOrderDate: string | null;
+    /** A decimal STRING — never parse it back onto a request. */
+    sanctionAmount: string;
+  } | null;
   createdAt: string;
   updatedAt: string;
 };
