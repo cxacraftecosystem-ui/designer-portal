@@ -577,6 +577,18 @@ def discard_temp(path: str | None) -> None:
         logger.warning("Could not remove the temporary object file %s: %s", path, exc)
 
 
+def put_object_bytes(object_key: str, data: bytes, mime_type: str) -> None:
+    """Store a small object the API built itself (a generated report file), encrypted like uploads."""
+    settings = get_settings()
+    _client().put_object(
+        Bucket=settings.aws_s3_bucket,
+        Key=object_key,
+        Body=data,
+        ContentType=mime_type,
+        **_sse_params(),
+    )
+
+
 def delete_object(object_key: str) -> None:
     """Remove a single object. Used to clean up staged uploads that were cancelled before save."""
     settings = get_settings()

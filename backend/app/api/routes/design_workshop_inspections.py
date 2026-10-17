@@ -119,7 +119,6 @@ from app.api.routes.design_workshop_oversight import require_workshop_assigner
 # puts a name on every suggestion is inside it. A second implementation here would differ first in
 # exactly that include, and the symptom would be a panel of corrections attributed to nobody.
 from app.api.routes.design_workshops import (
-    _inspection_feedback_payload,
     _provenance_maps,
     _stages_payload,
 )
@@ -129,9 +128,14 @@ from app.schemas import design_workshop_review_loop
 from app.schemas.design_workshop_inspections import (
     DesignWorkshopInspectorsIn,
     DwInspectionFeedbackIn,
+    DwInspectionNotesIn,
     DwInspectionSendBackIn,
 )
-from app.services import design_workshop_approvals, email_outbox
+from app.services import (
+    design_workshop_approvals,
+    design_workshop_review_aids as review_aids,
+    email_outbox,
+)
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import definition_payload, load_definition_or_empty
 from app.services.design_workshop_inspectors import (
@@ -271,6 +275,22 @@ async def set_inspectors(
 # --------------------------------------------------------------------------------------
 
 
+#: The inspector's three groups, as Android draws them: waiting for this reader, with the designers,
+#: and everything else (not handed in yet, approved, handed on).
+_INSPECTION_GROUPS: dict[str, dict[str, Any]] = {
+    "awaiting": {"status": design_workshop_review_loop.PRE_SUBMISSION},
+    "withDesigners": {"status": design_workshop_review_loop.NEEDS_REVISION},
+    "other": {
+        "status": {
+            "notIn": [
+                design_workshop_review_loop.PRE_SUBMISSION,
+                design_workshop_review_loop.NEEDS_REVISION,
+            ]
+        }
+    },
+}
+
+
 @router.get("")
 async def list_inspectable_workshops(
     page: int = 1,
@@ -282,6 +302,8 @@ async def list_inspectable_workshops(
     workshopKind: str | None = Query(None, max_length=120),
     dateFrom: date | None = None,
     dateTo: date | None = None,
+    group: str | None = Query(None),
+    sort: str | None = Query(None),
     current_user: Any = Depends(require_inspector),
 ) -> dict[str, Any]:
     """The design & prototype workshops this inspector has been assigned, newest first.
@@ -331,7 +353,44 @@ async def list_inspectable_workshops(
     )
     where.setdefault("AND", []).append(inspectable_by_clause(current_user.id))
 
+    # B4 (2026-10-17): Android's three groups as a filter, readiness on every row, two more sorts.
+    # Absent `group` and `sort` leave the answer exactly as it was, apart from the added keys.
+    chosen_sort = review_aids.check_sort(sort)
+    if group is not None and group not in _INSPECTION_GROUPS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"group must be one of {', '.join(_INSPECTION_GROUPS)}.",
+        )
+    counts = await gather_reads(
+        *(
+            db.designworkshop.count(where={"AND": [where, clause]})
+            for clause in _INSPECTION_GROUPS.values()
+        )
+    )
+    group_counts = dict(zip(_INSPECTION_GROUPS, counts, strict=True))
+    if group is not None:
+        where = {"AND": [where, _INSPECTION_GROUPS[group]]}
+
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
+    if chosen_sort == "complete":
+        rows, total, readiness, truncated = await review_aids.ranked_page(
+            where,
+            {"createdAt": "desc"},
+            page=clean_page,
+            page_size=clean_size,
+            sort=chosen_sort,
+            cleared=None,
+        )
+        answer = page_payload(
+            [{**workshop_summary(r), "readiness": readiness.get(r.id)} for r in rows],
+            total,
+            clean_page,
+            clean_size,
+        )
+        answer["groupCounts"] = group_counts
+        answer["candidatesTruncated"] = truncated
+        return answer
+    order = review_aids.dated_order("lastHandedInAt", chosen_sort) or {"createdAt": "desc"}
     # Count and page together: neither reads the other, and in series the count was a whole round
     # trip added to every page of an inspector's list — a cross-region one when this was written,
     # a co-located one or two milliseconds since 2026-09-02 (``services/concurrency.py``). One wait
@@ -341,10 +400,18 @@ async def list_inspectable_workshops(
     total, rows = await gather_reads(
         db.designworkshop.count(where=where),
         db.designworkshop.find_many(
-            where=where, skip=skip, take=clean_size, order={"createdAt": "desc"}
+            where=where, skip=skip, take=clean_size, order=order
         ),
     )
-    return page_payload([workshop_summary(r) for r in rows], total, clean_page, clean_size)
+    readiness = await review_aids.readiness_for(rows)
+    answer = page_payload(
+        [{**workshop_summary(r), "readiness": readiness.get(r.id)} for r in rows],
+        total,
+        clean_page,
+        clean_size,
+    )
+    answer["groupCounts"] = group_counts
+    return answer
 
 
 @router.get("/{workshop_id}")
@@ -400,8 +467,17 @@ async def read_workshop_under_inspection(
     # and `inspectionFeedbackTruncated` says so out loud rather than letting a long history look
     # like a short one.
     summary["inspectionFeedback"], summary["inspectionFeedbackTruncated"] = (
-        await _inspection_feedback_payload(workshop_id)
+        await review_aids.annotated_register(workshop_id, entries)
     )
+    # C5 / C13 (2026-10-17): every inspector's "Checked, no corrections", this reader's own on the
+    # current round, and the rounds whose hand-in copy was kept.
+    clearances, snapshots = await gather_reads(
+        review_aids.clearance_rows(workshop_id), review_aids.snapshot_list(workshop_id)
+    )
+    cycle = int(getattr(record, "submissionRound", 0) or 0)
+    summary["clearances"] = clearances
+    summary["myClearedAt"] = review_aids.my_clearance(clearances, current_user.id, cycle)
+    summary["roundSnapshots"] = snapshots
     # SAID ON THE WIRE RATHER THAN INFERRED FROM `readOnly`, AND THE TWO ARE NOT THE SAME ANSWER.
     # `readOnly` is about the workshop's CONTENT and must stay true — the handset's own helper is
     # `readOnly != false`, so it fails CLOSED, and flipping it to enable a feedback box would offer
@@ -574,7 +650,9 @@ def _parse_recorded_at(value: str | None) -> Any:
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
-async def _feedback_answer(record: Any, *, may_record: bool = True) -> dict[str, Any]:
+async def _feedback_answer(
+    record: Any, *, may_record: bool = True, user: Any = None
+) -> dict[str, Any]:
     """The workshop header plus the register, which is what both write routes answer with.
 
     THE ANSWER IS THE REGISTER AND NOT THE ROW JUST WRITTEN. An officer who files a suggestion is
@@ -583,10 +661,16 @@ async def _feedback_answer(record: Any, *, may_record: bool = True) -> dict[str,
     """
     summary = workshop_summary(record)
     summary["inspectionFeedback"], summary["inspectionFeedbackTruncated"] = (
-        await _inspection_feedback_payload(record.id)
+        await review_aids.annotated_register(record.id)
     )
     summary["readOnly"] = True
     summary["mayRecordFeedback"] = may_record
+    if user is not None:
+        clearances = await review_aids.clearance_rows(record.id)
+        summary["clearances"] = clearances
+        summary["myClearedAt"] = review_aids.my_clearance(
+            clearances, user.id, int(getattr(record, "submissionRound", 0) or 0)
+        )
     return summary
 
 
@@ -640,12 +724,13 @@ async def record_inspection_feedback(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refused)
         ) from refused
     await _apply(db, plan)
+    await review_aids.drop_clearance_after_note(workshop_id, current_user.id, plan.data["round"])
     # The designers hear about it by e-mail (when mail is configured and they have not turned it
     # off). Never raises: the suggestion is already filed.
     await email_outbox.notify_review_note(
         record, actor=current_user, note=payload.note, stage_key=payload.stageKey, sent_back=False
     )
-    return await _feedback_answer(record)
+    return await _feedback_answer(record, user=current_user)
 
 
 @router.post("/{workshop_id}/send-back")
@@ -738,6 +823,9 @@ async def send_workshop_back_for_revision(
         # some other transaction has left it.
         updated = await tx.designworkshop.find_unique(where={"id": workshop_id})
         await _apply(tx, plans.log)
+    await review_aids.drop_clearance_after_note(
+        workshop_id, current_user.id, plans.feedback.data["round"]
+    )
     # After the transaction, so a rolled-back send-back e-mails nobody. Never raises.
     await email_outbox.notify_review_note(
         updated or record,
@@ -746,4 +834,136 @@ async def send_workshop_back_for_revision(
         stage_key=payload.stageKey,
         sent_back=True,
     )
-    return await _feedback_answer(updated)
+    return await _feedback_answer(updated, user=current_user)
+
+
+# --------------------------------------------------------------------------------------
+# BATCHES, THE VERDICT AND THE ROUND COPIES (2026-10-17)
+#
+# `/feedback/batch` and `/send-back/batch` are the two single-note doors above taking a tray of
+# notes at once (B2): the same two acts, the same refusals, one transaction and one e-mail. The
+# single-note doors are unchanged, so a handset's queued note replays exactly as before.
+#
+# `/clearance` is "Checked, no corrections" (C5): one row per inspector per round, in its own table,
+# moving nothing. `/rounds/{round}` is a read.
+# --------------------------------------------------------------------------------------
+
+
+def _batch_rows(payload: DwInspectionNotesIn) -> list[tuple[str | None, str | None, str | None]]:
+    return [(item.note, item.stageKey, item.fieldKey) for item in payload.notes]
+
+
+@router.post("/{workshop_id}/feedback/batch", status_code=status.HTTP_201_CREATED)
+async def record_inspection_feedback_batch(
+    workshop_id: str,
+    payload: DwInspectionNotesIn,
+    current_user: Any = Depends(require_inspector),
+) -> dict[str, Any]:
+    """File several notes at once. **THE WORKSHOP'S STATUS IS NOT MOVED.** All or none are filed."""
+    record = await load_inspectable_workshop_or_404(workshop_id, current_user)
+    _under_review_or_422(record)
+    cycle = int(getattr(record, "submissionRound", 0) or 0)
+    try:
+        batch = design_workshop_review_loop.note_batch(
+            workshop_id=workshop_id,
+            round=cycle,
+            actor_id=current_user.id,
+            at=datetime.now(UTC),
+            notes=_batch_rows(payload),
+            recorded_at=_parse_recorded_at(payload.recordedAt),
+        )
+    except design_workshop_review_loop.InspectionRuleViolation as refused:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refused)
+        ) from refused
+    async with db.tx() as tx:
+        for plan in batch.rows:
+            await _apply(tx, plan)
+    await review_aids.drop_clearance_after_note(workshop_id, current_user.id, cycle)
+    await email_outbox.notify_review_note(
+        record, actor=current_user, note=batch.digest, stage_key=None, sent_back=False
+    )
+    return await _feedback_answer(record, user=current_user)
+
+
+@router.post("/{workshop_id}/send-back/batch")
+async def send_workshop_back_with_notes(
+    workshop_id: str,
+    payload: DwInspectionNotesIn,
+    current_user: Any = Depends(require_inspector),
+) -> dict[str, Any]:
+    """Send the report back with several notes, in one transaction — the single send-back's rules."""
+    record = await load_inspectable_workshop_or_404(workshop_id, current_user)
+    current = _under_review_or_422(record)
+    refusal = design_workshop_review_loop.transition_refusal(
+        current, design_workshop_review_loop.NEEDS_REVISION, by_decision_route=True
+    )
+    if refusal:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=refusal)
+    cycle = int(getattr(record, "submissionRound", 0) or 0)
+    try:
+        batch, workshop_plan, log_plan = design_workshop_review_loop.send_back_batch_plans(
+            workshop_id=workshop_id,
+            round=cycle,
+            actor_id=current_user.id,
+            at=datetime.now(UTC),
+            notes=_batch_rows(payload),
+            cover=payload.note,
+            recorded_at=_parse_recorded_at(payload.recordedAt),
+        )
+    except design_workshop_review_loop.InspectionRuleViolation as refused:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refused)
+        ) from refused
+    async with db.tx() as tx:
+        for plan in batch.rows:
+            await _apply(tx, plan)
+        if not await _apply_while_under_review(tx, workshop_plan):
+            moved = await tx.designworkshop.find_unique(where={"id": workshop_id})
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=design_workshop_review_loop.review_closed_refusal(
+                    str(getattr(moved, "status", "") or ""),
+                    handed_on=getattr(moved, "handedOnAt", None) is not None,
+                ),
+            )
+        updated = await tx.designworkshop.find_unique(where={"id": workshop_id})
+        await _apply(tx, log_plan)
+    await review_aids.drop_clearance_after_note(workshop_id, current_user.id, cycle)
+    await email_outbox.notify_review_note(
+        updated or record, actor=current_user, note=batch.digest, stage_key=None, sent_back=True
+    )
+    return await _feedback_answer(updated, user=current_user)
+
+
+@router.post("/{workshop_id}/clearance")
+async def clear_workshop_round(
+    workshop_id: str, current_user: Any = Depends(require_inspector)
+) -> dict[str, Any]:
+    """"Checked, no corrections" on the report's current round. Idempotent; moves nothing.
+
+    422 when the report is not under review, or when this inspector has filed notes on the round.
+    """
+    record = await load_inspectable_workshop_or_404(workshop_id, current_user)
+    _under_review_or_422(record)
+    await review_aids.clear_round(record, current_user)
+    return await _feedback_answer(record, user=current_user)
+
+
+@router.delete("/{workshop_id}/clearance")
+async def withdraw_workshop_round_clearance(
+    workshop_id: str, current_user: Any = Depends(require_inspector)
+) -> dict[str, Any]:
+    """Take back this inspector's "Checked, no corrections" on the current round. Idempotent."""
+    record = await load_inspectable_workshop_or_404(workshop_id, current_user)
+    await review_aids.withdraw_clearance(record, current_user)
+    return await _feedback_answer(record, user=current_user)
+
+
+@router.get("/{workshop_id}/rounds/{round}")
+async def read_round_snapshot_under_inspection(
+    workshop_id: str, round: int, current_user: Any = Depends(require_inspector)
+) -> dict[str, Any]:
+    """The stage data as it was handed in for ``round`` — what "Changed since round N" compares."""
+    await load_inspectable_workshop_or_404(workshop_id, current_user)
+    return await review_aids.snapshot_payload(workshop_id, round)

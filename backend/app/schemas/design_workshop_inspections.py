@@ -33,7 +33,10 @@ body is how the second happens by accident.
 
 from pydantic import BaseModel, Field
 
-from app.schemas.design_workshop_review_loop import MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS
+from app.schemas.design_workshop_review_loop import (
+    MAX_BATCH_NOTES,
+    MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS,
+)
 from app.services.design_workshop_inspectors import MAX_DESIGN_WORKSHOP_INSPECTORS
 
 
@@ -100,3 +103,25 @@ class DwInspectionSendBackIn(DwInspectionFeedbackIn):
     ``api/routes/review.py`` states: a send-back with no sentence tells a designer only that a
     fortnight of work is wrong.
     """
+
+
+class DwNoteItem(BaseModel):
+    """One note in a batch: the sentence, and the stage and field it is about (both optional)."""
+
+    note: str = Field(min_length=1, max_length=MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS)
+    stageKey: str | None = Field(default=None, max_length=64)
+    fieldKey: str | None = Field(default=None, max_length=120)
+
+
+class DwInspectionNotesIn(BaseModel):
+    """POST several notes at once — the tray of field flags a reader collected (B2, 2026-10-17).
+
+    ``POST …/feedback/batch`` files them and moves nothing; ``POST …/send-back/batch`` files them and
+    sends the report back. ``note`` is an optional covering sentence for a send-back; without it the
+    first note is the one recorded as sending the report back. Two routes, for the same reason as the
+    single-note pair above.
+    """
+
+    notes: list[DwNoteItem] = Field(min_length=1, max_length=MAX_BATCH_NOTES)
+    note: str | None = Field(default=None, max_length=MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS)
+    recordedAt: str | None = Field(default=None, max_length=40)

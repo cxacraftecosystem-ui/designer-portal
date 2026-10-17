@@ -42,6 +42,7 @@ report on, when, to which office and which exported file.
 
 import asyncio
 import hashlib
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -71,11 +72,14 @@ from app.services import (
     design_workshop_approvals as approvals,
     design_workshop_oversight as oversight,
     design_workshop_posts as posts,
+    design_workshop_review_aids as review_aids,
     email_outbox,
+    s3,
 )
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
 from app.services.design_workshop_inspectors import inspector_rows
+from app.services.design_workshop_reader_media import workshop_media_for_reader
 from app.services.design_workshops import (
     entry_rows,
     render_report,
@@ -87,6 +91,7 @@ from app.services.pagination import normalize_pagination, page_payload
 from app.services.stage_schema import registry_version
 
 router = APIRouter(prefix="/design-workshop-approvals", tags=["design-workshops"])
+logger = logging.getLogger(__name__)
 
 
 def _status(record: Any) -> str:
@@ -117,6 +122,8 @@ async def _read_for_decision(record: Any, user: Any) -> dict[str, Any]:
         names,
         refusal,
         latest,
+        clearances,
+        snapshots,
     ) = await gather_reads(
         entry_rows(workshop_id),
         load_definition_or_empty(workshop_id),
@@ -127,6 +134,8 @@ async def _read_for_decision(record: Any, user: Any) -> dict[str, Any]:
         approvals.approval_names(record),
         posts.decision_refusal(workshop_id, user),
         approvals.latest_export(workshop_id),
+        review_aids.clearance_rows(workshop_id),
+        review_aids.snapshot_list(workshop_id),
     )
     summary = workshop_summary(record)
     summary["stages"] = _stages_payload(entries)
@@ -138,8 +147,17 @@ async def _read_for_decision(record: Any, user: Any) -> dict[str, Any]:
     summary["schemaVersion"] = registry_version()
     summary["customSchemaVersion"] = definition.version
     summary["oversight"] = supervisors
-    summary["inspectors"] = inspectors
-    summary["inspectionFeedback"], summary["inspectionFeedbackTruncated"] = feedback
+    # C5: each inspector with their "Checked, no corrections" on the current round (or null).
+    cycle = int(getattr(record, "submissionRound", 0) or 0)
+    summary["inspectors"] = review_aids.with_verdicts(inspectors, clearances, cycle)
+    summary["clearances"] = clearances
+    # A19: each note says whether the stage it names was edited after it was filed.
+    rows, cut = feedback
+    edits = await review_aids.stage_edit_times(workshop_id, entries)
+    summary["inspectionFeedback"] = review_aids.annotate_freshness(rows, edits)
+    summary["inspectionFeedbackTruncated"] = cut
+    # C13: the rounds whose hand-in copy was kept, for "Changed since round N".
+    summary["roundSnapshots"] = snapshots
     summary["decisions"] = decisions
     summary.update(names)
     summary.update(approvals.decision_view(record, refusal=refusal))
@@ -170,27 +188,53 @@ async def list_reports_to_approve(
     page: int = 1,
     pageSize: int = 20,
     search: str | None = Query(None, max_length=120),
+    sort: str | None = Query(None),
+    cleared: str | None = Query(None),
     _: Any = Depends(require_approving_authority),
 ) -> dict[str, Any]:
     """One tab of the queue — awaiting, approved, handedOn or returned — estate-wide, over the index
     ``schema.prisma`` built for exactly this predicate. Each row carries the two sign-off names,
-    resolved for the page in one query."""
+    resolved for the page in one query, and its ``readiness`` (B4: completeness, this round's notes,
+    inspectors cleared).
+
+    ``sort``: ``oldest`` / ``newest`` by the tab's own date, or ``complete`` (most complete first).
+    ``cleared``: ``all`` / ``some`` / ``none`` of the assigned inspectors marked "Checked, no
+    corrections" on the current round (C5). Absent, both leave the tab's order and rows unchanged.
+    """
+    chosen_sort = review_aids.check_sort(sort)
+    wanted = review_aids.check_cleared(cleared)
     where = approvals.queue_where(state, search)
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
-    total, rows = await gather_reads(
-        db.designworkshop.count(where=where),
-        db.designworkshop.find_many(
-            where=where, skip=skip, take=clean_size, order=approvals.queue_order(state)
-        ),
-    )
+    order = approvals.queue_order(state)
+    dated = review_aids.dated_order(next(iter(order[0])), chosen_sort)
+    truncated = False
+    if chosen_sort == "complete" or wanted:
+        rows, total, readiness, truncated = await review_aids.ranked_page(
+            where,
+            dated or order,
+            page=clean_page,
+            page_size=clean_size,
+            sort=chosen_sort,
+            cleared=wanted,
+        )
+    else:
+        total, rows = await gather_reads(
+            db.designworkshop.count(where=where),
+            db.designworkshop.find_many(where=where, skip=skip, take=clean_size, order=dated or order),
+        )
+        readiness = await review_aids.readiness_for(rows)
     names = await approvals.names_for(rows)
     items = []
     for row in rows:
         item = workshop_summary(row)
         item["approvedByName"] = names.get(row.approvedById) if row.approvedById else None
         item["handedOnByName"] = names.get(row.handedOnById) if row.handedOnById else None
+        item["readiness"] = readiness.get(row.id)
         items.append(item)
-    return page_payload(items, total, clean_page, clean_size)
+    answer = page_payload(items, total, clean_page, clean_size)
+    if truncated:
+        answer["candidatesTruncated"] = True
+    return answer
 
 
 @router.get("/{workshop_id}")
@@ -200,6 +244,25 @@ async def read_report_to_approve(
     """One report, read for a decision. 404 for an unknown or deleted workshop."""
     record = await approvals.load_approvable_workshop_or_404(workshop_id)
     return await _read_for_decision(record, current_user)
+
+
+@router.get("/{workshop_id}/media")
+async def read_report_media_for_approval(
+    workshop_id: str, current_user: Any = Depends(require_approving_authority)
+) -> dict[str, Any]:
+    """The workshop's photographs, recordings and attachments, signed and read-only (A23) — the
+    inspector's and the supervisor's media read, behind this surface's own loader."""
+    await approvals.load_approvable_workshop_or_404(workshop_id)
+    return await workshop_media_for_reader(workshop_id, current_user)
+
+
+@router.get("/{workshop_id}/rounds/{round}")
+async def read_round_snapshot_for_approval(
+    workshop_id: str, round: int, _: Any = Depends(require_approving_authority)
+) -> dict[str, Any]:
+    """The stage data as handed in for ``round`` — what "Changed since round N" compares (C13)."""
+    await approvals.load_approvable_workshop_or_404(workshop_id)
+    return await review_aids.snapshot_payload(workshop_id, round)
 
 
 @router.post("/{workshop_id}/report")
@@ -213,6 +276,16 @@ async def generate_report_for_approval(
     a hand-on can then pin, generated by the approver."""
     record = await approvals.load_approvable_workshop_or_404(workshop_id)
     fmt = payload.formats[0]
+    # A22: AN UNCHANGED REPORT IS SERVED AGAIN, NOT REBUILT. The fingerprint covers the header, every
+    # stage row, the workshop's files, its own questions and this request's options; a stored file
+    # built from the same fingerprint in the last fortnight is read back and answered with
+    # `x-report-reused-from`. `fresh` rebuilds regardless. No new ledger row is written for a reuse.
+    options = payload.model_dump(exclude={"record", "fresh"})
+    fingerprint = await review_aids.report_fingerprint(record, fmt=fmt, options=options)
+    if payload.record and not payload.fresh:
+        reused = await _stored_report(workshop_id, fingerprint)
+        if reused is not None:
+            return reused
     data, resolver, load_warnings, template_id = await _report_inputs(
         workshop_id,
         record,
@@ -232,7 +305,7 @@ async def generate_report_for_approval(
         "x-report-warning-count": str(len(warnings)),
     }
     if payload.record:
-        await db.dwreportexport.create(
+        export = await db.dwreportexport.create(
             data={
                 "designWorkshopId": workshop_id,
                 "format": fmt,
@@ -245,9 +318,45 @@ async def generate_report_for_approval(
                 "schemaVersion": registry_version(),
                 "warnings": "\n".join(warnings) if warnings else None,
                 "generatedById": current_user.id,
+                "inputFingerprint": fingerprint,
             }
         )
+        headers["x-report-export-id"] = export.id
+        await _store_report(workshop_id, export.id, fmt, blob)
     return Response(content=blob, media_type=_MIME[fmt], headers=headers)
+
+
+async def _store_report(workshop_id: str, export_id: str, fmt: str, blob: bytes) -> None:
+    """Keep the file so an unchanged report can be served again. A failure only costs the reuse."""
+    key = review_aids.report_object_key(workshop_id, export_id, fmt)
+    try:
+        await asyncio.to_thread(s3.put_object_bytes, key, blob, _MIME[fmt])
+        await db.dwreportexport.update(where={"id": export_id}, data={"storageKey": key})
+    except Exception:  # the download itself has succeeded
+        logger.warning("could not store report %s for reuse", export_id, exc_info=True)
+
+
+async def _stored_report(workshop_id: str, fingerprint: str) -> Response | None:
+    """The stored file of an identical earlier build, as the download's answer, or None."""
+    prior = await review_aids.reusable_export(workshop_id, fingerprint)
+    if prior is None:
+        return None
+    try:
+        blob = await asyncio.to_thread(
+            s3.get_object_bytes, prior.storageKey, max_bytes=review_aids.REUSE_MAX_BYTES
+        )
+    except Exception:  # fall back to building it
+        logger.warning("stored report %s could not be read back", prior.id, exc_info=True)
+        return None
+    warnings = [line for line in (prior.warnings or "").split("\n") if line.strip()]
+    headers = {
+        "content-disposition": _content_disposition(prior.fileName),
+        "x-report-warnings": _warnings_header(warnings),
+        "x-report-warning-count": str(len(warnings)),
+        "x-report-export-id": prior.id,
+        "x-report-reused-from": prior.generatedAt.isoformat() if prior.generatedAt else "",
+    }
+    return Response(content=blob, media_type=_MIME.get(prior.format, _MIME["DOCX"]), headers=headers)
 
 
 # --------------------------------------------------------------------------------------
@@ -285,6 +394,8 @@ async def _apply(decision: plans.DecisionPlans) -> None:
             raise _LostTheRace
         if decision.feedback is not None:
             await tx.dwinspectionfeedback.create(data=dict(decision.feedback.data))
+        for extra in decision.extra:
+            await tx.dwinspectionfeedback.create(data=dict(extra.data))
         await tx.reviewlog.create(data=dict(decision.log.data))
 
 
@@ -380,6 +491,7 @@ async def revise_report(
             handed_on=handed_on,
             stage_key=payload.stageKey,
             field_key=payload.fieldKey,
+            notes=[(item.note, item.stageKey, item.fieldKey) for item in payload.notes] or None,
         )
     )
     try:
@@ -391,9 +503,13 @@ async def revise_report(
     updated = await approvals.load_approvable_workshop_or_404(workshop_id)
     # THE SAME NOTICE AN INSPECTOR'S SEND-BACK QUEUES, after the transaction so a rolled-back decision
     # e-mails nobody: the report is back on its designers' desk, with the sentence to act on. Never
-    # raises — the decision stands whether or not the notice is queued.
+    # raises — the decision stands whether or not the notice is queued. A batch is one e-mail.
     await email_outbox.notify_review_note(
-        updated, actor=current_user, note=payload.note, stage_key=payload.stageKey, sent_back=True
+        updated,
+        actor=current_user,
+        note=decision.digest or payload.note,
+        stage_key=None if decision.digest else payload.stageKey,
+        sent_back=True,
     )
     return await _read_for_decision(updated, current_user)
 

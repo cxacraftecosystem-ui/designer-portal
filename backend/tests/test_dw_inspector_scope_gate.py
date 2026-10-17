@@ -445,9 +445,19 @@ def test_an_inspector_is_refused_every_write_door_before_the_database(api, metho
 #: A THIRD ENTRY HERE IS A PERMISSION DECISION AND NOT A REFACTOR. Read the header of
 #: ``app/services/design_workshop_inspectors.py`` before adding one, and say in this comment what
 #: the new door writes and why an inspector may write it.
+#:
+#: FOUR MORE, 2026-10-17, and each still writes a note or a verdict and nothing else. The two
+#: ``/batch`` doors are the two above taking several notes at once (B2) — the same rows, the same
+#: refusals, one transaction. ``/clearance`` (POST and DELETE) records or withdraws one inspector's
+#: "Checked, no corrections" on the current round (C5): one row of ``DwInspectionClearance``, which
+#: moves no status and is never required for approval.
 INSPECTOR_WRITE_DOORS = {
     ("POST", "/design-workshop-inspections/{workshop_id}/feedback"),
     ("POST", "/design-workshop-inspections/{workshop_id}/send-back"),
+    ("POST", "/design-workshop-inspections/{workshop_id}/feedback/batch"),
+    ("POST", "/design-workshop-inspections/{workshop_id}/send-back/batch"),
+    ("POST", "/design-workshop-inspections/{workshop_id}/clearance"),
+    ("DELETE", "/design-workshop-inspections/{workshop_id}/clearance"),
 }
 
 
@@ -826,8 +836,13 @@ THE_FEATURE = {
 #: that one name, so the test below it — which asserts the classified reader still speaks NONE of
 #: the three predicates — is the fence that makes the exemption safe. Add the fence with the row,
 #: never after it.
+#:
+#: Added 2026-10-17: ``services/design_workshop_review_aids`` COUNTS each queued workshop's inspector
+#: rows for its readiness chip ("1 of 2 inspectors: no corrections") over workshops the queue has
+#: already scoped. It consults no predicate and writes nothing to that table.
 CLASSIFIED_READERS: dict[Path, frozenset[str]] = {
     APP / "services" / "ministry_dashboard.py": frozenset({"designworkshopinspector"}),
+    APP / "services" / "design_workshop_review_aids.py": frozenset({"designworkshopinspector"}),
 }
 
 #: The names that, spoken anywhere else, mean somebody has wired this scope into another path.

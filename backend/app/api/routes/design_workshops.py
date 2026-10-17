@@ -2641,6 +2641,11 @@ async def update_design_workshop(
             )
             or design_workshop_approvals_schema.FROZEN_APPROVED,
         )
+    if data.get("status") == design_workshop_review_loop.PRE_SUBMISSION:
+        # C13: keep the stage data as handed in for this round. Never raises.
+        from app.services.design_workshop_review_aids import capture_round_snapshot
+
+        await capture_round_snapshot(workshop_id)
     return workshop_summary(updated)
 
 

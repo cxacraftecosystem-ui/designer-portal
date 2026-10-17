@@ -155,6 +155,25 @@ class _Users:
 #: unpacks it keeps working and a caller that starts expecting a third element fails here rather
 #: than on a screen. The register itself is asserted in `test_design_workshop_review_loop.py` (its
 #: shape) and in `test_dw_inspector_scope.py` (a row, over a database).
+def _quiet_review_aids(monkeypatch):
+    """The review aids (2026-10-17) read their own tables; these readers' tests are about provenance."""
+    from app.services import design_workshop_review_aids as aids
+
+    async def _register(*_a, **_k):
+        return [], False
+
+    async def _empty(*_a, **_k):
+        return []
+
+    async def _edits(*_a, **_k):
+        return {}
+
+    monkeypatch.setattr(aids, "annotated_register", _register)
+    monkeypatch.setattr(aids, "clearance_rows", _empty)
+    monkeypatch.setattr(aids, "snapshot_list", _empty)
+    monkeypatch.setattr(aids, "stage_edit_times", _edits)
+
+
 async def _no_feedback(*_a, **_k):
     return ([], False)
 
@@ -783,7 +802,7 @@ def inspection(reader, monkeypatch):
     monkeypatch.setattr(inspections, "load_definition_or_empty", _definition)
     monkeypatch.setattr(inspections, "workshop_summary", lambda record: {"id": record.id})
     monkeypatch.setattr(inspections, "workshop_completeness", lambda *_a, **_k: {})
-    monkeypatch.setattr(inspections, "_inspection_feedback_payload", _no_feedback)
+    _quiet_review_aids(monkeypatch)
     return reader
 
 
@@ -1128,6 +1147,8 @@ def supervision(reader, monkeypatch):
     monkeypatch.setattr(oversight_routes, "workshop_summary", lambda record: {"id": record.id})
     monkeypatch.setattr(oversight_routes, "workshop_completeness", lambda *_a, **_k: {})
     monkeypatch.setattr(oversight_routes.design_workshop_approvals, "decision_history", _no_decisions)
+    monkeypatch.setattr(oversight_routes, "inspector_rows", _oversight_rows)
+    _quiet_review_aids(monkeypatch)
     return SimpleNamespace(users=reader.users, entries=fresh)
 
 
@@ -1171,6 +1192,7 @@ def sign_off(supervision, monkeypatch):
     monkeypatch.setattr(approval_routes.oversight, "oversight_rows", _empty)
     monkeypatch.setattr(approval_routes, "inspector_rows", _empty)
     monkeypatch.setattr(approval_routes, "_inspection_feedback_payload", _no_feedback)
+    _quiet_review_aids(monkeypatch)
     monkeypatch.setattr(approval_routes, "entry_rows", _rows)
     monkeypatch.setattr(approval_routes, "load_definition_or_empty", _definition)
     monkeypatch.setattr(approval_routes, "workshop_summary", lambda record: {"id": record.id})
@@ -1720,6 +1742,11 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         # Classified 2026-10-10 with the approvals router. NOT exempt: it resolves provenance, and
         # the two tests under "Reader 17" above are the classification.
         "app/api/routes/design_workshop_approvals.py",
+        # The review aids (2026-10-17): EXEMPT. They read stage rows for TIMESTAMPS (when a stage was
+        # last written, for a note's "Edited since"; the newest edit, for a report's fingerprint) and
+        # copy the stage payload into a round's snapshot WITHOUT its provenance. No field value is
+        # attributed to anybody; the readers that show the data resolve it, tested above.
+        "app/services/design_workshop_review_aids.py",
     }
     root = Path(__file__).resolve().parents[1] / "app"
     found = set()
