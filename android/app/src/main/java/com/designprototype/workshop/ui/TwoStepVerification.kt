@@ -286,12 +286,12 @@ fun TwoStepChallengeForm(
             .padding(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Two-step verification", display = true, fontSize = 24.sp, color = MaterialTheme.colorScheme.onBackground)
+        Text("Two-step verification", display = true, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground)
         Text(
             if (useRecovery) "Enter one of the recovery codes you saved. Each code works once."
             else "Enter the 6-digit code from your authenticator app.",
             color = MaterialTheme.field.muted,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 19.sp
         )
         ElevatedCard(
@@ -320,7 +320,7 @@ fun TwoStepChallengeForm(
                         it,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                         color = MaterialTheme.colorScheme.error,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         lineHeight = 18.sp
                     )
                 }
@@ -613,11 +613,11 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
                 it,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 color = MaterialTheme.colorScheme.error,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodyMedium
             )
         }
         notice?.let {
-            Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }, fontSize = 13.sp)
+            Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodyMedium)
         }
         if (current == null && loadError != null) {
             OutlinedButton(onClick = { scope.launch { load() } }) { Text("Try again") }
@@ -629,7 +629,7 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
                     Text(
                         "You are running out of recovery codes. Make new ones so you can still get in without your phone.",
                         color = MaterialTheme.colorScheme.error,
-                        fontSize = 13.sp
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
                 OutlinedButton(onClick = { go(TwoStepStep.ConfirmRegenerate) }, modifier = Modifier.fillMaxWidth()) {
@@ -640,7 +640,7 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
             is TwoStepStep.Setup -> {
                 BackHandler { leaveSetup() }
                 val uri = TwoFactorCode.authenticatorUri(shown.setup.otpauthUri)
-                Text("1. Add this account to your authenticator app.", fontSize = 14.sp)
+                Text("1. Add this account to your authenticator app.", style = MaterialTheme.typography.bodyMedium)
                 if (uri != null) {
                     Button(
                         onClick = {
@@ -653,23 +653,23 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Open in authenticator app") }
                 }
-                Text("Or type this key into the app:", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Or type this key into the app:", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         TwoFactorCode.grouped(shown.setup.secret),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 14.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedButton(onClick = {
                         notice = if (copyText(context, "Authenticator key", shown.setup.secret)) "Key copied." else null
                     }) { Text("Copy key") }
                 }
-                Text("Or scan it from another device:", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Or scan it from another device:", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 QrSquare(shown.setup.qrSvg)
                 Text(
                     "2. Enter the 6-digit code the app shows. Two-step verification switches on only when this code is checked.",
-                    fontSize = 14.sp
+                    style = MaterialTheme.typography.bodyMedium
                 )
                 OtpCodeField(
                     value = code,
@@ -688,11 +688,11 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
             }
 
             is TwoStepStep.Codes -> {
-                Text("Save these codes", display = true, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Text("Save these codes", display = true, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                 Text(
                     "If you lose your phone, each code gets you in once instead of the 6-digit code. Keep them " +
                         "somewhere safe. They will not be shown again.",
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     lineHeight = 18.sp
                 )
                 Column(
@@ -705,7 +705,7 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
                     shown.codes.chunked(2).forEach { pair ->
                         Row(modifier = Modifier.fillMaxWidth()) {
                             pair.forEach { recovery ->
-                                Text(recovery, fontFamily = FontFamily.Monospace, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                                Text(recovery, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                             }
                         }
                     }

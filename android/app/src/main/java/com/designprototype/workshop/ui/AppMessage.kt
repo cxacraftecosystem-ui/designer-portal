@@ -112,7 +112,7 @@ fun AppMessageBanner(state: AppMessageState, modifier: Modifier = Modifier) {
             )
             Text(
                 text = text,
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.weight(1f).padding(vertical = 8.dp),
             )
@@ -147,7 +147,7 @@ fun LoadFailedCard(message: String, onRetry: () -> Unit, modifier: Modifier = Mo
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Icon(Icons.Filled.ErrorOutline, contentDescription = null, modifier = Modifier.size(22.dp))
-            Text(message, fontSize = 14.sp, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+            Text(message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
             TextButton(onClick = onRetry) {
                 Text("Try again", color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.SemiBold)
             }

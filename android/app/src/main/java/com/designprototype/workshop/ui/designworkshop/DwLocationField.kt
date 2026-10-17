@@ -134,9 +134,9 @@ internal fun DwGeoField(
     val current = remember(value) { dwLocationFromValue(value) }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(requiredMarked(label), color = MaterialTheme.field.muted, fontSize = 12.sp)
+        Text(requiredMarked(label), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         if (help.isNotBlank()) {
-            Text(help, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(help, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         if (repository == null) {
             // The state and district dropdowns are served, so the card cannot exist without something
@@ -145,7 +145,7 @@ internal fun DwGeoField(
             Text(
                 "Location opens once you can edit this workshop.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         } else {
             LocationFieldsSection(
@@ -163,10 +163,10 @@ internal fun DwGeoField(
             )
         }
         if (!error.isNullOrBlank()) {
-            Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         if (!enabled) {
-            Text("This stage is read-only.", color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text("This stage is read-only.", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -227,14 +227,14 @@ internal fun DwRecordingPlaceCard(
                 Text(
                     "Place of recording",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     current?.let { describePlace(it) }
                         ?: "Not recorded yet",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
             Icon(
@@ -248,7 +248,7 @@ internal fun DwRecordingPlaceCard(
                 Text(
                     "Needs a connection once to load states and districts.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             } else {
                 LocationFieldsSection(

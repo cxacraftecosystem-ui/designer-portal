@@ -358,14 +358,14 @@ fun AccessRosterScreen(
             "Who may sign in",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
 
         if (!canManage) {
             Text(
                 "Who may sign in, and who's waiting. Admin-only.",
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.field.warningContainer, RoundedCornerShape(10.dp))
@@ -377,7 +377,7 @@ fun AccessRosterScreen(
         Text(
             "Everyone signs in through this list (except the master admin). Entries are never deleted.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         // ── The queue ────────────────────────────────────────────────────────────────────────────
@@ -390,12 +390,12 @@ fun AccessRosterScreen(
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 16.sp
+            style = MaterialTheme.typography.titleMedium
         )
         Text(
             "These people signed in successfully but aren't on the list yet.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         when {
@@ -403,7 +403,7 @@ fun AccessRosterScreen(
             queue.isEmpty() -> Text(
                 "Nobody is waiting.",
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodySmall
             )
 
             else -> queue.forEach { row ->
@@ -556,7 +556,7 @@ fun AccessRosterScreen(
             Text(
                 "$total ${RosterKind.ACCESS.noun} in all",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         Spacer(Modifier.height(8.dp))
@@ -780,7 +780,7 @@ private fun QueueCard(
                 display = true,
                 color = MaterialTheme.field.onWarningContainer,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp
+                style = MaterialTheme.typography.titleMedium
             )
             Text(
                 listOfNotNull(
@@ -789,7 +789,7 @@ private fun QueueCard(
                     row.lastAttemptAt?.let { "last ${it.take(10)}" },
                 ).joinToString(" · "),
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             ActionRow {
                 Button(onClick = onApprove, enabled = !busy) {
@@ -872,10 +872,10 @@ private fun AccessCard(
                     row.fullName?.takeIf { it.isNotBlank() } ?: row.email,
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 16.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                Text(row.email, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text(row.email, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
             FlowRow(
@@ -907,7 +907,7 @@ private fun AccessCard(
             }
 
             row.notes?.takeIf { it.isNotBlank() }?.let {
-                Text(it, color = MaterialTheme.field.body, fontSize = 12.sp)
+                Text(it, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
             }
 
             ActionRow {
@@ -979,7 +979,7 @@ private fun AccessChip(label: String, background: Color, foreground: Color) {
     Text(
         label,
         color = foreground,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.bodySmall,
         modifier = Modifier
             .background(background, RoundedCornerShape(6.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp)
@@ -1103,7 +1103,7 @@ private fun AccessEditDialog(
                         "Name, tier and note are for your records only. Use Approve, Refuse or Suspend to change access."
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedTextField(
                     value = email,
@@ -1127,7 +1127,7 @@ private fun AccessEditDialog(
                 // HOW WILL THEY SIGN IN — adding only. A provider sign-in makes the account at the
                 // first sign-in; a password makes it now. See `accessSignInNote`.
                 if (existing == null) {
-                    Text(ACCESS_SIGN_IN_QUESTION, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(ACCESS_SIGN_IN_QUESTION, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     listOf(
                         AccessSignIn.PROVIDER to ACCESS_SIGN_IN_PROVIDER,
                         AccessSignIn.PASSWORD to ACCESS_SIGN_IN_PASSWORD,
@@ -1143,10 +1143,10 @@ private fun AccessEditDialog(
                                 )
                         ) {
                             RadioButton(selected = signIn == option, onClick = null)
-                            Text(label, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
+                            Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 8.dp))
                         }
                     }
-                    Text(accessSignInNote(signIn), color = MaterialTheme.field.muted, fontSize = 12.sp)
+                    Text(accessSignInNote(signIn), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     if (signIn == AccessSignIn.PASSWORD) {
                         OutlinedTextField(
                             value = password,

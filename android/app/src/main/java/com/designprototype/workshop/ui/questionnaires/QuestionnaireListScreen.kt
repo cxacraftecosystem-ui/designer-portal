@@ -228,7 +228,7 @@ fun QuestionnaireListScreen(
             "Questionnaires",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
         // NOT "your own" any more, and the correction matters. Since an admin can put a second
         // designer on a design workshop, this list carries the forms attached to those workshops too —
@@ -242,7 +242,7 @@ fun QuestionnaireListScreen(
         Text(
             "Your questionnaires and those on your workshops. Open one to record answers, or exchange them as spreadsheets.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -281,7 +281,7 @@ fun QuestionnaireListScreen(
                 Text(
                     "The spreadsheet",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 ArtefactDownloadRow(
@@ -316,7 +316,7 @@ fun QuestionnaireListScreen(
                 Text(
                     "Prefer a spreadsheet? Download the pro-forma, fill it in, and upload it.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
 
                 HorizontalDivider(color = MaterialTheme.field.hairline)
@@ -372,7 +372,7 @@ fun QuestionnaireListScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
             // Said plainly rather than shown as an empty list. "You have no questionnaires" and "this
@@ -386,7 +386,7 @@ fun QuestionnaireListScreen(
             offline -> Text(
                 "Offline — this list may be incomplete.",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
 
             rows.isEmpty() -> EmptyNote(
@@ -409,7 +409,7 @@ fun QuestionnaireListScreen(
             Text(
                 "Showing $shown of $total. Search to find the rest.",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         Spacer(Modifier.padding(bottom = 8.dp))
@@ -452,18 +452,18 @@ private fun QuestionnaireRow(row: CustomQuestionnaireSummaryDto, onOpen: () -> U
                 row.title.ifBlank { "Untitled questionnaire" },
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 16.sp,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             row.description?.takeIf { it.isNotBlank() }?.let {
-                Text(it, color = MaterialTheme.field.body, fontSize = 12.sp, maxLines = 3)
+                Text(it, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall, maxLines = 3)
             }
             Text(
                 row.designWorkshopTitle?.takeIf { it.isNotBlank() }
                     ?.let { "Attached to $it" }
                     ?: "Not attached to a design workshop",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             val trail = listOfNotNull(
                 row.ownerName?.takeIf { it.isNotBlank() },
@@ -471,7 +471,7 @@ private fun QuestionnaireRow(row: CustomQuestionnaireSummaryDto, onOpen: () -> U
                 row.updatedAt?.take(10)?.takeIf { it.isNotBlank() }
             ).joinToString(" · ")
             if (trail.isNotBlank()) {
-                Text(trail, color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text(trail, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 /*

@@ -167,13 +167,13 @@ internal fun InspectionFeedbackPanel(
                 Text(
                     "Correction suggestions",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 15.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     "${rows.size} on record" + if (record.inspectionFeedbackTruncated) " (older ones not shown)" else "",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
@@ -181,7 +181,7 @@ internal fun InspectionFeedbackPanel(
                 Text(
                     "Round ${group.round}",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 group.rows.forEach { row -> key(row.id) { RegisterRow(row, stageTitles) } }
@@ -192,7 +192,7 @@ internal fun InspectionFeedbackPanel(
                 Text(
                     "On this phone, not yet on the record",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 queued.forEach { item ->
@@ -236,7 +236,7 @@ internal fun InspectionFeedbackPanel(
                 !record.mayRecordFeedback -> Text(
                     "You can't file suggestions on this workshop.",
                     color = MaterialTheme.field.body,
-                    fontSize = 13.sp
+                    style = MaterialTheme.typography.bodyMedium
                 )
 
                 !underReview -> InspectionNotice(DW_NOT_UNDER_REVIEW_SENTENCE, warning = true)
@@ -281,7 +281,7 @@ internal fun InspectionFeedbackPanel(
                     Text(
                         "Suggest keeps the report as is; Send back moves it to Needs revision. Neither can be undone.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -291,7 +291,7 @@ internal fun InspectionFeedbackPanel(
                 Text(
                     it,
                     color = MaterialTheme.field.onSuccessContainer,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(MaterialTheme.field.successContainer, RoundedCornerShape(10.dp))
@@ -354,7 +354,7 @@ private fun RegisterRow(row: DwInspectionFeedbackDto, stageTitles: Map<String, S
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(row.note, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+        Text(row.note, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
         Text(
             listOfNotNull(
                 dwFeedbackAuthor(row),
@@ -363,7 +363,7 @@ private fun RegisterRow(row: DwInspectionFeedbackDto, stageTitles: Map<String, S
                 if (row.sentBack) "sent the report back" else null,
             ).joinToString(" · "),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }
@@ -386,7 +386,7 @@ private fun QueuedNoteCard(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(item.note, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+        Text(item.note, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
         Text(
             listOfNotNull(
                 if (item.kind == DwInspectionNoteKind.SEND_BACK) "Send-back" else "Suggestion",
@@ -394,11 +394,11 @@ private fun QueuedNoteCard(
                 "written ${item.recordedAt.take(10)}",
             ).joinToString(" · "),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         val held = item.held
         if (held == null) {
-            Text(dwQueuedNoteSentence(item), color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(dwQueuedNoteSentence(item), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         } else {
             InspectionNotice(held, warning = true)
             ActionRow {

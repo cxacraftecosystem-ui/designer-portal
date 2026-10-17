@@ -326,7 +326,7 @@ object DwCostIntegrity {
         }
 
         if (declared == null) {
-            val message = "$sheetLabel: the ${rolled.count} $noun line(s) add up to " +
+            val message = "$sheetLabel: the ${rolled.count} $noun ${if (rolled.count == 1) "line adds" else "lines add"} up to " +
                 "${rupees(rolled.total)}; no $noun cost is declared on the sheet."
             return DwCostCheck(
                 key, sheetLabel, "INR", null, rolled.total, null, "NOT_DECLARED", message,
@@ -337,11 +337,11 @@ object DwCostIntegrity {
         val difference = declared - rolled.total
         val verdict = compare(declared, rolled.total, TOLERANCE_RUPEES)
         val message = if (verdict == "AGREES") {
-            "$sheetLabel: the ${rolled.count} $noun line(s) add up to ${rupees(rolled.total)}, " +
+            "$sheetLabel: the ${rolled.count} $noun ${if (rolled.count == 1) "line adds" else "lines add"} up to ${rupees(rolled.total)}, " +
                 "which is what the sheet declares."
         } else {
             val direction = if (difference < 0) "less" else "more"
-            "$sheetLabel: the ${rolled.count} $noun line(s) add up to ${rupees(rolled.total)}, but " +
+            "$sheetLabel: the ${rolled.count} $noun ${if (rolled.count == 1) "line adds" else "lines add"} up to ${rupees(rolled.total)}, but " +
                 "the sheet declares ${rupees(declared)} — ${rupees(abs(difference))} $direction " +
                 "than the lines account for."
         }

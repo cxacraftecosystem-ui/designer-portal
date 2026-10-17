@@ -77,7 +77,7 @@ fun AppToggle(
             status?.let {
                 Text(
                     it,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface,

@@ -273,7 +273,7 @@ internal fun DwMediaAiVerbsRow(
                         "Asking a model to describe this…"
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
         } else {
@@ -285,7 +285,7 @@ internal fun DwMediaAiVerbsRow(
                         modifier = Modifier.size(14.dp),
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(if (open) "Close" else "Ask AI about this file", fontSize = 12.sp)
+                    Text(if (open) "Close" else "Ask AI about this file", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -320,7 +320,7 @@ internal fun DwMediaAiVerbsRow(
                             modifier = Modifier.size(16.dp),
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("Describe this for the annexure", fontSize = 13.sp)
+                        Text("Describe this for the annexure", style = MaterialTheme.typography.labelLarge)
                     }
                 }
                 if (MEDIA_VERB_SUBTITLES in verbs) {
@@ -340,7 +340,7 @@ internal fun DwMediaAiVerbsRow(
                                 modifier = Modifier.size(16.dp),
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text("Make subtitles", fontSize = 13.sp)
+                            Text("Make subtitles", style = MaterialTheme.typography.labelLarge)
                         }
                         /*
                           SAID BEFORE THE PRESS AND NOT AFTER IT. This is the one verb that costs an
@@ -352,7 +352,7 @@ internal fun DwMediaAiVerbsRow(
                         Text(
                             DW_SUBTITLES_SECOND_UPLOAD_NOTE,
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                         )
                         // AND WHERE THE READ THAT WOULD HAVE ANSWERED "already done" NEVER LANDED.
@@ -362,14 +362,14 @@ internal fun DwMediaAiVerbsRow(
                             Text(
                                 "Couldn't check for existing subtitles.",
                                 color = MaterialTheme.field.muted,
-                                fontSize = 11.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 lineHeight = 16.sp,
                             )
                         }
                     }
                 }
                 dwAiVerbCountdownLine(surface.cap.remaining, surface.today)?.let {
-                    Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp, lineHeight = 16.sp)
+                    Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
                 }
                 /*
                   AND WHAT THE COUNTDOWN CANNOT SAY, WHICH THIS SURFACE USED TO SAY NOTHING ABOUT.
@@ -388,7 +388,7 @@ internal fun DwMediaAiVerbsRow(
                   refusal, and the countdown above is the line that is.
                 */
                 dwAiVerbAllowanceNote(surface.cap)?.let {
-                    Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
                 }
             }
         }
@@ -397,7 +397,7 @@ internal fun DwMediaAiVerbsRow(
             Text(
                 it,
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
@@ -428,7 +428,7 @@ private fun DwMediaVerbNote(sentence: String) {
     Text(
         sentence,
         color = MaterialTheme.field.muted,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.bodySmall,
         lineHeight = 16.sp,
         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
     )

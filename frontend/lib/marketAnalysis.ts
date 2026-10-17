@@ -34,6 +34,8 @@
  * BESIDE them.
  */
 
+import { byCount } from "@/lib/format";
+
 /**
  * Below this many observations, quantiles are not reported at all. Five is the smallest sample for
  * which a quartile describes a spread rather than an accident of two numbers.
@@ -645,7 +647,7 @@ export function judgeBand(
     return {
       category, declaredLow, declaredHigh, evidence: dist,
       inside: 0, below: 0, above: 0, coverage: 0, verdict: "NO_EVIDENCE",
-      message: `${dist.count} price observation(s) exist for ${named}, but the band itself is incomplete.`
+      message: `${dist.count} price ${byCount(dist.count, "observation exists", "observations exist")} for ${named}, but the band itself is incomplete.`
     };
   }
 
@@ -666,7 +668,7 @@ export function judgeBand(
     return {
       category, declaredLow, declaredHigh, evidence: dist, inside, below, above, coverage,
       verdict: "UNVERIFIABLE",
-      message: `Only ${dist.count} price observation(s) were recorded for ${named} — too few to ` +
+      message: `Only ${dist.count} price ${byCount(dist.count, "observation was", "observations were")} recorded for ${named} — too few to ` +
         `judge the band against. ${inside} of them fall inside it.`
     };
   }
@@ -1063,7 +1065,8 @@ export function analyse({
   const cautions: string[] = [];
   if (respondentValues.length && respondentValues.length < MIN_SAMPLE_FOR_VERDICT) {
     cautions.push(
-      `Only ${respondentValues.length} respondent price expectation(s) were recorded. The figures ` +
+      `Only ${respondentValues.length} respondent price ` +
+        `${byCount(respondentValues.length, "expectation was", "expectations were")} recorded. The figures ` +
         `below describe what was collected; they are not a market estimate.`
     );
   }

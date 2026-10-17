@@ -280,11 +280,11 @@ fun WorkshopScopeSelect(
                 leadingIcon = {
                     Icon(Icons.Filled.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
                 },
-                label = { Text("All records", fontSize = 12.sp) }
+                label = { Text("All records", style = MaterialTheme.typography.labelMedium) }
             )
             if (!all && scope.workshops.isNotEmpty()) {
                 TextButton(onClick = { scope.selectMostRecent() }) {
-                    Text("Most recent only", fontSize = 12.sp)
+                    Text("Most recent only", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -300,7 +300,7 @@ fun WorkshopScopeSelect(
                 Text(
                     scope.summary,
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f)
                 )
             }

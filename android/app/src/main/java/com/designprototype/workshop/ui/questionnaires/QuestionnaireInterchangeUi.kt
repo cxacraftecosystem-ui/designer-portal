@@ -85,7 +85,7 @@ internal fun ArtefactNotice(artefact: DwQuestionnaireArtefact) {
         Text(
             artefactContents(artefact),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         Text(
@@ -95,7 +95,7 @@ internal fun ArtefactNotice(artefact: DwQuestionnaireArtefact) {
                 "No names or answers."
             },
             color = if (carries) MaterialTheme.field.warning else MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = if (carries) FontWeight.SemiBold else FontWeight.Normal,
         )
     }
@@ -136,12 +136,12 @@ internal fun ArtefactDownloadRow(
                     Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
                 Spacer(Modifier.width(6.dp))
-                Text(if (working) "Saving…" else label, fontSize = 13.sp)
+                Text(if (working) "Saving…" else label, style = MaterialTheme.typography.labelLarge)
             }
         }
         ArtefactNotice(artefact)
         savedTo?.let {
-            Text("Saved to $it", color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text("Saved to $it", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -199,10 +199,10 @@ internal fun WorkbookUploadRow(
                     Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
                 Spacer(Modifier.width(6.dp))
-                Text(if (working) "Reading the workbook…" else label, fontSize = 13.sp)
+                Text(if (working) "Reading the workbook…" else label, style = MaterialTheme.typography.labelLarge)
             }
         }
-        Text(blurb, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+        Text(blurb, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
     }
 }
 
@@ -259,15 +259,15 @@ internal fun UploadReportPanel(
         Text(
             heading,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
         )
-        Text(qFormUploadSummary(report), color = MaterialTheme.field.body, fontSize = 12.sp)
+        Text(qFormUploadSummary(report), color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
         if (report.versionAfter > report.versionBefore) {
             Text(
                 "Version changed from ${report.versionBefore} to ${report.versionAfter}; an in-progress sitting uses the older one.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
 
@@ -276,11 +276,11 @@ internal fun UploadReportPanel(
             Text(
                 notice.heading,
                 color = if (notice.warn) MaterialTheme.field.warning else MaterialTheme.colorScheme.onSurface,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
             )
             notice.tally?.let {
-                Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             // VERBATIM. This paragraph is the server's, written for a designer to read, and a client
             // that summarised it would be summarising the only explanation of why their fieldwork is
@@ -288,7 +288,7 @@ internal fun UploadReportPanel(
             Text(
                 notice.reason,
                 color = if (notice.warn) MaterialTheme.field.warning else MaterialTheme.field.body,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -298,18 +298,18 @@ internal fun UploadReportPanel(
             Text(
                 "Questions that were superseded or retired",
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
             )
             report.details.forEach { detail ->
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     detail.before?.takeIf { it.isNotBlank() }?.let {
-                        Text("“$it”", color = MaterialTheme.field.body, fontSize = 11.sp)
+                        Text("“$it”", color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
                     }
                     detail.after?.takeIf { it.isNotBlank() }?.let {
-                        Text("became “$it”", color = MaterialTheme.field.body, fontSize = 11.sp)
+                        Text("became “$it”", color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
                     }
-                    Text(detail.reason, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    Text(detail.reason, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
                 }
             }
         }
@@ -319,13 +319,13 @@ internal fun UploadReportPanel(
             Text(
                 "Rows that couldn't be read (${problems.size})",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
                 "Sheet and row as shown in Excel (Ctrl+G to jump).",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
             problems.forEach { problem ->
                 Text(
@@ -335,14 +335,14 @@ internal fun UploadReportPanel(
                     } else {
                         MaterialTheme.field.warning
                     },
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
         }
 
         ActionRow {
-            TextButton(onClick = onDismiss) { Text("Done", fontSize = 13.sp) }
+            TextButton(onClick = onDismiss) { Text("Done", style = MaterialTheme.typography.labelLarge) }
         }
     }
 }

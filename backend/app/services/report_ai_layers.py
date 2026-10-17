@@ -55,6 +55,7 @@ from app.services.report_model import (
     TableColumn,
     runs_of,
 )
+from app.services.text_format import by_count, count_noun
 
 DEFAULT_HEADING = "Annexure — Machine-assisted text, and what produced it"
 
@@ -664,14 +665,17 @@ def annexure_warnings(items: tuple[AiLayerItem, ...] | list[AiLayerItem]) -> lis
     unaccepted = [item for item in items if not item.accepted]
     if unaccepted:
         warnings.append(
-            f"{len(unaccepted)} machine-generated layer(s) were left out of the annexure because "
-            "nobody has accepted them yet. Open the workshop's AI layers, read each one against its "
+            f"{count_noun(len(unaccepted), 'machine-generated layer')} "
+            f"{by_count(len(unaccepted), 'was', 'were')} left out of the annexure because "
+            f"nobody has accepted {by_count(len(unaccepted), 'it', 'them')} yet. Open the workshop's AI layers, read each one against its "
             "source, and accept the ones this report should carry."
         )
     empty = [item for item in items if item.accepted and not item.has_text]
     if empty:
         warnings.append(
-            f"{len(empty)} accepted layer(s) carry no text and were not printed — they hold "
+            f"{count_noun(len(empty), 'accepted layer')} {by_count(len(empty), 'carries', 'carry')} "
+            f"no text and {by_count(len(empty), 'was', 'were')} not printed — "
+            f"{by_count(len(empty), 'it holds', 'they hold')} "
             "structured data (tags or extracted details) rather than prose."
         )
     # THE ONE WARNING THAT FIRES ON A SUCCESSFUL RENDER, and it is not an error. Every other warning
@@ -685,8 +689,10 @@ def annexure_warnings(items: tuple[AiLayerItem, ...] | list[AiLayerItem]) -> lis
     ]
     if expanded:
         warnings.append(
-            f"{len(expanded)} passage(s) in the annexure were WRITTEN by a model from your notes "
-            "rather than transcribed or corrected — they contain sentences nobody said. Each is "
+            f"{count_noun(len(expanded), 'passage')} in the annexure "
+            f"{by_count(len(expanded), 'was', 'were')} WRITTEN by a model from your notes "
+            "rather than transcribed or corrected — "
+            f"{by_count(len(expanded), 'it contains', 'they contain')} sentences nobody said. Each is "
             "printed with the note it was made from and a caution beside it. Read them once more "
             "before this file leaves your hands; withdrawing an acceptance takes the passage out of "
             "the next copy."

@@ -7,6 +7,7 @@
  * Node with the fixture workshop and real fonts.
  */
 
+import { byCount, countNoun } from "@/lib/format";
 import { buildOfflineReport, type OfflineReportInput, type ReportOptions, type ReportSources } from "@/lib/offlineReport/assemble";
 import type { Registry, Row } from "@/lib/offlineReport/builder";
 import { renderDocx, type FigureRasteriser, type ImageLoader } from "@/lib/offlineReport/docx";
@@ -102,11 +103,15 @@ export function droppedWarnings(dropped: readonly string[]): string[] {
     );
   }
   const figures = dropped.filter((d) => d.startsWith("chart:") || d.startsWith("figure:")).length;
-  if (figures) said.push(`${figures} figure(s) could not be drawn. Their numbers are still in the tables.`);
+  if (figures) {
+    said.push(
+      `${countNoun(figures, "figure")} could not be drawn. ${byCount(figures, "Its numbers are", "Their numbers are")} still in the tables.`
+    );
+  }
   const photographs = dropped.filter((d) => !d.startsWith("map:") && !d.startsWith("chart:") && !d.startsWith("figure:")).length;
   if (photographs) {
     said.push(
-      `${photographs} photograph(s) are not on this device and are not in this file. ` +
+      `${countNoun(photographs, "photograph")} ${byCount(photographs, "is not on this device and is", "are not on this device and are")} not in this file. ` +
         "Open the workshop's report once with a connection and every photograph it shows is kept for the next time."
     );
   }

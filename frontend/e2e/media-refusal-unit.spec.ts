@@ -180,7 +180,7 @@ for (const arm of ANSWERED_ARMS) {
       expect(raised, "nothing landed, so the batch escalates").toBeInstanceOf(MediaBatchError);
       const message = (raised as MediaBatchError).message;
       expect(message, "the reason clause still leads with the server's own sentence").toContain(
-        "media file(s) failed to upload"
+        "The media file failed to upload"
       );
       expect(message, `a ${arm.status} gets its own advice`).toContain(arm.says);
       expect(message, "and not the sentence for a different verdict").not.toContain(arm.andNot);

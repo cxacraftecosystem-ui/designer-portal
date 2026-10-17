@@ -440,8 +440,8 @@ def test_a_missing_map_is_not_reported_as_a_missing_photograph():
         "map:india", "chart:DONUT", "figure:2", "cmsik2jg8000eh8xc1lcy661a",
     ]))
     assert "locator map" in mixed
-    assert "2 figure(s)" in mixed, "a chart placed by either path is a figure, not a photograph"
-    assert "1 photograph(s)" in mixed, "and a real media id must still be reported as one"
+    assert "2 figures could not be drawn" in mixed, "a chart placed by either path is a figure, not a photograph"
+    assert "1 photograph could not be included" in mixed, "and a real media id must still be reported as one"
 
 
 def test_a_photograph_that_did_not_arrive_is_still_called_a_photograph():
@@ -449,7 +449,7 @@ def test_a_photograph_that_did_not_arrive_is_still_called_a_photograph():
     from app.services.design_workshops import _dropped_warnings
 
     said = _dropped_warnings(["media-1", "media-2"])
-    assert said == ["2 photograph(s) could not be included in the file."]
+    assert said == ["2 photographs could not be included in the file."]
 
 
 def test_the_stage_20_template_picker_actually_chooses_the_template():

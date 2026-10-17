@@ -77,6 +77,7 @@ from app.services.records import (
     take_expected_updated_at,
     viewable_where,
 )
+from app.services.text_format import by_count, count_noun
 from app.services.workshop_access import (
     WorkshopSubmissionCheck,
     enforce_workshop_submission,
@@ -2087,7 +2088,8 @@ async def merge_interview_into(
             detail={
                 "code": _MERGE_CONFLICT_CODE,
                 "message": (
-                    f"Nothing was moved. {len(conflicts)} question(s) are answered differently in "
+                    f"Nothing was moved. {count_noun(len(conflicts), 'question')} "
+                    f"{by_count(len(conflicts), 'is', 'are')} answered differently in "
                     f"“{source.title}” and “{target.title}”: {named}. Open each one, keep the "
                     "wording that is right, then merge."
                 ),

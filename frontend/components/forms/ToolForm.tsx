@@ -1,5 +1,6 @@
 "use client";
 
+import { byCount, countNoun } from "@/lib/format";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -1512,8 +1513,8 @@ export function ToolForm({
       }
       if (stageFailed.length) {
         setError(
-          `${stageFailed.length} process stage file(s) failed to upload: ${stageFailed.join(", ")}. ` +
-            "The tool record was saved; re-open it to retry those files."
+          `${countNoun(stageFailed.length, "process stage file")} failed to upload: ${stageFailed.join(", ")}. ` +
+            `The tool record was saved; re-open it to retry ${byCount(stageFailed.length, "that file", "those files")}.`
         );
         setSaving(false);
         /*

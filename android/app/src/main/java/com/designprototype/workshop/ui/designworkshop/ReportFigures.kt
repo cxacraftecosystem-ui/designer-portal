@@ -235,7 +235,7 @@ internal class DwFigures(
             kind = ChartKind.DONUT,
             series = tally.map { (label, count) -> label to count.toDouble() },
             title = "Prototypes by review decision",
-            caption = "${tally.values.sum()} prototype(s) reviewed.",
+            caption = "${tally.values.sum()} ${if (tally.values.sum() == 1) "prototype" else "prototypes"} reviewed.",
         )
     }
 
@@ -290,7 +290,7 @@ internal class DwFigures(
             series = bands,
             title = "Products by price band",
             unit = "products",
-            caption = "${prices.size} product(s) with a recorded price, in rupees.",
+            caption = "${prices.size} ${if (prices.size == 1) "product" else "products"} with a recorded price, in rupees.",
         )
     }
 
@@ -640,7 +640,7 @@ internal fun renderMap(
     // same claim about the same rows.
     if (artisans.placed > 0) {
         sentences += "Home places of ${artisans.placed} of ${artisans.total} participating " +
-            "artisans, at ${artisans.points.size} location(s)."
+            "artisans, at ${artisans.points.size} ${if (artisans.points.size == 1) "location" else "locations"}."
     }
     // WHERE THE SERVER SAYS "recorded no address that could be placed", THIS COPY HAS TO SAY MORE.
     // The office's unplaced rows are ones that stated nothing; this copy's also include every row
@@ -649,8 +649,9 @@ internal fun renderMap(
     // from the RECORD, which would be false and is exactly the kind of quiet difference between two
     // copies of one report this file exists to prevent.
     if (artisans.total > artisans.placed) {
-        sentences += "${artisans.total - artisans.placed} participant(s) have no surveyed position " +
-            "and are not shown on this map."
+        sentences += "${artisans.total - artisans.placed} " +
+            "${if (artisans.total - artisans.placed == 1) "participant has" else "participants have"} no surveyed position " +
+            "and ${if (artisans.total - artisans.placed == 1) "is" else "are"} not shown on this map."
     }
     if (points.isEmpty()) {
         sentences += "No address in the record could be resolved to a position; the map shows the " +

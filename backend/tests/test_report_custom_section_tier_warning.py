@@ -143,7 +143,7 @@ def _about_custom_sections(warnings) -> list[str]:
     """Only the warnings this file is about. ``build_report`` also reports unfilled required stage
     fields, and a bare ``WorkshopData`` has plenty of those — asserting on the whole list would make
     every test here a test of the completeness warnings instead."""
-    return [w for w in warnings if "own section(s)" in w]
+    return [w for w in warnings if "own sections" in w]
 
 
 # --------------------------------------------------------------------------------------
@@ -400,6 +400,6 @@ def test_several_suppressed_sections_are_one_sentence_and_are_counted():
     _text, warnings = _generate(CAPPED, *items)
     said = _about_custom_sections(warnings)
     assert len(said) == 1
-    assert said[0].startswith("6 of this workshop's own section(s)")
+    assert said[0].startswith("6 of this workshop's own sections")
     assert "Section 1, Section 2, Section 3, Section 4…" in said[0]
     assert "Section 5" not in said[0]

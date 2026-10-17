@@ -609,12 +609,12 @@ fun WorkshopListScreen(
             "Design & prototype workshops",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
         Text(
             "Saved on this phone first; syncs when you're online.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -694,13 +694,13 @@ fun WorkshopListScreen(
                 Text(
                     "Only an admin can start a workshop",
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     DW_WORKSHOP_CREATE_REFUSAL,
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp
                 )
                 /*
@@ -748,7 +748,7 @@ fun WorkshopListScreen(
                     Text(
                         DW_LOCAL_START_NOTE,
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp
                     )
                     OutlinedTextField(
@@ -826,7 +826,7 @@ fun WorkshopListScreen(
                                 }
                             },
                             modifier = Modifier.heightIn(min = 48.dp)
-                        ) { Text(DW_LOCAL_START_ACTION, fontSize = 13.sp) }
+                        ) { Text(DW_LOCAL_START_ACTION, style = MaterialTheme.typography.labelLarge) }
                     }
                 }
             }
@@ -836,7 +836,7 @@ fun WorkshopListScreen(
             Text(
                 "Offline — showing what's on this phone.",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -873,7 +873,7 @@ fun WorkshopListScreen(
                     "$unlinkedCount workshops aren't linked to a workshop online yet. "
                 }) + DW_LOCAL_DRAFT_LINK_PROMPT + " Use “Move into a workshop” on the row.",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp
             )
         }
@@ -886,7 +886,7 @@ fun WorkshopListScreen(
             Text(
                 "Showing $shown of $total. Search to find the rest.",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -900,7 +900,7 @@ fun WorkshopListScreen(
                 // picked a type FOR, which is a different fact and a different next move.
                 "$unfilterableLocal workshop${if (unfilterableLocal == 1) " has" else "s have"} no type, so ${if (unfilterableLocal == 1) "it shows" else "they show"} under every filter.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -1101,7 +1101,7 @@ fun WorkshopListScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
             rows.isEmpty() -> Text(
@@ -1114,7 +1114,7 @@ fun WorkshopListScreen(
                     "No workshops yet. They appear here once an admin gives you access."
                 },
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodySmall
             )
 
             else -> rows.forEach { row ->
@@ -1389,16 +1389,16 @@ private fun WorkshopCard(
                         row.title,
                         display = true,
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 16.sp,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     if (row.subtitle.isNotBlank()) {
-                        Text(row.subtitle, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        Text(row.subtitle, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     }
                     Text(
                         "${row.requiredFilled} of ${row.requiredTotal} required fields",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -1411,7 +1411,7 @@ private fun WorkshopCard(
                 Text(
                     DW_DRAFT_OTHER_ACCOUNT_ROW,
                     color = MaterialTheme.field.warning,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp
                 )
             }
@@ -1462,7 +1462,7 @@ private fun WorkshopCard(
                 Text(
                     DW_LOCAL_DRAFT_UNLINKED + " " + DW_LOCAL_DRAFT_LINK_PROMPT,
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp
                 )
                 ActionRow {
@@ -1470,7 +1470,7 @@ private fun WorkshopCard(
                         onClick = adopt,
                         enabled = !busy && !sending,
                         modifier = Modifier.heightIn(min = 48.dp)
-                    ) { Text("Move into a workshop", fontSize = 13.sp) }
+                    ) { Text("Move into a workshop", style = MaterialTheme.typography.labelLarge) }
                 }
             }
         }
@@ -1513,7 +1513,7 @@ private fun CompletenessRing(percent: Int) {
                 style = Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
             )
         }
-        Text("$percent", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text("$percent", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -1959,7 +1959,7 @@ private fun CreateWorkshopDialog(
                             }
                         },
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 } else {
                     OutlinedTextField(
@@ -2113,7 +2113,7 @@ private fun CreateWorkshopDialog(
                         } else {
                             MaterialTheme.field.muted
                         },
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
 
@@ -2187,7 +2187,7 @@ private fun CreateWorkshopDialog(
                     Text(
                         "Everyone ticked can open and fill in this workshop. The lead's profile fills stages 1 and 3 and the report.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
 
@@ -2202,7 +2202,7 @@ private fun CreateWorkshopDialog(
                     Text(
                         "Up to $DW_MAX_NAMED_DESIGNERS designers. Remove ${designerUserIds.size - DW_MAX_NAMED_DESIGNERS} to continue.",
                         color = MaterialTheme.field.warning,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
 
@@ -2225,7 +2225,7 @@ private fun CreateWorkshopDialog(
                             (seenDesigners[lead]?.let { dwPersonLabel(it.name, it.email) } ?: lead) +
                             ".",
                         color = MaterialTheme.field.body,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     if (namedTeam.team.size > 1) {
                         SearchableSelectField(
@@ -2527,7 +2527,7 @@ private fun AdoptIntoWorkshopDialog(
                 Text(
                     "Everything captured under “${row.title}” moves into the workshop you pick and uploads on the next sync.",
                     color = MaterialTheme.field.body,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
                 if (options.isEmpty()) {
                     /*
@@ -2556,7 +2556,7 @@ private fun AdoptIntoWorkshopDialog(
                             ) ?: dwAdoptNoCandidatesMessage(offline = false)
                         },
                         color = MaterialTheme.field.warning,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 } else {
                     SearchableSelectField(
@@ -2575,12 +2575,12 @@ private fun AdoptIntoWorkshopDialog(
                         searched = searched,
                         listTruncated = listTruncated,
                     )?.let {
-                        Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp)
+                        Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall)
                     }
                     Text(
                         "Check the name — this can't be undone here.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -2806,13 +2806,13 @@ private fun DwMostRecentlyAllocated(
                 else -> "Ready to open: $title"
             },
             color = MaterialTheme.field.onWarningContainer,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             lineHeight = 17.sp
         )
         ActionRow {
             OutlinedButton(onClick = { onOpen(id) }) {
-                Text("Open this workshop", fontSize = 12.sp)
+                Text("Open this workshop", style = MaterialTheme.typography.labelMedium)
             }
         }
     }

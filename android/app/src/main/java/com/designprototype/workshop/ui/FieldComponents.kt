@@ -112,7 +112,7 @@ fun LocationEditor(
         Text(
             "Enter coordinates, use GPS, or drop a pin.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
@@ -246,8 +246,8 @@ fun MapPickerDialog(
             modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Drop a pin", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
-                Text("Tap or drag the marker to set the location.", color = Muted, fontSize = 12.sp)
+                Text("Drop a pin", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                Text("Tap or drag the marker to set the location.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 Box(modifier = Modifier.fillMaxWidth()) {
                     AndroidView(
                         // 380dp before the search box existed. The 40dp buys the floating field above
@@ -310,7 +310,7 @@ fun MapPickerDialog(
                     )
                 }
                 picked?.let { (lat, lng) ->
-                    Text("Selected: ${trimCoord(lat)}, ${trimCoord(lng)}", color = Body, fontSize = 12.sp)
+                    Text("Selected: ${trimCoord(lat)}, ${trimCoord(lng)}", color = Body, style = MaterialTheme.typography.bodySmall)
                 }
                 ActionRow {
                     OutlinedButton(onClick = onDismiss) { Text("Cancel") }
@@ -415,18 +415,18 @@ fun ProvenanceSection(meta: JsonObject?, createdByName: String?) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Field provenance", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
             if (!createdByName.isNullOrBlank()) {
-                Text("Record created by $createdByName", color = Muted, fontSize = 12.sp)
+                Text("Record created by $createdByName", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
             if (rows.isEmpty()) {
-                Text("No per-field attribution recorded yet.", color = Muted, fontSize = 12.sp)
+                Text("No per-field attribution recorded yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
             } else {
                 HorizontalDivider()
                 rows.forEach { row ->
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(prettyFieldName(row.field), color = Body, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        Text(prettyFieldName(row.field), color = Body, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
-                            Text(row.byName ?: "Unknown", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                            row.at?.take(10)?.let { Text(it, color = Muted, fontSize = 11.sp) }
+                            Text(row.byName ?: "Unknown", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                            row.at?.take(10)?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
                         }
                     }
                 }
@@ -448,15 +448,15 @@ fun ArtisanQuestionnairePanel(answers: List<ArtisanAnswerDto>, loading: Boolean)
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Questionnaire answers", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
+            Text("Questionnaire answers", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
             when {
-                loading -> Text("Loading answers...", color = Muted, fontSize = 12.sp)
-                answers.isEmpty() -> Text("No answers for this artisan yet.", color = Muted, fontSize = 12.sp)
+                loading -> Text("Loading answers...", color = Muted, style = MaterialTheme.typography.bodySmall)
+                answers.isEmpty() -> Text("No answers for this artisan yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 else -> {
                     val grouped = answers.groupBy { (it.sectionCode ?: "") + " " + (it.sectionTitle ?: "Section") }
                     grouped.forEach { (sectionLabel, sectionAnswers) ->
                         Spacer(Modifier.height(2.dp))
-                        Text(sectionLabel.trim(), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Text(sectionLabel.trim(), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                         sectionAnswers.forEach { answer ->
                             Column(
                                 modifier = Modifier
@@ -465,7 +465,7 @@ fun ArtisanQuestionnairePanel(answers: List<ArtisanAnswerDto>, loading: Boolean)
                                     .padding(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
-                                answer.prompt?.let { Text(it, color = Body, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+                                answer.prompt?.let { Text(it, color = Body, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium) }
                                 // `questionnaireAnswerPlain` AND NOT `answer.answerText.orEmpty()`.
                                 // `QuestionnaireResponse.answerText` is a `String?` that has always
                                 // held prose and, since the web's interview answer box became a rich
@@ -484,9 +484,9 @@ fun ArtisanQuestionnairePanel(answers: List<ArtisanAnswerDto>, loading: Boolean)
                                 // both ways — a document read as prose prints braces, and prose read
                                 // as a document blanks somebody's answer. It is identity on a plain
                                 // string, so every answer written before this renders as it did.
-                                Text(questionnaireAnswerPlain(answer.answerText), color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+                                Text(questionnaireAnswerPlain(answer.answerText), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
                                 val meta = listOfNotNull(answer.interviewTitle, answer.answeredByName?.let { "by $it" }).joinToString(" · ")
-                                if (meta.isNotBlank()) Text(meta, color = Muted, fontSize = 11.sp)
+                                if (meta.isNotBlank()) Text(meta, color = Muted, style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }

@@ -811,7 +811,7 @@ fun FieldRenderer(
         // and a label reading "Unknown" on all of them would train a designer to stop reading it at
         // all, at which point it cannot do its one job on the rows that DO carry an author.
         stamp?.attribution()?.let { line ->
-            Text(line, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(line, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -931,13 +931,13 @@ private fun fieldLabel(field: FieldDto): String = buildString {
 private fun FieldCaption(field: FieldDto, override: String? = null) {
     val help = override ?: field.help
     if (help.isBlank()) return
-    Text(help, color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(help, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
 private fun InlineError(error: String?) {
     if (error.isNullOrBlank()) return
-    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+    Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 }
 
 /**
@@ -1479,14 +1479,14 @@ private fun DwWorkshopNameField(
                 searching = nameQuery.isNotBlank(),
             ),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 15.sp,
         )
         notice?.let {
-            Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+            Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
         }
         dwWorkshopNamesWithheldLine(offer.withheld, field.maxLength)?.let {
-            Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+            Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
         }
         if (canDictate) {
             /*
@@ -1524,7 +1524,7 @@ private fun DwWorkshopNameField(
                     Text(
                         appendSpoken(current, spoken),
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 16.sp,
                     )
                 }
@@ -1987,7 +1987,7 @@ private fun BoolField(
     error: String?,
 ) {
     val current = remember(value) { DwValues.bool(value) }
-    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
     FieldCaption(field)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         FilterChip(
@@ -2097,7 +2097,7 @@ private fun DwListCapNotice(notice: String?) {
         },
     ) {
         notice?.let { sentence ->
-            Text(sentence, color = MaterialTheme.colorScheme.error, fontSize = 11.sp, lineHeight = 16.sp)
+            Text(sentence, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
         }
     }
 }
@@ -2122,7 +2122,7 @@ private fun DwListCapHint(declaredCap: Int?, held: Int) {
             "Up to $declaredCap — $room more can be added."
         },
         color = MaterialTheme.field.muted,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.bodySmall,
     )
 }
 
@@ -2189,7 +2189,7 @@ private fun TagsField(
         onChange(DwValues.ofList(tags + cleaned))
     }
 
-    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
     FieldCaption(field)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
@@ -2225,7 +2225,7 @@ private fun TagsField(
                         .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(8.dp))
                         .padding(start = 8.dp, end = 2.dp, top = 2.dp, bottom = 2.dp)
                 ) {
-                    Text(tag, color = MaterialTheme.colorScheme.onPrimaryContainer, fontSize = 12.sp)
+                    Text(tag, color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
                     IconButton(
                         // The notice goes with the removal that answers it: leaving "…is full" on
                         // screen beside a list that now has room asserts a state that has just
@@ -2298,7 +2298,7 @@ private fun GeoField(
         }
     }
 
-    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
     FieldCaption(field)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
@@ -2395,7 +2395,7 @@ private fun MediaField(
         else listOfNotNull(DwValues.text(value).takeIf { it.isNotBlank() })
     }
 
-    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(requiredMarked(fieldLabel(field)), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
     FieldCaption(field)
 
     if (media == null) {
@@ -2403,7 +2403,7 @@ private fun MediaField(
         // rather than drawing a dead button: a capture control that silently does nothing is
         // indistinguishable, to the person holding the phone, from a broken camera.
         Text("Attachments open once you can edit this workshop.",
-            color = MaterialTheme.field.muted, fontSize = 12.sp)
+            color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         return
     }
 

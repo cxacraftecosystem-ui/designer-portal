@@ -1338,7 +1338,7 @@ private fun StageScreenBody(
             modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
             FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-            Text("Opening the stage…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+            Text("Opening the stage…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         return
     }
@@ -1430,7 +1430,7 @@ private fun StageScreenBody(
                 Text(
                     sentence,
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(12.dp),
                 )
@@ -1460,10 +1460,10 @@ private fun StageScreenBody(
                     Text(
                         noteTitle ?: "This stage could not be downloaded",
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
-                    Text(note, color = MaterialTheme.field.onWarningContainer, fontSize = 11.sp)
+                    Text(note, color = MaterialTheme.field.onWarningContainer, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -1501,19 +1501,19 @@ private fun StageScreenBody(
                         if (report.count > 0) "Some answers were not accepted"
                         else "Some answers were not stored",
                         color = MaterialTheme.colorScheme.onErrorContainer,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         report.heading,
                         color = MaterialTheme.colorScheme.onErrorContainer,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     report.refusals.forEach { refusal ->
                         Text(
                             "• ${refusal.sentence}",
                             color = MaterialTheme.colorScheme.onErrorContainer,
-                            fontSize = 11.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                     report.unplaced.forEach { line ->
@@ -1538,7 +1538,7 @@ private fun StageScreenBody(
                         Text(
                             "• $line — couldn't be matched to this stage. Nothing was lost; show this to an admin.",
                             color = MaterialTheme.colorScheme.onErrorContainer,
-                            fontSize = 11.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
@@ -1732,16 +1732,16 @@ private fun StageHeader(
         Text(
             "Stage ${stage.number} of 22" + if (stage.optionalStage) " · optional" else "",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         Text(
             stage.title,
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
         if (stage.purpose.isNotBlank()) {
-            Text(stage.purpose, color = MaterialTheme.field.body, fontSize = 13.sp)
+            Text(stage.purpose, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
         }
         FieldLinearProgressIndicator(
             progress = { percent / 100f },
@@ -1795,13 +1795,13 @@ private fun StageHeader(
                 }
             },
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         syncNote?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         if (stage.notes.isNotBlank()) {
-            Text(stage.notes, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(stage.notes, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         HorizontalDivider()
     }
@@ -1970,7 +1970,7 @@ private fun EntitySection(
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
         if (entity.description.isNotBlank()) {
-            Text(entity.description, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(entity.description, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         missingViews.firstOrNull()?.let { DwMissingViewsNote(it.message) }
         upfront.forEach { field ->
@@ -2041,7 +2041,7 @@ private fun DisclosureHeader(label: String, expanded: Boolean, onToggle: () -> U
             label,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f)
         )
         Icon(
@@ -2258,13 +2258,13 @@ private fun CollectionSection(
                     entity.title,
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 16.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     if (rows.isEmpty()) "None recorded yet" else "${rows.size} recorded",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
             OutlinedButton(onClick = {
@@ -2278,7 +2278,7 @@ private fun CollectionSection(
             }
         }
         if (entity.description.isNotBlank()) {
-            Text(entity.description, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(entity.description, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
 
         /*
@@ -2306,7 +2306,7 @@ private fun CollectionSection(
                 Text(
                     announcement,
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                 )
             }
@@ -2638,7 +2638,7 @@ private fun CollectionRowCard(
                     Text(
                         "${index + 1}. $title",
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 14.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                     )
                     if (tentativeWord != null) {
@@ -2647,7 +2647,7 @@ private fun CollectionRowCard(
                             // The amber this app uses for "wants attention, nothing is wrong", which
                             // is what an unfinalised sketch is — the web's chip uses the same pair.
                             color = MaterialTheme.field.warning,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                         )
                     }
@@ -2732,7 +2732,7 @@ private fun CollectionRowCard(
                 Text(
                     note,
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }

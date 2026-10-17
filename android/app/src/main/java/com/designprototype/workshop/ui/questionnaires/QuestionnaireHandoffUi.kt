@@ -145,19 +145,19 @@ internal fun QuestionnaireHandoffCard(
             Text(
                 "Hand it to another phone",
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
                 "Makes a small file to share offline (Nearby Share, Bluetooth, cable). They open it under “A questionnaire from another phone”.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             Text(
                 QUESTIONNAIRE_BUNDLE_CONTENTS_NOTICE,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
 
@@ -199,7 +199,7 @@ internal fun QuestionnaireHandoffCard(
                         )
                     }
                     Spacer(Modifier.width(6.dp))
-                    Text(if (working) "Making the file…" else "Make the file", fontSize = 13.sp)
+                    Text(if (working) "Making the file…" else "Make the file", style = MaterialTheme.typography.labelLarge)
                 }
             }
 
@@ -216,10 +216,10 @@ internal fun QuestionnaireHandoffCard(
                         "Ready — ${file.bundle.questionCount} question(s) in " +
                             "${file.bundle.sections.count { it.questions.isNotEmpty() }} section(s)",
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text(file.savedTo, color = MaterialTheme.field.body, fontSize = 11.sp)
+                    Text(file.savedTo, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
 
                     if (file.shareUri != null) {
                         OutlinedButton(
@@ -254,7 +254,7 @@ internal fun QuestionnaireHandoffCard(
                         Text(
                             "Offline? Use Nearby Share, Bluetooth or a cable — chat apps wait until you're online.",
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                         )
                     } else {
@@ -264,7 +264,7 @@ internal fun QuestionnaireHandoffCard(
                         Text(
                             "Find it in Downloads to send it.",
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                         )
                     }
@@ -293,13 +293,13 @@ private fun HandoffCodePanel(code: String) {
         Text(
             "The check code",
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
             "A fingerprint, not the questionnaire. Have the receiver compare it to confirm the file arrived whole.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         Row(
@@ -316,7 +316,7 @@ private fun HandoffCodePanel(code: String) {
             Text(
                 code,
                 color = MaterialTheme.field.body,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 lineHeight = 18.sp,
                 modifier = Modifier.weight(1f),
@@ -444,7 +444,7 @@ internal fun ReceivedQuestionnairesCard(
             Text(
                 "A questionnaire from another phone",
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
@@ -454,7 +454,7 @@ internal fun ReceivedQuestionnairesCard(
                 // appear here" would sit waiting for a notification that never comes.
                 "Open a .$QUESTIONNAIRE_BUNDLE_EXTENSION file a colleague sent you (usually in Downloads).",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
 
@@ -474,7 +474,7 @@ internal fun ReceivedQuestionnairesCard(
                         )
                     }
                     Spacer(Modifier.width(6.dp))
-                    Text(if (busy) "Reading the file…" else "Open a questionnaire file", fontSize = 13.sp)
+                    Text(if (busy) "Reading the file…" else "Open a questionnaire file", style = MaterialTheme.typography.labelLarge)
                 }
             }
 
@@ -482,13 +482,13 @@ internal fun ReceivedQuestionnairesCard(
                 Text(
                     "Nothing has arrived on this phone yet.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             } else {
                 Text(
                     QUESTIONNAIRE_BUNDLE_ADOPT_NOTICE,
                     color = MaterialTheme.field.warning,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -582,22 +582,22 @@ private fun ReceivedQuestionnaireRow(
         Text(
             row.title.ifBlank { row.filename },
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
             "${row.filename} · arrived ${readableStamp(row.receivedAt) ?: row.receivedAt}",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
         Text(
             receivedQuestionnaireStatus(row),
             color = if (row.failure != null) MaterialTheme.field.warning else MaterialTheme.field.body,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         progress?.let {
-            Text(it, color = MaterialTheme.field.body, fontSize = 11.sp)
+            Text(it, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
         }
 
         if (!row.adopted) {
@@ -616,22 +616,22 @@ private fun ReceivedQuestionnaireRow(
                             row.started -> "Carry on adding"
                             else -> "Add to my questionnaires"
                         },
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.labelLarge,
                     )
                 }
                 TextButton(onClick = onDiscard, enabled = !busy) {
-                    Text("Throw it away", fontSize = 13.sp)
+                    Text("Throw it away", style = MaterialTheme.typography.labelLarge)
                 }
             }
             Text(
                 "Adding needs a connection. The file is kept until then.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
         } else {
             ActionRow {
                 TextButton(modifier = Modifier.destructiveAction(), onClick = onDiscard, enabled = !busy) {
-                    Text("Remove this file", fontSize = 13.sp)
+                    Text("Remove this file", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -652,7 +652,7 @@ private fun ReceivedQuestionnaireRow(
                 } else {
                     MaterialTheme.field.warning
                 },
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }

@@ -910,7 +910,7 @@ internal fun DwPhotoMeasurePanel(
             Text(
                 "$DW_MEASURE_ELSEWHERE_TITLE — “${chosen?.displayName.orEmpty()}”.",
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -926,7 +926,7 @@ internal fun DwPhotoMeasurePanel(
                     // press they had already decided to make.
                     dwMeasureSpansFieldsClause(photoFieldLabels),
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         } else {
@@ -937,13 +937,13 @@ internal fun DwPhotoMeasurePanel(
             Text(
                 summary,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
             )
             Text(
                 "Your marks are kept when closed.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -961,7 +961,7 @@ internal fun DwPhotoMeasurePanel(
                 Spacer(Modifier.width(6.dp))
                 Text(
                     if (summary == null) "Measure from a photograph" else "Open the measuring card again",
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.labelLarge,
                 )
             }
         }
@@ -1059,7 +1059,7 @@ internal fun DwPanelDisclosureHeader(
             // chevron and the close button stay on it rather than being pushed off the edge.
             modifier = Modifier.weight(1f),
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
         )
         // THE EXISTING DOOR, KEPT RATHER THAN REMOVED. A button is a merging semantics node of its
@@ -1128,7 +1128,7 @@ internal fun DwPanelCollapseButton(prominent: Boolean, title: String, onClick: (
         // without the other. See the note above for why only one of them carries the name.
         Text(
             if (prominent) "$DW_PANEL_COLLAPSE_WORD “$title”" else DW_PANEL_COLLAPSE_WORD,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
     }
     if (prominent) {
@@ -1556,7 +1556,7 @@ private fun DwPhotoMeasureOpen(
                 decoding -> Text(
                     "Opening the photograph…",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.align(Alignment.Center),
                 )
 
@@ -1565,7 +1565,7 @@ private fun DwPhotoMeasureOpen(
                     // device could not decode these bytes; the photograph itself is untouched.
                     "Couldn't open this photo. You can still type the dimension.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                     modifier = Modifier
                         .align(Alignment.Center)
@@ -1703,7 +1703,7 @@ private fun DwPhotoMeasureOpen(
                 }
             },
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
@@ -1716,7 +1716,7 @@ private fun DwPhotoMeasureOpen(
                     // browser's for the same photograph and the same marks. See the file header.
                     "Marked on a ${shownWidth}×${decoded.bitmap.height} working copy of a ${decoded.sourceWidth}×${decoded.sourceHeight} photo.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -1807,7 +1807,7 @@ private fun DwPhotoMeasureOpen(
             Text(
                 "Width: corner 1 → 2. Height: corner 2 → 3.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -1861,7 +1861,7 @@ private fun DwPhotoMeasureOpen(
         Text(
             "Your marks are kept when closed.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         DwPanelCollapseButton(prominent = true, title = DW_MEASURE_CARD_TITLE, onClick = onCollapse)
@@ -1948,7 +1948,7 @@ private fun DwMeasureDifferentPhotograph(
             Text(
                 DW_MEASURE_ELSEWHERE_TITLE,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
@@ -1958,7 +1958,7 @@ private fun DwMeasureDifferentPhotograph(
                 // so what is owed is the fact that this card changes neither.
                 "Measuring “${chosen.displayName}”. The tracing panel is unaffected.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         } else {
@@ -1996,13 +1996,13 @@ private fun DwMeasureDifferentPhotograph(
                         // find it under the same words on the handset.
                         DW_MEASURE_DIFFERENT_PHOTOGRAPH,
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                     )
                     Text(
                         DW_MEASURE_DIFFERENT_WHY,
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 16.sp,
                     )
                 }
@@ -2049,7 +2049,7 @@ private fun DwMeasureDifferentPhotograph(
                 // to the subject.
                 "Changing the photo clears the marks.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -2064,7 +2064,7 @@ private fun DwMeasureDifferentPhotograph(
             ) {
                 Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(DW_MEASURE_BACK_TO_SHARED, fontSize = 12.sp)
+                Text(DW_MEASURE_BACK_TO_SHARED, style = MaterialTheme.typography.labelMedium)
             }
         }
     }
@@ -2093,7 +2093,7 @@ private fun DwMeasurementReadout(
         Text(
             "${remaining.size} of ${needed.size} marks left (${remaining.joinToString(", ") { MARK_BADGE.getValue(it) }}).",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         return
@@ -2107,7 +2107,7 @@ private fun DwMeasurementReadout(
                 "Enter the rectangle's real size."
             },
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
         return
     }
@@ -2136,20 +2136,20 @@ private fun DwMeasurementReadout(
         Text(
             "Measured — not saved yet",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Medium,
         )
         Text(
             "${dwFormatRounded(shown)} ± ${dwFormatRounded(doubt)} ${measurement.unit}",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp,
+            style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )
         Text(
             "±${String.format(Locale.ROOT, "%.1f", measurement.relativeUncertainty * 100)}% (reference ${measurement.referencePixels.roundToInt()} px, object ${measurement.targetPixels.roundToInt()} px). Assumes the reference length is correct.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -2175,7 +2175,7 @@ private fun DwMeasurementReadout(
                     )
                 },
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -2191,7 +2191,7 @@ private fun DwMeasurementReadout(
                 Text(
                     "${target.field.label} uses ${target.unit}, which can't be converted.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                 )
                 return@forEach
             }
@@ -2206,7 +2206,7 @@ private fun DwMeasurementReadout(
                 ) {
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("${target.field.label}: $text ${target.unit}", fontSize = 13.sp)
+                    Text("${target.field.label}: $text ${target.unit}", style = MaterialTheme.typography.labelLarge)
                 }
             }
             // THE SENTENCE IS THE OTHER TWO CARDS'; THE SHAPE IS NOT, AND THAT DIFFERENCE IS REAL.
@@ -2220,20 +2220,20 @@ private fun DwMeasurementReadout(
                 Text(
                     it,
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
         }
 
         proposeError?.let { message ->
-            Text(message, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
 
         Text(
             "Rounded to the precision of its error bar.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }
@@ -2325,7 +2325,7 @@ internal fun DwMarkHandle(
             Text(
                 badge,
                 color = if (outlined) markColor else discColor,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
             )
         }
@@ -2363,7 +2363,7 @@ private fun DwNudgePad(
         Text(
             "Nudge ${MARK_BADGE.getValue(active)}",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
         Spacer(Modifier.width(4.dp))
         DwNudgeButton(Icons.Filled.KeyboardArrowLeft, "Nudge ${MARK_BADGE.getValue(active)} left", enabled) {
@@ -2416,7 +2416,7 @@ internal fun DwZoomButton(
 /** The small caption above a group of controls. Shared with [DwSketchRectifyPanel]. */
 @Composable
 internal fun DwPanelLabel(text: String) {
-    Text(text, color = MaterialTheme.field.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    Text(text, color = MaterialTheme.field.muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Medium)
 }
 
 /**
@@ -2479,11 +2479,11 @@ internal fun DwPanelChip(
         .then(announce)
     if (selected) {
         Button(onClick = onClick, enabled = enabled, modifier = shape) {
-            Text(label, fontSize = 12.sp)
+            Text(label, style = MaterialTheme.typography.labelMedium)
         }
     } else {
         OutlinedButton(onClick = onClick, enabled = enabled, modifier = shape) {
-            Text(label, fontSize = 12.sp)
+            Text(label, style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -2524,7 +2524,7 @@ internal fun DwPanelNote(warning: Boolean, text: String, polite: Boolean = false
         Text(
             text,
             color = if (warning) MaterialTheme.field.onWarningContainer else MaterialTheme.field.body,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }

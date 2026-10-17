@@ -465,7 +465,7 @@ def test_a_partly_referenced_archive_says_how_many_rows_could_not_join_a_cohort(
     assert survival.cohort_possible is True
     assert survival.tracked_to_12 == 1
     assert survival.rows_without_product == 3
-    assert "3 follow-up record(s) carry no product reference" in survival.message
+    assert "3 follow-up records carry no product reference" in survival.message
 
 
 def test_the_same_product_code_in_two_workshops_is_two_designs():
@@ -519,7 +519,7 @@ def test_a_product_priced_below_its_cost_is_counted_and_said_out_loud():
                      cost_sheets=(sheet("500.00", "300.00"),)),
     ])
     assert groups[0].below_cost == 1
-    assert "priced BELOW what they cost to make" in groups[0].message
+    assert "1 sheet is priced BELOW what it costs to make" in groups[0].message
 
 
 def test_an_uncostable_sheet_is_counted_rather_than_treated_as_a_ratio_of_zero():
@@ -673,7 +673,7 @@ def test_a_total_always_carries_the_rows_it_came_from():
                                workshops_in_archive=1)
     assert findings.reach.rows == 3
     assert findings.reach.rows_with_revenue == 1
-    assert "1 of 3 standing follow-up record(s)" in findings.reach.message
+    assert "1 of 3 standing follow-up records" in findings.reach.message
 
 
 # --------------------------------------------------------------------------------------

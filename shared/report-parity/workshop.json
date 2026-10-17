@@ -1918,16 +1918,16 @@
   ],
   "warnings": {
    "questionnaires": [
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form)."
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form)."
    ],
    "transcripts": [
-    "1 recording(s) have no transcript and were left out of the transcript annexure (1 still being transcribed)."
+    "1 recording has no transcript and was left out of the transcript annexure (1 still being transcribed)."
    ],
    "aiLayers": [
-    "1 machine-generated layer(s) were left out of the annexure because nobody has accepted them yet. Open the workshop's AI layers, read each one against its source, and accept the ones this report should carry."
+    "1 machine-generated layer was left out of the annexure because nobody has accepted it yet. Open the workshop's AI layers, read each one against its source, and accept the ones this report should carry."
    ],
    "media": [
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone."
    ]
   }
  },

@@ -329,7 +329,7 @@ internal fun DwMediaCarousel(
                     Text(
                         missing,
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.semantics { contentDescription = missing }
                     )
                 }
@@ -352,7 +352,7 @@ internal fun DwMediaCarousel(
             Text(
                 "${index + 1} of ${items.size}",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             IconButton(onClick = { go(index + 1) }, enabled = items.size > 1) {
                 Icon(
@@ -364,7 +364,7 @@ internal fun DwMediaCarousel(
             Text(
                 current.displayName,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 modifier = Modifier.weight(1f).padding(start = 4.dp)
             )
@@ -400,7 +400,7 @@ internal fun DwMediaCarousel(
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
-                            Text("${at + 1}", color = MaterialTheme.field.muted, fontSize = 10.sp)
+                            Text("${at + 1}", color = MaterialTheme.field.muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }

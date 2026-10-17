@@ -90,13 +90,13 @@ internal fun DwGalleryFloor(
         ) {
             // The bar's own caption, muted: the field already has a label above it and a second
             // heading inside one control's block is how a form grows a second outline.
-            Text(label, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(label, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             // THE DIGITS — the number the designer came to read, so they carry the weight and the
             // foreground colour while everything else on the row is context for them.
             Text(
                 progress.readout,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -116,7 +116,7 @@ internal fun DwGalleryFloor(
         Text(
             progress.words,
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         Text(
@@ -126,7 +126,7 @@ internal fun DwGalleryFloor(
             // keeps the floor from reading as a threat to the work already done.
             DwPhotoGate.galleryFloorSentence(floor = floor, label = label),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }

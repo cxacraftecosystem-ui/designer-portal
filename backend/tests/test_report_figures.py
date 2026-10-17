@@ -595,7 +595,7 @@ def test_a_participant_who_stated_no_place_is_counted_in_the_caption_not_pinned(
     block = _maps(document)[0]
     assert len([p for p in block.points if p.kind is MapPointKind.ARTISAN]) == 1
     assert "1 of 2" in block.caption
-    assert "1 participant(s) recorded no address" in block.caption
+    assert "1 participant recorded no address" in block.caption
 
 
 def test_a_place_the_atlas_cannot_resolve_says_so_in_the_caption():
@@ -891,7 +891,7 @@ def test_responses_the_summary_counts_but_nobody_entered_are_named_in_the_captio
         {"respondentGroup": "RETAILER"},
     ], collected=100)), "respondent group")
     assert "98 were never entered as rows" in chart.caption, chart.caption
-    assert "states 100 response(s) collected" in chart.caption, chart.caption
+    assert "states 100 responses collected" in chart.caption, chart.caption
 
 
 def test_a_stated_count_below_the_rows_entered_is_not_reported_as_missing_work():
@@ -905,7 +905,7 @@ def test_a_stated_count_below_the_rows_entered_is_not_reported_as_missing_work()
         {"respondentGroup": "ARTISAN"},
     ], collected=2)), "respondent group")
     assert "never entered" not in chart.caption, chart.caption
-    assert chart.caption.startswith("5 response(s) plotted"), chart.caption
+    assert chart.caption.startswith("5 responses plotted"), chart.caption
 
 
 def test_a_survey_nobody_filled_in_draws_no_figure_at_all():
@@ -958,7 +958,7 @@ def test_the_price_figure_states_how_many_respondents_actually_named_a_price():
         {"respondentGroup": "RETAILER"},
         {"respondentGroup": "EXPORTER", "priceExpectation": None},
     ])), "would pay")
-    assert "3 of 5 response(s) stated a price expectation" in chart.caption, chart.caption
+    assert "3 of 5 responses stated a price expectation" in chart.caption, chart.caption
 
 
 def test_a_money_value_arrives_as_a_string_and_is_still_banded_as_a_number():

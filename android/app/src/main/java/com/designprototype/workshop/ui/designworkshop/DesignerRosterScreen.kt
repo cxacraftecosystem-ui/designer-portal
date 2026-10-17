@@ -359,14 +359,14 @@ fun DesignerRosterScreen(
             "Designer roster",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
 
         if (!canManage) {
             Text(
                 "The designer roster is admin-only.",
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.field.warningContainer, RoundedCornerShape(10.dp))
@@ -378,7 +378,7 @@ fun DesignerRosterScreen(
         Text(
             "Only emails on this roster can sign in as designers. Accounts are created on first Google sign-in.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         // THE SERVER'S TOTAL, AND NOTHING DERIVED FROM THE PAGE.
@@ -394,7 +394,7 @@ fun DesignerRosterScreen(
         Text(
             "$rosterTotal on the roster",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         RosterHint(
             "Sort by “First signed in” to see who hasn't joined; use the chips to see who can't sign in."
@@ -758,12 +758,12 @@ private fun RosterCard(
                     row.fullName?.takeIf { it.isNotBlank() } ?: row.email,
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 16.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                Text(row.email, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text(row.email, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 row.institution?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                    Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
 
@@ -805,10 +805,10 @@ private fun RosterCard(
             }
 
             row.notes?.takeIf { it.isNotBlank() }?.let {
-                Text(it, color = MaterialTheme.field.body, fontSize = 12.sp)
+                Text(it, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
             }
             addedByLabel?.takeIf { it.isNotBlank() }?.let {
-                Text("Empanelled by $it", color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text("Empanelled by $it", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
             ActionRow {
@@ -851,7 +851,7 @@ private fun RosterBadge(label: String, background: Color, foreground: Color) {
     Text(
         label,
         color = foreground,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.bodySmall,
         modifier = Modifier
             .background(background, RoundedCornerShape(6.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp)
@@ -903,7 +903,7 @@ private fun RosterEditDialog(
                         "The old email will no longer sign in."
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedTextField(
                     value = email,

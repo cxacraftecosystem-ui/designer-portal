@@ -11,6 +11,7 @@
  * server's own output for the shared fixture (`shared/report-parity/`).
  */
 
+import { byCount, countNoun } from "@/lib/format";
 import {
   DocumentBuilder,
   asNumber,
@@ -946,11 +947,11 @@ export class ReportBuilder {
     if (venue.points.length && statedVenue) sentences.push(`Workshop venue: ${statedVenue}.`);
     if (artisans.placed) {
       sentences.push(
-        `Home places of ${artisans.placed} of ${artisans.total} participating artisans, at ${artisans.points.length} location(s).`
+        `Home places of ${artisans.placed} of ${artisans.total} participating artisans, at ${countNoun(artisans.points.length, "location")}.`
       );
     }
     if (artisans.total > artisans.placed) {
-      sentences.push(`${artisans.total - artisans.placed} participant(s) recorded no address that could be placed.`);
+      sentences.push(`${countNoun(artisans.total - artisans.placed, "participant")} recorded no address that could be placed.`);
     }
     if (approximate) {
       sentences.push(
@@ -1096,7 +1097,7 @@ export class ReportBuilder {
         }
         if (tally.size < MIN_CHART_CATEGORIES) return null;
         const total = [...tally.values()].reduce((a, b) => a + b, 0);
-        return chart("DONUT", [...tally.entries()], "Prototypes by review decision", `${total} prototype(s) reviewed.`);
+        return chart("DONUT", [...tally.entries()], "Prototypes by review decision", `${countNoun(total, "prototype")} reviewed.`);
       }
       case "SURVEY_RESPONDENTS": {
         const entity = this.entityIn("MARKET_SURVEY_CAPTURE", "surveyResponse");
@@ -1117,12 +1118,12 @@ export class ReportBuilder {
         const series = order.map((t) => [enumLabel(this.registry, spec.enum, t), tally.get(t) ?? 0] as [string, number]);
         if (series.length < MIN_CHART_CATEGORIES) return null;
         const plotted = [...tally.values()].reduce((a, b) => a + b, 0);
-        let caption = `${plotted} response(s) plotted, from the rows entered at this workshop.`;
+        let caption = `${countNoun(plotted, "response")} plotted, from the rows entered at this workshop.`;
         if (unstated) caption += ` ${unstated} more recorded no respondent group and could not be plotted.`;
         const unentered = this.unenteredResponses();
         if (unentered) {
           caption +=
-            ` The survey summary states ${plotted + unstated + unentered} response(s) ` +
+            ` The survey summary states ${countNoun(plotted + unstated + unentered, "response")} ` +
             `collected, so ${unentered} were never entered as rows and are in no figure here.`;
         }
         return chart("HORIZONTAL_BAR", series, "Survey responses by respondent group", caption, "responses");
@@ -1132,9 +1133,9 @@ export class ReportBuilder {
         const prices = responses.map((r) => asNumber(r.priceExpectation)).filter((n): n is number => n !== null && n > 0);
         const bands = priceBands(prices);
         if (bands.length < MIN_CHART_CATEGORIES) return null;
-        let caption = `${prices.length} of ${responses.length} response(s) stated a price expectation, in rupees.`;
+        let caption = `${prices.length} of ${countNoun(responses.length, "response")} stated a price expectation, in rupees.`;
         const unentered = this.unenteredResponses();
-        if (unentered) caption += ` A further ${unentered} response(s) the summary counts were never entered as rows.`;
+        if (unentered) caption += ` A further ${countNoun(unentered, "response")} the summary counts ${byCount(unentered, "was", "were")} never entered as rows.`;
         return chart("BAR", bands, "What respondents said they would pay", caption, "responses");
       }
       case "COST_BY_HEAD": {
@@ -1160,7 +1161,7 @@ export class ReportBuilder {
         }
         const bands = priceBands(prices);
         if (bands.length < MIN_CHART_CATEGORIES) return null;
-        return chart("BAR", bands, "Products by price band", `${prices.length} product(s) with a recorded price, in rupees.`, "products");
+        return chart("BAR", bands, "Products by price band", `${countNoun(prices.length, "product")} with a recorded price, in rupees.`, "products");
       }
       case "ADOPTION": {
         const entity = this.entityIn("POST_WORKSHOP_FOLLOWUP", "followUp");
@@ -1439,7 +1440,7 @@ export function buildReport(
     const score = builder.completenessOf(stage);
     if (!score.isComplete && score.missing.length) {
       warnings.push(
-        `Stage ${stage.number} (${stage.title}): ${score.missing.length} required field(s) ` +
+        `Stage ${stage.number} (${stage.title}): ${countNoun(score.missing.length, "required field")} ` +
           `not recorded — ${score.missing.slice(0, 4).join(", ")}` +
           (score.missing.length > 4 ? "…" : "")
       );
@@ -1451,10 +1452,11 @@ export function buildReport(
     const total = lostByTier.reduce((sum, [, labels]) => sum + labels.length, 0);
     const where = lostByTier.slice(0, 4).map(([s]) => `stage ${s.number}`).join(", ");
     warnings.push(
-      `${total} field(s) recorded in this workshop are above ${template.name}'s capture tier ` +
-        `(${tierTitle}) and are not in this file — ${where}` +
+      `${countNoun(total, "field")} recorded in this workshop ${byCount(total, "is", "are")} ` +
+        `above ${template.name}'s capture tier (${tierTitle}) and ` +
+        `${byCount(total, "is", "are")} not in this file — ${where}` +
         (lostByTier.length > 4 ? "…" : "") +
-        ". Generate the report with a template that captures every tier to include them."
+        `. Generate the report with a template that captures every tier to include ${byCount(total, "it", "them")}.`
     );
   }
   const overCap = builder.photographsOverCap();
@@ -1462,10 +1464,10 @@ export function buildReport(
     const total = overCap.reduce((sum, [, n]) => sum + n, 0);
     const where = overCap.slice(0, 4).map(([s]) => `stage ${s.number}`).join(", ");
     warnings.push(
-      `${total} photograph(s) recorded in this workshop did not fit ${template.name}'s ` +
-        `photograph cap and are not in this file — ${where}` +
+      `${countNoun(total, "photograph")} recorded in this workshop did not fit ${template.name}'s ` +
+        `photograph cap and ${byCount(total, "is", "are")} not in this file — ${where}` +
         (overCap.length > 4 ? "…" : "") +
-        ". Generate the report with a template that prints every photograph to include them."
+        `. Generate the report with a template that prints every photograph to include ${byCount(total, "it", "them")}.`
     );
   }
   const attachments = builder.attachmentsNamedButNotCarried();
@@ -1473,7 +1475,8 @@ export function buildReport(
     const total = attachments.reduce((sum, [, n]) => sum + n, 0);
     const where = attachments.slice(0, 4).map(([s]) => `stage ${s.number}`).join(", ");
     warnings.push(
-      `${total} attached file(s) are named in this report but the files themselves are not ` +
+      `${total} attached ${byCount(total, "file is", "files are")} named in this report but ` +
+        `the ${byCount(total, "file itself is", "files themselves are")} not ` +
         `inside it — ${where}` +
         (attachments.length > 4 ? "…" : "") +
         ". A report file cannot carry a document, a recording or a video; send them alongside it."
@@ -1482,9 +1485,9 @@ export function buildReport(
   if (builder.coverFieldsDropped.length) {
     const dropped = builder.coverFieldsDropped;
     warnings.push(
-      `${dropped.length} cover field(s) did not fit the cover table and ` +
-        `the ${template.name} template prints no workshop-setup section to carry them, so ` +
-        `they are not in this file: ${dropped.slice(0, 4).join(", ")}` +
+      `${countNoun(dropped.length, "cover field")} did not fit the cover table and ` +
+        `the ${template.name} template prints no workshop-setup section to carry ` +
+        `${byCount(dropped.length, "it, so it is", "them, so they are")} not in this file: ${dropped.slice(0, 4).join(", ")}` +
         (dropped.length > 4 ? "…" : "") +
         "."
     );
@@ -1496,8 +1499,8 @@ export function buildReport(
   if (hidden.length) {
     const titles = hidden.map((i) => i.title).sort(pyCompare);
     warnings.push(
-      `${hidden.length} of this workshop's own section(s) ask only questions above ` +
-        `${template.name}'s capture tier (${tierTitle}) and are not in ` +
+      `${hidden.length} of this workshop's own sections ${byCount(hidden.length, "asks", "ask")} only questions above ` +
+        `${template.name}'s capture tier (${tierTitle}) and ${byCount(hidden.length, "is", "are")} not in ` +
         `this file: ` +
         titles.slice(0, 4).join(", ") +
         (titles.length > 4 ? "…" : "")

@@ -122,6 +122,7 @@
  * A STORE THAT CANNOT BE READ IS NOT AN EMPTY STORE. See {@link OutboxStoreHealth}.
  */
 
+import { byCount, countNoun } from "@/lib/format";
 import { ApiError, apiFetch, getToken, sessionOwesPasswordChange } from "@/lib/api";
 // `underlyingIsTransient` AND NOT `isTransient` FOR THE DRAIN. They are two readings of one table
 // and differ only in whether a wrapper is opened first; the drain needs the opened one, because
@@ -1277,7 +1278,7 @@ export function outboxDanglingSentence(said: string, nouns: readonly string[], f
       : // NOT A GUESS DRESSED AS A FACT. The 404 names no field and the body carries several ids, so
         // the sentence carries several.
         `${subject} points at something that no longer exists: ${anyOneOf(nouns)}.`;
-  const carrying = files > 0 ? ` and the ${files} file(s) saved with it` : "";
+  const carrying = files > 0 ? ` and the ${countNoun(files, "file")} saved with it` : "";
   const isAre = files > 0 ? "are" : "is";
   const trimmed = said.trim();
   const server = trimmed ? ` Reason: ${/[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`}` : "";
@@ -2061,7 +2062,7 @@ async function runSync(): Promise<SyncResult> {
               // its files attached" is the consequence of the first clause and is argued in the
               // comment above, not on a row read standing up beside a Discard button.
               "This may have been saved, but it couldn't be confirmed. This entry" +
-                `${files ? ` and its ${files} file(s)` : ""} are still in this browser. If you were on a wi-fi ` +
+                `${files ? ` and its ${countNoun(files, "file")} are` : " is"} still in this browser. If you were on a wi-fi ` +
                 "network that asks you to sign in, connect properly and check whether the record arrived before " +
                 "discarding this."
             );
@@ -2085,7 +2086,7 @@ async function runSync(): Promise<SyncResult> {
               // 2026-09-03: "Nothing has been sent" is what the row already means, so "nothing was
               // deleted" is the half that has to be said beside a Discard button.
               `Not saved — it clashes with a record that already exists. ${error.message} Nothing was deleted: ` +
-                `this entry${files ? ` and its ${files} file(s)` : ""} are still in this browser. Open the clashing ` +
+                `this entry${files ? ` and its ${countNoun(files, "file")} are` : " is"} still in this browser. Open the clashing ` +
                 "record, copy anything missing, then discard this entry."
             );
             failed += 1;
@@ -2255,9 +2256,14 @@ async function runSync(): Promise<SyncResult> {
       if (mediaFailed.length) {
         await markFailure(
           progress,
-          `Saved, but ${mediaFailed.length} file(s) did not upload: ${mediaFailed.map((f) => f.name).join(", ")}. ` +
-            "Nothing has been thrown away — they are still on this device, and Try again re-sends only those. If " +
-            "they keep failing, attach them again on the record."
+          `Saved, but ${countNoun(mediaFailed.length, "file")} did not upload: ${mediaFailed.map((f) => f.name).join(", ")}. ` +
+            byCount(
+              mediaFailed.length,
+              "Nothing has been thrown away — it is still on this device, and Try again re-sends only that. If " +
+                "it keeps failing, attach it again on the record.",
+              "Nothing has been thrown away — they are still on this device, and Try again re-sends only those. If " +
+                "they keep failing, attach them again on the record."
+            )
         );
         failed += 1;
         await refreshOutbox();
@@ -2324,7 +2330,7 @@ async function runSync(): Promise<SyncResult> {
         await markFailure(
           progress,
           `This entry couldn't be sent: ${answered.message} Nothing you entered is wrong and nothing has been ` +
-            `thrown away — this entry${files ? ` and its ${files} file(s)` : ""} stays on this device. Reload the ` +
+            `thrown away — this entry${files ? ` and its ${countNoun(files, "file")} stay` : " stays"} on this device. Reload the ` +
             "page to update the app, and it will send by itself.",
           APP_RUN_ID
         );

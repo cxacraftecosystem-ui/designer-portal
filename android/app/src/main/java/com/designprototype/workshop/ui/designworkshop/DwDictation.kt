@@ -1340,7 +1340,7 @@ internal fun DwDictationButton(
                 Text(
                     DW_DICTATION_LANGUAGES.firstOrNull { it.tag == tag }?.label ?: tag,
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     maxLines = 1
                 )
             }
@@ -1567,14 +1567,14 @@ private fun DwOnDeviceModelPanel(
                                 "Transcribing — ${elapsed / 60} min ${elapsed % 60} sec."
                             },
                             color = MaterialTheme.field.body,
-                            fontSize = 13.sp
+                            style = MaterialTheme.typography.bodyMedium
                         )
                     }
                 } else {
                     Text(
                         "Recording — speak now, then press Stop.",
                         color = MaterialTheme.colorScheme.error,
-                        fontSize = 13.sp
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
                 // The measured wait band, which is the one thing on this panel worth a sentence and
@@ -1583,7 +1583,7 @@ private fun DwOnDeviceModelPanel(
                 // DRAWN ONLY WHEN IT WAS MEASURED. An unmeasured model prints nothing here rather than
                 // a sentence saying so — the elapsed clock above is then the only timing claim on the
                 // panel, and it is a reading rather than an estimate.
-                note?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp) }
+                note?.let { Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall) }
                 if (!transcribing) {
                     // Said while it is still true rather than as a surprise at ninety seconds. The
                     // "why" clause went with the rest of the narration — the wait band above already
@@ -1591,7 +1591,7 @@ private fun DwOnDeviceModelPanel(
                     Text(
                         "Stops itself after 90 seconds.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -1656,7 +1656,7 @@ private fun DwServerDictationPanel(
                         Text(
                             "Writing down what you said…",
                             color = MaterialTheme.field.body,
-                            fontSize = 13.sp
+                            style = MaterialTheme.typography.bodyMedium
                         )
                     }
                     sendingClip?.let { clip ->
@@ -1672,7 +1672,7 @@ private fun DwServerDictationPanel(
                     Text(
                         "Recording — speak now, then press Stop.",
                         color = MaterialTheme.colorScheme.error,
-                        fontSize = 13.sp
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
                 /*
@@ -1696,14 +1696,14 @@ private fun DwServerDictationPanel(
                     Text(
                         "Text appears after you tap Stop.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     // Said while it is still true rather than as an error at the end. The recorder
                     // stops itself at its cap and sends what it has (see DW_DICTATION_MAX_MILLIS).
                     Text(
                         "Stops itself after four minutes.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -1731,7 +1731,7 @@ private fun DwServerDictationPanel(
 internal fun DwDictationHint(listening: Boolean) {
     if (!listening) return
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text("Listening — speak now.", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+        Text("Listening — speak now.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
 }
 

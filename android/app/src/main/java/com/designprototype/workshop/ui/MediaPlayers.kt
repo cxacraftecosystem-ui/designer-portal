@@ -238,7 +238,7 @@ fun AudioPlayer(uri: Uri, modifier: Modifier = Modifier) {
                 // unplayed track used to be 1.00:1 against it — the voice note with no bar at all.
                 colors = FieldProgressDefaults.sliderColors()
             )
-            Text("${formatMs(positionMs)} / ${formatMs(durationMs)}", color = Body, fontSize = 11.sp)
+            Text("${formatMs(positionMs)} / ${formatMs(durationMs)}", color = Body, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -308,10 +308,10 @@ fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, p
         )
         if (paused) {
             // Slowly blinking "Paused" label, with the (frozen) elapsed time alongside.
-            Text("Paused", color = Body.copy(alpha = if (reduceMotion) 1f else pausedBlink), fontSize = 12.sp)
-            Text(formatMs(elapsedMs.toInt()), color = Body, fontSize = 12.sp)
+            Text("Paused", color = Body.copy(alpha = if (reduceMotion) 1f else pausedBlink), style = MaterialTheme.typography.bodySmall)
+            Text(formatMs(elapsedMs.toInt()), color = Body, style = MaterialTheme.typography.bodySmall)
         } else {
-            Text("Recording  ${formatMs(elapsedMs.toInt())}", color = Body, fontSize = 12.sp)
+            Text("Recording  ${formatMs(elapsedMs.toInt())}", color = Body, style = MaterialTheme.typography.bodySmall)
         }
         // The app's one accent, not the logo's coral as a second one.
         val waveColor = MaterialTheme.colorScheme.primary
@@ -402,13 +402,13 @@ fun MediaThumb(
                     )
                     Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White)
                 }
-                else -> Text(mediaType.take(3).uppercase(), color = Body, fontSize = 11.sp)
+                else -> Text(mediaType.take(3).uppercase(), color = Body, style = MaterialTheme.typography.bodySmall)
             }
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = onTile ?: MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, color = onTile ?: MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val subtitleInk = if (onTile != null) MaterialTheme.field.onBrandTileMuted else MaterialTheme.field.muted
-            subtitle?.let { Text(it, color = subtitleInk, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            subtitle?.let { Text(it, color = subtitleInk, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
         if (onTile != null) {
             OutlinedButton(
@@ -416,7 +416,7 @@ fun MediaThumb(
                 colors = onTileButtonColors(onTile),
                 border = onTileBorder(onTile),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-            ) { Text("Open", fontSize = 13.sp) }
+            ) { Text("Open", style = MaterialTheme.typography.labelLarge) }
         } else {
             TextButton(onClick = onOpen) { Text("Open") }
         }

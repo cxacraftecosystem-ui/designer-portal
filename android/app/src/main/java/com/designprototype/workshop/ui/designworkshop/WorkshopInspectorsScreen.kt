@@ -370,10 +370,10 @@ fun WorkshopInspectorsScreen(
             "Inspection of a design workshop",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
         if (title.isNotBlank()) {
-            Text(title, color = MaterialTheme.field.body, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(title, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
         }
 
         // ── The refusal, first, and never as a greyed control ────────────────────────────────────
@@ -388,7 +388,7 @@ fun WorkshopInspectorsScreen(
         Text(
             "Who can inspect this workshop.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         // THE WEB PANEL'S SENTENCE, WORD FOR WORD, and no longer "an Inspector / Reviewer assigned
         // here": since 2026-10-09 the server offers this screen admin accounts as well (see the hint
@@ -396,7 +396,7 @@ fun WorkshopInspectorsScreen(
         Text(
             "Inspectors can read every stage but change nothing. Admins appointed here lose edit access while they hold the post.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         // Said before anything is attempted, not only when it fails. An admin who does not know this
@@ -404,7 +404,7 @@ fun WorkshopInspectorsScreen(
         Text(
             "Needs a connection.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         if (!onServer) {
@@ -429,7 +429,7 @@ fun WorkshopInspectorsScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             return@Column
         }
@@ -510,7 +510,7 @@ fun WorkshopInspectorsScreen(
                     // The WORD carries it; the colour only separates "somebody is hidden from you"
                     // from "nobody matched", and neither is an error.
                     color = if (offer.truncated) MaterialTheme.field.warning else MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
@@ -542,7 +542,7 @@ fun WorkshopInspectorsScreen(
         Text(
             "Inspector and admin accounts that can sign in (not you). People who worked on this workshop are refused. Max $DW_INSPECTOR_LIMIT.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         // ── What is currently SAVED ──────────────────────────────────────────────────────────────
@@ -557,7 +557,7 @@ fun WorkshopInspectorsScreen(
             Text(
                 "Not under inspection.",
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodySmall
             )
         } else {
             served.forEach { row ->
@@ -571,7 +571,7 @@ fun WorkshopInspectorsScreen(
                 "Will be assigned on save: " +
                     added.joinToString(", ") { dwPersonLabel(it.name, it.email) } + ".",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -614,7 +614,7 @@ fun WorkshopInspectorsScreen(
                     (if (selection.resultingCount == 1) "account" else "accounts") +
                     " would be inspecting this workshop.",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         Spacer(Modifier.height(8.dp))
@@ -703,7 +703,7 @@ private fun AssignedRow(row: DwInspectorDto, willEnd: Boolean) {
         Text(
             dwPersonLabel(row.name, row.email),
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 14.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
         Text(
@@ -716,7 +716,7 @@ private fun AssignedRow(row: DwInspectorDto, willEnd: Boolean) {
                 row.assignedAt?.takeIf { it.isNotBlank() }?.let { "assigned ${it.take(10)}" },
             ).joinToString(" · "),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         // The WORDS carry it, not the colour: legible to somebody who cannot tell the red container
         // from the grey one.
@@ -724,7 +724,7 @@ private fun AssignedRow(row: DwInspectorDto, willEnd: Boolean) {
             Text(
                 "inspection ends on save",
                 color = MaterialTheme.colorScheme.onErrorContainer,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier
                     .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(6.dp))
                     .padding(horizontal = 8.dp, vertical = 3.dp)
@@ -745,7 +745,7 @@ internal fun InspectionNotice(text: String, warning: Boolean) {
     Text(
         text,
         color = if (warning) MaterialTheme.field.onWarningContainer else MaterialTheme.colorScheme.onErrorContainer,
-        fontSize = 13.sp,
+        style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier
             .fillMaxWidth()
             .background(

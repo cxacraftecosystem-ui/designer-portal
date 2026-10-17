@@ -44,6 +44,7 @@
  *    entitled to show; the port's sentences are never edited. Same rule, same count, as the handset.
  */
 
+import { countNoun } from "@/lib/format";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Calculator, Info } from "lucide-react";
 
@@ -236,7 +237,7 @@ export function CostFindingsPanel({
           saved" and "this laptop worked this out from what is on screen" are different claims. */}
       <p className="text-xs leading-5 text-ink-500">
         {source === "local"
-          ? `From ${findings.sheetCount} sheet(s), ${materialLines.length} material and ${labourLines.length} labour line(s). Not saved to the stage.`
+          ? `From ${countNoun(findings.sheetCount, "sheet")}, ${materialLines.length} material and ${countNoun(labourLines.length, "labour line")}. Not saved to the stage.`
           : "From saved data only. Unsaved edits aren't counted."}
       </p>
 

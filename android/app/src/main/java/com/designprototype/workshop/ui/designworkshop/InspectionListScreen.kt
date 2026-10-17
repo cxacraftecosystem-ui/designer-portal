@@ -190,7 +190,7 @@ fun InspectionListScreen(
             DW_INSPECTION_LIST_TITLE,
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
 
         // ── The refusal, and it is the one refusal in this app an ADMIN also meets ───────────────
@@ -205,7 +205,7 @@ fun InspectionListScreen(
         Text(
             "Workshops assigned to you to inspect (read-only).",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         // A KEPT LIST SAYS SO, with the moment it was saved: an inspector must be able to tell the
         // copy on this phone from a list that has just been read.
@@ -266,7 +266,7 @@ fun InspectionListScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
             // THE SERVER ANSWERED, AND THE ANSWER IS NONE. Two different sentences, because a search
@@ -277,12 +277,12 @@ fun InspectionListScreen(
                     "No matching workshops",
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 16.sp
+                    style = MaterialTheme.typography.titleMedium
                 )
                 Text(
                     "Clear the search to see all.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
@@ -291,12 +291,12 @@ fun InspectionListScreen(
                     "No workshop is assigned to you",
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 16.sp
+                    style = MaterialTheme.typography.titleMedium
                 )
                 Text(
                     "Workshops an admin assigns to you appear here.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
@@ -307,7 +307,7 @@ fun InspectionListScreen(
                     "$total ${if (total == 1) "workshop" else "workshops"} assigned to you" +
                         if (answeredFor != null) ", matching this search." else ".",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
                 served.forEach { workshop ->
                     InspectableWorkshopCard(
@@ -330,7 +330,7 @@ fun InspectionListScreen(
                         Text(
                             "Page $page of $pages",
                             color = MaterialTheme.field.muted,
-                            fontSize = 12.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                         OutlinedButton(
                             onClick = { page++ },
@@ -367,7 +367,7 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
                 workshop.title.ifBlank { "Untitled workshop" },
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 15.sp,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             val line = listOfNotNull(
@@ -379,7 +379,7 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
                 ).joinToString(", ").takeIf { it.isNotBlank() },
             ).joinToString(" · ")
             if (line.isNotBlank()) {
-                Text(line, color = MaterialTheme.field.body, fontSize = 13.sp)
+                Text(line, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
             }
             val second = listOfNotNull(
                 workshop.workshopCode?.takeIf { it.isNotBlank() },
@@ -392,7 +392,7 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
                 ).joinToString(" – ").takeIf { it.isNotBlank() },
             ).joinToString(" · ")
             if (second.isNotBlank()) {
-                Text(second, color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text(second, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             // SAID ON EVERY CARD, not only on the detail screen. An inspector tapping through has
             // to know before they arrive that there is nothing here for them to do to the record —
@@ -400,7 +400,7 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
             Text(
                 "Read-only",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold
             )
         }

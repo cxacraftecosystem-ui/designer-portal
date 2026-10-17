@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -163,7 +164,7 @@ fun QuestionnaireTranscriptActions(
                 modifier = Modifier.size(14.dp)
             )
             Spacer(Modifier.width(4.dp))
-            Text(if (copied) "Copied" else "Copy", fontSize = 12.sp)
+            Text(if (copied) "Copied" else "Copy", style = MaterialTheme.typography.labelMedium)
         }
         if (onSave != null) {
             TextButton(
@@ -174,7 +175,7 @@ fun QuestionnaireTranscriptActions(
             ) {
                 Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Download", fontSize = 12.sp)
+                Text("Download", style = MaterialTheme.typography.labelMedium)
             }
         }
     }

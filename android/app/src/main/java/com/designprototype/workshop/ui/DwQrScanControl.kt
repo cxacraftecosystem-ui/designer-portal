@@ -238,7 +238,7 @@ fun DwQrScanControl(
                     Icon(Icons.Filled.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
                 Spacer(Modifier.width(6.dp))
-                Text(if (working) "Reading…" else "Scan a code", fontSize = 13.sp)
+                Text(if (working) "Reading…" else "Scan a code", style = MaterialTheme.typography.labelLarge)
             }
             OutlinedButton(
                 onClick = {
@@ -252,7 +252,7 @@ fun DwQrScanControl(
             ) {
                 Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Use a picture", fontSize = 13.sp)
+                Text("Use a picture", style = MaterialTheme.typography.labelLarge)
             }
             /*
              * THE WAY FORWARD, and it appears only once there is nowhere else to go.
@@ -271,14 +271,14 @@ fun DwQrScanControl(
                     Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     // The label the blocked sentence quotes, from the one place it is spelled.
-                    Text(DW_CAMERA_SETTINGS_BUTTON, fontSize = 13.sp)
+                    Text(DW_CAMERA_SETTINGS_BUTTON, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
         Text(
             "Photograph the code or pick a picture. Works offline; lookup needs a connection.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }

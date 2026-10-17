@@ -273,14 +273,14 @@ private fun DwPhotoQualityCard(entry: DwPhotoFindings, onDismiss: () -> Unit) {
                     Text(
                         "Check this photograph — ${entry.displayName}",
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     entry.findings.forEach { finding ->
                         Text(
                             finding.message,
                             color = MaterialTheme.field.onWarningContainer,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 17.sp,
                         )
                     }
@@ -292,7 +292,7 @@ private fun DwPhotoQualityCard(entry: DwPhotoFindings, onDismiss: () -> Unit) {
                     // is a warning they will learn to resent.
                     modifier = Modifier.heightIn(min = 48.dp),
                 ) {
-                    Text("Dismiss", color = MaterialTheme.field.onWarningContainer, fontSize = 12.sp)
+                    Text("Dismiss", color = MaterialTheme.field.onWarningContainer, style = MaterialTheme.typography.labelMedium)
                 }
             }
             Text(
@@ -300,7 +300,7 @@ private fun DwPhotoQualityCard(entry: DwPhotoFindings, onDismiss: () -> Unit) {
                 // "advice" and "refusal" about is a warning they will stop attaching photographs over.
                 "Already saved on this phone.",
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
     }
@@ -333,6 +333,6 @@ internal fun DwMissingViewsNote(message: String, modifier: Modifier = Modifier) 
             tint = MaterialTheme.field.warning,
             modifier = Modifier.size(16.dp),
         )
-        Text(message, color = MaterialTheme.field.body, fontSize = 12.sp, lineHeight = 17.sp)
+        Text(message, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
     }
 }

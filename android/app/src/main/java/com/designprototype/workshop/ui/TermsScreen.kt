@@ -216,7 +216,7 @@ fun TermsScreen(
         Text(
             TERMS_INTRO,
             color = MaterialTheme.field.muted,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 19.sp
         )
 
@@ -230,12 +230,12 @@ fun TermsScreen(
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp
+                    style = MaterialTheme.typography.titleMedium
                 )
                 Text(
                     clause.body,
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 19.sp
                 )
             }
@@ -249,7 +249,7 @@ fun TermsScreen(
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp
+                style = MaterialTheme.typography.titleMedium
             )
             if (notice != null && notice.isUsable) {
                 // THE SERVER'S TEXT, VERBATIM AND VERSIONED, through the same composable the
@@ -261,12 +261,12 @@ fun TermsScreen(
                 Text(
                     TERMS_NOTICE_UNAVAILABLE_LINE,
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 19.sp
                 )
                 onRetryNotice?.let { retry ->
                     ActionRow {
-                        TextButton(onClick = retry) { Text("Try again", fontSize = 13.sp) }
+                        TextButton(onClick = retry) { Text("Try again", style = MaterialTheme.typography.labelLarge) }
                     }
                 }
             }

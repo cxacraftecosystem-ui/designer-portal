@@ -252,12 +252,12 @@ fun DwReportHistoryScreen(
             DW_REPORT_HISTORY_TITLE,
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
-        Text(DW_REPORT_HISTORY_SUBTITLE, color = MaterialTheme.field.muted, fontSize = 13.sp)
+        Text(DW_REPORT_HISTORY_SUBTITLE, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
 
         if (!onServer) {
-            Text(DW_REPORT_HISTORY_LOCAL_ONLY, color = MaterialTheme.field.muted, fontSize = 13.sp)
+            Text(DW_REPORT_HISTORY_LOCAL_ONLY, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             return@Column
         }
 
@@ -267,7 +267,7 @@ fun DwReportHistoryScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Reading the history…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Reading the history…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             return@Column
         }
@@ -281,7 +281,7 @@ fun DwReportHistoryScreen(
             Text(
                 loadError ?: "The report history could not be read.",
                 color = MaterialTheme.colorScheme.error,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodyMedium
             )
             OutlinedButton(onClick = { reload++ }, modifier = Modifier.fillMaxWidth()) {
                 Text("Try again")
@@ -300,9 +300,9 @@ fun DwReportHistoryScreen(
                 DW_REPORT_HISTORY_EMPTY_TITLE,
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 16.sp
+                style = MaterialTheme.typography.titleMedium
             )
-            Text(DW_REPORT_HISTORY_EMPTY_BODY, color = MaterialTheme.field.muted, fontSize = 13.sp)
+            Text(DW_REPORT_HISTORY_EMPTY_BODY, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             return@Column
         }
 
@@ -350,7 +350,7 @@ fun DwReportHistoryScreen(
             DW_REPORT_HISTORY_LIST_TITLE,
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 16.sp
+            style = MaterialTheme.typography.titleMedium
         )
         Text(
             buildString {
@@ -360,7 +360,7 @@ fun DwReportHistoryScreen(
                 if (served.exportsTruncated) append(" Only the most recent 100 are shown.")
             },
             color = MaterialTheme.field.muted,
-            fontSize = 13.sp
+            style = MaterialTheme.typography.bodySmall
         )
         served.exports.forEach { record ->
             DwExportCard(
@@ -414,7 +414,7 @@ private fun DwDiffPanel(
                 DW_REPORT_DIFF_TITLE,
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 16.sp
+                style = MaterialTheme.typography.titleMedium
             )
 
             // A file with no recorded generation time is a file no comparison can include, and the
@@ -422,11 +422,11 @@ private fun DwDiffPanel(
             // have different remedies and merging them would send a designer looking for a second
             // file that is already listed above.
             if (ordered.isEmpty()) {
-                Text(DW_REPORT_HISTORY_NONE_DATED, color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text(DW_REPORT_HISTORY_NONE_DATED, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 return@Column
             }
             if (ordered.size < 2) {
-                Text(DW_REPORT_HISTORY_ONE_FILE, color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text(DW_REPORT_HISTORY_ONE_FILE, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 return@Column
             }
 
@@ -462,7 +462,7 @@ private fun DwDiffPanel(
             )
 
             if (leftId == rightId) {
-                Text("Choose two different files.", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Choose two different files.", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 return@Column
             }
             if (diff == null) return@Column
@@ -484,12 +484,12 @@ private fun DwDiffPanel(
             Text(
                 dwDiffHeadline(diff, absolute = absolute, windowTruncated = history.exportsTruncated),
                 color = MaterialTheme.field.body,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
             )
 
             dwFileFacts(diff, templateName).forEach { fact ->
-                Text("• $fact", color = MaterialTheme.field.body, fontSize = 13.sp)
+                Text("• $fact", color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
             }
 
             dwHeaderVerdict(diff)?.let { verdict ->
@@ -503,7 +503,7 @@ private fun DwDiffPanel(
                     } else {
                         MaterialTheme.field.muted
                     },
-                    fontSize = 13.sp
+                    style = MaterialTheme.typography.bodyMedium
                 )
             }
 
@@ -514,7 +514,7 @@ private fun DwDiffPanel(
                 Text(
                     DW_REPORT_DIFF_WRITTEN_NOT_CHANGED,
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
@@ -526,14 +526,14 @@ private fun DwDiffPanel(
                         "Nothing written (timeline capped)"
                     },
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )
                 untouched.forEach { stage ->
                     Column {
-                        Text(stageTitle(stage.stageKey), color = MaterialTheme.field.body, fontSize = 13.sp)
+                        Text(stageTitle(stage.stageKey), color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
                         dwStageCompletenessNote(stage, history.completeness[stage.stageKey])?.let { note ->
-                            Text(note, color = MaterialTheme.field.muted, fontSize = 11.sp)
+                            Text(note, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -548,11 +548,11 @@ private fun DwDiffPanel(
             Text(
                 DW_REPORT_DIFF_LIMITS_TITLE,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
             )
             dwDiffLimits(diff, history).forEach { limit ->
-                Text("• $limit", color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text("• $limit", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -563,7 +563,7 @@ private fun DwDiffPanel(
 @Composable
 private fun DwTouchedStageRow(stage: DwStageChange, title: String) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+        Text(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (stage.rowsAdded > 0) DwHistoryChip("${stage.rowsAdded} added", tone = DwChipTone.Good)
             // "Rewritten" and never "changed" — see `DW_REPORT_DIFF_WRITTEN_NOT_CHANGED`, which is
@@ -580,7 +580,7 @@ private fun DwTouchedStageRow(stage: DwStageChange, title: String) {
                     "removed again between the two files, so neither document contains " +
                     (if (stage.rowsTransient == 1) "it" else "them"),
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
@@ -614,7 +614,7 @@ private fun DwExportCard(
                 dwGenerationLabel(generation, absolute = absolute, windowTruncated = windowTruncated),
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp
+                style = MaterialTheme.typography.titleMedium
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 DwHistoryChip(record.format, tone = DwChipTone.Neutral)
@@ -625,7 +625,7 @@ private fun DwExportCard(
                     tone = if (record.generatedOnDevice) DwChipTone.Warn else DwChipTone.Neutral,
                 )
             }
-            Text(dwExportMoment(record.generatedAt), color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(dwExportMoment(record.generatedAt), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
 
             DwFact("Template", templateName)
             DwFact("Pages", record.pageCount?.toString() ?: "Not recorded")
@@ -644,14 +644,14 @@ private fun DwExportCard(
                 }
             }
             if (showFingerprint) {
-                Text("SHA-256 of the file", color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text("SHA-256 of the file", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 DwChecksum(value = record.checksumSha256, onDevice = record.generatedOnDevice)
             }
 
             Text(
                 "File name: ${record.fileName}",
                 color = MaterialTheme.field.placeholder,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
 
             dwDuplicateFileNote(duplicates)?.let { note -> DwWarnNote(note) }
@@ -668,10 +668,10 @@ private fun DwExportCard(
                 Text(
                     "Warnings recorded when this file was made",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Medium,
                 )
-                Text(warnings, color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text(warnings, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -697,7 +697,7 @@ private fun DwChecksum(value: String?, onDevice: Boolean) {
                     ""
                 },
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         return
     }
@@ -705,7 +705,7 @@ private fun DwChecksum(value: String?, onDevice: Boolean) {
         Text(
             value,
             color = MaterialTheme.field.body,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
         )
     }
@@ -714,9 +714,9 @@ private fun DwChecksum(value: String?, onDevice: Boolean) {
 @Composable
 private fun DwFact(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth()) {
-        Text(label, color = MaterialTheme.field.muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+        Text(label, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(8.dp))
-        Text(value, color = MaterialTheme.field.body, fontSize = 12.sp, modifier = Modifier.weight(2f))
+        Text(value, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(2f))
     }
 }
 
@@ -725,7 +725,7 @@ private fun DwWarnNote(text: String) {
     Text(
         text,
         color = MaterialTheme.field.onWarningContainer,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.bodySmall,
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.field.warningContainer, RoundedCornerShape(6.dp))
@@ -750,7 +750,7 @@ private fun DwHistoryChip(label: String, tone: DwChipTone) {
     Text(
         label,
         color = ink,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.bodySmall,
         modifier = Modifier
             .background(background, RoundedCornerShape(999.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp)

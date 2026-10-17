@@ -88,10 +88,10 @@ internal fun DwTier2ModelList(
         Text(
             "Language models",
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
-        Text(DW_TIER2_LIST_INTRO, color = MaterialTheme.field.body, fontSize = 12.sp)
+        Text(DW_TIER2_LIST_INTRO, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
         rows.forEach { (choice, status, offer) ->
             DwTier2Row(choice, status, offer, measurement, models)
         }
@@ -126,7 +126,7 @@ private fun DwTier2Row(
             Text(
                 modelId,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.weight(1f)
             )
@@ -137,28 +137,28 @@ private fun DwTier2Row(
                     DwModelFit.TIGHT -> MaterialTheme.field.warning
                     DwModelFit.WILL_NOT_FIT, DwModelFit.UNMEASURED -> MaterialTheme.field.muted
                 },
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
-        Text(dwTier2RowSentence(choice, measurement), color = MaterialTheme.field.body, fontSize = 12.sp)
+        Text(dwTier2RowSentence(choice, measurement), color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
         dwTier2StateLine(offer, status)?.let { line ->
             Text(
                 line,
                 color = if (offer == DwTier2InstallOffer.RETRY) MaterialTheme.field.warning else MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
         if (offer == DwTier2InstallOffer.IN_PROGRESS && models.activeModelId == modelId) {
             val live = models.readout
             val stage = models.phase
-            stage?.let { Text(dwTransferHeading(it), color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp) }
+            stage?.let { Text(dwTransferHeading(it), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodySmall) }
             live?.percent?.let { percent ->
                 FieldLinearProgressIndicator(progress = { percent.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth())
             }
-            live?.let { Text(dwTransferLine(it), color = MaterialTheme.field.body, fontSize = 12.sp) }
+            live?.let { Text(dwTransferLine(it), color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall) }
             if (live != null && stage != null) {
-                dwStalledSentence(live, stage)?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp) }
+                dwStalledSentence(live, stage)?.let { Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall) }
             }
             ActionRow {
                 OutlinedButton(onClick = { models.pause() }) { Text("Pause") }
@@ -169,7 +169,7 @@ private fun DwTier2Row(
 
         val label = dwTier2ActionLabel(offer) ?: return@Column
         if (confirming && offer != DwTier2InstallOffer.INSTALLED) {
-            dwModelOverrideSentence(choice)?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
+            dwModelOverrideSentence(choice)?.let { Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall) }
             ActionRow {
                 Button(
                     onClick = {

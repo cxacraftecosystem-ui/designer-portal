@@ -108,7 +108,7 @@ fun ForgotPasswordScreen(
         Text(
             FORGOT_PASSWORD_HEADING,
             display = true,
-            fontSize = 24.sp,
+            style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground
         )
         ElevatedCard(
@@ -120,7 +120,7 @@ fun ForgotPasswordScreen(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(FORGOT_PASSWORD_INTRO, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 19.sp)
+                Text(FORGOT_PASSWORD_INTRO, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp)
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it; error = null },
@@ -134,7 +134,7 @@ fun ForgotPasswordScreen(
                     Text(
                         it,
                         color = MaterialTheme.colorScheme.primary,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         lineHeight = 19.sp,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                     )
@@ -143,7 +143,7 @@ fun ForgotPasswordScreen(
                     Text(
                         it,
                         color = MaterialTheme.colorScheme.error,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         lineHeight = 19.sp,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }
                     )
@@ -172,12 +172,12 @@ fun ForgotPasswordScreen(
                 ) {
                     Text(if (busy) "Sending…" else "Email me a link")
                 }
-                Text(FORGOT_PASSWORD_TWO_STEP_NOTE, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
-                Text(FORGOT_PASSWORD_NO_EMAIL_NOTE, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+                Text(FORGOT_PASSWORD_TWO_STEP_NOTE, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
+                Text(FORGOT_PASSWORD_NO_EMAIL_NOTE, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
             }
         }
         TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth(), shape = RectangleShape) {
-            Text("Back to sign in", fontSize = 13.sp)
+            Text("Back to sign in", style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -318,8 +318,8 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(passwordCardTitle(hasPassword), display = true, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-            Text(passwordCardIntro(hasPassword, user), color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 19.sp)
+            Text(passwordCardTitle(hasPassword), display = true, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge)
+            Text(passwordCardIntro(hasPassword, user), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp)
             if (hasPassword) {
                 OutlinedTextField(
                     value = current,
@@ -373,7 +373,7 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
                 Text(
                     it,
                     color = MaterialTheme.colorScheme.primary,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                 )
             }
@@ -381,12 +381,12 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
                 Text(
                     it,
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }
                 )
             }
             if (!hasPassword) {
-                Text(firstPasswordConfirmNote(confirmWith), color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+                Text(firstPasswordConfirmNote(confirmWith), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
             }
             Button(
                 enabled = !busy && (!hasPassword || current.isNotEmpty()),
@@ -473,7 +473,7 @@ fun HelpThemBackInActions(
     var confirmSignOut by remember { mutableStateOf(false) }
 
     HorizontalDivider()
-    Text(HELP_THEM_BACK_IN_HEADING, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+    Text(HELP_THEM_BACK_IN_HEADING, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
     ActionRow {
         if (emailLinkOffered(target, mailAvailable)) {
             OutlinedButton(
@@ -504,7 +504,7 @@ fun HelpThemBackInActions(
         Text(
             it,
             color = MaterialTheme.colorScheme.primary,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
         )
     }
@@ -575,7 +575,7 @@ private fun TemporaryPasswordDialog(
         title = { Text("Set a temporary password for $name") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(temporaryPasswordIntro(name), color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text(temporaryPasswordIntro(name), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it; problem = null },

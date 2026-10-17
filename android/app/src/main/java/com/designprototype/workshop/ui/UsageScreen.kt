@@ -189,7 +189,7 @@ fun UsageScreen(
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp
+                style = MaterialTheme.typography.titleMedium
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 WINDOW_CHOICES.forEach { days ->
@@ -210,7 +210,7 @@ fun UsageScreen(
                 Text(
                     "${window.days} days, up to ${window.maxDays} at a time.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp
                 )
             }
@@ -230,7 +230,7 @@ fun UsageScreen(
                 notice,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 18.sp
             )
         }
@@ -240,7 +240,7 @@ fun UsageScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text(loadingListLine("usage figures"), color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text(loadingListLine("usage figures"), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
         if (routesRead is UsageReadState.Failed) {
@@ -256,7 +256,7 @@ fun UsageScreen(
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp
+                    style = MaterialTheme.typography.titleMedium
                 )
                 // NAMED "This page" AND NOT "Total", following the server's own naming of the field
                 // it comes from. A figure called "total" beside a paged list is read as the platform
@@ -273,7 +273,7 @@ fun UsageScreen(
                     Text(
                         "Used by fewer than ${data.limits.minimumIdentifiedUsers} accounts — hidden and excluded from totals.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp
                     )
                 }
@@ -284,7 +284,7 @@ fun UsageScreen(
                         "The screens you asked about."
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
@@ -295,7 +295,7 @@ fun UsageScreen(
                     Text(
                         "Page ${data.page} of ${data.pages} — ${usageCount(data.total)} screens in total",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     ActionRow {
                         OutlinedButton(
@@ -317,12 +317,12 @@ fun UsageScreen(
                     // opposite facts.
                     "${usageCount(data.notMeasured.size)} screens are never measured.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp
                 )
             }
             data.notes.forEach {
-                Text("• $it", color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+                Text("• $it", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
             }
         }
     }
@@ -370,7 +370,7 @@ private fun CollectionPostureCard(
                             emptyLine = "Collection method unavailable."
                         ).orEmpty(),
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         lineHeight = 18.sp
                     )
                     if (state is UsageReadState.Failed) {
@@ -380,7 +380,7 @@ private fun CollectionPostureCard(
                         Text(
                             "Figures shown; attribution unknown until this loads.",
                             color = MaterialTheme.field.onWarningContainer,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 17.sp
                         )
                         ActionRow {
@@ -401,20 +401,20 @@ private fun CollectionPostureCard(
                         },
                         color = MaterialTheme.field.onWarningContainer,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         lineHeight = 18.sp
                     )
                     Text(
                         method.consent.explanation,
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp
                     )
                     method.consent.withdrawalCosts?.takeIf { it.isNotBlank() }?.let {
                         Text(
                             it,
                             color = MaterialTheme.field.onWarningContainer,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 17.sp
                         )
                     }
@@ -440,7 +440,7 @@ private fun RouteCard(row: UsageRouteRow) {
             row.routeTemplate,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp
         )
         if (usageWithheld(row)) {
@@ -455,14 +455,14 @@ private fun RouteCard(row: UsageRouteRow) {
                 // The em dash, drawn once and labelled, rather than six of them down the card. A dash
                 // and a small number must not look alike, or a reader skims past a refusal as though
                 // it were a quiet fortnight.
-                Text("—", color = MaterialTheme.field.muted, fontSize = 16.sp)
+                Text("—", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodyLarge)
                 Text(
                     row.withheldBecause.orEmpty().ifBlank {
                         "Figures for this screen are not shown."
                     },
                     modifier = Modifier.weight(1f),
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp
                 )
             }
@@ -491,13 +491,13 @@ private fun StatLine(label: String, value: String) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top
     ) {
-        Text(label, modifier = Modifier.weight(1f), color = MaterialTheme.field.muted, fontSize = 12.sp)
+        Text(label, modifier = Modifier.weight(1f), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         Text(
             value,
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp
+            style = MaterialTheme.typography.titleMedium
         )
     }
 }

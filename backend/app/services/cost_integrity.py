@@ -59,6 +59,7 @@ from typing import Any
 # "₹ nan" into a document that has already been submitted by the time anybody notices. Both
 # modules are pure, so this costs nothing and a second copy would drift.
 from app.services.market_analysis import as_number
+from app.services.text_format import by_count
 
 #: The six heads `totalCost` is declared to SUM over, in `stage_definitions.STAGE_17`.
 #:
@@ -255,7 +256,7 @@ def check_subtotal(
 
     if declared is None:
         message = (
-            f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
+            f"{sheet_label}: the {rolled.count} {noun} {by_count(rolled.count, 'line adds', 'lines add')} up to "
             f"{_rupees(rolled.total)}; no {noun} cost is declared on the sheet."
         )
         return Check(
@@ -266,13 +267,13 @@ def check_subtotal(
     verdict = _compare(declared, rolled.total, TOLERANCE_RUPEES)
     if verdict == "AGREES":
         message = (
-            f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
+            f"{sheet_label}: the {rolled.count} {noun} {by_count(rolled.count, 'line adds', 'lines add')} up to "
             f"{_rupees(rolled.total)}, which is what the sheet declares."
         )
     else:
         direction = "less" if difference < 0 else "more"
         message = (
-            f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
+            f"{sheet_label}: the {rolled.count} {noun} {by_count(rolled.count, 'line adds', 'lines add')} up to "
             f"{_rupees(rolled.total)}, but the sheet declares {_rupees(declared)} — "
             f"{_rupees(abs(difference))} {direction} than the lines account for."
         )

@@ -604,7 +604,7 @@ internal fun DwSketchSharedPhotograph(
             Text(
                 DW_SHARED_PHOTOGRAPH_LABEL,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -618,7 +618,7 @@ internal fun DwSketchSharedPhotograph(
             Text(
                 noPhotographSentence,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             return@Column
@@ -638,7 +638,7 @@ internal fun DwSketchSharedPhotograph(
                 Text(
                     chosen.item.displayName,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
                     // ONE LINE AND AN ELLIPSIS IS WRONG HERE and is not what this does: `softWrap`
                     // is left alone so a long filename wraps onto a second line. Two photographs
@@ -654,7 +654,7 @@ internal fun DwSketchSharedPhotograph(
                         sizeBytes = chosen.item.sizeBytes,
                     ),
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -668,7 +668,7 @@ internal fun DwSketchSharedPhotograph(
             // entity declared two.
             dwSharedPhotographSentence(imageLabel = chosen.fieldLabel, rowName = rowName),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
@@ -992,7 +992,7 @@ internal fun DwSketchDerivationSection(
             Text(
                 nothingToWorkFrom,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             return@Column

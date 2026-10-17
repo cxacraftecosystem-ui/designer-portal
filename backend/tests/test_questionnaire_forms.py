@@ -1489,7 +1489,7 @@ async def test_an_unanswered_questionnaire_is_never_silently_absent_from_the_rep
     header = generated.headers["x-report-warnings"]
     pieces = [piece for piece in header.split("; ") if piece]
 
-    assert "questionnaire annexure" in header or "further warning(s) did not fit" in header, (
+    assert "questionnaire annexure" in header or "did not fit in this header" in header, (
         "the questionnaire annexure's warning did not reach the header AND the header did not say "
         f"anything was dropped, so the designer is told nothing at all. Header was: {header!r}"
     )
@@ -1543,7 +1543,7 @@ async def test_a_questionnaire_title_a_designer_typed_cannot_split_its_own_warni
     assert generated.status_code == 200, generated.text
     header = generated.headers["x-report-warnings"]
     count = int(generated.headers["x-report-warning-count"])
-    assert "further warning(s) did not fit" not in header, (
+    assert "did not fit in this header" not in header, (
         "this fixture is meant to fit inside the budget whole; if it stopped fitting, the "
         "assertion below is no longer measuring the separator"
     )

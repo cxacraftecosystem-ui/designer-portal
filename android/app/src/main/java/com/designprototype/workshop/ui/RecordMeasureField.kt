@@ -436,7 +436,7 @@ internal fun RecordMeasureField(
             Text(
                 note,
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }

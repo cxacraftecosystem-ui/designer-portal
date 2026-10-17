@@ -147,6 +147,7 @@ from app.ai_features.types import (
     ResearchResult,
     RetrievedProduct,
 )
+from app.services.text_format import by_count, count_noun
 
 if TYPE_CHECKING:
     from app.services.market_analysis import Distribution, PriceObservation
@@ -840,7 +841,8 @@ def consolidate(
     deduped, duplicates_removed = deduplicate(relevant)
     if duplicates_removed:
         notes.append(
-            f"{duplicates_removed} duplicate listing(s) removed across {len(queries)} queries"
+            f"{count_noun(duplicates_removed, 'duplicate listing')} removed across "
+            f"{count_noun(len(queries), 'query', 'queries')}"
         )
 
     currency, other_currencies, off_currency = _split_by_currency(
@@ -855,8 +857,9 @@ def consolidate(
         )
     if other_currencies:
         cautions.append(
-            f"{sum(other_currencies.values())} listing(s) in "
-            f"{', '.join(sorted(other_currencies))} were excluded. Prices are never converted "
+            f"{count_noun(sum(other_currencies.values()), 'listing')} in "
+            f"{', '.join(sorted(other_currencies))} "
+            f"{by_count(sum(other_currencies.values()), 'was', 'were')} excluded. Prices are never converted "
             f"here: a conversion needs a rate, and a rate that was true once becomes a wrong "
             f"number in a report later."
         )
@@ -865,7 +868,8 @@ def consolidate(
     rejected.extend(outliers)
     if outliers:
         notes.append(
-            f"{len(outliers)} listing(s) outside the price fence, listed under 'rejected' rather "
+            f"{count_noun(len(outliers), 'listing')} outside the price fence, listed under "
+            f"'rejected' rather "
             f"than dropped"
         )
 
@@ -873,7 +877,8 @@ def consolidate(
     distribution = _describe(in_currency) if len(priced) >= MIN_RETRIEVED_FOR_DISTRIBUTION else None
     if priced and distribution is None:
         cautions.append(
-            f"Only {len(priced)} comparable listing(s) with a readable price were retrieved - "
+            f"Only {count_noun(len(priced), 'comparable listing')} with a readable price "
+            f"{by_count(len(priced), 'was', 'were')} retrieved - "
             f"fewer than the {MIN_RETRIEVED_FOR_DISTRIBUTION} this module will describe a "
             f"distribution from. The listings are below; no median or spread is reported."
         )
@@ -887,8 +892,10 @@ def consolidate(
         # is the sentence that has to survive being pasted into a report by somebody in a hurry.
         cautions.insert(
             0,
-            f"These {len(priced)} price(s) were RETRIEVED from {provider} on {when}. They are shop "
-            f"listings - what a seller asks - not answers from anybody the survey spoke to, and "
+            f"{by_count(len(priced), 'This 1 price was', f'These {len(priced)} prices were')} "
+            f"RETRIEVED from {provider} on {when}. "
+            f"{by_count(len(priced), 'It is a shop listing', 'They are shop listings')} "
+            f"- what a seller asks - not answers from anybody the survey spoke to, and "
             f"they must not be reported as demand, willingness to pay, or a respondent's price "
             f"expectation.",
         )

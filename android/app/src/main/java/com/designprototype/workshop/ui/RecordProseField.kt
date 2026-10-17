@@ -692,7 +692,7 @@ private fun RecordDictationButton(
                 enabled = enabled,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
             ) {
-                Text(labelOf(tag), color = MaterialTheme.field.muted, fontSize = 11.sp, maxLines = 1)
+                Text(labelOf(tag), color = MaterialTheme.field.muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
             }
         }
     }
@@ -816,25 +816,25 @@ private fun RecordOnDeviceModelPanel(
                                 "Transcribing — ${elapsed / 60} min ${elapsed % 60} sec."
                             },
                             color = MaterialTheme.field.body,
-                            fontSize = 13.sp
+                            style = MaterialTheme.typography.bodyMedium
                         )
                     }
                 } else {
                     Text(
                         "Recording — speak now, then press Stop.",
                         color = MaterialTheme.colorScheme.error,
-                        fontSize = 13.sp
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
                 // Said only where it was measured. An unmeasured model prints nothing here rather
                 // than a sentence saying so; the elapsed clock is then the only timing claim on the
                 // panel, and it is a reading rather than an estimate.
-                note?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp) }
+                note?.let { Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall) }
                 if (!transcribing) {
                     Text(
                         "Stays on this phone. Stops after 90 seconds.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -1044,7 +1044,7 @@ fun RecordProseField(
                  */
                 onError = { message -> dictationError = message },
             )
-            Text(RECORD_RICH_TEXT_NOTE, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(RECORD_RICH_TEXT_NOTE, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         } else {
             val focusManager = LocalFocusManager.current
             OutlinedTextField(
@@ -1114,16 +1114,16 @@ fun RecordProseField(
                         }
                     }
             )
-            help?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp) }
+            help?.let { Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall) }
         }
 
         // Three words, the web's own. It used to be fourteen; both halves of the extra clause
         // described what the designer was already watching happen.
         if (spoken.isNotBlank()) {
-            Text("Listening — speak now.", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+            Text("Listening — speak now.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         dictationError?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         /*
          * THE HONEST ABSENCE. A box that was asked for a microphone and has no recogniser to give it
@@ -1143,7 +1143,7 @@ fun RecordProseField(
          * answer is not "say both".
          */
         if (dictate && !rich && !available) {
-            Text(RECORD_DICTATION_UNAVAILABLE, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(RECORD_DICTATION_UNAVAILABLE, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         below()
     }

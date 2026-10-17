@@ -233,7 +233,7 @@ fun FormDraftRestoredNote(handle: FormDraftHandle) {
         Text(
             "Restored your unsaved entry (${readableDraftStamp(at)}).",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.weight(1f),
         )
         TextButton(onClick = { handle.startOver() }) { Text("Start over") }

@@ -126,7 +126,7 @@ internal fun WorkshopSyncChip(status: WorkshopSyncStatus, sending: Boolean) {
         Text(
             if (sending) "Sending…" else status.summary,
             color = tint,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Medium
         )
     }
@@ -155,7 +155,7 @@ internal fun WorkshopSyncActions(
             Text(
                 "${status.pendingMedia} file(s) (${syncBytes(status.pendingMediaBytes)}) only on this phone.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         status.lastError?.takeIf { !status.isFullySynced }?.let { error ->
@@ -165,7 +165,7 @@ internal fun WorkshopSyncActions(
             Text(
                 "Last attempt: $error It will retry automatically.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -173,7 +173,7 @@ internal fun WorkshopSyncActions(
             Text(
                 if (showProblems) "Hide details" else "${problems.size} need attention — details",
                 color = MaterialTheme.colorScheme.primary,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.clickable { showProblems = !showProblems }
             )
@@ -186,12 +186,12 @@ internal fun WorkshopSyncActions(
                         .padding(8.dp)
                 ) {
                     problems.forEach { line ->
-                        Text("• $line", color = MaterialTheme.field.muted, fontSize = 11.sp)
+                        Text("• $line", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     }
                     Text(
                         "Nothing here has been deleted from this phone.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -304,17 +304,17 @@ internal fun DeviceSyncBanner(
             Text(
                 banner.headline,
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
                 banner.detail,
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         OutlinedButton(onClick = onSyncNow, enabled = !busy) {
-            Text(if (busy) "Syncing…" else "Sync now", fontSize = 12.sp)
+            Text(if (busy) "Syncing…" else "Sync now", style = MaterialTheme.typography.labelMedium)
         }
     }
 }

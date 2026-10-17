@@ -309,11 +309,11 @@ fun WorkshopCodesScreen(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Cards & tags", display = true, color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp)
+        Text("Cards & tags", display = true, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.headlineSmall)
         Text(
             "Print codes for artisans and prototypes, and scan one to look it up.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp
         )
 
@@ -323,7 +323,7 @@ fun WorkshopCodesScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Reading this workshop…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Reading this workshop…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             return@Column
         }
@@ -479,7 +479,7 @@ fun WorkshopCodesScreen(
                     "No artisans yet. Enrol them on the participants stage."
                 },
                 color = MaterialTheme.field.body,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 lineHeight = 19.sp
             )
             return@Column
@@ -496,7 +496,7 @@ fun WorkshopCodesScreen(
                 if (refusals > 0) append(" · $refusals cannot be printed yet")
             },
             color = if (refusals > 0) MaterialTheme.field.warning else MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         Button(
@@ -527,7 +527,7 @@ fun WorkshopCodesScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Drawing the sheet on this device…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Drawing the sheet on this device…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
 
@@ -539,7 +539,7 @@ fun WorkshopCodesScreen(
             // at the resolution limit of the camera that has to read it in a courtyard.
             "Print at 100%, not “fit to page”.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp
         )
 
@@ -600,7 +600,7 @@ private fun DwCardPreview(card: DwCardRender) {
                 Text(
                     card.spec.title,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     // Two lines then an ellipsis, as on paper: a long name must never push the printed
                     // code out of view, because the code is the half a human falls back on.
@@ -608,13 +608,13 @@ private fun DwCardPreview(card: DwCardRender) {
                     overflow = TextOverflow.Ellipsis
                 )
                 card.spec.lines.take(2).forEach { line ->
-                    Text(line, color = MaterialTheme.field.muted, fontSize = 11.sp)
+                    Text(line, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 }
                 when (card) {
                     is DwCardRender.Ok -> Text(
                         card.printed,
                         color = MaterialTheme.field.body,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 15.sp,
                         // Monospace, because this string is read aloud and typed back: the grouping is
                         // only legible if the groups line up.
@@ -638,7 +638,7 @@ private fun DwCardPreview(card: DwCardRender) {
                         Text(
                             card.message,
                             color = MaterialTheme.field.onWarningContainer,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp
                         )
                     }
@@ -789,7 +789,7 @@ private fun DwCodeLookupPanel(resolve: suspend (DwWorkshopCodeRef) -> DwLookupOu
                 Text(
                     "Open a record from its code",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
             }
@@ -864,7 +864,7 @@ private fun DwCodeLookupPanel(resolve: suspend (DwWorkshopCodeRef) -> DwLookupOu
             Text(
                 "Spaces and capitals don't matter. The last four characters are a check.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp
             )
 
@@ -890,8 +890,8 @@ private fun DwCodeLookupPanel(resolve: suspend (DwWorkshopCodeRef) -> DwLookupOu
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Text(message, color = ink, fontSize = 13.sp, lineHeight = 18.sp)
-                    detail?.let { Text(it, color = ink, fontSize = 11.sp) }
+                    Text(message, color = ink, style = MaterialTheme.typography.bodyMedium, lineHeight = 18.sp)
+                    detail?.let { Text(it, color = ink, style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }
@@ -988,12 +988,12 @@ private fun DwSheetSavedCard(sheet: SheetExport) {
             .background(MaterialTheme.field.surface100, RoundedCornerShape(12.dp))
             .padding(12.dp)
     ) {
-        Text("Saved", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-        Text(sheet.displayLocation, color = MaterialTheme.field.body, fontSize = 12.sp)
+        Text("Saved", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+        Text(sheet.displayLocation, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
         Text(
             "${sheet.pages} A4 page${if (sheet.pages == 1) "" else "s"}",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         if (sheet.shareUri != null) {
             OutlinedButton(
@@ -1020,7 +1020,7 @@ private fun DwSheetSavedCard(sheet: SheetExport) {
             Text(
                 "Find it in Downloads.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
@@ -1078,7 +1078,7 @@ internal fun DwWorkshopNotice(message: String) {
         Text(
             message,
             color = MaterialTheme.field.onWarningContainer,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp
         )
     }
@@ -1192,7 +1192,7 @@ private fun DwDesignWorkshopCodeCard(workshopId: String) {
             Text(
                 drawn.third,
                 color = MaterialTheme.field.body,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 lineHeight = 18.sp,
                 // Monospace, because this string is read aloud and typed back and the grouping is
                 // only legible when the groups line up.
@@ -1202,13 +1202,13 @@ private fun DwDesignWorkshopCodeCard(workshopId: String) {
             Text(
                 designWorkshopCardPurposeMessage(),
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             Text(
                 "Brightness is at full so another phone can scan. Or type the code shown above.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -1338,14 +1338,14 @@ private fun DwJoinCardsPanel(workshopId: String) {
                 Text(
                     "Join cards",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )
             }
             Text(
                 "A join card lets one person onto this workshop instantly. Single use.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
 
@@ -1366,7 +1366,7 @@ private fun DwJoinCardsPanel(workshopId: String) {
                 Text(
                     it,
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1386,7 +1386,7 @@ private fun DwJoinCardsPanel(workshopId: String) {
                 Text(
                     "Cards printed for this workshop",
                     color = MaterialTheme.field.body,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
                 )
                 if (truncated) {
@@ -1467,7 +1467,7 @@ private fun DwFreshJoinCard(card: DwJoinCardDto) {
             Text(
                 render?.second ?: formatWorkshopCodeForPrint(code),
                 color = MaterialTheme.field.body,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 lineHeight = 18.sp,
                 // Monospace, because this string is read aloud and typed back and the grouping is
                 // only legible when the groups line up.
@@ -1477,13 +1477,13 @@ private fun DwFreshJoinCard(card: DwJoinCardDto) {
             Text(
                 designWorkshopJoinCardPurposeMessage(),
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             Text(
                 "Shown only once. Print, photograph or write it down now — if lost, cancel it and print another.",
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1517,13 +1517,13 @@ private fun DwJoinCardRow(card: DwJoinCardDto, busy: Boolean, onRevoke: () -> Un
             Text(
                 "…${card.secretLast4}",
                 color = MaterialTheme.field.body,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontFamily = FontFamily.Monospace,
             )
             Text(
                 state,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,

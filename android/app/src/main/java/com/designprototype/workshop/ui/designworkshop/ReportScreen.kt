@@ -793,7 +793,7 @@ fun ReportScreen(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Report", display = true, color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp)
+        Text("Report", display = true, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.headlineSmall)
 
         if (loading) {
             Row(
@@ -813,7 +813,7 @@ fun ReportScreen(
                     if (isLocalOnlyWorkshop(workshopId)) "Preparing…"
                     else "Loading this workshop…",
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
             return@Column
@@ -847,21 +847,21 @@ fun ReportScreen(
         Text(
             "$percent% of required fields filled across ${schema?.stages?.size ?: 0} stages.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         // The same fact in its unalarming form: even when the server answered, the designer is told
         // how much of this document came from where. A count is what makes "the workshop has 22
         // stages and this file has three" visible on the screen instead of in the printed copy.
         if (builtFromLine.isNotEmpty()) {
-            Text(builtFromLine, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+            Text(builtFromLine, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
         }
 
         if (warnings.isEmpty()) {
             Text(
                 "Every required field is answered.",
                 color = MaterialTheme.field.success,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         } else {
             ElevatedCard(
@@ -873,7 +873,7 @@ fun ReportScreen(
                     Text(
                         "${warnings.size} stage(s) are incomplete",
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     // The export is NOT blocked by these. A workshop report missing four Advanced
@@ -882,10 +882,10 @@ fun ReportScreen(
                     Text(
                         "You can still generate; missing fields print blank.",
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     warnings.forEach {
-                        Text("· $it", color = MaterialTheme.field.onWarningContainer, fontSize = 11.sp)
+                        Text("· $it", color = MaterialTheme.field.onWarningContainer, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -916,7 +916,7 @@ fun ReportScreen(
                         if (reportChecks.size == 1) "1 stage-20 setting changes this document"
                         else "${reportChecks.size} stage-20 settings change this document",
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     reportChecks.forEach { check ->
@@ -924,7 +924,7 @@ fun ReportScreen(
                             Text(
                                 "· ${check.title}",
                                 color = MaterialTheme.field.onWarningContainer,
-                                fontSize = 12.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 lineHeight = 16.sp,
                             )
                             // THE DETAIL, NOT ONLY THE TITLE. The title names the condition; the
@@ -934,7 +934,7 @@ fun ReportScreen(
                             Text(
                                 check.detail,
                                 color = MaterialTheme.field.onWarningContainer,
-                                fontSize = 11.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 lineHeight = 15.sp,
                             )
                         }
@@ -1005,7 +1005,7 @@ fun ReportScreen(
                 Text(
                     "Built on this phone — exactly what the export writes.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 15.sp,
                 )
 
@@ -1029,7 +1029,7 @@ fun ReportScreen(
                             } else {
                                 MaterialTheme.field.body
                             },
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                             modifier = Modifier
                                 .background(
@@ -1066,7 +1066,7 @@ fun ReportScreen(
                     Text(
                         "· " + unresolvedMediaNote(previewUnresolvedMedia),
                         color = MaterialTheme.field.warning,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 15.sp,
                     )
                 }
@@ -1074,7 +1074,7 @@ fun ReportScreen(
                     Text(
                         "· $note",
                         color = MaterialTheme.field.warning,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 15.sp,
                     )
                 }
@@ -1109,7 +1109,7 @@ fun ReportScreen(
             Text(
                 "Transcripts are added when generated online. Local exports include photos and the completeness annexure.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         ActionRow {
@@ -1131,7 +1131,7 @@ fun ReportScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Rendering the report on this device…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Rendering the report on this device…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
 
@@ -1143,14 +1143,14 @@ fun ReportScreen(
                     .background(MaterialTheme.field.surface100, RoundedCornerShape(12.dp))
                     .padding(12.dp)
             ) {
-                Text("Saved", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                Text(exported.displayLocation, color = MaterialTheme.field.body, fontSize = 12.sp)
+                Text("Saved", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(exported.displayLocation, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
                 // WHAT THIS FILE DOES NOT CARRY, said beside the file rather than written into it.
                 // A designer who is told the PDF is not in their chosen typeface can send the .docx
                 // instead; the same difference unmentioned is a defect somebody else notices first,
                 // in an office, about a document that has already been submitted.
                 exportNotes.forEach { note ->
-                    Text("· $note", color = MaterialTheme.field.warning, fontSize = 11.sp)
+                    Text("· $note", color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall)
                 }
                 // THE TEMPLATE'S AND THE FORMAT'S OWN LOSSES, in the same register and the same
                 // place, because they answer the same question a designer holding a finished file
@@ -1162,7 +1162,7 @@ fun ReportScreen(
                     Text(
                         "· $note",
                         color = MaterialTheme.field.warning,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 15.sp,
                     )
                 }
@@ -1172,7 +1172,7 @@ fun ReportScreen(
                     Text(
                         "${exported.droppedImages.size} photo(s) couldn't be embedded.",
                         color = MaterialTheme.field.warning,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
                 // THE OTHER HALF OF THAT COUNT, and until this line existed there was no half at all:
@@ -1185,7 +1185,7 @@ fun ReportScreen(
                     Text(
                         unresolvedMediaNote(unresolvedMedia),
                         color = MaterialTheme.field.warning,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 15.sp,
                     )
                 }
@@ -1215,7 +1215,7 @@ fun ReportScreen(
                     Text(
                         "Find it in Downloads.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -1259,11 +1259,11 @@ private fun ReportAccentPicker(accent: String, onAccent: (String) -> Unit) {
     var typed by remember(accent) { mutableStateOf(normalised?.let { "#$it" } ?: "") }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("Report colour", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text("Report colour", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         Text(
             "One accent colour drives headings, tables and figures. These twelve stay distinct in black and white.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         FlowRow(
@@ -1290,7 +1290,7 @@ private fun ReportAccentPicker(accent: String, onAccent: (String) -> Unit) {
                         .padding(horizontal = 8.dp, vertical = 6.dp)
                 ) {
                     Swatch(preset.hex)
-                    Text(preset.label, color = MaterialTheme.field.body, fontSize = 12.sp)
+                    Text(preset.label, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -1321,7 +1321,7 @@ private fun ReportAccentPicker(accent: String, onAccent: (String) -> Unit) {
             Text(
                 "Too pale for headings — using #$derived instead.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -1333,7 +1333,7 @@ private fun ReportAccentPicker(accent: String, onAccent: (String) -> Unit) {
                     "This export only."
                 },
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f)
             )
             if (normalised != null) {
@@ -1807,9 +1807,9 @@ internal fun dwPhotographsOverCapNote(
 ): String? {
     if (counted.isEmpty()) return null
     val total = counted.sumOf { it.second }
-    return "$total photograph(s) recorded in this workshop did not fit ${template.name}'s " +
-        "photograph cap and are not in this file — " + stagesNamed(counted) +
-        ". Generate the report with a template that prints every photograph to include them."
+    return "$total ${if (total == 1) "photograph" else "photographs"} recorded in this workshop did not fit ${template.name}'s " +
+        "photograph cap and ${if (total == 1) "is" else "are"} not in this file — " + stagesNamed(counted) +
+        ". Generate the report with a template that prints every photograph to include ${if (total == 1) "it" else "them"}."
 }
 
 /**
@@ -1906,7 +1906,8 @@ internal fun dwAttachmentsNamedButNotCarried(
 internal fun dwAttachmentsNotCarriedNote(counted: List<Pair<StageDto, Int>>): String? {
     if (counted.isEmpty()) return null
     val total = counted.sumOf { it.second }
-    return "$total attached file(s) are named in this report but the files themselves are not " +
+    return "$total attached ${if (total == 1) "file is" else "files are"} named in this report but " +
+        "the ${if (total == 1) "file itself is" else "files themselves are"} not " +
         "inside it — " + stagesNamed(counted) +
         ". A report file cannot carry a document, a recording or a video; send them alongside it."
 }

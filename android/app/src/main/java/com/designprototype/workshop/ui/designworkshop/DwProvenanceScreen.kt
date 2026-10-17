@@ -220,7 +220,7 @@ fun DwProvenanceScreen(
             DW_PROVENANCE_TITLE,
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
 
         // ── The gate, before anything is drawn ───────────────────────────────────────────────────
@@ -231,7 +231,7 @@ fun DwProvenanceScreen(
             Text(
                 "Comparing with shared records is admin-only. Who set each field is shown under every box.",
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodySmall
             )
             return@Column
         }
@@ -240,7 +240,7 @@ fun DwProvenanceScreen(
             Text(
                 "Upload this workshop first to compare.",
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodySmall
             )
             return@Column
         }
@@ -251,7 +251,7 @@ fun DwProvenanceScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text(DW_PROVENANCE_LOADING, color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text(DW_PROVENANCE_LOADING, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             return@Column
         }
@@ -265,7 +265,7 @@ fun DwProvenanceScreen(
             Text(
                 loadError ?: DW_PROVENANCE_LOAD_FAILED,
                 color = MaterialTheme.colorScheme.error,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodyMedium
             )
             OutlinedButton(onClick = { reload++ }, modifier = Modifier.fillMaxWidth()) {
                 Text("Try again")
@@ -289,7 +289,7 @@ fun DwProvenanceScreen(
                     dwDivergenceHeadline(tally),
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 16.sp
+                    style = MaterialTheme.typography.titleMedium
                 )
                 Text(
                     // The browser's `<strong>not an error</strong>`, carried across as weight rather
@@ -303,10 +303,10 @@ fun DwProvenanceScreen(
                         append(DW_PROVENANCE_NOT_AN_ERROR_SUFFIX)
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
                 if (tally.nothingHasMoved) {
-                    Text(DW_PROVENANCE_ALL_MATCH, color = MaterialTheme.field.muted, fontSize = 13.sp)
+                    Text(DW_PROVENANCE_ALL_MATCH, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -349,7 +349,7 @@ private fun DwDivergenceCard(entry: DwProvenanceEntryDto, registry: SchemaRespon
                 dwProvenanceEntryTitle(entry, registry),
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp
+                style = MaterialTheme.typography.titleMedium
             )
 
             // ── The three column headings ────────────────────────────────────────────────────────
@@ -370,7 +370,7 @@ private fun DwDivergenceCard(entry: DwProvenanceEntryDto, registry: SchemaRespon
                 HorizontalDivider(color = MaterialTheme.field.hairline)
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(fieldKey, color = MaterialTheme.field.body, fontSize = 13.sp)
+                        Text(fieldKey, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
                         // THE STAMP UNDER THE FIELD NAME, in the same words the stage form uses —
                         // literally the same function, `DwFieldStampDto.attribution()`, which is
                         // already asserted equal to the web's `fieldProvenanceLine`. An admin
@@ -378,14 +378,14 @@ private fun DwDivergenceCard(entry: DwProvenanceEntryDto, registry: SchemaRespon
                         // and that is exactly what a reference stamp says. Null renders nothing: an
                         // unattributed field says nothing rather than saying "Unknown".
                         entry.fields[fieldKey]?.attribution()?.let { line ->
-                            Text(line, color = MaterialTheme.field.placeholder, fontSize = 11.sp)
+                            Text(line, color = MaterialTheme.field.placeholder, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(
                         dwComparisonText(comparison.stored),
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f)
                     )
                     Spacer(Modifier.width(8.dp))
@@ -405,7 +405,7 @@ private fun DwDivergenceCard(entry: DwProvenanceEntryDto, registry: SchemaRespon
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         },
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -419,7 +419,7 @@ private fun ColumnHeading(label: String, modifier: Modifier) {
     Text(
         label,
         color = MaterialTheme.field.muted,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Medium,
         modifier = modifier
     )

@@ -104,11 +104,11 @@ internal fun DwModelChoiceList(
         Text(
             heading,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
         dwModelChoiceIntroSentence(choices)?.let { intro ->
-            Text(intro, color = MaterialTheme.field.body, fontSize = 12.sp)
+            Text(intro, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
         }
         choices.forEach { choice ->
             DwModelChoiceRow(
@@ -166,14 +166,14 @@ private fun DwModelChoiceRow(
             Text(
                 choice.plan.modelId,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.weight(1f)
             )
             // The suggestion is a marking on a row, never a row of its own and never a filter over
             // the list: the other rows are choices, not mistakes.
             if (choice.suggested) {
-                Text("Suggested", color = MaterialTheme.field.success, fontSize = 11.sp)
+                Text("Suggested", color = MaterialTheme.field.success, style = MaterialTheme.typography.bodySmall)
             }
             Text(
                 dwModelFitLabel(choice.fit),
@@ -182,13 +182,13 @@ private fun DwModelChoiceRow(
                     DwModelFit.TIGHT -> MaterialTheme.field.warning
                     DwModelFit.WILL_NOT_FIT, DwModelFit.UNMEASURED -> MaterialTheme.field.muted
                 },
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
         // The size, the memory, the handset it was measured on, and the fit — one sentence, from the
         // pure layer, so the card and any future surface cannot come to two accounts of one model.
-        Text(dwModelChoiceSentence(choice, measurement), color = MaterialTheme.field.body, fontSize = 12.sp)
+        Text(dwModelChoiceSentence(choice, measurement), color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
 
         /*
          * THE LANGUAGES, ON EVERY ROW, INCLUDING THE ROWS THAT WILL NOT FIT.
@@ -201,14 +201,14 @@ private fun DwModelChoiceRow(
         Text(
             dwModelLanguagesSentence(choice.plan, languageLabels),
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         // ---- The one control that would spend data ------------------------------------------
         if (onInstall != null && dwModelDownloadMayBeOffered(choice, connection)) {
             if (accepting) {
                 dwModelOverrideSentence(choice)?.let { warning ->
-                    Text(warning, color = MaterialTheme.field.warning, fontSize = 12.sp)
+                    Text(warning, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall)
                 }
                 ActionRow {
                     Button(onClick = { onInstall(choice) }) {

@@ -53,6 +53,7 @@ from app.services.account_provisioning import (
 )
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import clean_data, contains, count_and_page, with_id_tiebreak
+from app.services.text_format import by_count, count_noun
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -454,7 +455,8 @@ async def update_user(
         if moved.carried_bar
         else "",
         "the ended designer empanelment moved with it" if moved.carried_ended_empanelment else "",
-        f"promoted, so {links_withdrawn} outstanding password link(s) were withdrawn"
+        f"promoted, so {count_noun(links_withdrawn, 'outstanding password link')} "
+        f"{by_count(links_withdrawn, 'was', 'were')} withdrawn"
         if links_withdrawn
         else "",
     ]

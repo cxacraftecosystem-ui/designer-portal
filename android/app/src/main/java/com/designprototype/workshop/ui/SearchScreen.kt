@@ -897,7 +897,7 @@ fun SearchScreen(
                         HorizontalDivider(color = MaterialTheme.field.hairline)
                         Text(
                             if (page > 1) "No more results" else "No matching records",
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         if (page > 1) {
@@ -1348,7 +1348,7 @@ internal fun SearchResultRow(row: SearchRow, onOpen: () -> Unit, openable: Boole
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text(
                 row.title,
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,

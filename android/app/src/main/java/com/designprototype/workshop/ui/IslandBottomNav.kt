@@ -161,12 +161,13 @@ val ISLAND_SHORT_LABELS: Map<String, String> = mapOf(
 fun islandShortLabel(label: String): String = ISLAND_SHORT_LABELS[label] ?: label
 
 /**
- * The bar's label size, and the smallest it shrinks to before it gives up words for glyphs. The
- * largest is the theme's labelSmall (11sp, the size the bar always used), so where the words fit the
- * bar looks exactly as it did; on a narrow phone they shrink to 10sp first.
+ * The bar's label size, and the smallest it shrinks to before it gives up words for glyphs. Both
+ * are the theme's labelSmall (11sp, the size the bar always used): the app sets nothing under 11sp
+ * (Theme.kt's type scale), so where the words do not fit at 11 the bar draws glyphs rather than
+ * shrink them. On 320dp and wider phones a full bar fits its words at 11.
  */
 const val ISLAND_LABEL_MAX_SP = 11f
-const val ISLAND_LABEL_MIN_SP = 10f
+const val ISLAND_LABEL_MIN_SP = 11f
 private const val ISLAND_LABEL_STEP_SP = 0.5f
 
 /**
@@ -748,7 +749,7 @@ private fun IslandMoreSheet(
                         )
                         Text(
                             ISLAND_MORE_LABEL,
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 4.dp)
                         )

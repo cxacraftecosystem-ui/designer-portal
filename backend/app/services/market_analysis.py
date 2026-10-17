@@ -52,6 +52,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.services.text_format import by_count
+
 #: Below this many observations, quantiles are not reported at all. Five is the smallest sample for
 #: which a quartile is a description of a spread rather than an accident of two numbers.
 MIN_SAMPLE_FOR_QUANTILES = 5
@@ -366,7 +368,7 @@ def judge_band(
             0,
             0.0,
             "NO_EVIDENCE",
-            f"{dist.count} price observation(s) exist for "
+            f"{dist.count} price {by_count(dist.count, 'observation exists', 'observations exist')} for "
             f"{category or 'this category'}, but the band itself is incomplete.",
         )
 
@@ -386,7 +388,7 @@ def judge_band(
             above,
             coverage,
             "UNVERIFIABLE",
-            f"Only {dist.count} price observation(s) were recorded for "
+            f"Only {dist.count} price {by_count(dist.count, 'observation was', 'observations were')} recorded for "
             f"{category or 'this category'} — too few to judge the band against. "
             f"{inside} of them fall inside it.",
         )
@@ -762,7 +764,8 @@ def analyse(
     cautions: list[str] = []
     if respondent_values and len(respondent_values) < MIN_SAMPLE_FOR_VERDICT:
         cautions.append(
-            f"Only {len(respondent_values)} respondent price expectation(s) were recorded. "
+            f"Only {len(respondent_values)} respondent price "
+            f"{by_count(len(respondent_values), 'expectation was', 'expectations were')} recorded. "
             f"The figures below describe what was collected; they are not a market estimate."
         )
     if group_counts:

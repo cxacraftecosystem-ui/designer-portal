@@ -276,7 +276,7 @@ internal fun DwStageDocumentPreview(
                 .padding(vertical = 8.dp),
         ) {
             Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text("Document preview", fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Text("Document preview", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             Icon(
                 if (open) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                 contentDescription = if (open) "Hide the document preview" else "Show the document preview",
@@ -286,14 +286,14 @@ internal fun DwStageDocumentPreview(
             Text(
                 "Live preview of this stage's pages.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 15.sp,
             )
             if (failed && document != null) {
                 Text(
                     "Latest change couldn't render yet; showing the previous one.",
                     color = MaterialTheme.field.warning,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 15.sp,
                 )
             }
@@ -305,7 +305,7 @@ internal fun DwStageDocumentPreview(
                         "Showing only what this device holds; the server couldn't be reached."
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 15.sp,
                 )
             }
@@ -328,7 +328,7 @@ internal fun DwStageDocumentPreview(
                     empty -> Text(
                         "Nothing to preview yet. Fill in a field and its page appears here.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 16.sp,
                         modifier = Modifier.padding(vertical = 8.dp),
                     )
@@ -338,7 +338,7 @@ internal fun DwStageDocumentPreview(
                         modifier = Modifier.padding(vertical = 8.dp),
                     ) {
                         FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Text("Building the document…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        Text("Building the document…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             } else {
@@ -347,14 +347,14 @@ internal fun DwStageDocumentPreview(
                     Text(
                         "This stage has no heading yet, so the whole document is shown.",
                         color = MaterialTheme.field.warning,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 15.sp,
                     )
                 } else {
                     Text(
                         if (showAll) "Show only this stage's pages" else "Show every page",
                         color = MaterialTheme.colorScheme.primary,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.clickable { showAll = !showAll }.padding(vertical = 4.dp),
                     )
                 }

@@ -530,7 +530,7 @@ internal fun DwSketchTracePanel(
                     // under the Attach button where a designer is deciding.
                     "Turns the pencil in a photo into vector line art, attached as ${field.label}. Works offline.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             } else {
@@ -540,7 +540,7 @@ internal fun DwSketchTracePanel(
                 Text(
                     summary,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                 )
                 Text(
@@ -551,7 +551,7 @@ internal fun DwSketchTracePanel(
                     // false by a card that said nothing.
                     "The trace isn't kept when closed; reopening traces again. Attachments stay.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -575,7 +575,7 @@ internal fun DwSketchTracePanel(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         if (summary == null) "Trace a sketch" else "Open the tracing card again",
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.labelLarge,
                     )
                 }
             }
@@ -1124,7 +1124,7 @@ private fun DwSketchTraceOpen(
         if (loading) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text("Starting the tracing engine…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text("Starting the tracing engine…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             return@Column
         }
@@ -1159,7 +1159,7 @@ private fun DwSketchTraceOpen(
                     "Tracing “${it.item.displayName}”."
                 } ?: ("Choose a photo in “$DW_SHARED_PHOTOGRAPH_LABEL” above."),
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         } else if (sources.size > 1) {
@@ -1334,7 +1334,7 @@ private fun DwSketchTraceOpen(
                 ) {
                     Text(
                         "Adjust for ${dwTracePresetName(tables.subjects, subjectId).lowercase(Locale.ROOT)}",
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.labelLarge,
                     )
                 }
             }
@@ -1429,7 +1429,7 @@ private fun DwSketchTraceOpen(
             ) {
                 Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Update the preview", fontSize = 13.sp)
+                Text("Update the preview", style = MaterialTheme.typography.labelLarge)
             }
         }
 
@@ -1443,7 +1443,7 @@ private fun DwSketchTraceOpen(
             Text(
                 "Limits are conservative for this phone.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -1456,7 +1456,7 @@ private fun DwSketchTraceOpen(
             ) {
                 Icon(Icons.Filled.Gesture, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Trace the sketch", fontSize = 13.sp)
+                Text("Trace the sketch", style = MaterialTheme.typography.labelLarge)
             }
             Button(
                 onClick = { attach() },
@@ -1488,7 +1488,7 @@ private fun DwSketchTraceOpen(
                   this one is a string copy: there is no straightening panel in a browser, so that
                   panel takes the SHAPE and names its own artefact.
                 */
-                Text("Add the line art to “${field.label}”", fontSize = 13.sp)
+                Text("Add the line art to “${field.label}”", style = MaterialTheme.typography.labelLarge)
             }
             /*
               DECLINING IS A FIRST-CLASS OUTCOME AND NOT A CANCEL. `SketchTraceField.tsx:45-57`: a
@@ -1497,7 +1497,7 @@ private fun DwSketchTraceOpen(
               needs no explanation and nothing is written.
             */
             TextButton(onClick = onClose, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Keep the photograph as it is", fontSize = 12.sp)
+                Text("Keep the photograph as it is", style = MaterialTheme.typography.labelMedium)
             }
         }
 
@@ -1560,7 +1560,7 @@ private fun DwSketchTraceOpen(
             // copy, because the two files have different fates and the same authority behind them.
             DW_TRACE_ATTACH_REPORT_SENTENCE,
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -1680,7 +1680,7 @@ private fun DwTraceProgressRow(
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-            Text(sentence, color = MaterialTheme.field.body, fontSize = 12.sp)
+            Text(sentence, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
         }
 
         if (kind != null && kind.isFullResolution && progress != null) {
@@ -1695,7 +1695,7 @@ private fun DwTraceProgressRow(
                 Text(
                     "Progress counts stages until the first trace finishes.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -1711,7 +1711,7 @@ private fun DwTraceProgressRow(
                 // stages and nowhere else (`pipeline.ts:238-246`), so the worst case is the length of the
                 // longest single stage — seconds at full resolution. A control that promised instant would
                 // be wrong, and a control that appeared to do nothing for four seconds is worse.
-                Text(if (stopping) "Stopping…" else "Stop", fontSize = 12.sp)
+                Text(if (stopping) "Stopping…" else "Stop", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
@@ -1746,7 +1746,7 @@ private fun DwTraceNotes(notes: List<String>) {
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         notes.forEach { note ->
-            Text(note, color = MaterialTheme.field.body, fontSize = 11.sp, lineHeight = 16.sp)
+            Text(note, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
         }
     }
 }
@@ -1757,7 +1757,7 @@ private fun DwTraceStatsRow(result: DwTraceResult) {
     Text(
         "${result.shapeCount} paths · ${result.nodeCount} nodes · ${dwTraceSeconds(result.totalMillis)}",
         color = MaterialTheme.field.muted,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.bodySmall,
     )
 }
 
@@ -1868,7 +1868,7 @@ private fun DwTraceAdvancedSection(
             Text(
                 "$DW_TRACE_ADVANCED_COUNT more settings hidden on this version. Update to see them.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             return@Column
@@ -1919,7 +1919,7 @@ private fun DwTraceAdvancedSection(
                 // to choose.
                 dwTraceDisclosureLabel(open, revealed, changedBehindDisclosure.size),
                 color = MaterialTheme.field.body,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
@@ -1929,7 +1929,7 @@ private fun DwTraceAdvancedSection(
             Text(
                 dwTraceDisclosureBlurb(revealed),
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             // PROGRESSIVE DISCLOSURE IS ONLY HONEST IF WHAT IT HIDES CAN STILL ANNOUNCE ITSELF —
@@ -2168,7 +2168,7 @@ private fun DwTraceNumberChoiceRow(
             }
         }
         control.options.firstOrNull { abs(it.value - value) < 0.5 }?.let {
-            Text(it.note, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text(it.note, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
         }
         DwTraceRowTail(control, inactive)
     }
@@ -2188,11 +2188,11 @@ private fun DwTraceRowHeading(label: String, readout: String?, changed: Boolean)
             // that never sees the styling at all.
             if (changed) "$label · changed" else label,
             color = MaterialTheme.field.body,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             fontWeight = if (changed) FontWeight.SemiBold else FontWeight.Normal,
         )
         readout?.let {
-            Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -2200,9 +2200,9 @@ private fun DwTraceRowHeading(label: String, readout: String?, changed: Boolean)
 /** The upstream's sentence, this client's sentence, and "this does nothing right now" if it does not. */
 @Composable
 private fun DwTraceRowTail(control: DwTraceControl, inactive: String?) {
-    Text(control.hint, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+    Text(control.hint, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
     control.handsetNote?.let {
-        Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+        Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
     }
     inactive?.let {
         // A SENTENCE, NOT A DISABLED ROW. Greying the control out would stop a designer setting a
@@ -2211,7 +2211,7 @@ private fun DwTraceRowTail(control: DwTraceControl, inactive: String?) {
         Text(
             "Not used by the current settings. $it",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.labelSmall,
             lineHeight = 16.sp,
             fontWeight = FontWeight.Medium,
         )

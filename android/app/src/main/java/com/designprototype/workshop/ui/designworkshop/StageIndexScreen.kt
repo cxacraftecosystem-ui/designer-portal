@@ -443,7 +443,7 @@ fun StageIndexScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Reading progress…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Reading progress…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             return@Column
         }
@@ -455,16 +455,16 @@ fun StageIndexScreen(
             title.ifBlank { "Design workshop" },
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
         FieldLinearProgressIndicator(progress = { overall / 100f }, modifier = Modifier.fillMaxWidth())
         Text(
             "$overall% overall · $done of ${stages.size} stages complete",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
-        serverNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
-        frozenNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 13.sp) }
+        serverNote?.let { Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall) }
+        frozenNote?.let { Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodyMedium) }
 
         /*
          * THE WORKSHOP'S ACTIONS, through the one button-row primitive: stacked full width on a
@@ -522,12 +522,12 @@ fun StageIndexScreen(
             mayAdminister -> Text(
                 "Upload this workshop from the list so others can open it.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             else -> Text(
                 "Only you, its designers and admins can open this. Ask an admin to add a co-designer.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -649,7 +649,7 @@ private fun DwDictationConsentRow(
         Text(
             DW_CONSENT_ROW_TITLE,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 14.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
         )
         // WHAT IS ON RECORD AND WHAT IT MEANS FOR THE MICROPHONE, in one sentence, because "not
@@ -662,10 +662,10 @@ private fun DwDictationConsentRow(
             } else {
                 MaterialTheme.field.warning
             },
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
         if (mayRecord) {
-            Text(DW_CONSENT_QUESTION, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(DW_CONSENT_QUESTION, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             // STACKED AND FULL WIDTH, not side by side: both labels are sentences rather than verbs,
             // and two of them in one row would truncate to "They agreed —…" on the narrow handsets this
             // fleet runs, which is where a consent control must be least ambiguous.
@@ -680,13 +680,13 @@ private fun DwDictationConsentRow(
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(DW_CONSENT_NO_LABEL) }
         } else {
-            Text(DW_CONSENT_NOT_YOURS_TO_RECORD, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(DW_CONSENT_NOT_YOURS_TO_RECORD, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         note?.let {
             Text(
                 it,
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 // Announced, because the visible change this write makes is one line of prose several
                 // rows away from the button that caused it.
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
@@ -1011,7 +1011,7 @@ private fun WorkshopSearchPanel(
             Text(
                 "A word, name or code — any script",
                 color = MaterialTheme.field.placeholder,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
         },
         singleLine = true,
@@ -1072,7 +1072,7 @@ private fun WorkshopSearchPanel(
             else -> "${result.total} matching answer${if (result.total == 1) "" else "s"}."
         },
         color = MaterialTheme.field.muted,
-        fontSize = 12.sp,
+        style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
     )
 
@@ -1121,11 +1121,11 @@ private fun SearchHitRow(hit: DwWorkshopSearchHit, onOpen: () -> Unit) {
                 append(" · ${hit.fieldLabel}")
             },
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        Text(quoted, color = MaterialTheme.field.body, fontSize = 13.sp)
+        Text(quoted, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -1170,14 +1170,14 @@ private fun StageIndexRow(
                 Text(
                     stage.number.toString().padStart(2, '0'),
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         stage.title,
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 14.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
                     FieldLinearProgressIndicator(
@@ -1199,7 +1199,7 @@ private fun StageIndexRow(
                             if (rows > 0) append(" · $rows entr${if (rows == 1) "y" else "ies"}")
                         },
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
                 Icon(
@@ -1218,7 +1218,7 @@ private fun StageIndexRow(
                     Text(
                         "${stage.missing.size} required field${if (stage.missing.size == 1) "" else "s"} still missing",
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier
                             .background(MaterialTheme.field.warningContainer, RoundedCornerShape(6.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1263,7 +1263,7 @@ private fun StageIndexRow(
                                 Text(
                                     "· $label",
                                     color = MaterialTheme.colorScheme.primary,
-                                    fontSize = 12.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Icon(

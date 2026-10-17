@@ -440,7 +440,7 @@ internal fun DwRankableList(
                 Text(
                     announcement,
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                 )
             }
@@ -517,7 +517,7 @@ internal fun DwRankableList(
                         Text(
                             "${index + 1}",
                             color = MaterialTheme.field.body,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
@@ -735,7 +735,7 @@ internal fun DwRankableList(
             Text(
                 disabledReason.orEmpty(),
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }

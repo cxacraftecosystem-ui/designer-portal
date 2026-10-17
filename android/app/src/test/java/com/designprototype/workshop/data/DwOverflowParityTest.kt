@@ -80,7 +80,7 @@ class DwOverflowParityTest {
         val check = findings.sheets.single().checks.single { it.key == "materialCost" }
         assertEquals("MISMATCH", check.verdict)
         assertEquals(
-            "Cost sheet 1: the 2 material line(s) add up to ₹inf, but the sheet declares ₹1.00 — " +
+            "Cost sheet 1: the 2 material lines add up to ₹inf, but the sheet declares ₹1.00 — " +
                 "₹inf less than the lines account for.",
             check.message,
         )

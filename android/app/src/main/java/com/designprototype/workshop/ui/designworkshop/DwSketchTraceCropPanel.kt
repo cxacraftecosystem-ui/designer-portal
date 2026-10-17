@@ -183,7 +183,7 @@ internal fun DwTraceFramePanel(
                 Text(
                     "The part of the photograph to trace",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
@@ -197,7 +197,7 @@ internal fun DwTraceFramePanel(
                             "${applied.frameWidth}×${applied.frameHeight}."
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -206,7 +206,7 @@ internal fun DwTraceFramePanel(
                 enabled = enabled,
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
-                Text(if (open) "Done" else "Choose a frame", fontSize = 12.sp)
+                Text(if (open) "Done" else "Choose a frame", style = MaterialTheme.typography.labelMedium)
             }
         }
 
@@ -270,7 +270,7 @@ private fun DwTraceFrameChooser(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-            Text("Opening the photograph…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text("Opening the photograph…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
 
         else -> DwPanelNote(
@@ -386,7 +386,7 @@ private fun DwTraceFrameEditor(
         Text(
             "${dwTraceCropReadout(box, frameWidth, frameHeight)} $DW_TRACE_CROP_ENGINE_NOTE",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -408,7 +408,7 @@ private fun DwTraceFrameEditor(
             ) {
                 Icon(Icons.Filled.Crop, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Use this frame for the trace", fontSize = 12.sp)
+                Text("Use this frame for the trace", style = MaterialTheme.typography.labelMedium)
             }
             if (applied != null || !dwTraceIsWholeFrame(box, frameWidth, frameHeight)) {
                 OutlinedButton(
@@ -420,7 +420,7 @@ private fun DwTraceFrameEditor(
                     enabled = enabled,
                     modifier = Modifier.heightIn(min = 48.dp),
                 ) {
-                    Text("Use the whole photograph", fontSize = 12.sp)
+                    Text("Use the whole photograph", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }

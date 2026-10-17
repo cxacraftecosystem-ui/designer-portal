@@ -24,6 +24,7 @@
  * is "Try again". Nothing on this banner deletes a photograph.
  */
 
+import { countNoun } from "@/lib/format";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -274,9 +275,9 @@ export function DesignWorkshopDraftBanner() {
             tone: outcome.tone,
             title: outcome.title,
             description: result.credentialExpired
-              ? `Signed out — ${result.pending} workshop(s) still waiting. Sign in to send them.`
+              ? `Signed out — ${countNoun(result.pending, "workshop")} still waiting. Sign in to send ${result.pending === 1 ? "it" : "them"}.`
               : result.pending
-                ? `${result.pending} workshop(s) still waiting.`
+                ? `${countNoun(result.pending, "workshop")} still waiting.`
                 : "Everything on this device has been sent."
           });
         } else if (trigger === "manual") {
@@ -464,7 +465,7 @@ export function DesignWorkshopDraftBanner() {
                     which. A bare "pending" tells a designer nothing about whether they may pack up. */}
                 {[
                   state.neverSent ? "not uploaded yet" : null,
-                  state.stages ? `${state.stages} stage(s) waiting` : null,
+                  state.stages ? `${countNoun(state.stages, "stage")} waiting` : null,
                   state.headerOnly && !state.neverSent ? "workshop details waiting" : null
                 ]
                   .filter(Boolean)

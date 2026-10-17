@@ -137,6 +137,7 @@ from app.services.stage_schema import (
     coerce_value,
     stages,
 )
+from app.services.text_format import by_count, count_noun
 
 # --------------------------------------------------------------------------------------
 # The vocabulary
@@ -705,7 +706,8 @@ def _field_problems(
     if f.type in _OPTION_TYPES:
         if len(f.options) < 2:
             problems.append(
-                f"Field {where} is a {f.type.value} with {len(f.options)} option(s). A choice needs "
+                f"Field {where} is a {f.type.value} with {count_noun(len(f.options), 'option')}. "
+                f"A choice needs "
                 f"at least two; a single-option list is a label."
             )
         if len(f.options) > MAX_CUSTOM_OPTIONS:
@@ -868,7 +870,7 @@ def _coerce_custom(f: CustomFieldSpec, raw: Any) -> tuple[Any, str | None]:
         items = [str(v).strip() for v in raw if str(v).strip()]
         unknown = [v for v in items if v not in f.option_values]
         if unknown:
-            return None, f"{f.label}: unknown option(s) {', '.join(unknown)}"
+            return None, f"{f.label}: unknown {by_count(len(unknown), 'option', 'options')} {', '.join(unknown)}"
         return items, None
     return coerce_value(spec, raw)
 

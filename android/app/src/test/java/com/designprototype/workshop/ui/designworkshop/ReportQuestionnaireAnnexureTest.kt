@@ -189,11 +189,11 @@ class ReportQuestionnaireAnnexureTest {
                 "T|Questionnaire,Questions,Sittings,Answers recorded|" +
                     "Barpali loom survey || 4 || 1 || 3",
                 "H2|1.1|Barpali loom survey",
-                "P|NOTE|The designer's own questionnaire, attached to this workshop · 1 sitting(s) " +
-                    "· 4 question(s) · version 3 · from barpali.xlsx · questionnaire cmq0001",
+                "P|NOTE|The designer's own questionnaire, attached to this workshop · 1 sitting " +
+                    "· 4 questions · version 3 · from barpali.xlsx · questionnaire cmq0001",
                 "P|BODY|Household level.",
                 "H3|1.1.1|Padma Meher",
-                "P|NOTE|3 question(s) answered · recorded in the app · 2026-03-04 · recorded by " +
+                "P|NOTE|3 questions answered · recorded in the app · 2026-03-04 · recorded by " +
                     "A. Mohanty",
                 "P|BODY|Recorded in the courtyard.",
                 "P|BODY|A — Household",
@@ -282,7 +282,7 @@ class ReportQuestionnaireAnnexureTest {
         assertEquals(emptyList<Block>(), annexureBlocks(cacheOf(unanswered)))
         assertEquals(
             listOf(
-                "1 questionnaire(s) attached to this workshop have no recorded answers and were " +
+                "1 questionnaire attached to this workshop has no recorded answers and was " +
                     "left out of the questionnaire annexure (Dye sourcing)."
             ),
             dwQuestionnaireWarnings(cacheOf(unanswered)),

@@ -211,7 +211,7 @@ internal fun DwModelViewer(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(16.dp),
                 ) {
-                    Text(shown.message, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                    Text(shown.message, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     ActionRow {
                         OutlinedButton(onClick = { show() }) { Text("Try again") }
                     }
@@ -244,7 +244,7 @@ internal fun DwModelViewer(
                     if (pageState == "failed") pageMessage
                     else "$displayName — drag to rotate, pinch to zoom.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 15.sp,
                     modifier = Modifier
                         .weight(1f)
@@ -252,7 +252,7 @@ internal fun DwModelViewer(
                 )
                 if (pageState == "ready") {
                     OutlinedButton(onClick = { webView?.evaluateJavascript("window.dwResetModelView && dwResetModelView()", null) }) {
-                        Text("Reset view", fontSize = 12.sp)
+                        Text("Reset view", style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }

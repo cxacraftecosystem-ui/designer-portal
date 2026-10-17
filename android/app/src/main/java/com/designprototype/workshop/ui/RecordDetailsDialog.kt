@@ -46,10 +46,10 @@ fun RecordDetailsDialog(
                             Text(
                                 label,
                                 color = MaterialTheme.field.muted,
-                                fontSize = 12.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.width(120.dp)
                             )
-                            Text(value, color = MaterialTheme.field.body, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text(value, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                         }
                     }
                 }

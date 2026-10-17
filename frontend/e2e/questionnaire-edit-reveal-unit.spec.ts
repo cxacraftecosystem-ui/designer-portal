@@ -346,7 +346,7 @@ test.describe("each section says how much of it is done", () => {
     expect(sectionsLoop()).toContain("{sectionProgressLabel(progress)}");
     const label = functionBody("sectionProgressLabel");
     expect(label).toContain("${progress.questions} questions · ${progress.answered} answered");
-    expect(label).toContain("${progress.recordings} saved recording(s)");
+    expect(label).toContain('countNoun(progress.recordings, "saved recording")');
   });
 
   test("a whole-section take marks every question in its section answered", () => {

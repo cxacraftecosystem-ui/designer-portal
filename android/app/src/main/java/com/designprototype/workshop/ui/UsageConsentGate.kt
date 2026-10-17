@@ -44,9 +44,9 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.USAGE_BASIS_REQUIRED_AT_SIGN_IN
@@ -356,9 +356,9 @@ fun UsageNoticeBody(notice: UsageNoticeDto, modifier: Modifier = Modifier) {
                     display = true,
                     color = MaterialTheme.field.onWarningContainer,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp
+                    style = MaterialTheme.typography.titleMedium
                 )
-                Text(notice.requiredSentence, color = MaterialTheme.field.onWarningContainer, fontSize = 13.sp)
+                Text(notice.requiredSentence, color = MaterialTheme.field.onWarningContainer, style = MaterialTheme.typography.bodyMedium)
             }
         }
 
@@ -373,13 +373,13 @@ fun UsageNoticeBody(notice: UsageNoticeDto, modifier: Modifier = Modifier) {
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp
+                    style = MaterialTheme.typography.titleMedium
                 )
                 // Keyed by route on the wire. Printed as "route — who", because the route name is
                 // what a reader can go and check, and dropping it would leave four promises about
                 // "aggregates" with nothing to attach them to.
                 notice.readableBy.forEach { (_, who) ->
-                    Text(who, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+                    Text(who, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                 }
             }
         }
@@ -390,16 +390,16 @@ fun UsageNoticeBody(notice: UsageNoticeDto, modifier: Modifier = Modifier) {
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp
+                style = MaterialTheme.typography.titleMedium
             )
             if (notice.withdrawal.where.isNotBlank()) {
-                Text(notice.withdrawal.where, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 18.sp)
+                Text(notice.withdrawal.where, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
             }
             if (notice.withdrawal.costsNothing.isNotBlank()) {
                 Text(
                     notice.withdrawal.costsNothing,
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 18.sp
                 )
             }
@@ -415,7 +415,7 @@ fun UsageNoticeBody(notice: UsageNoticeDto, modifier: Modifier = Modifier) {
             "Notice version ${notice.version}" +
                 (notice.document.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }
@@ -429,7 +429,7 @@ private fun NoticeSection(heading: String, lines: List<String>) {
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp
+            style = MaterialTheme.typography.titleMedium
         )
         lines.forEach { Bullet(it) }
     }
@@ -443,9 +443,9 @@ private fun NoticeParagraph(heading: String, body: String) {
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp
+            style = MaterialTheme.typography.titleMedium
         )
-        Text(body, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 18.sp)
+        Text(body, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
     }
 }
 
@@ -455,7 +455,7 @@ private fun NoticeParagraph(heading: String, body: String) {
  */
 @Composable
 private fun Bullet(text: String) {
-    Text("• $text", color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 18.sp)
+    Text("• $text", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
 }
 
 /**
@@ -491,7 +491,7 @@ fun UsageNoticeDisclosure(
                 USAGE_NOTICE_EXPANDER,
                 modifier = Modifier.weight(1f),
                 color = MaterialTheme.colorScheme.primary,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold
             )
             Icon(
@@ -548,7 +548,7 @@ private fun UsageAgreeRow(
     onAgree: (Boolean) -> Unit,
     onOpenTerms: () -> Unit,
     modifier: Modifier = Modifier,
-    fontSize: TextUnit = 14.sp,
+    style: TextStyle = MaterialTheme.typography.bodyMedium,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -570,7 +570,7 @@ private fun UsageAgreeRow(
             Text(
                 USAGE_AGREE_LABEL,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = fontSize
+                style = style
             )
         }
         Text(
@@ -588,7 +588,7 @@ private fun UsageAgreeRow(
                 // minimum a thumb can aim at. The Checkbox beside it already enforces its own.
                 .padding(vertical = 14.dp),
             color = MaterialTheme.colorScheme.primary,
-            fontSize = fontSize,
+            style = style,
             fontWeight = FontWeight.SemiBold,
             textDecoration = TextDecoration.Underline
         )
@@ -663,7 +663,7 @@ fun UsageConsentDoor(
                 // assertive region interrupts them at every keystroke that changes the state.
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp
             )
         }
@@ -775,7 +775,7 @@ fun UsageConsentGateScreen(
         Text(
             notice?.title?.takeIf { it.isNotBlank() } ?: "Recording how you use this platform",
             display = true,
-            fontSize = 24.sp,
+            style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground
         )
         // The SERVER's sentence for the state this account is actually in. Three states reach three
@@ -783,7 +783,7 @@ fun UsageConsentGateScreen(
         // declined — because the next moves differ, and a single "please agree" would be false for
         // two of the three.
         state?.gate?.reason?.takeIf { it.isNotBlank() }?.let {
-            Text(it, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 19.sp)
+            Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp)
         }
 
         when {
@@ -792,7 +792,7 @@ fun UsageConsentGateScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text(loadingListLine("recording notice"), color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text(loadingListLine("recording notice"), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
             read is UsageReadState.Failed -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -800,7 +800,7 @@ fun UsageConsentGateScreen(
                     if (online) usageCouldNotReadLine("recording notice") else usageOfflineLine("recording notice"),
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 18.sp
                 )
                 Button(onClick = { scope.launch { load() } }, modifier = Modifier.fillMaxWidth()) {
@@ -831,7 +831,7 @@ fun UsageConsentGateScreen(
                             agreedAt = if (it) usageNowStamp() else null
                         },
                         onOpenTerms = { showTerms = true },
-                        fontSize = 15.sp
+                        style = MaterialTheme.typography.bodyLarge
                     )
 
                     if (!agreed) {
@@ -839,7 +839,7 @@ fun UsageConsentGateScreen(
                             USAGE_TICK_TO_CONTINUE,
                             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                             color = MaterialTheme.field.muted,
-                            fontSize = 12.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                     sendError?.let {
@@ -847,7 +847,7 @@ fun UsageConsentGateScreen(
                             it,
                             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                             color = MaterialTheme.colorScheme.error,
-                            fontSize = 13.sp,
+                            style = MaterialTheme.typography.bodyMedium,
                             lineHeight = 18.sp
                         )
                     }
@@ -913,7 +913,7 @@ fun UsageConsentGateScreen(
             modifier = Modifier.fillMaxWidth(),
             shape = RectangleShape
         ) {
-            Text("Reload this question", fontSize = 12.sp)
+            Text("Reload this question", style = MaterialTheme.typography.labelMedium)
         }
     }
 

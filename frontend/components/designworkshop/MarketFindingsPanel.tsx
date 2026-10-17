@@ -45,6 +45,7 @@
  *    colour-blindness and the glare of a courtyard at noon.
  */
 
+import { countNoun } from "@/lib/format";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, BarChart3, Info } from "lucide-react";
 
@@ -249,8 +250,8 @@ export function MarketFindingsPanel({
           designer reading a verdict on a band they typed two minutes ago has to know which. */}
       <p className="text-xs leading-5 text-ink-500">
         {source === "local"
-          ? `From ${findings.observations} price observation(s). Not saved to stage 9.`
-          : `From ${findings.observations} saved price observation(s). Unsaved edits aren't counted.`}
+          ? `From ${countNoun(findings.observations, "price observation")}. Not saved to stage 9.`
+          : `From ${countNoun(findings.observations, "saved price observation")}. Unsaved edits aren't counted.`}
       </p>
 
       {findings.bands.length ? (

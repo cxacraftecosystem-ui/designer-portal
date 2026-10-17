@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,7 +56,7 @@ fun OfflineNotice(text: String, modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Icon(Icons.Filled.CloudOff, contentDescription = null, tint = ChipInk, modifier = Modifier.size(18.dp))
-        Text(text, color = ChipInk, fontSize = 13.sp, lineHeight = 18.sp)
+        Text(text, color = ChipInk, style = MaterialTheme.typography.bodyMedium, lineHeight = 18.sp)
     }
 }
 
@@ -96,7 +97,7 @@ fun OutboxDeviceBannerCard(banner: OutboxBanner, onOpen: (() -> Unit)?, modifier
                 Text(
                     line.text,
                     color = if (line.warn) ChipWarn else ChipInk,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     lineHeight = 18.sp,
                     fontWeight = if (line.warn) FontWeight.Medium else FontWeight.Normal
                 )
@@ -104,7 +105,7 @@ fun OutboxDeviceBannerCard(banner: OutboxBanner, onOpen: (() -> Unit)?, modifier
         }
         if (onOpen != null) {
             Spacer(Modifier.size(2.dp))
-            Text("View", color = ChipInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text("View", color = ChipInk, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,

@@ -28,6 +28,7 @@
  * turned down. The two changes belong together and should not be separated.
  */
 
+import { countNoun } from "@/lib/format";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CircleAlert, CloudOff, Link2, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 
@@ -704,7 +705,7 @@ export function OutboxBanner() {
               <span className="text-sm font-medium">{entry.label}</span>
               <span className="ml-2 text-xs text-ink-500">
                 {new Date(entry.createdAt).toLocaleString()}
-                {fileCount(entry) ? ` · ${fileCount(entry)} file(s)` : ""}
+                {fileCount(entry) ? ` · ${countNoun(fileCount(entry), "file")}` : ""}
               </span>
               {entry.failure ? (
                 <p className="mt-0.5 flex items-start gap-1 text-xs text-error-600">

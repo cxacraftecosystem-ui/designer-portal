@@ -105,7 +105,7 @@ fun CarryContextBanner(
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     "Continuing with $headline",
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 if (chain.isNotEmpty()) {
@@ -123,8 +123,8 @@ fun CarryContextBanner(
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    Text(label.uppercase(), fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                                    Text(value, fontSize = 11.sp, color = Body)
+                                    Text(label.uppercase(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                    Text(value, style = MaterialTheme.typography.bodySmall, color = Body)
                                 }
                             }
                         }
@@ -134,13 +134,13 @@ fun CarryContextBanner(
                     listOf(provenance, implied, "Prefilled below — check it before saving.")
                         .filter { it.isNotEmpty() }
                         .joinToString(" "),
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     color = Muted
                 )
             }
             TextButton(onClick = onChange) {
                 Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text(changeLabel, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp))
+                Text(changeLabel, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
             }
         }
     }

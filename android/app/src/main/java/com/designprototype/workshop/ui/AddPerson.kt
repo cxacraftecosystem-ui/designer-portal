@@ -98,7 +98,7 @@ fun AddPersonCard(
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             done?.let {
-                Text(it, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp,
+                Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             }
             temporary?.let { secret ->
@@ -110,7 +110,7 @@ fun AddPersonCard(
                     textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text(ADD_PERSON_TEMPORARY_NOTE, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text(ADD_PERSON_TEMPORARY_NOTE, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 ActionRow {
                     Button(
                         onClick = {
@@ -132,7 +132,7 @@ fun AddPersonCard(
                 return@Column
             }
             Text(ADD_PERSON_HEADING, display = true, fontWeight = FontWeight.SemiBold)
-            Text(ADD_PERSON_INTRO, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(ADD_PERSON_INTRO, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = name, onValueChange = { name = it; error = null },
                 label = { Text(requiredMarked("Full name *")) }, singleLine = true,
@@ -152,7 +152,7 @@ fun AddPersonCard(
                 includeNone = false,
                 onSelect = { picked -> role = picked.ifBlank { null } }
             )
-            Text(ADD_PERSON_SIGN_IN_QUESTION, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text(ADD_PERSON_SIGN_IN_QUESTION, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
             listOf(
                 PasswordMode.SET to ADD_PERSON_MODE_SET,
                 PasswordMode.GENERATE to ADD_PERSON_MODE_GENERATE,
@@ -164,7 +164,7 @@ fun AddPersonCard(
                         .selectable(selected = mode == option, role = Role.RadioButton, onClick = { mode = option })
                 ) {
                     RadioButton(selected = mode == option, onClick = null)
-                    Text(label, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
+                    Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 8.dp))
                 }
             }
             when (mode) {
@@ -185,7 +185,7 @@ fun AddPersonCard(
                 else -> Unit
             }
             error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp,
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
             }
             existingId?.let { id ->

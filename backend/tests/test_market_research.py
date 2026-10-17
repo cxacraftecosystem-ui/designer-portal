@@ -473,7 +473,7 @@ def test_finding_nothing_is_reported_as_a_failed_search_not_as_a_market() -> Non
 def test_the_provenance_caution_comes_first_and_names_the_provider_and_the_date() -> None:
     result = _result(["₹800", "₹950", "₹1,200", "₹1,500", "₹2,200"])
     first = result.cautions[0]
-    assert first.startswith("These 5 price(s) were RETRIEVED from local_catalogue on 2026-08-08")
+    assert first.startswith("These 5 prices were RETRIEVED from local_catalogue on 2026-08-08")
     assert "not answers from anybody the survey spoke to" in first
     assert "willingness to pay" in first
 

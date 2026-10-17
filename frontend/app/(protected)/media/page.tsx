@@ -43,7 +43,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { ComboBox, Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { apiFetch, listResource } from "@/lib/api";
-import { bytes, formatDateTime } from "@/lib/format";
+import { bytes, countNoun, formatDateTime } from "@/lib/format";
 import { locationFromForm, textValue } from "@/lib/forms";
 import { inferMediaType, transcribeMediaNow, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { isAdmin } from "@/lib/permissions";
@@ -581,7 +581,7 @@ function MediaPageBody() {
         // The first failure's reason is enough: a batch either met one refusal or lost the link.
         const reason = failed[0]?.error ? `${failed[0].error} ` : "";
         setError(
-          `${failed.length} of ${selectedFiles.length} file(s) failed to upload: ${failed.map((item) => item.name).join(", ")}. ` +
+          `${failed.length} of ${countNoun(selectedFiles.length, "file")} failed to upload: ${failed.map((item) => item.name).join(", ")}. ` +
             reason +
             "The rest were saved. Remove those, then upload the others again."
         );

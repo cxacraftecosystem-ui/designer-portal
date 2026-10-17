@@ -225,7 +225,7 @@ internal fun DwAiVerbsPanel(
                 Text(
                     if (runningOnDevice) DW_TIER2_WORKING_SENTENCE else "Working on the passage…",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
         } else {
@@ -424,7 +424,7 @@ internal fun DwAiVerbsPanel(
                                 Text(
                                     "“$passagePreview”",
                                     color = MaterialTheme.field.body,
-                                    fontSize = 12.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                     lineHeight = 17.sp,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
@@ -443,7 +443,7 @@ internal fun DwAiVerbsPanel(
                                 Text(
                                     dwTier2VerbNote(model),
                                     color = MaterialTheme.field.muted,
-                                    fontSize = 11.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                     lineHeight = 16.sp,
                                 )
                             }
@@ -473,13 +473,13 @@ internal fun DwAiVerbsPanel(
                                 Text(
                                     "This text will be sent:",
                                     color = MaterialTheme.field.muted,
-                                    fontSize = 11.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                     lineHeight = 16.sp,
                                 )
                                 Text(
                                     "“$passagePreview”",
                                     color = MaterialTheme.field.body,
-                                    fontSize = 12.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                     lineHeight = 17.sp,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
@@ -512,7 +512,7 @@ internal fun DwAiVerbsPanel(
                                         Text(
                                             dwTier2VerbNote(model),
                                             color = MaterialTheme.field.muted,
-                                            fontSize = 11.sp,
+                                            style = MaterialTheme.typography.bodySmall,
                                             lineHeight = 16.sp,
                                         )
                                     }
@@ -521,7 +521,7 @@ internal fun DwAiVerbsPanel(
                                     Text(
                                         it,
                                         color = MaterialTheme.field.warning,
-                                        fontSize = 11.sp,
+                                        style = MaterialTheme.typography.bodySmall,
                                         lineHeight = 16.sp,
                                     )
                                 }
@@ -547,7 +547,7 @@ internal fun DwAiVerbsPanel(
                                     Text(
                                         it,
                                         color = MaterialTheme.field.muted,
-                                        fontSize = 11.sp,
+                                        style = MaterialTheme.typography.bodySmall,
                                         lineHeight = 16.sp,
                                     )
                                 }
@@ -562,7 +562,7 @@ internal fun DwAiVerbsPanel(
             Text(
                 it,
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
                 // Announced: the sentence can be several rows below the button that produced it, and
                 // on a phone it is routinely below the fold with the keyboard open.
@@ -613,7 +613,7 @@ private fun DwVerbRefusal(sentence: String) {
     Text(
         sentence,
         color = MaterialTheme.field.muted,
-        fontSize = 12.sp,
+        style = MaterialTheme.typography.bodySmall,
         lineHeight = 17.sp,
         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
     )
@@ -644,14 +644,14 @@ private fun DwVerbTranslateStep(
         Text(
             "Language name or code, e.g. “Odia” or “or”. The original stays.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         // Drawn only once the designer has typed something. The empty-field refusal is an instruction
         // rather than a fault, and printing it before they have had a chance to type is telling
         // somebody off for not having started.
         if (refusal != null && value.isNotBlank()) {
-            Text(refusal, color = MaterialTheme.field.warning, fontSize = 11.sp, lineHeight = 16.sp)
+            Text(refusal, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
         }
         ActionRow {
             Button(

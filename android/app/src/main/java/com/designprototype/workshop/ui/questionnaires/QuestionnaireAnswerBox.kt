@@ -119,7 +119,7 @@ fun QuestionnaireAnswerBox(
             },
         )
         dictationError?.let {
-            Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp)
+            Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

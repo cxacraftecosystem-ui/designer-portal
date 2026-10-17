@@ -125,7 +125,7 @@ fun OtpCodeField(
 
     val red = MaterialTheme.colorScheme.error
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.field.muted)
+        Text(label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium, color = MaterialTheme.field.muted)
         BasicTextField(
             value = TextFieldValue(code, selection = TextRange(code.length)),
             onValueChange = { edit ->
@@ -178,10 +178,9 @@ fun OtpCodeField(
                                     digit,
                                     fontFamily = FieldDisplayFontFamily,
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 28.sp,
                                     textAlign = TextAlign.Center,
                                     color = MaterialTheme.colorScheme.onSurface,
-                                    style = TextStyle(fontFeatureSettings = "tnum")
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontFeatureSettings = "tnum")
                                 )
                             }
                         }
@@ -192,7 +191,7 @@ fun OtpCodeField(
         supportingText?.let {
             Text(
                 it,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
                 color = if (isError) red else MaterialTheme.field.muted,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }

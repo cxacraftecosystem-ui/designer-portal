@@ -2575,7 +2575,7 @@ private fun LoginScreen(
         Text(
             text = "Design Workshop",
             display = true,
-            fontSize = 34.sp,
+            style = MaterialTheme.typography.displaySmall,
             color = MaterialTheme.colorScheme.onBackground
         )
         Text(
@@ -2644,7 +2644,7 @@ private fun LoginScreen(
                                 display = true,
                                 color = MaterialTheme.field.onWarningContainer,
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 14.sp
+                                style = MaterialTheme.typography.titleMedium
                             )
                             // The server's own sentence, verbatim, and NOTHING under it. It already
                             // names the next move — "sign in with your email address instead", "ask
@@ -2652,7 +2652,7 @@ private fun LoginScreen(
                             // would be the card repeating itself in different words. This is the one
                             // place these panels differ from `accessRefusalChrome`'s, and the reason
                             // is in `signInHintHeading`'s own KDoc.
-                            Text(error, color = MaterialTheme.field.onWarningContainer, fontSize = 13.sp)
+                            Text(error, color = MaterialTheme.field.onWarningContainer, style = MaterialTheme.typography.bodyMedium)
                         }
                     } else if (chrome != null) {
                         // A FILLED PANEL RATHER THAN A RED LINE, because this message is not a "try
@@ -2683,20 +2683,20 @@ private fun LoginScreen(
                                 display = true,
                                 color = onContainer,
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 14.sp
+                                style = MaterialTheme.typography.titleMedium
                             )
                             // The server's own sentence, verbatim. It names the reason and whom to
                             // contact, and nothing this client could write in its place would know
                             // either of those.
-                            Text(error, color = onContainer, fontSize = 13.sp)
-                            Text(chrome.advice, color = onContainer, fontSize = 12.sp)
+                            Text(error, color = onContainer, style = MaterialTheme.typography.bodyMedium)
+                            Text(chrome.advice, color = onContainer, style = MaterialTheme.typography.bodySmall)
                         }
                     } else {
                         // A wrong password, a dead connection, or a refusal this build could not
                         // classify. All three get the plain line and the server's own words: dressing
                         // a mistyped password in a panel would make every typo look like an account
                         // problem, which is this feature's mistake made backwards.
-                        Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                        Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
                 // ── THE USAGE-RECORDING CONSENT ────────────────────────────────────────────────
@@ -2781,14 +2781,14 @@ private fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RectangleShape
                 ) {
-                    Text("Forgot your password?", fontSize = 12.sp)
+                    Text("Forgot your password?", style = MaterialTheme.typography.labelMedium)
                 }
                 TextButton(
                     onClick = onOpenSetPasswordLink,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RectangleShape
                 ) {
-                    Text("I have a set-password link", fontSize = 12.sp)
+                    Text("I have a set-password link", style = MaterialTheme.typography.labelMedium)
                 }
                 // Steer researchers to Google sign-in. Many were typing into the email/password fields
                 // (meant only for admin-issued password accounts) and getting locked out.
@@ -2804,7 +2804,7 @@ private fun LoginScreen(
                     Text(
                         "Researchers: use “Sign in with Google” above. Email and password are only for accounts an admin set up.",
                         color = Muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
@@ -4360,7 +4360,7 @@ private fun HomeScreen(
                         title,
                         display = true,
                         modifier = Modifier.weight(1f),
-                        fontSize = 28.sp,
+                        style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                 }
@@ -4571,7 +4571,7 @@ private fun HomeScreen(
                         Text(
                             "All ${searchFocusLabel(focus)} records, newest first.",
                             color = Muted,
-                            fontSize = 12.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                     SearchScreen(
@@ -5084,7 +5084,7 @@ private fun HomeScreen(
                 Text(
                     "Scan a card, tag or picture to open its record.",
                     color = Muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp
                 )
                 RecordCodeLookupPanel(
@@ -5107,7 +5107,7 @@ private fun HomeScreen(
                     // One line (UX audit 2026-10-16, DA-41).
                     "Cards & tags inside a workshop also scans offline.",
                     color = Muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp
                 )
             }
@@ -5342,11 +5342,11 @@ private fun HomeScreen(
                         text = {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text("Version ${release.versionName} is required to continue.")
-                                release.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted, fontSize = 12.sp) }
-                                updateError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                                release.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
+                                updateError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                                 if (updateBusy) {
                                     FieldLinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                                    Text("Downloading and preparing the installer…", color = Muted, fontSize = 12.sp)
+                                    Text("Downloading and preparing the installer…", color = Muted, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         },
@@ -5637,13 +5637,13 @@ private fun AdminViewHiddenCard(
                 "$blurb These tools are for admins."
             },
             color = Body,
-            fontSize = 13.sp
+            style = MaterialTheme.typography.bodyMedium
         )
         if (canToggle) {
             Text(
                 "Your access hasn't changed — this is just your view setting.",
                 color = Muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             Button(onClick = onEnable, modifier = Modifier.fillMaxWidth()) {
                 Text("Turn admin view back on")
@@ -5659,7 +5659,7 @@ private fun DataBrowserEntryCard(onOpen: () -> Unit) {
         Text(
             "Browse records as folders, preview media, and download as zip.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         Button(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Filled.Storage, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -5724,7 +5724,7 @@ private fun SettingsScreen(
         if (loading) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text("Loading settings…", color = Muted, fontSize = 13.sp)
+                Text("Loading settings…", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
             return@RecordCard
         }
@@ -5739,7 +5739,7 @@ private fun SettingsScreen(
         Text(
             "How audio becomes text after upload. AI refinement always waits for your approval.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         Column(modifier = Modifier.selectableGroup()) {
         SettingsRadioRow("Raw transcript only", "Fastest and cheapest.", mode == "RAW") { mode = "RAW" }
@@ -5759,7 +5759,7 @@ private fun SettingsScreen(
                 Box(modifier = Modifier.weight(1f)) { TimePickerField("Start", startTime) { startTime = it } }
                 Box(modifier = Modifier.weight(1f)) { TimePickerField("End", endTime) { endTime = it } }
             }
-            Text("India Standard Time.", color = Muted, fontSize = 11.sp)
+            Text("India Standard Time.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
 
         Button(
@@ -5806,8 +5806,8 @@ private fun SettingsRadioRow(title: String, subtitle: String, selected: Boolean,
     ) {
         RadioButton(selected = selected, onClick = null)
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-            Text(subtitle, color = Muted, fontSize = 11.sp)
+            Text(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
+            Text(subtitle, color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -5862,8 +5862,8 @@ private fun CarryForwardPanel(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Saved ${prefill.artisanName ?: "artisan"} ✓", display = true, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
-            Text("Continue for the same artisan — details are pre-filled.", color = Muted, fontSize = 12.sp)
+            Text("Saved ${prefill.artisanName ?: "artisan"} ✓", display = true, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text("Continue for the same artisan — details are pre-filled.", color = Muted, style = MaterialTheme.typography.bodySmall)
             ActionRow {
                 Button(onClick = { onSelect(EntryMode.PRODUCT) }) { Text("Add product") }
                 if (canCreateTool) {
@@ -6382,7 +6382,7 @@ private fun DashboardScreen(
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("What would you like to do?", display = true, fontSize = 20.sp, color = MaterialTheme.colorScheme.onBackground)
+        Text("What would you like to do?", display = true, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onBackground)
         /*
          * ── THE FOUR MEGA CARDS ─────────────────────────────────────────────────────────────────
          *
@@ -6472,7 +6472,7 @@ private fun DashboardScreen(
             Text(
                 "${tiles.size - filedCount} more in the menu.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp
             )
         }
@@ -6489,7 +6489,7 @@ private fun DashboardScreen(
                     Text(
                         "You're signed in as $roleLabel: you can answer interviews, upload media and comment. Creating records needs Researcher access — ask an admin.",
                         color = Muted,
-                        fontSize = 13.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     ActionRow {
                         TextButton(onClick = onWalkthrough, contentPadding = PaddingValues(0.dp)) {
@@ -6517,7 +6517,7 @@ private fun DashboardScreen(
          * filter on the existing table, not a second table.
          */
         if (recentArtisans.isNotEmpty()) {
-            Text("Recent artisans", display = true, fontSize = 20.sp, color = MaterialTheme.colorScheme.onBackground)
+            Text("Recent artisans", display = true, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onBackground)
             recentArtisans.take(6).forEach { artisan ->
                 val interaction = remember(artisan.id) { MutableInteractionSource() }
                 val pressed by interaction.collectIsPressedAsState()
@@ -6551,7 +6551,7 @@ private fun DashboardScreen(
                             .padding(12.dp)
                     ) {
                         Text(artisan.name, display = true, fontWeight = FontWeight.SemiBold)
-                        Text("${artisan.craft?.name ?: "No craft"} · ${artisan.place}", color = Muted, fontSize = 12.sp)
+                        Text("${artisan.craft?.name ?: "No craft"} · ${artisan.place}", color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -6674,7 +6674,7 @@ private fun DashboardActionCard(tile: DashboardTile, modifier: Modifier = Modifi
             Text(
                 tile.label,
                 display = true,
-                fontSize = 16.sp,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f)
@@ -6704,7 +6704,7 @@ private fun CardButtonLabel(icon: ImageVector, text: String) {
     Spacer(Modifier.width(6.dp))
     // Ellipsis, not a silent clip: the cards are two-to-a-row on a phone and "New interview" is wider
     // than the button at that width.
-    Text(text, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+    Text(text, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
 }
 
 /*
@@ -6821,7 +6821,7 @@ private fun DashboardMegaCard(
                     Text(
                         group.title,
                         display = true,
-                        fontSize = 16.sp,
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     // NO `maxLines` AND NO ELLIPSIS. These notes are the web's sentences byte for
@@ -6831,13 +6831,13 @@ private fun DashboardMegaCard(
                     Text(
                         group.note,
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 15.sp
                     )
                     Text(
                         countLabel,
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -6936,11 +6936,11 @@ private fun StatsCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
-            Text("At a glance", display = true, color = MaterialTheme.field.onBrandTile, fontSize = 24.sp)
+            Text("At a glance", display = true, color = MaterialTheme.field.onBrandTile, style = MaterialTheme.typography.headlineSmall)
             Text(
                 "Across the whole portal.",
                 color = MaterialTheme.field.onBrandTileMuted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             Spacer(Modifier.height(12.dp))
             if (stats == null) {
@@ -7035,12 +7035,12 @@ private fun MyContributionCard(mine: DashboardStatsMine?, onOpenMyActivity: () -
                 Text(
                     "Your contribution",
                     display = true,
-                    fontSize = 18.sp,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 TextButton(onClick = onOpenMyActivity, contentPadding = PaddingValues(0.dp)) {
-                    Text("Open My Activity", fontSize = 12.sp)
+                    Text("Open My Activity", style = MaterialTheme.typography.labelMedium)
                 }
             }
             tiles.chunked(3).forEach { rowTiles ->
@@ -7110,7 +7110,7 @@ private fun MineStat(
             Text(
                 label,
                 color = Muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
@@ -7119,7 +7119,7 @@ private fun MineStat(
         Text(
             value.toString(),
             display = true,
-            fontSize = 20.sp,
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface
         )
@@ -7145,29 +7145,29 @@ private fun RecentSubmissionsCard(stats: DashboardStats?, onOpenRecord: (EntryMo
             Text(
                 "Recent submissions",
                 display = true,
-                fontSize = 18.sp,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 "Newest entries across the portal.",
                 color = Muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
             when {
-                stats == null -> Text("Loading...", color = Muted, fontSize = 12.sp)
+                stats == null -> Text("Loading...", color = Muted, style = MaterialTheme.typography.bodySmall)
                 stats.recentSubmissions.isEmpty() -> {
                     Text(
                         "No submissions yet",
                         display = true,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         "New records will appear here.",
                         color = Muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
                 else -> stats.recentSubmissions.forEach { item ->
@@ -7206,7 +7206,7 @@ private fun RecentSubmissionRow(
             title,
             display = true,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp,
+            style = MaterialTheme.typography.titleMedium,
             // Purple is the only action colour, so an openable title carries it and a dead one does
             // not — which is the only signal on the row that says which is which.
             color = if (mode == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
@@ -7217,14 +7217,14 @@ private fun RecentSubmissionRow(
         Text(
             listOfNotNull(typeLabel.takeIf { it.isNotBlank() }, place).joinToString(" · ").ifBlank { "Record" },
             color = Muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         Text(
             "Recorded by ${item.createdByName?.takeIf { it.isNotBlank() } ?: "-"}" +
                 " · ${item.status.ifBlank { "-" }}" +
                 " · ${formatIsoDate(item.createdAt) ?: "-"}",
             color = Muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }
@@ -7287,8 +7287,8 @@ private fun Stat(
             )
             .padding(12.dp)
     ) {
-        Text(value.toString(), display = true, color = MaterialTheme.field.onBrandTile, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
-        Text(label, color = MaterialTheme.field.onBrandTileMuted, fontSize = 12.sp)
+        Text(value.toString(), display = true, color = MaterialTheme.field.onBrandTile, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Text(label, color = MaterialTheme.field.onBrandTileMuted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -8243,7 +8243,7 @@ private fun GridMeasurementSection(
             onCheckedChange = { checked -> enabled = if (checked) enabled + key else enabled - key }
         )
         if (enabled.contains(key)) {
-            Text(hint, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp))
+            Text(hint, color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 8.dp))
             ActionRow {
                 OutlinedButton(
                     onClick = {
@@ -8256,13 +8256,13 @@ private fun GridMeasurementSection(
                         }
                     },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-                ) { Text("Capture photo", maxLines = 1, softWrap = false, fontSize = 12.sp) }
+                ) { Text("Capture photo", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium) }
                 OutlinedButton(
                     onClick = { pendingGroup = key; pickImage.launch("image/*") },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-                ) { Text("Pick photo", maxLines = 1, softWrap = false, fontSize = 12.sp) }
+                ) { Text("Pick photo", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium) }
             }
-            status[key]?.let { Text(it, color = Muted, fontSize = 11.sp) }
+            status[key]?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
             // THE BUTTON THAT MAKES THE RECORD'S SIGNATURE TRUE. It names the figure it will write,
             // which is [DwPhotoMeasureField]'s rule for the same class of control — "the button says
             // the figure it will write" — so a designer who has stopped reading the status line still
@@ -8286,7 +8286,7 @@ private fun GridMeasurementSection(
                             status = status + (key to "Filled ${parts.joinToString(" · ")} — still editable")
                         },
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-                    ) { Text("Use ${parts.joinToString(" · ")}", fontSize = 12.sp) }
+                    ) { Text("Use ${parts.joinToString(" · ")}", style = MaterialTheme.typography.labelMedium) }
                 }
             } else {
                 proposedHeight?.let { reading ->
@@ -8301,7 +8301,7 @@ private fun GridMeasurementSection(
                             status = status + (key to "Filled ${"%.2f".format(value)} in — still editable")
                         },
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-                    ) { Text("Use ${"%.2f".format(value)} in", fontSize = 12.sp) }
+                    ) { Text("Use ${"%.2f".format(value)} in", style = MaterialTheme.typography.labelMedium) }
                 }
             }
             capturedUris[key]?.let { uri ->
@@ -8326,7 +8326,7 @@ private fun GridMeasurementSection(
         Text(
             "Place the object on a 1-inch grid. One top-down photo gives length and breadth; a side photo gives height. Needs a connection; you confirm before anything is filled.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         GridGroupRow("lengthBreadth", "Length & breadth (one photo)", "Top-down photo on the grid — offers length and breadth.")
         if (includeHeight) {
@@ -8449,7 +8449,7 @@ private fun RegisterDropdownField(
         // already printing this identical string on the form. Two copies of one sentence, stacked,
         // reads as two problems.
         if (notice != null && options.isNotEmpty()) {
-            Text(notice, color = Muted, fontSize = 12.sp)
+            Text(notice, color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -8476,7 +8476,7 @@ private fun StatusControl(canSetStatus: Boolean, value: String, onSelect: (Strin
         StatusDropdown(value = value, onSelect = onSelect)
     } else {
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Status", color = Muted, fontSize = 12.sp)
+            Text("Status", color = Muted, style = MaterialTheme.typography.bodySmall)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -8495,7 +8495,7 @@ private fun StatusControl(canSetStatus: Boolean, value: String, onSelect: (Strin
                 Text(
                     value.ifBlank { "PENDING" }.lowercase().split('_').joinToString(" ").replaceFirstChar { it.uppercase() },
                     color = Body,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
             }
@@ -8503,7 +8503,7 @@ private fun StatusControl(canSetStatus: Boolean, value: String, onSelect: (Strin
                 if (value.isBlank() || value == "PENDING") "New records are reviewed before publishing."
                 else "Your edit goes to review when you save.",
                 color = Muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
@@ -8990,22 +8990,22 @@ private fun WorkshopField(state: WorkshopPickerState, saving: Boolean = false) {
           about a ceiling they cannot reach; the one assigned to more than a page's worth does.
         */
         workshopCapLine(state.workshops.size, state.total, WorkshopListKind.FIELD)?.let { cap ->
-            Text(cap, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+            Text(cap, color = Muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
         }
         // Skipped when the field has been stood down: `SearchableSelectField` already printed this
         // exact string on the form for that case, and one fact may not appear twice under one control.
-        if (!standDown) notice?.let { Text(it, color = Muted, fontSize = 11.sp, lineHeight = 15.sp) }
+        if (!standDown) notice?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp) }
         if (options.isNotEmpty()) {
             Text(
                 "Only workshops you can access. Ask an admin if one is missing.",
-                color = Muted, fontSize = 11.sp, lineHeight = 15.sp,
+                color = Muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp,
             )
         }
         if (blocked) {
             Text(
                 "You're not assigned to this workshop. Ask an admin, or pick another.",
                 color = MaterialTheme.colorScheme.error,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         } else if (late) {
             Text(
@@ -9017,7 +9017,7 @@ private fun WorkshopField(state: WorkshopPickerState, saving: Boolean = false) {
                         "Saving now is recorded as a late submission."
                     },
                 color = Coral,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
@@ -9281,7 +9281,7 @@ private fun LateSubmissionDialog(
                 Text(
                     "Pick another workshop if this belongs to one still running.",
                     color = Muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         },
@@ -9440,7 +9440,7 @@ private fun ArtisanAadhaarField(
                             "Optional for this older record. Add only if the artisan agrees."
                         },
                         color = Muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             },
@@ -9454,7 +9454,7 @@ private fun ArtisanAadhaarField(
                 .fillMaxWidth()
                 .focusRequester(focusRequester)
         )
-        warning?.let { msg -> Text(msg, color = Coral, fontSize = 12.sp) }
+        warning?.let { msg -> Text(msg, color = Coral, style = MaterialTheme.typography.bodySmall) }
     }
 }
 
@@ -9466,9 +9466,9 @@ private fun ArtisanMultiSelectField(
     onToggle: (String) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("$label (${selectedIds.size} selected)", color = Muted, fontSize = 12.sp)
+        Text("$label (${selectedIds.size} selected)", color = Muted, style = MaterialTheme.typography.bodySmall)
         if (artisans.isEmpty()) {
-            Text("No artisans yet. Create one first.", color = Muted, fontSize = 12.sp)
+            Text("No artisans yet. Create one first.", color = Muted, style = MaterialTheme.typography.bodySmall)
         } else {
             Column(
                 modifier = Modifier
@@ -9485,7 +9485,7 @@ private fun ArtisanMultiSelectField(
                             .clickable { onToggle(artisan.id) }
                     ) {
                         Checkbox(checked = selectedIds.contains(artisan.id), onCheckedChange = { onToggle(artisan.id) })
-                        Text("${artisan.name} · ${artisan.place}", color = Body, fontSize = 13.sp)
+                        Text("${artisan.name} · ${artisan.place}", color = Body, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -9685,7 +9685,7 @@ private fun AudioClipRecorder(
                 it,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 color = Muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp
             )
         }
@@ -9694,7 +9694,7 @@ private fun AudioClipRecorder(
                 onClick = { startNew() },
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = pad
-            ) { Text(if (clips.isNotEmpty()) "Record another ●" else idleLabel, maxLines = 1, softWrap = false, fontSize = 13.sp) }
+            ) { Text(if (clips.isNotEmpty()) "Record another ●" else idleLabel, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge) }
 
             RecPhase.RECORDING -> {
                 ActionRow {
@@ -9704,7 +9704,7 @@ private fun AudioClipRecorder(
                     ) {
                         Icon(Icons.Filled.Pause, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Pause", maxLines = 1, softWrap = false, fontSize = 13.sp)
+                        Text("Pause", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge)
                     }
                     OutlinedButton(onClick = { stopAndSave() }, contentPadding = pad) {
                         StopSquareLabel("Stop")
@@ -9717,7 +9717,7 @@ private fun AudioClipRecorder(
                     OutlinedButton(
                         onClick = { runCatching { recorder?.resume(); phase = RecPhase.RECORDING }.onFailure { onError(it.userMessage("Unable to resume")) } },
                         contentPadding = pad
-                    ) { Text("Resume ●", maxLines = 1, softWrap = false, fontSize = 13.sp) }
+                    ) { Text("Resume ●", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge) }
                     OutlinedButton(onClick = { stopAndSave() }, contentPadding = pad) {
                         StopSquareLabel("Stop")
                     }
@@ -9728,17 +9728,17 @@ private fun AudioClipRecorder(
                 Button(onClick = { onRemoveLast(); startNew() }, modifier = Modifier.fillMaxWidth(), contentPadding = pad) {
                     Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Re-record", maxLines = 1, softWrap = false, fontSize = 13.sp)
+                    Text("Re-record", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge)
                 }
                 OutlinedButton(onClick = { startNew() }, modifier = Modifier.fillMaxWidth(), contentPadding = pad) {
                     Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Record another", maxLines = 1, softWrap = false, fontSize = 13.sp)
+                    Text("Record another", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge)
                 }
                 OutlinedButton(onClick = { onRemoveLast(); phase = RecPhase.IDLE }, modifier = Modifier.fillMaxWidth(), contentPadding = pad) {
                     Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Discard", maxLines = 1, softWrap = false, fontSize = 13.sp)
+                    Text("Discard", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -9752,7 +9752,7 @@ private fun AudioClipRecorder(
             ) {
                 Icon(Icons.Filled.PermMedia, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Add audio file", maxLines = 1, softWrap = false, fontSize = 13.sp)
+                Text("Add audio file", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge)
             }
             // After picking a file the recorder sits in IDLE (no Discard button), so offer a way to
             // undo a mistaken pick by dropping the most recent clip.
@@ -9764,7 +9764,7 @@ private fun AudioClipRecorder(
                 ) {
                     Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Remove last clip", maxLines = 1, softWrap = false, fontSize = 12.sp)
+                    Text("Remove last clip", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -9777,7 +9777,7 @@ private fun AudioClipRecorder(
                 paused = phase == RecPhase.PAUSED
             )
         }
-        Text("${clips.size} clip(s)", color = Muted, fontSize = 11.sp)
+        Text("${clips.size} clip(s)", color = Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -9794,7 +9794,7 @@ private fun StopSquareLabel(text: String = "Stop") {
             .background(Color(0xFFD13438), RoundedCornerShape(3.dp))
     )
     Spacer(Modifier.width(6.dp))
-    Text(text, maxLines = 1, softWrap = false, fontSize = 13.sp)
+    Text(text, maxLines = 1, softWrap = false, style = MaterialTheme.typography.bodyMedium)
 }
 
 @Composable
@@ -9861,7 +9861,7 @@ private fun MediaCaptureSection(
         Text(
             "Media links to this record automatically; audio is transcribed after upload.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         ActionRow {
             OutlinedButton(onClick = { pickMedia.launch("*/*") }) { Text("Pick files") }
@@ -9878,7 +9878,7 @@ private fun MediaCaptureSection(
         if (emphasizeVideo) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Filled.Videocam, contentDescription = null, tint = MaterialTheme.field.muted, modifier = Modifier.size(18.dp))
-                Text("Video preferred — capture the action as it happens.", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text("Video preferred — capture the action as it happens.", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
         ActionRow {
@@ -9903,7 +9903,7 @@ private fun MediaCaptureSection(
                         }
                     },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-                ) { Text("Record video", maxLines = 1, softWrap = false, fontSize = 13.sp) }
+                ) { Text("Record video", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge) }
             }
             OutlinedButton(
                 onClick = {
@@ -9930,7 +9930,7 @@ private fun MediaCaptureSection(
                     }
                 },
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-            ) { if (recording) StopSquareLabel("Stop audio") else Text("Record audio ●", maxLines = 1, softWrap = false, fontSize = 13.sp) }
+            ) { if (recording) StopSquareLabel("Stop audio") else Text("Record audio ●", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge) }
         }
         if (recording) {
             RecordingIndicator(getAmplitude = { runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0) })
@@ -9979,7 +9979,7 @@ private fun MediaCaptureSection(
                 Text(
                     status.line,
                     color = if (status.failed) MaterialTheme.field.errorOnBrandTile else MaterialTheme.field.onBrandTileMuted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
                 var attachmentsExpanded by remember { mutableStateOf(false) }
                 val attachmentsCap = 6
@@ -10111,7 +10111,7 @@ private fun AttachedUploadsCard(
         Text(
             status.line,
             color = if (status.failed) MaterialTheme.field.errorOnBrandTile else MaterialTheme.field.onBrandTileMuted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         var expanded by remember { mutableStateOf(false) }
         val cap = 8
@@ -10154,7 +10154,7 @@ private fun LoadingCard(mode: EntryMode, failed: String? = null, onRetry: () -> 
         return
     }
     RecordCard(title = "Loading ${mode.label.lowercase()}") {
-        Text("Fetching the latest saved values…", color = Muted, fontSize = 13.sp)
+        Text("Fetching the latest saved values…", color = Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -10272,7 +10272,7 @@ private fun RecordPickerScreen(
         Text(
             "Tap a record to read it. ${RecordOpen.UPDATE_LABEL} opens its form.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         OutlinedTextField(
             value = query,
@@ -10307,10 +10307,10 @@ private fun RecordPickerScreen(
                     Text(
                         "Newest ${options.size} of $total. Type a name to find others.",
                         color = Muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
-                Text(if (query.isBlank()) "Recently added" else "Matches", color = Muted, fontSize = 12.sp)
+                Text(if (query.isBlank()) "Recently added" else "Matches", color = Muted, style = MaterialTheme.typography.bodySmall)
                 options.take(if (query.isBlank()) 12 else 50).forEach { (id, label) ->
                     ElevatedCard(
                         colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard),
@@ -10328,10 +10328,10 @@ private fun RecordPickerScreen(
                                 .padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                            Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
                             if (canUpdate) {
                                 TextButton(onClick = { onUpdate(id) }, modifier = Modifier.heightIn(min = 48.dp)) {
-                                    Text(RecordOpen.UPDATE_LABEL, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(RecordOpen.UPDATE_LABEL, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -10419,7 +10419,7 @@ private fun DeleteRecordSection(
     var deleting by remember { mutableStateOf(false) }
     val noun = mode.label.lowercase()
     RecordCard(title = "Delete this $noun") {
-        Text("Permanently removes this $noun and its links.", color = Muted, fontSize = 12.sp)
+        Text("Permanently removes this $noun and its links.", color = Muted, style = MaterialTheme.typography.bodySmall)
         OutlinedButton(
             onClick = { confirm = true },
             enabled = !deleting,
@@ -10573,7 +10573,7 @@ private fun DwInlineRecordDialog(
                         Text(
                             if (editing) "Update $noun" else "New $noun",
                             display = true,
-                            fontSize = 20.sp,
+                            style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         // Said out loud, because the whole value of this dialog is the promise that
@@ -10586,7 +10586,7 @@ private fun DwInlineRecordDialog(
                                 "$noun saved and linked. Your stage stays open."
                             },
                             color = Muted,
-                            fontSize = 12.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                     IconButton(onClick = abandon) {
@@ -11800,7 +11800,7 @@ private fun ArtisanForm(
         Text(
             "Prevents duplicate records across workshops. Stored securely and masked.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         ArtisanAadhaarField(
             value = aadhaar,
@@ -11876,7 +11876,7 @@ private fun ArtisanForm(
                     } else {
                         "Set “available” to Yes to enter a number."
                     }
-                Text(hint, color = if (pehchanError != null) MaterialTheme.colorScheme.error else Muted, fontSize = 12.sp)
+                Text(hint, color = if (pehchanError != null) MaterialTheme.colorScheme.error else Muted, style = MaterialTheme.typography.bodySmall)
             },
             singleLine = true,
             modifier = Modifier
@@ -11973,7 +11973,7 @@ internal const val WORKSHOP_CREATE_REFUSAL =
 @Composable
 private fun WorkshopCreateRefusedCard(onOpenExisting: (() -> Unit)? = null) {
     RecordCard(title = "Add workshop") {
-        Text(WORKSHOP_CREATE_REFUSAL, color = Muted, fontSize = 13.sp)
+        Text(WORKSHOP_CREATE_REFUSAL, color = Muted, style = MaterialTheme.typography.bodySmall)
         if (onOpenExisting != null) {
             ActionRow {
                 TextButton(onClick = onOpenExisting, contentPadding = PaddingValues(0.dp)) {
@@ -12193,7 +12193,7 @@ private fun WorkshopForm(
         Text(
             "Design & prototype workshops can use this for their cover details.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         RequiredInput("Workshop title", title, titleError, titleFocus, titleCased = true) { title = it }
         RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
@@ -12611,7 +12611,7 @@ private fun ProductForm(
             }
         }
         if (craftId.isNotBlank() && artisanOptionsForCraft.isEmpty()) {
-            Text("No artisans are linked to this craft yet.", color = Muted, fontSize = 12.sp)
+            Text("No artisans are linked to this craft yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         RequiredInput("Artisan name", artisanName, artisanNameError, artisanNameFocus, titleCased = true) { artisanName = it }
         RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
@@ -13459,7 +13459,7 @@ private fun ToolForm(
             // rewrites either box, and only a keystroke converts.
             "Height (cm) and Height (in) fill each other, as do Width (cm) and Breadth (in). Older records may disagree — fix the wrong one.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.weight(1f)) { TextInput("Thickness", thickness, keyboardType = KeyboardType.Decimal, dictate = false) { thickness = it } }
@@ -13600,7 +13600,7 @@ private fun ToolStagesSection(
         Text(
             "Document each step of making or using this tool, in order.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         ActionRow {
             OutlinedButton(onClick = { pickMedia.launch("*/*") }) { Text("Add files") }
@@ -13651,10 +13651,10 @@ private fun ToolStagesSection(
             RecordingIndicator(getAmplitude = { runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0) })
         }
         if (stages.uris.isNotEmpty()) {
-            Text("${stages.uris.size} stage step(s) captured", color = Muted, fontSize = 12.sp)
+            Text("${stages.uris.size} stage step(s) captured", color = Muted, style = MaterialTheme.typography.bodySmall)
             stages.uris.forEachIndexed { index, uri ->
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Step ${index + 1}", color = Body, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Step ${index + 1}", color = Body, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                     AndroidUriPreview(context = context, uri = uri)
                 }
             }
@@ -14149,7 +14149,7 @@ private fun ProcessForm(
         Text(
             "Capture how a product is made, step by step.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
@@ -14185,7 +14185,7 @@ private fun ProcessForm(
                 }
             }
         }
-        if (artisanError != null) Text(artisanError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+        if (artisanError != null) Text(artisanError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         /*
           THE PLACEHOLDER STAYS AND THE SENTENCE IS ADDED, because they answer different questions.
 
@@ -14233,15 +14233,15 @@ private fun ProcessForm(
         when {
             productsLoading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text("Loading this artisan's products…", color = Muted, fontSize = 11.sp)
+                Text("Loading this artisan's products…", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
-            productLoadError != null -> Text(productLoadError!!, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+            productLoadError != null -> Text(productLoadError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             artisanId.isNotBlank() && artisanProducts.isEmpty() ->
-                Text("No products for this artisan yet. Create one first.", color = Muted, fontSize = 11.sp)
+                Text("No products for this artisan yet. Create one first.", color = Muted, style = MaterialTheme.typography.bodySmall)
             artisanId.isNotBlank() && artisanProducts.isNotEmpty() ->
-                Text("${artisanProducts.size} product(s) for this artisan.", color = Muted, fontSize = 11.sp)
+                Text("${artisanProducts.size} product(s) for this artisan.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
-        if (productError != null) Text(productError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+        if (productError != null) Text(productError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 
         // WHAT HAPPENS, FOR THE PROCESS AS A WHOLE, and until this box existed there was nowhere on
         // either surface to type it. `notes` was declared, carried through on edit and sent on every
@@ -14266,9 +14266,9 @@ private fun ProcessForm(
             onCheckedChange = { preProcessAvailable = it }
         )
         if (preProcessAvailable) {
-            Text("Attach the pre-process media (required).", color = Muted, fontSize = 12.sp)
+            Text("Attach the pre-process media (required).", color = Muted, style = MaterialTheme.typography.bodySmall)
             if (existingPreMedia.isNotEmpty()) {
-                Text("Already attached:", color = Muted, fontSize = 11.sp)
+                Text("Already attached:", color = Muted, style = MaterialTheme.typography.bodySmall)
                 existingPreMedia.forEach { saved ->
                     AndroidSavedMediaPreview(
                         context = context,
@@ -14285,12 +14285,12 @@ private fun ProcessForm(
                 }
             }
             MediaCaptureSection(repository = repository, media = preMedia, emphasizeVideo = true, onMessage = LocalAppNotice.current, onError = onError)
-            if (preMediaError != null) Text(preMediaError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            if (preMediaError != null) Text(preMediaError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
 
         HorizontalDivider()
         Text("Steps", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-        if (stepsError != null) Text(stepsError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+        if (stepsError != null) Text(stepsError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 
         steps.forEachIndexed { index, step ->
             ElevatedCard(
@@ -14305,7 +14305,7 @@ private fun ProcessForm(
                     }
                     RequiredInput("Name of the step", step.name, step.nameError, step.nameFocus) { step.name = it }
                     if (step.existingMedia.isNotEmpty()) {
-                        Text("Already attached:", color = Muted, fontSize = 11.sp)
+                        Text("Already attached:", color = Muted, style = MaterialTheme.typography.bodySmall)
                         step.existingMedia.forEach { saved ->
                             AndroidSavedMediaPreview(
                                 context = context,
@@ -14372,7 +14372,7 @@ private fun ProcessForm(
             Text(
                 "Each researcher should document processes separately to keep different perspectives.",
                 color = MaterialTheme.field.body,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -14647,7 +14647,7 @@ private fun MyActivityScreen(
             // the alternative is a designer reading an empty list as lost work.
             "Your records, newest first.",
             color = Muted,
-            fontSize = 13.sp
+            style = MaterialTheme.typography.bodySmall
         )
         cachedNote?.let { CachedCopyNote(it) }
         val current = loaded
@@ -14658,13 +14658,13 @@ private fun MyActivityScreen(
             Text(
                 "Some record types could not be loaded, so this list may be incomplete.",
                 color = Coral,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         when {
             current == null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text("Loading your activity…", color = Muted, fontSize = 13.sp)
+                Text("Loading your activity…", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
             // NOTHING ANSWERED. Saying "you haven't recorded anything yet" here would tell a designer
             // whose only copy of a morning's work is on this handset that the work is gone.
@@ -14672,12 +14672,12 @@ private fun MyActivityScreen(
                 "Your activity couldn't be loaded. Anything you have recorded is safe; open this again " +
                     "when you have a connection.",
                 color = Coral,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodyMedium
             )
             current.items.isEmpty() -> Text(
                 "You haven't recorded anything yet. Create a record from the menu and it will appear here.",
                 color = Muted,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodySmall
             )
             else -> current.items.forEach { item ->
                 ElevatedCard(
@@ -14694,11 +14694,11 @@ private fun MyActivityScreen(
                         .clickable(onClickLabel = RecordOpen.openClickLabel(item.title), role = Role.Button) { onOpen(item.mode, item.id) }
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(item.title, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text(item.title, display = true, color = Body, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                         Text(
                             item.subtitle + (formatIsoDate(item.createdAt)?.let { " · $it" } ?: ""),
                             color = Muted,
-                            fontSize = 12.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
@@ -14767,7 +14767,7 @@ private fun ToolAssignScreen(
         Text(
             "Link one tool to several artisans instead of re-entering it.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         RegisterDropdownField(
             label = "Tool *",
@@ -14795,7 +14795,7 @@ private fun ToolAssignScreen(
             emptyMessage = if (craftIds.isEmpty()) "Select one or more crafts first." else "No artisans for the selected crafts.",
             onToggle = { id -> artisanIds = if (artisanIds.contains(id)) artisanIds - id else artisanIds + id }
         )
-        info?.let { Text(it, color = Coral, fontSize = 12.sp) }
+        info?.let { Text(it, color = Coral, style = MaterialTheme.typography.bodySmall) }
         Button(
             onClick = {
                 info = null
@@ -14814,16 +14814,16 @@ private fun ToolAssignScreen(
 
         if (toolId.isNotBlank()) {
             HorizontalDivider()
-            Text("Currently assigned to", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text("Currently assigned to", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
             if (assigned.isEmpty()) {
-                Text("Not assigned to any additional artisans yet.", color = Muted, fontSize = 12.sp)
+                Text("Not assigned to any additional artisans yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
             } else {
                 assigned.forEach { artisan ->
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         Text(
                             "${artisan.name}${artisan.craft?.name?.let { " · $it" } ?: ""}",
                             color = Body,
-                            fontSize = 13.sp,
+                            style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = {
@@ -14844,8 +14844,8 @@ private fun ToolAssignScreen(
 private fun DetailRow(label: String, value: String?) {
     if (!value.isNullOrBlank()) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(label, color = Muted, fontSize = 12.sp, modifier = Modifier.width(120.dp))
-            Text(value, color = Body, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Text(label, color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(120.dp))
+            Text(value, color = Body, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         }
     }
 }
@@ -14874,7 +14874,7 @@ private fun MediaWithTranscript(
         Text(
             "Uploaded by ${uploader ?: "Unknown"}" + (uploadedWhen?.let { " · $it" } ?: ""),
             color = Muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
     }
     val scope = rememberCoroutineScope()
@@ -14942,7 +14942,7 @@ private fun MediaWithTranscript(
                         }
                     },
                     leading = {
-                        Text("Transcript", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Transcript", color = Muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                         /*
                          * THE EDITED FLAG ON A STORED TRANSCRIPT — "Edited" OR NOTHING, NEVER "Not edited".
                          *
@@ -14978,7 +14978,7 @@ private fun MediaWithTranscript(
                                 Text(
                                     "Edited",
                                     color = MaterialTheme.field.onWarningContainer,
-                                    fontSize = 11.sp,
+                                    style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -15009,11 +15009,11 @@ private fun MediaWithTranscript(
             // Still processing — show a buffer icon; the transcript appears here once it's ready.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text(if (transcribing) "Transcribing now…" else "Transcribing audio…", color = Muted, fontSize = 11.sp)
+                Text(if (transcribing) "Transcribing now…" else "Transcribing audio…", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
         isAudio && status in done -> {
-            Text("Transcript complete — no speech detected.", color = Muted, fontSize = 11.sp)
+            Text("Transcript complete — no speech detected.", color = Muted, style = MaterialTheme.typography.bodySmall)
             if (isAdmin && repository != null) {
                 TranscribeNowButton(transcribing = transcribing, hasExisting = false) { transcribeNow() }
             }
@@ -15022,7 +15022,7 @@ private fun MediaWithTranscript(
             Text(
                 "Transcript: ${liveStatus ?: "—"}" + (media.transcriptError?.let { " — $it" } ?: ""),
                 color = Muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
             if (isAdmin && repository != null) {
                 TranscribeNowButton(transcribing = transcribing, hasExisting = false) { transcribeNow() }
@@ -15037,7 +15037,7 @@ private fun TranscribeNowButton(transcribing: Boolean, hasExisting: Boolean, onC
     OutlinedButton(onClick = onClick, enabled = !transcribing) {
         Icon(Icons.Filled.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(6.dp))
-        Text(if (transcribing) "Transcribing…" else if (hasExisting) "Re-transcribe now" else "Transcribe now", fontSize = 13.sp)
+        Text(if (transcribing) "Transcribing…" else if (hasExisting) "Re-transcribe now" else "Transcribe now", style = MaterialTheme.typography.labelLarge)
     }
 }
 
@@ -15063,18 +15063,18 @@ private fun ArtisanQuestionnaireData(repository: WorkshopRepository, artisanId: 
             Text(
                 "Recordings and notes from every interview with this artisan.",
                 color = Muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             interviews.forEach { interview ->
                 HorizontalDivider()
-                Text(interview.title.ifBlank { "Interview" }, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(interview.title.ifBlank { "Interview" }, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 val meta = listOfNotNull(
                     formatIsoDate(interview.interviewDate),
                     if (interview.coArtisans.isNotEmpty()) "with ${interview.coArtisans.joinToString(", ")}" else null
                 ).joinToString(" · ")
-                if (meta.isNotBlank()) Text(meta, color = Muted, fontSize = 11.sp)
-                interview.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Body, fontSize = 12.sp) }
-                if (interview.media.isEmpty()) Text("No recordings.", color = Muted, fontSize = 12.sp)
+                if (meta.isNotBlank()) Text(meta, color = Muted, style = MaterialTheme.typography.bodySmall)
+                interview.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Body, style = MaterialTheme.typography.bodySmall) }
+                if (interview.media.isEmpty()) Text("No recordings.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 interview.media.forEach { MediaWithTranscript(context, it, repository) }
             }
         }
@@ -15150,19 +15150,19 @@ private fun TranscriptRefineControls(
 
     ActionRow {
         OutlinedButton(onClick = { onRefineClick(false) }, enabled = !refining, contentPadding = pad) {
-            Text("Refine transcript", maxLines = 1, softWrap = false, fontSize = 12.sp)
+            Text("Refine transcript", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
         }
         OutlinedButton(onClick = { onRefineClick(true) }, enabled = !refining, contentPadding = pad) {
-            Text("Refine & translate", maxLines = 1, softWrap = false, fontSize = 12.sp)
+            Text("Refine & translate", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
         }
     }
     if (refining) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-            Text("Refining with AI…", color = Muted, fontSize = 11.sp)
+            Text("Refining with AI…", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
-    refineError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+    refineError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     refined?.let { md ->
         Column(
             modifier = Modifier
@@ -15174,14 +15174,14 @@ private fun TranscriptRefineControls(
             Text(
                 if (refinedTranslated) "Refined conversation (English)" else "Refined conversation",
                 color = Coral,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold
             )
             MarkdownText(markdown = md, color = Canvas)
             Text(
                 "Replace the current transcript with this refined version?",
                 color = SurfaceCard,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
             // Approve = persist the refined text as the transcript (uploader/admin only on the server);
             // Reject = just discard this preview, leaving the stored transcript untouched.
@@ -15206,16 +15206,16 @@ private fun TranscriptRefineControls(
                     },
                     enabled = !applying,
                     contentPadding = pad
-                ) { Text(if (applying) "Saving…" else "Approve", maxLines = 1, softWrap = false, fontSize = 12.sp) }
+                ) { Text(if (applying) "Saving…" else "Approve", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium) }
                 OutlinedButton(modifier = Modifier.destructiveAction(), 
                     onClick = { refined = null },
                     enabled = !applying,
                     contentPadding = pad
-                ) { Text("Reject", maxLines = 1, softWrap = false, fontSize = 12.sp) }
+                ) { Text("Reject", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium) }
             }
         }
     }
-    appliedNote?.let { Text(it, color = SuccessGreen, fontSize = 11.sp) }
+    appliedNote?.let { Text(it, color = SuccessGreen, style = MaterialTheme.typography.bodySmall) }
 
     val mode = pendingTranslate
     if (mode != null) {
@@ -15261,14 +15261,14 @@ private fun MarkdownText(markdown: String, color: Color = Body) {
             when {
                 line.isEmpty() -> Spacer(Modifier.height(2.dp))
                 isRule -> HorizontalDivider(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), color = Muted)
-                line.startsWith("### ") -> Text(parseInlineMarkdown(line.removePrefix("### ")), display = true, color = color, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                line.startsWith("## ") -> Text(parseInlineMarkdown(line.removePrefix("## ")), display = true, color = color, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                line.startsWith("# ") -> Text(parseInlineMarkdown(line.removePrefix("# ")), display = true, color = color, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                line.startsWith("### ") -> Text(parseInlineMarkdown(line.removePrefix("### ")), display = true, color = color, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                line.startsWith("## ") -> Text(parseInlineMarkdown(line.removePrefix("## ")), display = true, color = color, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                line.startsWith("# ") -> Text(parseInlineMarkdown(line.removePrefix("# ")), display = true, color = color, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
                 line.startsWith("- ") || line.startsWith("* ") -> Row(modifier = Modifier.fillMaxWidth()) {
-                    Text("•  ", color = color, fontSize = 13.sp)
-                    Text(parseInlineMarkdown(line.drop(2)), color = color, fontSize = 13.sp)
+                    Text("•  ", color = color, style = MaterialTheme.typography.bodyMedium)
+                    Text(parseInlineMarkdown(line.drop(2)), color = color, style = MaterialTheme.typography.bodyMedium)
                 }
-                else -> Text(parseInlineMarkdown(line), color = color, fontSize = 13.sp)
+                else -> Text(parseInlineMarkdown(line), color = color, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
@@ -15321,8 +15321,8 @@ private fun RecordMediaSection(
     HorizontalDivider()
     Text("Media & transcripts", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
     when {
-        loading -> Text("Loading media…", color = Muted, fontSize = 12.sp)
-        media.isEmpty() -> Text("No media attached.", color = Muted, fontSize = 12.sp)
+        loading -> Text("Loading media…", color = Muted, style = MaterialTheme.typography.bodySmall)
+        media.isEmpty() -> Text("No media attached.", color = Muted, style = MaterialTheme.typography.bodySmall)
         else -> media.forEach { MediaWithTranscript(context, it, repository, readOnly) }
     }
 }
@@ -15371,7 +15371,7 @@ private fun StarRatingDisplay(rating: Int, max: Int = 5) {
             )
         }
         Spacer(Modifier.width(6.dp))
-        Text("$rating / $max", color = Muted, fontSize = 12.sp)
+        Text("$rating / $max", color = Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -15379,7 +15379,7 @@ private fun StarRatingDisplay(rating: Int, max: Int = 5) {
 @Composable
 private fun LabeledStarRating(label: String, rating: Int, onChange: (Int) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+        Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
         StarRatingInput(rating = rating, onChange = onChange)
     }
 }
@@ -15389,7 +15389,7 @@ private fun LabeledStarRating(label: String, rating: Int, onChange: (Int) -> Uni
 private fun LabeledRatingDisplay(label: String, rating: Int?) {
     if (rating == null) return
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(label, color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Text(label, color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
         StarRatingDisplay(rating)
     }
 }
@@ -15399,8 +15399,8 @@ private fun LabeledRatingDisplay(label: String, rating: Int?) {
 private fun QualitativeRow(label: String, value: String?) {
     if (value.isNullOrBlank()) return
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text(label, color = Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-        Text(value, color = Body, fontSize = 13.sp)
+        Text(label, color = Muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+        Text(value, color = Body, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -15450,32 +15450,32 @@ private fun DwFeedbackReportCard(report: FeedbackReportDto) {
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(report.subject, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+        Text(report.subject, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(report.kindLabel.ifBlank { report.kind }, color = Muted, fontSize = 11.sp)
-            if (report.severityLabel.isNotBlank()) Text("· ${report.severityLabel}", color = Muted, fontSize = 11.sp)
-            if (report.areaLabel.isNotBlank()) Text("· ${report.areaLabel}", color = Muted, fontSize = 11.sp)
+            Text(report.kindLabel.ifBlank { report.kind }, color = Muted, style = MaterialTheme.typography.bodySmall)
+            if (report.severityLabel.isNotBlank()) Text("· ${report.severityLabel}", color = Muted, style = MaterialTheme.typography.bodySmall)
+            if (report.areaLabel.isNotBlank()) Text("· ${report.areaLabel}", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         // The status is a WORD in a coloured pill and never a colour alone, so the judgement survives
         // colour-blindness and a greyscale screenshot in a bug report about this very screen.
         Text(
             report.statusLabel.ifBlank { report.status },
             color = dwFeedbackStatusColour(report.status),
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold
         )
-        Text(report.details, color = Body, fontSize = 13.sp)
+        Text(report.details, color = Body, style = MaterialTheme.typography.bodyMedium)
         val seen = readableStamp(report.acknowledgedAt)
         val done = readableStamp(report.resolvedAt)
         if (seen != null) {
             Text("Seen by ${report.acknowledgedBy?.name ?: "an administrator (account since removed)"} on $seen",
-                color = Muted, fontSize = 11.sp)
+                color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         if (done != null) {
             Text("Resolved by ${report.resolvedBy?.name ?: "an administrator (account since removed)"} on $done",
-                color = Muted, fontSize = 11.sp)
+                color = Muted, style = MaterialTheme.typography.bodySmall)
         }
-        report.responseNote?.takeIf { it.isNotBlank() }?.let { Text(it, color = Body, fontSize = 13.sp) }
+        report.responseNote?.takeIf { it.isNotBlank() }?.let { Text(it, color = Body, style = MaterialTheme.typography.bodyMedium) }
     }
 }
 
@@ -15579,11 +15579,11 @@ private fun FeedbackReportSection(repository: WorkshopRepository, onError: (Stri
         Text(
             "A grievance, suggestion or bug report. You can see who reads it.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         val served = vocabulary
         if (served == null) {
-            Text("Loading…", color = Muted, fontSize = 12.sp)
+            Text("Loading…", color = Muted, style = MaterialTheme.typography.bodySmall)
         } else {
             DropdownField(
                 label = "What is this?",
@@ -15617,7 +15617,7 @@ private fun FeedbackReportSection(repository: WorkshopRepository, onError: (Stri
             Text(
                 "Sends your app version and device too.",
                 color = Muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
 
             ActionRow {
@@ -15703,18 +15703,18 @@ private fun FeedbackReportSection(repository: WorkshopRepository, onError: (Stri
     RecordCard(title = "Your reports") {
         val filed = mine
         when {
-            filed == null -> Text("Loading…", color = Muted, fontSize = 12.sp)
+            filed == null -> Text("Loading…", color = Muted, style = MaterialTheme.typography.bodySmall)
             filed.isEmpty() -> Text(
                 "Your reports and replies appear here.",
                 color = Muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             else -> {
                 // The count is printed because the list is ONE PAGE of it. A list that quietly stops
                 // is indistinguishable from a place with no records, and this route's envelope
                 // carries the real total rather than leaving it to be inferred from a length.
                 if (mineTotal > filed.size) {
-                    Text("Latest ${filed.size} of $mineTotal.", color = Muted, fontSize = 11.sp)
+                    Text("Latest ${filed.size} of $mineTotal.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 filed.forEach { DwFeedbackReportCard(it) }
             }
@@ -15826,15 +15826,15 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
         Text(
             "One rating per person; change it any time. Everything is optional.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         if (loading) {
-            Text("Loading your feedback…", color = Muted, fontSize = 12.sp)
+            Text("Loading your feedback…", color = Muted, style = MaterialTheme.typography.bodySmall)
         } else {
             FormDraftRestoredNote(draft)
             // ---- Quantitative ----
-            Text("Ratings", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-            Text("Overall rating", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+            Text("Ratings", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+            Text("Overall rating", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
             StarRatingInput(rating = rating) { rating = it }
             Text(
                 when (rating) {
@@ -15846,7 +15846,7 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
                     else -> "Excellent"
                 },
                 color = Muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             LabeledStarRating("Ease of use", easeOfUse) { easeOfUse = it }
             LabeledStarRating("Reliability / stability", reliability) { reliability = it }
@@ -15857,7 +15857,7 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
 
             HorizontalDivider()
             // ---- Qualitative ----
-            Text("In your words", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Text("In your words", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
             TextInput("Your role (e.g. researcher, field documenter)", role) { role = it }
             /*
              * FEEDBACK: THE MICROPHONE, NOT THE EDITOR, ON ALL FIVE.
@@ -15945,7 +15945,7 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
                     }
                 )
             }
-            existing?.updatedAt?.let { formatIsoDate(it)?.let { d -> Text("Last updated $d", color = Muted, fontSize = 11.sp) } }
+            existing?.updatedAt?.let { formatIsoDate(it)?.let { d -> Text("Last updated $d", color = Muted, style = MaterialTheme.typography.bodySmall) } }
         }
     }
 }
@@ -15969,16 +15969,16 @@ private fun MasterFeedbackCard(repository: WorkshopRepository, onError: (String)
     }
 
     RecordCard(title = "User feedback") {
-        Text("Feedback from the team. Pick a user to read theirs.", color = Muted, fontSize = 12.sp)
+        Text("Feedback from the team. Pick a user to read theirs.", color = Muted, style = MaterialTheme.typography.bodySmall)
         when {
-            loading -> Text("Loading feedback…", color = Muted, fontSize = 12.sp)
-            feedback.isEmpty() -> Text("No feedback submitted yet.", color = Muted, fontSize = 12.sp)
+            loading -> Text("Loading feedback…", color = Muted, style = MaterialTheme.typography.bodySmall)
+            feedback.isEmpty() -> Text("No feedback submitted yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
             else -> {
                 val avg = feedback.mapNotNull { it.rating }.takeIf { it.isNotEmpty() }?.average()
                 Text(
                     "${feedback.size} user(s) gave feedback" + (avg?.let { " · average rating ${"%.1f".format(it)} / 5" } ?: ""),
                     color = Body,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 val options = feedback
@@ -16003,12 +16003,12 @@ private fun MasterFeedbackCard(repository: WorkshopRepository, onError: (String)
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(fb.user?.name ?: "Unknown user", display = true, color = Body, fontWeight = FontWeight.SemiBold)
-                        fb.user?.email?.let { Text(it, color = Muted, fontSize = 11.sp) }
-                        if (!fb.role.isNullOrBlank()) Text("Role: ${fb.role}", color = Muted, fontSize = 11.sp)
+                        fb.user?.email?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
+                        if (!fb.role.isNullOrBlank()) Text("Role: ${fb.role}", color = Muted, style = MaterialTheme.typography.bodySmall)
 
                         // Quantitative: overall + each aspect that was rated.
                         if (fb.rating != null) {
-                            Text("Overall", color = Muted, fontSize = 12.sp)
+                            Text("Overall", color = Muted, style = MaterialTheme.typography.bodySmall)
                             StarRatingDisplay(fb.rating!!)
                         }
                         LabeledRatingDisplay("Ease of use", fb.easeOfUse)
@@ -16030,8 +16030,8 @@ private fun MasterFeedbackCard(repository: WorkshopRepository, onError: (String)
                         val nothing = fb.rating == null && fb.easeOfUse == null && fb.reliability == null &&
                             fb.performance == null && fb.design == null && fb.features == null &&
                             fb.recommend == null && !hasText
-                        if (nothing) Text("No details provided.", color = Muted, fontSize = 12.sp)
-                        formatIsoDate(fb.updatedAt)?.let { Text("Updated $it", color = Muted, fontSize = 11.sp) }
+                        if (nothing) Text("No details provided.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        formatIsoDate(fb.updatedAt)?.let { Text("Updated $it", color = Muted, style = MaterialTheme.typography.bodySmall) }
                     }
                 }
             }
@@ -16093,13 +16093,13 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
         Text(
             "Recordings whose record was deleted. Play them or re-link to an existing record.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         when {
-            loading -> Text("Loading…", color = Muted, fontSize = 12.sp)
-            orphans.isEmpty() -> Text("None — every recording is attached.", color = Muted, fontSize = 12.sp)
+            loading -> Text("Loading…", color = Muted, style = MaterialTheme.typography.bodySmall)
+            orphans.isEmpty() -> Text("None — every recording is attached.", color = Muted, style = MaterialTheme.typography.bodySmall)
             else -> {
-                Text("${orphans.size} recovered file(s)", color = Body, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text("${orphans.size} recovered file(s)", color = Body, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
                 orphans.forEach { m ->
                     Column(
                         modifier = Modifier
@@ -16109,12 +16109,12 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         val typeLabel = m.linkedRecordType?.replaceFirstChar { it.uppercase() } ?: "Record"
-                        Text("From a deleted $typeLabel", color = Muted, fontSize = 11.sp)
-                        m.uploadedBy?.name?.let { Text("Recorded by $it", color = Muted, fontSize = 11.sp) }
+                        Text("From a deleted $typeLabel", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        m.uploadedBy?.name?.let { Text("Recorded by $it", color = Muted, style = MaterialTheme.typography.bodySmall) }
                         MediaWithTranscript(context, m, repository)
                         val opts = targetOptions[m.linkedRecordType].orEmpty()
                         if (opts.isEmpty()) {
-                            Text("No ${typeLabel.lowercase()} to re-link to.", color = Muted, fontSize = 11.sp)
+                            Text("No ${typeLabel.lowercase()} to re-link to.", color = Muted, style = MaterialTheme.typography.bodySmall)
                         } else {
                             DropdownField(
                                 label = "Re-link to a ${typeLabel.lowercase()}",
@@ -16311,7 +16311,7 @@ private fun AdminHubScreen(
 
     if (current == null) {
         RecordCard(title = "Admin tools", icon = Icons.Filled.Tune) {
-            Text("Administrative tools and settings.", color = Muted, fontSize = 12.sp)
+            Text("Administrative tools and settings.", color = Muted, style = MaterialTheme.typography.bodySmall)
             entries.forEach { entry ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -16331,10 +16331,10 @@ private fun AdminHubScreen(
                         Icon(entry.icon, contentDescription = null, tint = Canvas, modifier = Modifier.size(20.dp))
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(entry.label, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                        Text(entry.description, color = Muted, fontSize = 12.sp)
+                        Text(entry.label, display = true, color = Body, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                        Text(entry.description, color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
-                    Text("›", color = Muted, fontSize = 20.sp)
+                    Text("›", color = Muted, style = MaterialTheme.typography.bodyLarge)
                 }
             }
         }
@@ -16521,7 +16521,7 @@ private fun ViewDataScreen(
 
     RecordCard(title = "View data") {
         listCachedNote?.let { CachedCopyNote(it) }
-        Text("Pick a record type, then an entry.", color = Muted, fontSize = 12.sp)
+        Text("Pick a record type, then an entry.", color = Muted, style = MaterialTheme.typography.bodySmall)
         DropdownField(
             label = "Record type",
             options = viewDataModes.map { it.name to it.label },
@@ -16552,7 +16552,7 @@ private fun ViewDataScreen(
                     enabled = true
                 ) { selectedId = it }
                 if (hasArtisan && questionnaireOptions.isEmpty()) {
-                    Text("No questionnaires for these artisans yet. “Check completion” still shows the matrix.", color = Muted, fontSize = 12.sp)
+                    Text("No questionnaires for these artisans yet. “Check completion” still shows the matrix.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
             options.isEmpty() -> Text("No ${mode.label.lowercase()} records yet.", color = Muted)
@@ -16799,21 +16799,21 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
         Text(
             "Pending records. Approve, edit a small mistake, send back with comments, or reject.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         when {
             loading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text("Loading pending records…", color = Muted, fontSize = 12.sp)
+                Text("Loading pending records…", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
             loadError != null -> LoadFailedCard(message = loadError.orEmpty(), onRetry = { refresh() })
-            pending.isEmpty() -> Text("Nothing is waiting for review.", color = Muted, fontSize = 12.sp)
+            pending.isEmpty() -> Text("Nothing is waiting for review.", color = Muted, style = MaterialTheme.typography.bodySmall)
             else -> {
                 // ``total``, not ``pending.size``: they are the same number until the queue outgrows
                 // the cap, and after that the length of the list is the one figure that is certainly
                 // wrong — 200 of 340 announced as "200 record(s) awaiting review". The line below
                 // says which of the two the reader is looking at.
-                Text(if (queue.total == 1) "1 record awaiting review" else "${queue.total} records awaiting review", color = Body, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(if (queue.total == 1) "1 record awaiting review" else "${queue.total} records awaiting review", color = Body, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 // Wording decided in ui/ReviewQueueCopy.kt, the twin of the web's `queueCutNotice`,
                 // never assembled here: one queue described in two sentences by two clients is how a
                 // reviewer learns that neither means much. Renders nothing when the queue is whole.
@@ -16822,8 +16822,8 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
                     shown = pending.size,
                     total = queue.total,
                     cap = queue.cap,
-                )?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp) }
-                info?.let { Text(it, color = SuccessGreen, fontSize = 11.sp) }
+                )?.let { Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall) }
+                info?.let { Text(it, color = SuccessGreen, style = MaterialTheme.typography.bodySmall) }
                 pending.forEach { item ->
                     // Keyed by the record, not by position in the list. Every row here remembers state
                     // of its own — which panel is open, the half-typed rejection comment, the edit
@@ -16935,13 +16935,13 @@ private fun PendingReviewRow(
                     formatIsoDate(item.createdAt)
                 ).joinToString(" · "),
                 color = Muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
             if (item.needsAdminApproval) {
                 Text(
                     "Late submission — only an admin can edit or approve it.",
                     color = Coral,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
             ActionRow {
@@ -16949,7 +16949,7 @@ private fun PendingReviewRow(
                     onClick = { act("Approved ${item.label}", resolves = true) { repository.approveRecord(item.recordType, item.id) } },
                     enabled = !busy,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-                ) { Text(if (busy) "Working…" else "Approve", maxLines = 1, fontSize = 13.sp) }
+                ) { Text(if (busy) "Working…" else "Approve", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
                 OutlinedButton(modifier = Modifier.destructiveAction(), 
                     // Asks first, as the web's review page does. Rejection is the end of the road for a
                     // submission and it sits one tap away from "Send for revision", the recoverable
@@ -16959,7 +16959,7 @@ private fun PendingReviewRow(
                     onClick = { confirmReject = true },
                     enabled = !busy,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-                ) { Text("Reject", maxLines = 1, fontSize = 13.sp) }
+                ) { Text("Reject", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
             }
             ActionRow {
                 OutlinedButton(
@@ -16969,13 +16969,13 @@ private fun PendingReviewRow(
                 ) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (panel == "edit") "Close" else RecordOpen.UPDATE_LABEL, maxLines = 1, fontSize = 13.sp)
+                    Text(if (panel == "edit") "Close" else RecordOpen.UPDATE_LABEL, maxLines = 1, style = MaterialTheme.typography.labelLarge)
                 }
                 OutlinedButton(
                     onClick = { panel = if (panel == "revise") null else "revise" },
                     enabled = !busy,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-                ) { Text(if (panel == "revise") "Close" else "Send for revision", maxLines = 1, fontSize = 12.sp) }
+                ) { Text(if (panel == "revise") "Close" else "Send for revision", maxLines = 1, style = MaterialTheme.typography.labelMedium) }
             }
 
             when (panel) {
@@ -16983,7 +16983,7 @@ private fun PendingReviewRow(
                     Text(
                         "Comments are required. The record returns to its creator to fix.",
                         color = Muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     // The reviewer's note back to the field. Dictation only: it is read as a message,
                     // not rendered as a document, and the reviewer is usually dictating a correction
@@ -17002,12 +17002,12 @@ private fun PendingReviewRow(
                 "edit" -> {
                     val baseline = original
                     if (baseline == null) {
-                        Text("Loading ${item.recordType}…", color = Muted, fontSize = 12.sp)
+                        Text("Loading ${item.recordType}…", color = Muted, style = MaterialTheme.typography.bodySmall)
                     } else {
                         Text(
                             "Fix values directly. This doesn't approve it; changes are recorded under your name.",
                             color = Muted,
-                            fontSize = 11.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                         fields.forEach { field ->
                             val value = edited[field.key].orEmpty()
@@ -17061,7 +17061,7 @@ private fun PendingReviewRow(
                             // Name-like columns are title-cased server-side, so show what will land.
                             if (field.key in com.designprototype.workshop.data.TITLE_CASE_FIELDS) {
                                 titleCasePreview(value)?.let { normalised ->
-                                    Text("Will be saved as “$normalised”", color = Muted, fontSize = 11.sp)
+                                    Text("Will be saved as “$normalised”", color = Muted, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         }
@@ -17142,14 +17142,14 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
         Text(
             "Downloads every record and file as one zip, organised by workshop. May take a while.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         if (downloading) {
             val fraction = if (total > 0) done.toFloat() / total.toFloat() else 0f
             FieldLinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
-            Text("Compiling $done / $total files (${(fraction * 100).toInt()}%)", color = Muted, fontSize = 12.sp)
+            Text("Compiling $done / $total files (${(fraction * 100).toInt()}%)", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
-        resultMessage?.let { Text(it, color = Body, fontSize = 12.sp) }
+        resultMessage?.let { Text(it, color = Body, style = MaterialTheme.typography.bodySmall) }
         Button(
             onClick = {
                 if (downloading) return@Button
@@ -17195,9 +17195,9 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
         Text(
             "Or download a styled .xlsx with one sheet per record type.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
-        reportMessage?.let { Text(it, color = Body, fontSize = 12.sp) }
+        reportMessage?.let { Text(it, color = Body, style = MaterialTheme.typography.bodySmall) }
         OutlinedButton(
             onClick = {
                 if (reportBusy) return@OutlinedButton
@@ -17306,7 +17306,7 @@ private fun CompletionMatrixCard(
             "Sections recorded per artisan; green is done. Pinch to zoom." +
                 if (canEdit) " Tap a cell to set its status." else "",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         // The scope sits ABOVE the matrix, because it changes what every cell means.
         WorkshopScopeSelect(scope = workshopScope, label = "Workshops in this matrix")
@@ -17333,7 +17333,7 @@ private fun CompletionMatrixCard(
                 Text(
                     "$hidden interview${if (hidden == 1) " isn't" else "s aren't"} filed under a workshop",
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
@@ -17342,7 +17342,7 @@ private fun CompletionMatrixCard(
                             ", or file ${if (hidden == 1) "it" else "them"} from the Workshop screen."
                         } else ".",
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
@@ -17368,14 +17368,14 @@ private fun CompletionMatrixCard(
             Text(
                 "Scope filters recorded progress. Admin overrides apply under every scope.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
         val data = matrix
         when {
-            loading -> Text("Loading completion…", color = Muted, fontSize = 12.sp)
-            data == null || data.sections.isEmpty() -> Text("No questionnaire sections defined yet.", color = Muted, fontSize = 12.sp)
+            loading -> Text("Loading completion…", color = Muted, style = MaterialTheme.typography.bodySmall)
+            data == null || data.sections.isEmpty() -> Text("No questionnaire sections defined yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
             // Two different facts, and saying the wrong one sends somebody to look for artisans that
             // are there. The web's own two sentences.
             data.artisans.isEmpty() -> Text(
@@ -17385,7 +17385,7 @@ private fun CompletionMatrixCard(
                     "No artisans yet."
                 },
                 color = Muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             else -> {
                 val grid = data
@@ -17436,7 +17436,7 @@ private fun CompletionMatrixCard(
                                             .padding(horizontal = 6.dp),
                                         contentAlignment = Alignment.CenterStart
                                     ) {
-                                        Text(artisan.name, color = Body, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(artisan.name, color = Body, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     }
                                     data.sections.forEach { section ->
                                         val key = artisan.id to section.id
@@ -17465,11 +17465,11 @@ private fun CompletionMatrixCard(
                                             contentAlignment = Alignment.Center
                                         ) {
                                             if (status == "COMPLETED" || (status == null && derived)) {
-                                                Text("✓", color = OnStatusSuccess, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text("✓", color = OnStatusSuccess, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                                             } else if (status == "NEEDS_REVIEW") {
-                                                Text("!", color = OnStatusWarning, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text("!", color = OnStatusWarning, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                                             } else if (status == "NEEDS_REDO") {
-                                                Text("✗", color = OnStatusError, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text("✗", color = OnStatusError, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                     }
@@ -17508,7 +17508,7 @@ private fun CompletionMatrixCard(
             title = { Text("Mark $sectionName") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("for $artisanName", color = Muted, fontSize = 12.sp)
+                    Text("for $artisanName", color = Muted, style = MaterialTheme.typography.bodySmall)
                     CompletionStatusButton(CompletionGreen, "Completed") { apply("COMPLETED") }
                     CompletionStatusButton(CompletionAmber, "Requires review") { apply("NEEDS_REVIEW") }
                     CompletionStatusButton(CompletionRed, "Needs to be redone") { apply("NEEDS_REDO") }
@@ -17525,7 +17525,7 @@ private fun CompletionMatrixCard(
 private fun CompletionLegendChip(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(modifier = Modifier.size(12.dp).background(color, RoundedCornerShape(3.dp)))
-        Text(label, color = Muted, fontSize = 11.sp)
+        Text(label, color = Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -17539,7 +17539,7 @@ private fun CompletionHeaderCell(text: String, width: androidx.compose.ui.unit.D
             .padding(horizontal = 4.dp),
         contentAlignment = if (alignStart) Alignment.CenterStart else Alignment.Center
     ) {
-        Text(text, color = Body, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, color = Body, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -17554,7 +17554,7 @@ private fun CompletionStatusButton(color: Color, label: String, onClick: () -> U
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Box(modifier = Modifier.size(18.dp).background(color, RoundedCornerShape(4.dp)))
-        Text(label, color = Body, fontSize = 14.sp)
+        Text(label, color = Body, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -17594,9 +17594,9 @@ private fun ViewDataDetail(
                 }
                 d.steps.forEach { step ->
                     HorizontalDivider()
-                    Text("Step ${step.sortOrder} · ${if (step.stepType == "SEQUENTIAL") "Sequential" else "Group"} — ${step.name}", color = Body, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    step.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted, fontSize = 12.sp) }
-                    if (step.media.isEmpty()) Text("No media.", color = Muted, fontSize = 12.sp)
+                    Text("Step ${step.sortOrder} · ${if (step.stepType == "SEQUENTIAL") "Sequential" else "Group"} — ${step.name}", color = Body, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    step.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
+                    if (step.media.isEmpty()) Text("No media.", color = Muted, style = MaterialTheme.typography.bodySmall)
                     step.media.forEach { MediaWithTranscript(context, it, repository, readOnly) }
                 }
             }
@@ -17766,7 +17766,7 @@ private fun ViewDataDetail(
                 }
                 HorizontalDivider()
                 Text("Recordings & media", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-                if (groupMedia.isEmpty()) Text("No media attached.", color = Muted, fontSize = 12.sp)
+                if (groupMedia.isEmpty()) Text("No media attached.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 else groupMedia.forEach { MediaWithTranscript(context, it, repository, readOnly) }
             }
         }
@@ -17830,13 +17830,13 @@ private fun RecordCollabSection(
     LaunchedEffect(recordType, recordId) { reload() }
 
     RecordCard(title = "Comments & edit history") {
-        Text("Comments", display = true, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-        if (comments.isEmpty()) Text("No comments yet.", color = Muted, fontSize = 12.sp)
+        Text("Comments", display = true, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+        if (comments.isEmpty()) Text("No comments yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
         comments.forEach { c ->
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(1.dp), modifier = Modifier.weight(1f)) {
-                    Text(c.body, color = Body, fontSize = 13.sp)
-                    Text("${c.author?.name ?: "Someone"} · ${c.createdAt.take(10)}", color = Muted, fontSize = 11.sp)
+                    Text(c.body, color = Body, style = MaterialTheme.typography.bodyMedium)
+                    Text("${c.author?.name ?: "Someone"} · ${c.createdAt.take(10)}", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 /*
                   WITHDRAWING ONE, WHICH THIS HANDSET COULD NOT DO WHILE IT COULD POST.
@@ -17864,7 +17864,7 @@ private fun RecordCollabSection(
                                 busy = false
                             }
                         }
-                    ) { Text("Remove", fontSize = 12.sp) }
+                    ) { Text("Remove", style = MaterialTheme.typography.labelMedium) }
                 }
             }
         }
@@ -18094,7 +18094,7 @@ private fun AndroidMediaForm(
         Text(
             "Media is saved online with your records; audio is transcribed after upload.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         ActionRow {
             Button(onClick = { pickMedia.launch("*/*") }) {
@@ -18270,10 +18270,10 @@ private fun AndroidMediaForm(
                 }
             }
         }
-        localMessage?.let { Text(it, color = Muted, fontSize = 12.sp) }
+        localMessage?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
         if (uploading) {
             FieldLinearProgressIndicator(progress = { uploadFraction }, modifier = Modifier.fillMaxWidth())
-            uploadProgressText?.let { Text(it, color = Muted, fontSize = 12.sp) }
+            uploadProgressText?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
         }
         Button(
             onClick = {
@@ -18529,7 +18529,7 @@ private fun MediaProcessingJobsCard(
                     "$failedCount failed" + if (isAdmin) " — retry below." else " — an admin can re-run them."
                 } else "Nothing has failed.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
@@ -18565,18 +18565,18 @@ private fun MediaProcessingJobsCard(
                 enabled = !draining,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (draining) "Running queue…" else "Run queue now", fontSize = 13.sp)
+                Text(if (draining) "Running queue…" else "Run queue now", style = MaterialTheme.typography.labelLarge)
             }
         }
-        notice?.let { Text(it, color = Muted, fontSize = 11.sp) }
-        loadError?.let { Text(it, color = FailureRed, fontSize = 12.sp) }
+        notice?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
+        loadError?.let { Text(it, color = FailureRed, style = MaterialTheme.typography.bodySmall) }
         val rows = jobs
         when {
-            rows == null && loadError == null -> Text("Loading processing jobs…", color = Muted, fontSize = 12.sp)
+            rows == null && loadError == null -> Text("Loading processing jobs…", color = Muted, style = MaterialTheme.typography.bodySmall)
             rows != null && rows.isEmpty() -> Text(
                 if (failedOnly) "No failed jobs — the queue is clear." else "No jobs yet. Audio uploads queue automatically.",
                 color = Muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             rows != null -> rows.forEach { job -> MediaProcessingJobRow(
                 job = job,
@@ -18633,13 +18633,13 @@ private fun MediaProcessingJobRow(
         Text(
             job.mediaFile?.originalFilename ?: "(file removed)",
             color = Body,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold
         )
         Text(
             "$typeLabel · $statusLabel · attempt ${job.attempts} of ${job.maxAttempts}",
             color = statusColor,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         job.error?.takeIf { it.isNotBlank() }?.let { reason ->
             Text(
@@ -18648,7 +18648,7 @@ private fun MediaProcessingJobRow(
                 // trying again" — states that otherwise read identically from here.
                 (if (status == "FAILED") "Why it failed: " else "Retrying automatically: ") + reason,
                 color = if (status == "FAILED") FailureRed else Muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         if (retryable) {
@@ -18662,7 +18662,7 @@ private fun MediaProcessingJobRow(
                     )
                 }
             } else {
-                Text("An admin can re-run this.", color = Muted, fontSize = 11.sp)
+                Text("An admin can re-run this.", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -18769,16 +18769,16 @@ private fun AndroidUriPreview(
             "Upload failed — tap Retry, or Download to keep a copy.",
             // On the purple tile the scheme's error red is about 2:1; the tile's own error rung is AA.
             color = if (onTile != null) MaterialTheme.field.errorOnBrandTile else MaterialTheme.colorScheme.error,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         progress != null && progress < 1f -> {
             FieldLinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier.fillMaxWidth().height(4.dp)
             )
-            Text("Uploading ${(progress * 100).toInt()}%", color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text("Uploading ${(progress * 100).toInt()}%", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
-        progress != null && progress >= 1f -> Text("Uploaded", color = SuccessGreen, fontSize = 12.sp)
+        progress != null && progress >= 1f -> Text("Uploaded", color = SuccessGreen, style = MaterialTheme.typography.bodySmall)
     }
     if (onRetry != null || downloadable) {
         // Real tonal buttons, icon and word, 48dp (owner's report, 2026-10-17) — `MediaActionButton`.
@@ -18883,10 +18883,10 @@ private fun AndroidSavedMediaPreview(
     if (uri == null) {
         // No preview URL (e.g. an old/broken row) — still offer removal when allowed.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text(media.originalFilename, color = Body, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            Text(media.originalFilename, color = Body, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
             if (onDelete != null) {
                 TextButton(onClick = { confirmDelete = true }) {
-                    Text("Remove", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    Text("Remove", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -18923,7 +18923,7 @@ private fun AndroidSavedMediaPreview(
                 TextButton(modifier = Modifier.destructiveAction(), onClick = { confirmDelete = true }) {
                     Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(4.dp))
-                    Text("Remove", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    Text("Remove", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -19616,7 +19616,7 @@ private fun QuestionnaireForm(
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
         if (isEdit) {
-            Text("Add or update answers. Others' answers stay unless you change them.", color = Muted, fontSize = 12.sp)
+            Text("Add or update answers. Others' answers stay unless you change them.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         // ABOVE EVERY FIELD IT FILLS, so what was carried in is read before any of them. This line
         // used to say "above the workshop picker", which was true while the workshop opened this
@@ -19871,7 +19871,7 @@ private fun QuestionnaireForm(
         // would print a second, contradicting sentence under the first.
         if (artisanScope.narrowed && workshopArtisans.isNotEmpty()) {
             registerListNotice("artisans", workshopArtisans.size, workshopArtisanLoad)?.let { notice ->
-                Text(notice, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+                Text(notice, color = Muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
             }
         }
         DropdownField(
@@ -19898,7 +19898,7 @@ private fun QuestionnaireForm(
             onChange = { capturedLocation = it },
             onMessage = LocalAppNotice.current
         )
-        Text("Tap a section to answer. Only answered questions are saved.", color = Muted, fontSize = 12.sp)
+        Text("Tap a section to answer. Only answered questions are saved.", color = Muted, style = MaterialTheme.typography.bodySmall)
         sections.forEach { section ->
             val activeQuestions = section.questions.filter { it.isActive }
             if (activeQuestions.isNotEmpty()) {
@@ -19937,22 +19937,22 @@ private fun QuestionnaireForm(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("${section.code}. ${section.title}", display = true, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp)
+                                Text("${section.code}. ${section.title}", display = true, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
                                 Text(
                                     "${activeQuestions.size} questions · $answeredCount answered" +
-                                        (if (sectionSavedMedia.isNotEmpty()) " · ${sectionSavedMedia.size} saved recording(s)" else ""),
+                                        (if (sectionSavedMedia.isNotEmpty()) " · ${sectionSavedMedia.size} ${if (sectionSavedMedia.size == 1) "saved recording" else "saved recordings"}" else ""),
                                     color = Muted,
-                                    fontSize = 11.sp
+                                    style = MaterialTheme.typography.bodySmall
                                 )
                             }
-                            Text(if (expanded) "Hide ▲" else "Open ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (expanded) "Hide ▲" else "Open ▼", color = Body, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                         }
                         // Only the expanded section composes its inputs, which keeps the screen responsive.
                         if (expanded) {
                             if (recordMode == "SECTION") {
                                 // One consolidated recording for the whole section.
                                 val sectionKey = questionnaireSectionClipKey(section.id)
-                                Text("Record this entire section in one take.", color = Muted, fontSize = 12.sp)
+                                Text("Record this entire section in one take.", color = Muted, style = MaterialTheme.typography.bodySmall)
                                 AudioClipRecorder(
                                     clips = questionAudio[sectionKey] ?: emptyList(),
                                     onAddClip = { uri -> addClip(sectionKey, uri) },
@@ -20000,7 +20000,7 @@ private fun QuestionnaireForm(
                                     Text(
                                         transcript,
                                         color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 13.sp,
+                                        style = MaterialTheme.typography.bodyMedium,
                                         lineHeight = 19.sp
                                     )
                                 }
@@ -20033,7 +20033,7 @@ private fun QuestionnaireForm(
                                 HorizontalDivider()
                             }
                             activeQuestions.forEach { question ->
-                                Text("${question.sortOrder}. ${question.prompt}", color = Muted, fontSize = 12.sp)
+                                Text("${question.sortOrder}. ${question.prompt}", color = Muted, style = MaterialTheme.typography.bodySmall)
                                 if (recordMode == "INDIVIDUAL") {
                                     AudioClipRecorder(
                                         clips = questionAudio[question.id] ?: emptyList(),
@@ -20086,7 +20086,7 @@ private fun QuestionnaireForm(
                                             Text(
                                                 "Recorded answer",
                                                 color = MaterialTheme.field.onWarningContainer,
-                                                fontSize = 11.sp,
+                                                style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.SemiBold
                                             )
                                             // FLATTENED, ALWAYS. The column may hold a rich document,
@@ -20096,13 +20096,13 @@ private fun QuestionnaireForm(
                                             Text(
                                                 questionnaireAnswerPlain(answers[question.id]?.value),
                                                 color = MaterialTheme.field.onWarningContainer,
-                                                fontSize = 13.sp,
+                                                style = MaterialTheme.typography.bodyMedium,
                                                 lineHeight = 19.sp
                                             )
                                             Text(
                                                 QUESTIONNAIRE_RECORDED_ANSWER_HINT,
                                                 color = MaterialTheme.field.onWarningContainer,
-                                                fontSize = 11.sp,
+                                                style = MaterialTheme.typography.bodySmall,
                                                 lineHeight = 15.sp
                                             )
                                         }
@@ -20230,7 +20230,7 @@ private fun QuestionnaireForm(
                                 .flatMap { it.value }
                             if (sectionUploadUris.isNotEmpty()) {
                                 HorizontalDivider()
-                                Text("This section's recordings (uploading)", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("This section's recordings (uploading)", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                                 AttachedUploadsCard(
                                     context = context,
                                     media = qMedia,
@@ -20243,7 +20243,7 @@ private fun QuestionnaireForm(
                             // user can see (and not lose) what was captured earlier, right where it belongs.
                             if (isEdit && sectionSavedMedia.isNotEmpty()) {
                                 HorizontalDivider()
-                                Text("Saved recordings & media for this section", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("Saved recordings & media for this section", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                                 sectionSavedMedia.forEach { MediaWithTranscript(context, it, repository) }
                             }
                         }
@@ -20257,7 +20257,7 @@ private fun QuestionnaireForm(
                         modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 2.dp)
                     ) {
                         Icon(Icons.Filled.ArrowUpward, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(16.dp))
-                        Text("Your latest changes were made here", color = SuccessGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Your latest changes were made here", color = SuccessGreen, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -20269,7 +20269,7 @@ private fun QuestionnaireForm(
         if (qMedia.uris.isNotEmpty()) {
             HorizontalDivider()
             Text("All recordings (every section)", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-            Text("All clips for this interview; they upload as you record and link on save.", color = Muted, fontSize = 12.sp)
+            Text("All clips for this interview; they upload as you record and link on save.", color = Muted, style = MaterialTheme.typography.bodySmall)
             AttachedUploadsCard(context = context, media = qMedia, label = "recording", repository = repository) { uri -> removeClipUri(uri) }
         }
         // Any saved media not tied to a specific section (general attachments, or recordings whose
@@ -20760,7 +20760,7 @@ private fun QuestionnaireForm(
             state = saveState,
             idleLabel = if (isEdit) "Update interview" else "Save questionnaire"
         ) { submit() }
-        Text("Media uploads as you go and links automatically; audio is transcribed.", color = Muted, fontSize = 12.sp)
+        Text("Media uploads as you go and links automatically; audio is transcribed.", color = Muted, style = MaterialTheme.typography.bodySmall)
 
         /* ══════════════════════════════════════════════════════════════════════════════════════
          * "D BLACK POTTERY ALREADY COVERS THESE ARTISANS. MOVE THIS INTERVIEW INTO IT?"
@@ -20868,12 +20868,12 @@ private fun QuestionnaireForm(
                         modifier = Modifier.verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(report.heading, fontSize = 13.sp, lineHeight = 18.sp)
+                        Text(report.heading, style = MaterialTheme.typography.bodyMedium, lineHeight = 18.sp)
                         report.questions.forEach { question ->
-                            Text("•  $question", fontSize = 12.sp, lineHeight = 17.sp)
+                            Text("•  $question", style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                         }
                         if (report.remedy.isNotBlank()) {
-                            Text(report.remedy, fontSize = 12.sp, lineHeight = 17.sp, color = Muted)
+                            Text(report.remedy, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp, color = Muted)
                         }
                     }
                 }
@@ -20900,7 +20900,7 @@ private fun QuestionnaireBuilder(
     var updatingSections by remember { mutableStateOf(setOf<String>()) }
 
     RecordCard(title = "Questionnaire builder") {
-        Text("Add, edit and reorder sections and questions. ${RecordOpen.UPDATE_LABEL} opens the editors.", color = Muted, fontSize = 12.sp)
+        Text("Add, edit and reorder sections and questions. ${RecordOpen.UPDATE_LABEL} opens the editors.", color = Muted, style = MaterialTheme.typography.bodySmall)
         TextInput("New section code", newCode, dictate = false) { newCode = it }
         TextInput("New section title", newTitle) { newTitle = it }
         Button(
@@ -20942,17 +20942,17 @@ private fun QuestionnaireBuilder(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("${section.sortOrder}. ${section.code} - ${section.title}", display = true, fontWeight = FontWeight.SemiBold)
-                            Text("${section.questions.size} question(s)", color = Muted, fontSize = 11.sp)
+                            Text("${section.questions.size} question(s)", color = Muted, style = MaterialTheme.typography.bodySmall)
                         }
-                        Text(if (expanded) "Hide ▲" else "Show ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (expanded) "Hide ▲" else "Show ▼", color = Body, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                     }
                     // Shown: the section's questions, read-only, and the one way into its editors.
                     if (expanded && !updating) {
                         if (section.questions.isEmpty()) {
-                            Text("No questions in this section yet.", color = Muted, fontSize = 12.sp)
+                            Text("No questions in this section yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
                         }
                         section.questions.forEach { question ->
-                            Text("${question.sortOrder}. ${question.prompt}", color = Body, fontSize = 13.sp)
+                            Text("${question.sortOrder}. ${question.prompt}", color = Body, style = MaterialTheme.typography.bodyMedium)
                         }
                         OutlinedButton(
                             onClick = { updatingSections = updatingSections + section.id },
@@ -21027,7 +21027,7 @@ private fun QuestionnaireBuilder(
                                     .padding(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Text("${question.sortOrder}. ${question.sectionCode} ${question.prompt}", color = Muted, fontSize = 12.sp)
+                                Text("${question.sortOrder}. ${question.sectionCode} ${question.prompt}", color = Muted, style = MaterialTheme.typography.bodySmall)
                                 TextInput("Prompt", prompt, minLines = 2) { prompt = it }
                                 ActionRow {
                                     OutlinedButton(
@@ -21188,7 +21188,7 @@ private fun UserManagementForm(
         Text(
             "Professors and above can change roles (up to their own). Admins can also grant individual permissions. Tap a user to view; ${RecordOpen.UPDATE_LABEL} to change.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         /*
          * THE ISSUED LINK, AT THE TOP OF THE CARD AND NOT INSIDE THE ROW THAT MINTED IT.
@@ -21324,22 +21324,22 @@ private fun UserManagementForm(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(appUser.name, display = true, fontWeight = FontWeight.SemiBold)
-                            Text("${appUser.email} · ${roleLabel(appUser.role)}", color = Muted, fontSize = 12.sp)
+                            Text("${appUser.email} · ${roleLabel(appUser.role)}", color = Muted, style = MaterialTheme.typography.bodySmall)
                             // Nothing unless the server has an Aadhaar method switched on.
                             AadhaarUserBadge(account = appUser, viewer = repository.cachedUser())
                             Text(
                                 if (isMaster) "All privileges (master admin)"
                                 else "$grantedCount of 4 privileges granted",
                                 color = Muted,
-                                fontSize = 11.sp
+                                style = MaterialTheme.typography.bodySmall
                             )
                             if (appUser.twoFactorEnabled) {
-                                Text("Two-step on", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Two-step on", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                             }
                             // How this account gets in, in a line (2026-10-17): see AccountSignInCopy.kt.
-                            Text(accountSignInStatus(appUser), color = Muted, fontSize = 11.sp)
+                            Text(accountSignInStatus(appUser), color = Muted, style = MaterialTheme.typography.bodySmall)
                         }
-                        Text(if (expanded) "Hide ▲" else "Show ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (expanded) "Hide ▲" else "Show ▼", color = Body, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                     }
                     // Read-only: what the account is and holds, in the words the controls use.
                     if (expanded && !updating) {
@@ -21390,7 +21390,7 @@ private fun UserManagementForm(
                             Text(
                                 "Professors and above already have all of these; toggles grant single powers to lower roles.",
                                 color = Muted,
-                                fontSize = 11.sp
+                                style = MaterialTheme.typography.bodySmall
                             )
                             HorizontalDivider()
                         }
@@ -21505,7 +21505,7 @@ private fun UserManagementForm(
                                 // pressing: the panel that appears is the only copy there will be.
                                 "Shown once. Copy it and send it yourself.",
                                 color = Muted,
-                                fontSize = 11.sp
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                         /*
@@ -21620,9 +21620,9 @@ private fun SharingForm(
                         "COMMENT" -> "Comment (medium)"
                         else -> "Edit (maximum)"
                     },
-                    fontWeight = FontWeight.SemiBold, fontSize = 13.sp
+                    fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium
                 )
-                Text(t.description, color = Muted, fontSize = 12.sp)
+                Text(t.description, color = Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -21650,7 +21650,7 @@ private fun SharingForm(
 
     RecordCard(title = "Access to your data") {
         val incoming = grants.incoming
-        if (incoming.isEmpty()) Text("No requests yet.", color = Muted, fontSize = 13.sp)
+        if (incoming.isEmpty()) Text("No requests yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
         incoming.forEach { g ->
             ElevatedCard(colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard)) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -21658,9 +21658,9 @@ private fun SharingForm(
                     Text(
                         "${g.grantee?.email ?: ""} · ${tierLabel(g.tier)} · ${g.status}" +
                             (if (g.allData) " · all data" else " · ${g.scopeItems.size} records"),
-                        color = Muted, fontSize = 12.sp
+                        color = Muted, style = MaterialTheme.typography.bodySmall
                     )
-                    if (!g.requestNote.isNullOrBlank()) Text("“${g.requestNote}”", color = Muted, fontSize = 12.sp)
+                    if (!g.requestNote.isNullOrBlank()) Text("“${g.requestNote}”", color = Muted, style = MaterialTheme.typography.bodySmall)
                     val who = g.grantee?.name ?: g.granteeId
                     ActionRow {
                         when (g.status) {
@@ -21718,14 +21718,14 @@ private fun SharingForm(
 
     RecordCard(title = "Your access to others' data") {
         val outgoing = grants.outgoing
-        if (outgoing.isEmpty()) Text("No access yet.", color = Muted, fontSize = 13.sp)
+        if (outgoing.isEmpty()) Text("No access yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
         outgoing.forEach { g ->
             ElevatedCard(colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard)) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(g.owner?.name ?: g.ownerId, display = true, fontWeight = FontWeight.SemiBold)
                     Text(
                         "${g.owner?.email ?: ""} · ${tierLabel(g.tier)} · ${g.status}",
-                        color = Muted, fontSize = 12.sp
+                        color = Muted, style = MaterialTheme.typography.bodySmall
                     )
                     // The SAME DELETE, from the other side of the table: as grantee it withdraws a
                     // pending request or drops access already held. Both readings are destructive and
@@ -21771,7 +21771,7 @@ private fun SharingForm(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(pending.body)
-                    Text(pending.note, color = Muted, fontSize = 12.sp)
+                    Text(pending.note, color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
@@ -21903,7 +21903,7 @@ private fun WorkshopAssignmentCard(
         Text(
             "Pick a workshop and choose who can work in it. With nobody assigned, it's open to everyone.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         DropdownField(
             label = "Workshop",
@@ -21915,9 +21915,9 @@ private fun WorkshopAssignmentCard(
         if (selectedWorkshop.isBlank()) return@RecordCard
 
         if (loadingRoster) {
-            Text("Loading the roster…", color = Muted, fontSize = 12.sp)
+            Text("Loading the roster…", color = Muted, style = MaterialTheme.typography.bodySmall)
         } else if (roster.isEmpty()) {
-            Text("Nobody assigned — open to everyone.", color = Muted, fontSize = 12.sp)
+            Text("Nobody assigned — open to everyone.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         // Granted first (the people who actually have access), then anyone waiting, then the history.
         val ordered = roster.sortedBy { row ->
@@ -21938,11 +21938,11 @@ private fun WorkshopAssignmentCard(
                             workshopLevelLabel(row.accessLevel)
                         ).joinToString(" · "),
                         color = Muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
-                    Text(workshopAccessStatusLabel(row.status), color = workshopAccessStatusColor(row.status), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                    row.requestNote?.takeIf { it.isNotBlank() }?.let { Text("Asked: “$it”", color = Muted, fontSize = 11.sp) }
-                    row.decisionNote?.takeIf { it.isNotBlank() }?.let { Text("Decision: “$it”", color = Muted, fontSize = 11.sp) }
+                    Text(workshopAccessStatusLabel(row.status), color = workshopAccessStatusColor(row.status), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                    row.requestNote?.takeIf { it.isNotBlank() }?.let { Text("Asked: “$it”", color = Muted, style = MaterialTheme.typography.bodySmall) }
+                    row.decisionNote?.takeIf { it.isNotBlank() }?.let { Text("Decision: “$it”", color = Muted, style = MaterialTheme.typography.bodySmall) }
                     DropdownField(
                         label = "Access level",
                         options = workshopLevelOptions(levels),
@@ -21966,7 +21966,7 @@ private fun WorkshopAssignmentCard(
                                         repository.revokeWorkshopAccess(selectedWorkshop, row.userId)
                                     }
                                 }
-                            ) { Text(if (busy) "Working…" else "Revoke", maxLines = 1, fontSize = 13.sp) }
+                            ) { Text(if (busy) "Working…" else "Revoke", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
                         } else {
                             Button(
                                 enabled = !busy,
@@ -21975,7 +21975,7 @@ private fun WorkshopAssignmentCard(
                                         repository.grantWorkshopAccess(selectedWorkshop, row.userId, row.accessLevel)
                                     }
                                 }
-                            ) { Text(if (busy) "Working…" else "Grant", maxLines = 1, fontSize = 13.sp) }
+                            ) { Text(if (busy) "Working…" else "Grant", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
                             if (row.status == "PENDING") {
                                 OutlinedButton(modifier = Modifier.destructiveAction(), 
                                     enabled = !busy,
@@ -21984,7 +21984,7 @@ private fun WorkshopAssignmentCard(
                                             repository.updateWorkshopAccess(selectedWorkshop, row.userId, status = "DENIED")
                                         }
                                     }
-                                ) { Text("Deny", maxLines = 1, fontSize = 13.sp) }
+                                ) { Text("Deny", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
                             }
                         }
                     }
@@ -21993,13 +21993,13 @@ private fun WorkshopAssignmentCard(
         }
 
         HorizontalDivider()
-        Text("Add a researcher", display = true, color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("Add a researcher", display = true, color = Body, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         // Anyone already on the roster is reachable through their own row above, so they are not
         // offered here — granting them again from this picker would be a second way to do one thing.
         val onRoster = roster.map { it.userId }.toSet()
         val addable = directory.filterNot { it.id in onRoster }
         if (addable.isEmpty()) {
-            Text("Everyone already has a row here.", color = Muted, fontSize = 12.sp)
+            Text("Everyone already has a row here.", color = Muted, style = MaterialTheme.typography.bodySmall)
         } else {
             DropdownField(
                 label = "Researcher",
@@ -22016,7 +22016,7 @@ private fun WorkshopAssignmentCard(
                 onSelect = { addLevel = it }
             )
             levels.firstOrNull { it.level == addLevel }?.description?.takeIf { it.isNotBlank() }
-                ?.let { Text(it, color = Muted, fontSize = 11.sp) }
+                ?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
             Button(
                 enabled = busyUserId == null && addUserId.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
@@ -22074,10 +22074,10 @@ private fun WorkshopAccessScreen(
         Text(
             "Pick the workshops you need and send one request. An admin sets your level.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         if (loading) {
-            Text("Loading workshops…", color = Muted, fontSize = 12.sp)
+            Text("Loading workshops…", color = Muted, style = MaterialTheme.typography.bodySmall)
         } else {
             CheckboxMultiSelectField(
                 label = "Workshops",
@@ -22102,7 +22102,7 @@ private fun WorkshopAccessScreen(
                 onSelect = { level = it }
             )
             levels.firstOrNull { it.level == level }?.description?.takeIf { it.isNotBlank() }
-                ?.let { Text(it, color = Muted, fontSize = 11.sp) }
+                ?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
             // A note to whoever grants the access. Dictation only: it is read once, by a person, in a
             // request list — there is nothing here for formatting to survive into.
             TextInput("Why do you need access? (optional)", note, minLines = 2) { note = it }
@@ -22140,10 +22140,10 @@ private fun WorkshopAccessScreen(
         Text(
             "Your access, pending requests and refusals.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         if (mine.isEmpty()) {
-            Text("No workshop access yet.", color = Muted, fontSize = 12.sp)
+            Text("No workshop access yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         mine.forEach { row ->
             ElevatedCard(
@@ -22157,15 +22157,15 @@ private fun WorkshopAccessScreen(
                         Text(
                             workshopAccessStatusLabel(row.status),
                             color = workshopAccessStatusColor(row.status),
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold
                         )
-                        Text("· ${workshopLevelLabel(row.accessLevel)}", color = Muted, fontSize = 12.sp)
+                        Text("· ${workshopLevelLabel(row.accessLevel)}", color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
-                    row.decisionNote?.takeIf { it.isNotBlank() }?.let { Text("“$it”", color = Muted, fontSize = 11.sp) }
-                    row.decidedBy?.name?.let { Text("Decided by $it${formatIsoDate(row.decidedAt)?.let { d -> " · $d" } ?: ""}", color = Muted, fontSize = 11.sp) }
+                    row.decisionNote?.takeIf { it.isNotBlank() }?.let { Text("“$it”", color = Muted, style = MaterialTheme.typography.bodySmall) }
+                    row.decidedBy?.name?.let { Text("Decided by $it${formatIsoDate(row.decidedAt)?.let { d -> " · $d" } ?: ""}", color = Muted, style = MaterialTheme.typography.bodySmall) }
                     if (row.status == "DENIED" || row.status == "REVOKED") {
-                        Text("You can ask again above.", color = Muted, fontSize = 11.sp)
+                        Text("You can ask again above.", color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -22241,7 +22241,7 @@ private fun WorkshopAccessQueueCard(
         Text(
             "Access requests, oldest first. Approving sets their level; it doesn't close an open workshop.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = !showAll, onClick = { showAll = false }, label = { Text("Pending") })
@@ -22270,8 +22270,8 @@ private fun WorkshopAccessQueueCard(
                 // The server answered and the answer was "none". An ordinary state, so it reads as
                 // one — the card's own ink, no panel.
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(n.heading, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text(n.body, color = Muted, fontSize = 12.sp)
+                    Text(n.heading, display = true, color = Body, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                    Text(n.body, color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             } else {
                 // A FILLED AMBER PANEL when the queue was NOT read, the same treatment the sign-in
@@ -22290,14 +22290,14 @@ private fun WorkshopAccessQueueCard(
                         display = true,
                         color = MaterialTheme.field.onWarningContainer,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp
+                        style = MaterialTheme.typography.titleMedium
                     )
-                    Text(n.body, color = MaterialTheme.field.onWarningContainer, fontSize = 12.sp)
+                    Text(n.body, color = MaterialTheme.field.onWarningContainer, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
         if (loading) {
-            Text("Loading requests…", color = Muted, fontSize = 12.sp)
+            Text("Loading requests…", color = Muted, style = MaterialTheme.typography.bodySmall)
         } else {
             rows.forEach { row ->
                 val busy = busyId == row.id
@@ -22316,15 +22316,15 @@ private fun WorkshopAccessQueueCard(
                                 formatIsoDate(row.createdAt)
                             ).joinToString(" · "),
                             color = Muted,
-                            fontSize = 11.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                         Text(
                             "${workshopAccessStatusLabel(row.status)} · asked for ${workshopLevelLabel(row.accessLevel)}",
                             color = workshopAccessStatusColor(row.status),
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
                         )
-                        row.requestNote?.takeIf { it.isNotBlank() }?.let { Text("“$it”", color = Muted, fontSize = 11.sp) }
+                        row.requestNote?.takeIf { it.isNotBlank() }?.let { Text("“$it”", color = Muted, style = MaterialTheme.typography.bodySmall) }
                         if (pending) {
                             DropdownField(
                                 label = "Grant at level",
@@ -22338,18 +22338,18 @@ private fun WorkshopAccessQueueCard(
                                 Button(
                                     enabled = !busy,
                                     onClick = { decide(row, "GRANTED") }
-                                ) { Text(if (busy) "Working…" else "Approve", maxLines = 1, fontSize = 13.sp) }
+                                ) { Text(if (busy) "Working…" else "Approve", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
                                 OutlinedButton(modifier = Modifier.destructiveAction(), 
                                     enabled = !busy,
                                     onClick = { decide(row, "DENIED") }
-                                ) { Text("Deny", maxLines = 1, fontSize = 13.sp) }
+                                ) { Text("Deny", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
                             }
                         } else {
-                            row.decisionNote?.takeIf { it.isNotBlank() }?.let { Text("Decision: “$it”", color = Muted, fontSize = 11.sp) }
+                            row.decisionNote?.takeIf { it.isNotBlank() }?.let { Text("Decision: “$it”", color = Muted, style = MaterialTheme.typography.bodySmall) }
                             Text(
                                 "Already decided — change it under Workshop assignments.",
                                 color = Muted,
-                                fontSize = 11.sp
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                     }
@@ -22558,7 +22558,7 @@ private fun MyTasksScreen(
             // up front is what stops an unreachable server being read as an empty workload.
             "Your assigned work and progress. Update the status as you go. Needs a connection.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         if (canAssign) {
             // Web parity with the strip on /tasks: say where handing work out actually happens, and
@@ -22566,7 +22566,7 @@ private fun MyTasksScreen(
             Text(
                 "Assign work from the assignment board.",
                 color = Muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             onOpenAssignmentBoard?.let { open ->
                 OutlinedButton(onClick = open, modifier = Modifier.fillMaxWidth()) {
@@ -22620,12 +22620,12 @@ private fun MyTasksScreen(
                         "Offline — this list may be out of date, and changes won't send until you're online."
                 },
                 color = Coral,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         cachedNote?.takeIf { !loading }?.let { CachedCopyNote(it) }
         when {
-            loading -> Text("Loading tasks…", color = Muted, fontSize = 12.sp)
+            loading -> Text("Loading tasks…", color = Muted, style = MaterialTheme.typography.bodySmall)
             // "Nothing is assigned to you" is a claim about what the SERVER holds, so it is only
             // said when the server answered. When it did not, the caption above has already given
             // the honest reason and printing this underneath would contradict it on one screen.
@@ -22634,7 +22634,7 @@ private fun MyTasksScreen(
                     if (view == "created") "You have not assigned any work yet."
                     else "Nothing is assigned to you right now.",
                     color = Muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
             else -> tasks.forEach { task ->
@@ -22673,8 +22673,8 @@ private fun TaskCard(
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(task.title.ifBlank { "Field task" }, display = true, color = Body, fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(taskStatusLabel(task.status), color = taskStatusColor(task.status), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                if (task.isOverdue) Text("· Overdue", color = FailureRed, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(taskStatusLabel(task.status), color = taskStatusColor(task.status), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                if (task.isOverdue) Text("· Overdue", color = FailureRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
             }
             Text(
                 listOfNotNull(
@@ -22685,10 +22685,10 @@ private fun TaskCard(
                     if (!editable) task.assignee?.name?.takeIf { it.isNotBlank() }?.let { "for $it" } else null
                 ).joinToString(" · ").ifBlank { "No workshop or due date" },
                 color = Muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
-            if (scopeLine.isNotBlank()) Text(scopeLine, color = Body, fontSize = 12.sp)
-            task.description?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted, fontSize = 12.sp) }
+            if (scopeLine.isNotBlank()) Text(scopeLine, color = Body, style = MaterialTheme.typography.bodySmall)
+            task.description?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
 
             // Reported vs derived, side by side: "says 8, repository sees 2" is the signal worth seeing.
             val target = task.targetCount
@@ -22703,7 +22703,7 @@ private fun TaskCard(
                     }
                 },
                 color = Muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
             task.percentComplete?.let { percent ->
                 FieldLinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth())
@@ -22717,7 +22717,7 @@ private fun TaskCard(
                     // The current status is the FILLED button, not a "✓" squeezed into the label that
                     // clipped "In progress" at 360dp (UX audit 2026-10-16, DA-35).
                     val label: @Composable () -> Unit = {
-                        Text(taskStatusLabel(value), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
+                        Text(taskStatusLabel(value), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                     }
                     if (current) {
                         Button(
@@ -22764,8 +22764,8 @@ private fun tierLabel(tier: String): String = when (tier) {
 private fun GrantToggleRow(label: String, granted: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, color = Body, fontSize = 13.sp)
-            Text(if (granted) "Granted" else "Not granted", color = Muted, fontSize = 11.sp)
+            Text(label, color = Body, style = MaterialTheme.typography.bodyMedium)
+            Text(if (granted) "Granted" else "Not granted", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         OutlinedButton(enabled = enabled, onClick = { onToggle(!granted) }) {
             Text(if (granted) "Revoke" else "Grant")
@@ -22784,10 +22784,10 @@ private fun RecordCard(title: String, icon: ImageVector? = null, content: @Compo
             if (icon != null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(24.dp))
-                    Text(title, display = true, fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurface)
+                    Text(title, display = true, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
                 }
             } else {
-                Text(title, display = true, fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurface)
+                Text(title, display = true, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
             }
             content()
         }
@@ -22845,26 +22845,26 @@ private fun WorkshopMappingCard(
         Text(
             "Records without a workshop are hidden from every workshop scope. This files each one using its own evidence.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         val current = plan
         when {
             loading && current == null ->
-                Text("Reading every record that names no workshop…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text("Reading every record that names no workshop…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
 
             current == null ->
                 Text(
                     "Couldn't load the report. Tap Re-check.",
                     color = MaterialTheme.field.body,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
 
             current.totals.unassigned == 0 ->
                 Text(
                     "Every record is filed under a workshop.",
                     color = MaterialTheme.field.body,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
 
             else -> {
@@ -22894,14 +22894,14 @@ private fun WorkshopMappingCard(
                                         if (bucket.unresolved > 0) ", ${bucket.unresolved} need a person" else ""
                                 },
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold
                         )
                         if (bucket.byWorkshop.isNotEmpty()) {
                             Text(
                                 "Filed under " + bucket.byWorkshop.joinToString(", ") { "${it.title} (${it.count})" } + ".",
                                 color = MaterialTheme.field.muted,
-                                fontSize = 11.sp
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                         // WHICH RULE DECIDED, aggregated. An admin approving a bulk write needs to know
@@ -22912,7 +22912,7 @@ private fun WorkshopMappingCard(
                             Text(
                                 "${entry.count} because ${entry.copy}.",
                                 color = MaterialTheme.field.body,
-                                fontSize = 11.sp
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                         val stuck = bucket.rows.filter { it.workshopId == null }
@@ -22927,7 +22927,7 @@ private fun WorkshopMappingCard(
                                 Text(
                                     "Left alone — choose its workshop by hand",
                                     color = MaterialTheme.field.onWarningContainer,
-                                    fontSize = 11.sp,
+                                    style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 /*
@@ -22971,7 +22971,7 @@ private fun WorkshopMappingCard(
                                     Text(
                                         "${bucket.unresolved - stuck.size} more not listed. Re-check after filing these.",
                                         color = MaterialTheme.field.onWarningContainer,
-                                        fontSize = 11.sp
+                                        style = MaterialTheme.typography.bodySmall
                                     )
                                 }
                             }
@@ -23016,7 +23016,7 @@ private fun WorkshopMappingCard(
                     Text(
                         "Only fills empty workshops; nothing filed is changed.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -23030,7 +23030,7 @@ private fun WorkshopMappingCard(
                     "$total record${if (total == 1) "" else "s"} filed."
                 },
                 color = MaterialTheme.field.body,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -23039,7 +23039,7 @@ private fun WorkshopMappingCard(
                 Text(
                     "No workshop has dates, so nothing can be filed by date. Add start and end dates.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             } else {
                 // The WINDOWS, not just the titles. An end date is stored differently by each client — the
@@ -23051,7 +23051,7 @@ private fun WorkshopMappingCard(
                         "${window.title} — read as ${formatIsoDay(window.start)} to " +
                             formatIsoDay(window.end, daysBefore = 1),
                         color = MaterialTheme.field.placeholder,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -23138,7 +23138,7 @@ private fun DwUnfiledRecordCard(
         Text(
             row.title.ifBlank { "Untitled $noun" },
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold
         )
         // WHY IT WAS LEFT ALONE, kept from the line this card replaces: an admin deciding where a row
@@ -23148,11 +23148,11 @@ private fun DwUnfiledRecordCard(
             row.candidateTitles.takeIf { it.isNotEmpty() }?.joinToString(" or ")
         ).joinToString(" · ")
         if (why.isNotBlank()) {
-            Text(why, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+            Text(why, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
         }
 
         if (!expanded) {
-            Text("Tap to file it, open it, or discard it.", color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text("Tap to file it, open it, or discard it.", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             return@Column
         }
 
@@ -23188,7 +23188,7 @@ private fun DwUnfiledRecordCard(
                     }
                 },
                 enabled = !busy && chosenWorkshop.isNotBlank(),
-            ) { Text("File it", fontSize = 12.sp) }
+            ) { Text("File it", style = MaterialTheme.typography.labelMedium) }
 
             // ── 2. OPEN ────────────────────────────────────────────────────────────────────────
             //
@@ -23200,7 +23200,7 @@ private fun DwUnfiledRecordCard(
                 OutlinedButton(
                     onClick = { onOpen(mode, row.id) },
                     enabled = !busy,
-                ) { Text("Open", fontSize = 12.sp) }
+                ) { Text("Open", style = MaterialTheme.typography.labelMedium) }
             }
         }
 
@@ -23208,21 +23208,21 @@ private fun DwUnfiledRecordCard(
         if (!confirmingDelete) {
             ActionRow {
                 TextButton(modifier = Modifier.destructiveAction(), onClick = { confirmingDelete = true }, enabled = !busy) {
-                    Text("Discard permanently", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    Text("Discard permanently", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
                 }
             }
         } else {
             Text(
                 "Permanently delete “${row.title}”? Attached media is kept but unlinked.",
                 color = MaterialTheme.colorScheme.error,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 15.sp
             )
             ActionRow {
                 // CANCEL FIRST AND CANCEL WIDER. A reflex press on a two-button row lands on the
                 // leading control, and on this row that must be the one that loses nothing.
                 OutlinedButton(onClick = { confirmingDelete = false }, enabled = !busy) {
-                    Text("Keep it", fontSize = 12.sp)
+                    Text("Keep it", style = MaterialTheme.typography.labelMedium)
                 }
                 TextButton(modifier = Modifier.destructiveAction(), 
                     onClick = {
@@ -23247,7 +23247,7 @@ private fun DwUnfiledRecordCard(
                     },
                     enabled = !busy
                 ) {
-                    Text("Delete it permanently", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    Text("Delete it permanently", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -23286,12 +23286,12 @@ private fun MappingStatTile(label: String, value: Int, modifier: Modifier = Modi
             .border(1.dp, MaterialTheme.field.hairline, MaterialTheme.shapes.small)
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
-        Text(label.uppercase(Locale.ROOT), color = MaterialTheme.field.muted, fontSize = 11.sp)
+        Text(label.uppercase(Locale.ROOT), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         Text(
             value.toString(),
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 20.sp,
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold
         )
     }
@@ -23454,7 +23454,7 @@ private const val SAVED_CONFIRM_MS = 750L
 @Composable
 private fun TitleCaseHint(value: String) {
     val normalised = titleCasePreview(value) ?: return
-    Text("Will be saved as “$normalised”", color = Muted, fontSize = 11.sp)
+    Text("Will be saved as “$normalised”", color = Muted, style = MaterialTheme.typography.bodySmall)
 }
 
 /**
@@ -23630,9 +23630,9 @@ private fun NumberedListDisplay(label: String, value: String?) {
     val items = value?.split("\n")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
     if (items.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(label, color = Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Text(label, color = Muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
         items.forEachIndexed { index, item ->
-            Text("${index + 1}. $item", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+            Text("${index + 1}. $item", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

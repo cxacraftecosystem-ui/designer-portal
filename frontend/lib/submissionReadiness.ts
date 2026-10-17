@@ -49,6 +49,7 @@
  * that is not.
  */
 
+import { byCount, countNoun } from "@/lib/format";
 import {
   isFilled,
   rowTitle,
@@ -382,7 +383,8 @@ function reportChecks(
       stageTitle: target.title,
       title: `Stage ${target.number} is excluded from the report but has answers in it`,
       detail:
-        `${score.requiredFilled + score.optionalFilled} field(s) are filled in on "${target.title}", and ` +
+        `${countNoun(score.requiredFilled + score.optionalFilled, "field")} ` +
+          `${byCount(score.requiredFilled + score.optionalFilled, "is", "are")} filled in on "${target.title}", and ` +
         "stage 20 leaves this stage out of the generated report. That is a legitimate choice — but the " +
         "work will not appear in the file that is submitted.",
       href: at(EXCLUDED_STAGES_FIELD_KEY)

@@ -208,21 +208,22 @@ class IslandBottomNavTest {
     }
 
     @Test
-    fun `labels shrink in half points before they are given up`() {
-        // 11sp needs 44dp, 10.5sp needs 42dp: 43dp of room takes 10.5sp.
-        assertEquals(10.5f, islandLabelSize(available = 43f, widestAt = widest(4f)))
-        assertEquals(ISLAND_LABEL_MIN_SP, islandLabelSize(available = 40f, widestAt = widest(4f)))
+    fun `a caller's own floor still shrinks in half points before the words are given up`() {
+        // 11sp needs 44dp, 10.5sp needs 42dp: 43dp of room takes 10.5sp when 10sp is allowed.
+        assertEquals(10.5f, islandLabelSize(available = 43f, widestAt = widest(4f), minSp = 10f))
+        assertEquals(10f, islandLabelSize(available = 40f, widestAt = widest(4f), minSp = 10f))
     }
 
     @Test
     fun `below the smallest size the bar draws glyphs only`() {
-        assertNull(islandLabelSize(available = 39.9f, widestAt = widest(4f)))
+        // The bar's own floor is 11sp: 43.9dp cannot hold the 44dp word, so the bar draws glyphs.
+        assertNull(islandLabelSize(available = 43.9f, widestAt = widest(4f)))
     }
 
     @Test
-    fun `the bar never prints larger than labelSmall and shrinks to ten points`() {
+    fun `the bar prints at labelSmall and never under the app's 11sp floor`() {
         assertEquals(11f, ISLAND_LABEL_MAX_SP)
-        assertEquals(10f, ISLAND_LABEL_MIN_SP)
+        assertEquals(11f, ISLAND_LABEL_MIN_SP)
     }
 
     /**

@@ -539,7 +539,7 @@ internal fun DwSketchChooserUploadTab(
                 problem != null -> Text(
                     problem.orEmpty(),
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     lineHeight = 18.sp,
                 )
 
@@ -551,14 +551,14 @@ internal fun DwSketchChooserUploadTab(
                     Text(
                         "Loading sketches and prototypes…",
                         color = MaterialTheme.field.muted,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
 
                 notice != null -> Text(
                     notice.orEmpty(),
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                 )
 
@@ -657,7 +657,7 @@ private fun DwChooserUploadHalf(
                 half.title,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
             )
         }
 
@@ -676,7 +676,7 @@ private fun DwChooserUploadHalf(
             Text(
                 DW_SKETCH_CHOOSER_NO_STAGE,
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
             )
             return@Column
@@ -689,13 +689,13 @@ private fun DwChooserUploadHalf(
             Text(
                 sentence,
                 color = MaterialTheme.colorScheme.error,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
             )
             Text(
                 DW_SKETCH_CHOOSER_STALE,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -709,7 +709,7 @@ private fun DwChooserUploadHalf(
             Text(
                 half.emptyNote,
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
             )
         } else {
@@ -766,7 +766,7 @@ private fun DwChooserUploadHalf(
                 onClick = { onAdd(half) },
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text(half.addLabel, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
+                Text(half.addLabel, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
             }
             OutlinedButton(
                 onClick = { onOpenStage(workshopId, stageKey) },
@@ -776,7 +776,7 @@ private fun DwChooserUploadHalf(
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
                 )
-                Text("Open the stage", fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
+                Text("Open the stage", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
             }
         }
         // THE ESCAPE IS NAMED RATHER THAN IMPLIED. Everything this tab cannot do is on that form, and
@@ -788,7 +788,7 @@ private fun DwChooserUploadHalf(
         Text(
             half.stageNote,
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -817,8 +817,7 @@ private fun DwChooserUploadHalf(
                     // The FACT and the ADVICE are two different kinds of statement and are sized
                     // apart deliberately — see the two constants' own KDocs for why they are two
                     // constants rather than one paragraph.
-                    fontSize = if (index == 0) 12.sp else 11.sp,
-                    lineHeight = if (index == 0) 17.sp else 16.sp,
+                    style = if (index == 0) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
                 )
             }
         }
@@ -826,7 +825,7 @@ private fun DwChooserUploadHalf(
             fields.isEmpty() -> Text(
                 DW_SKETCH_CHOOSER_NO_MEDIA_FIELDS,
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
             )
 

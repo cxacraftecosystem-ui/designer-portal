@@ -880,7 +880,7 @@ internal fun DwMediaCaptureCard(
                     "Up to $declaredCap file${if (declaredCap == 1) "" else "s"} — $room more can be attached."
                 },
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -928,7 +928,7 @@ internal fun DwMediaCaptureCard(
                 Text(
                     sentence,
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -966,7 +966,7 @@ internal fun DwMediaCaptureCard(
             Text(
                 "Checking ${screening.screening} photo${if (screening.screening == 1) "" else "s"}…",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
 
@@ -974,7 +974,7 @@ internal fun DwMediaCaptureCard(
             Text(
                 if (multiple) "No photographs yet." else "Nothing attached yet.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -1299,7 +1299,7 @@ private fun CaptureButton(
         Text(
             label,
             color = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.labelLarge,
             maxLines = 1
         )
     }
@@ -1423,7 +1423,7 @@ private fun DwAttachmentRow(
                     .then(if (exists) Modifier.clickable(onClickLabel = "play", onClick = onOpen) else Modifier)
             ) {
                 when {
-                    !exists || fileUri == null -> Text("?", color = MaterialTheme.field.muted, fontSize = 16.sp)
+                    !exists || fileUri == null -> Text("?", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodyLarge)
                     item?.mediaType.equals("IMAGE", ignoreCase = true) -> AsyncImage(
                         model = fileUri,
                         contentDescription = item?.displayName,
@@ -1461,7 +1461,7 @@ private fun DwAttachmentRow(
                 Text(
                     item?.displayName ?: "Missing file",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1
                 )
@@ -1472,7 +1472,7 @@ private fun DwAttachmentRow(
                         DwAttachmentTone.PROGRESS -> MaterialTheme.colorScheme.primary
                         DwAttachmentTone.NEUTRAL -> MaterialTheme.field.muted
                     },
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     // Four lines, not two. A refusal now carries the reason it was refused, and the
                     // reasons are sentences — "the file store refused it with HTTP 413. This is a
                     // setting on the store rather than your connection…". Clipped at two lines, the

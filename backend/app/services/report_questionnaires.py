@@ -75,6 +75,7 @@ from app.services.report_model import (
     clean_text,
     runs_of,
 )
+from app.services.text_format import by_count, count_noun
 
 DEFAULT_HEADING = "Annexure — Questionnaire responses"
 
@@ -390,7 +391,7 @@ def _sitting_provenance(sitting: QuestionnaireSitting) -> str:
     parts = [
         p
         for p in (
-            f"{sitting.answered_count} question(s) answered",
+            f"{count_noun(sitting.answered_count, 'question')} answered",
             source,
             sitting.recorded_at[:10] if sitting.recorded_at else "",
             f"recorded by {sitting.recorded_by}" if sitting.recorded_by else "",
@@ -416,8 +417,8 @@ def _questionnaire_provenance(item: QuestionnaireItem) -> str:
             # keeps the line byte-identical to what it was for every questionnaire recorded before
             # the column existed — the same rule the grouping above follows.
             _stage_group(item)[2],
-            f"{len(printed)} sitting(s)",
-            f"{item.question_count} question(s)" if item.question_count else "",
+            count_noun(len(printed), "sitting"),
+            count_noun(item.question_count, "question") if item.question_count else "",
             f"version {item.version}",
             f"from {item.source_filename}" if item.source_filename else "",
             f"questionnaire {item.questionnaire_id}",
@@ -681,8 +682,9 @@ def append_questionnaire_annexure(
                     doc.add(block)
             if dropped > 0:
                 doc.para(
-                    f"[{dropped} further sitting(s) were recorded against this questionnaire and "
-                    f"are not printed here. The full set is in the online workshop record.]",
+                    f"[{dropped} further {by_count(dropped, 'sitting was', 'sittings were')} "
+                    f"recorded against this questionnaire and {by_count(dropped, 'is', 'are')} not "
+                    f"printed here. The full set is in the online workshop record.]",
                     style=ParaStyle.NOTE,
                 )
     return len(printed)
@@ -728,6 +730,7 @@ def questionnaire_warnings(
     names = ", ".join(clean_text(item.title) or item.questionnaire_id for item in empty[:3])
     more = "…" if len(empty) > 3 else ""
     return [
-        f"{len(empty)} questionnaire(s) attached to this workshop have no recorded answers and "
-        f"were left out of the questionnaire annexure ({names}{more})."
+        f"{count_noun(len(empty), 'questionnaire')} attached to this workshop "
+        f"{by_count(len(empty), 'has', 'have')} no recorded answers and "
+        f"{by_count(len(empty), 'was', 'were')} left out of the questionnaire annexure ({names}{more})."
     ]

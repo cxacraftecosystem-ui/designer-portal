@@ -360,7 +360,7 @@ def test_too_many_sittings_are_capped_and_counted_rather_than_dropped():
         for i in range(MAX_SITTINGS_PER_QUESTIONNAIRE + 4)
     ]
     text = _text(_document([_item(sittings)])[0])
-    assert "4 further sitting(s) were recorded" in text
+    assert "4 further sittings were recorded" in text
     assert f"Respondent {MAX_SITTINGS_PER_QUESTIONNAIRE - 1}" in text
     assert f"Respondent {MAX_SITTINGS_PER_QUESTIONNAIRE + 1}" not in text
 
