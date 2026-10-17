@@ -977,7 +977,34 @@ export function richSummary(raw: unknown, limit = 160): string {
 export function isStoredRichTextEmpty(raw: unknown): boolean {
   if (raw === null || raw === undefined) return true;
   if (typeof raw === "string") return !raw.trim();
-  return isEmptyDoc(fromStored(raw));
+  if (typeof raw !== "object") return isEmptyDoc(fromStored(raw));
+  /*
+    REMEMBERED PER DOCUMENT OBJECT. The stage form scores every required field on every keystroke,
+    and a stage with eighteen narratives re-parsed all eighteen documents to answer "is it empty" for
+    the seventeen nobody touched — measured as the largest item left in a keystroke's profile. A stored
+    value is never edited in place (an editor emits a NEW document object), so an object that has been
+    asked once has the same answer for as long as it exists; the cache holds it weakly, so it lives no
+    longer than the document does.
+  */
+  const known = emptinessByDocument.get(raw);
+  if (known !== undefined) return known;
+  const empty = isEmptyDoc(fromStored(raw));
+  emptinessByDocument.set(raw, empty);
+  // The rule above is held, not hoped for: outside production the document is frozen once it is
+  // cached, so any code that edits one in place throws where it does it instead of leaving a stale
+  // answer here and a wrong completeness score on screen. `e2e/rich-text-emptiness-cache-unit.spec.ts`.
+  if (process.env.NODE_ENV !== "production") freezeDeep(raw);
+  return empty;
+}
+
+const emptinessByDocument = new WeakMap<object, boolean>();
+
+function freezeDeep(value: object): void {
+  if (Object.isFrozen(value)) return;
+  Object.freeze(value);
+  for (const child of Object.values(value)) {
+    if (child && typeof child === "object") freezeDeep(child);
+  }
 }
 
 /**

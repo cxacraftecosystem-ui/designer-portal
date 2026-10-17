@@ -84,8 +84,20 @@ function shortDate(iso?: string): string {
   // this repository's new checks workflow caught that no local run could have.
   //
   // Day-first, month name localised, matching the handset exactly.
-  const month = new Intl.DateTimeFormat(undefined, { month: "short" }).format(parsed);
+  const month = monthFormat().format(parsed);
   return `${parsed.getDate()} ${month}`;
+}
+
+/**
+ * The month-name formatter, built once. Building an `Intl.DateTimeFormat` costs far more than using
+ * one, and this runs for every stamped field a stage form draws — measured as the single largest item
+ * in a keystroke's profile before it was held here (`e2e/stage-form-speed.spec.ts`). Same arguments,
+ * so the same words.
+ */
+let monthFormatter: Intl.DateTimeFormat | null = null;
+function monthFormat(): Intl.DateTimeFormat {
+  monthFormatter ??= new Intl.DateTimeFormat(undefined, { month: "short" });
+  return monthFormatter;
 }
 
 /**

@@ -140,7 +140,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -1934,6 +1934,32 @@ async def _stage_one_state(workshop_id: str) -> tuple[dict[str, Any] | None, Any
     return singleton, score
 
 
+async def _stage_one_singletons(workshop_ids: Sequence[str | None]) -> dict[str, dict[str, Any]]:
+    """:func:`_stage_one_state`'s read for MANY workshops, in one query: each workshop's stage-1
+    ``workshopSetup`` data, keyed by workshop id, absent where it has none.
+
+    THE SAME ROWS AND THE SAME PICK. ``entry_rows`` reads the live (undeleted) stage-1 entries in
+    ordinal order and the single read takes the first ``workshopSetup`` among them; this reads the
+    same rows for every id at once, in the same order, and takes the first per workshop. The scoring
+    stays with the caller, through the one scorer, so a count built from this agrees with the list
+    built from :func:`_stage_one_state`.
+    """
+    wanted = sorted({workshop_id for workshop_id in workshop_ids if workshop_id})
+    if not wanted:
+        return {}
+    rows = await db.dwstageentry.find_many(
+        where={"designWorkshopId": {"in": wanted}, "stageKey": STAGE_ONE_KEY, "deletedAt": None},
+        order={"ordinal": "asc"},
+    )
+    found: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        workshop_id = getattr(row, "designWorkshopId", None)
+        if workshop_id in found or getattr(row, "entityKey", None) != STAGE_ONE_ENTITY:
+            continue
+        found[workshop_id] = dict(getattr(row, "data", None) or {})
+    return found
+
+
 def _report_copy_matches(singleton: dict[str, Any] | None, row: Any) -> bool | None:
     """Does the report's cover still say what the register says? None where there is no cover yet.
 
@@ -2016,6 +2042,7 @@ async def sanction_payload(
     designer: Any | None = None,
     officer: Any | None = None,
     team: Sequence[Any] | None = None,
+    stage_one: Mapping[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The wire form of one sanction order. HAND-BUILT, and never ``jsonable_encoder(row)``.
 
@@ -2030,7 +2057,13 @@ async def sanction_payload(
     officer = officer or getattr(row, "createdBy", None)
 
     workshop_id = getattr(row, "designWorkshopId", None) or getattr(workshop, "id", None)
-    singleton, score = await _stage_one_state(workshop_id)
+    if stage_one is None:
+        singleton, score = await _stage_one_state(workshop_id)
+    else:
+        # Read already, for a whole page at once (``sanction_payloads``). The same pick and the
+        # same scorer, so the payload is identical to the one-order read's.
+        singleton = stage_one.get(workshop_id) if workshop_id else None
+        score = stage_completeness(stage(STAGE_ONE_KEY), singleton or {}, {})
 
     order_date = getattr(row, "sanctionOrderDate", None)
     return {
@@ -2090,6 +2123,16 @@ async def sanction_payload(
     }
 
 
+async def sanction_payloads(rows: Sequence[Any]) -> list[dict[str, Any]]:
+    """:func:`sanction_payload` for a page of orders, reading stage 1 ONCE for the whole page.
+
+    The officer's list used to build each row with its own stage-1 read — a query per order, the
+    same N+1 the badge had (``awaiting_count``). Same rows, same pick, same scorer.
+    """
+    stage_one = await _stage_one_singletons([getattr(row, "designWorkshopId", None) for row in rows])
+    return [await sanction_payload(row, stage_one=stage_one) for row in rows]
+
+
 def _iso(value: Any) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else None
 
@@ -2129,9 +2172,14 @@ async def awaiting_count() -> int:
     scoped another is how "3 waiting" comes to open onto nothing.
     """
     rows = await db.sanctionorder.find_many(order={"sanctionOrderDate": "desc"})
+    # ONE read for every order's stage 1, not one per order (2026-10-17). This badge is asked on every
+    # page an officer or admin opens, and the per-order read made it a query per sanction order — 75
+    # round trips for 74 orders, measured as the slowest request on the stage form's open.
+    singletons = await _stage_one_singletons([row.designWorkshopId for row in rows])
+    spec = stage(STAGE_ONE_KEY)
     awaiting = 0
     for row in rows:
-        _singleton, score = await _stage_one_state(row.designWorkshopId)
+        score = stage_completeness(spec, singletons.get(row.designWorkshopId) or {}, {})
         if not score.is_complete:
             awaiting += 1
     return awaiting

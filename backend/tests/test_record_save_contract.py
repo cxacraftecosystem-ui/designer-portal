@@ -332,7 +332,13 @@ def test_the_web_integrated_hosts_mount_the_real_record_forms():
         if record["key"] == "interview":
             continue  # no stage field points at one — see the record's own note
         component = pathlib.PurePath(record["web"]["form"]).stem
-        assert f'from "@/components/forms/{component}"' in dialog, (
+        # Either spelling of "this module IS the real form": a static import, or — since 2026-10-17,
+        # when the four forms stopped riding in the script every stage waits for — `next/dynamic`
+        # over the very same module. A host-local copy would match neither.
+        assert (
+            f'from "@/components/forms/{component}"' in dialog
+            or f'import("@/components/forms/{component}")' in dialog
+        ), (
             f"{integrated['files'][0]} no longer imports {component} from components/forms. The "
             "integrated door must mount the REAL record form; a host-local copy is a second answer "
             "to what this record is."

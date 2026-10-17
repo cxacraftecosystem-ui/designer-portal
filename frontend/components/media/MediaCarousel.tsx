@@ -422,7 +422,7 @@ export function MediaCarousel({
               >
                 {item.url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.url} alt="" loading="lazy" className="h-full w-full object-cover" />
+                  <img src={item.url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                 ) : (
                   <span className="grid h-full w-full place-items-center text-[0.625rem] leading-3 text-ink-500">
                     {itemIndex + 1}

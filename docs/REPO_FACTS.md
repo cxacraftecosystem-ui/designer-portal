@@ -27,16 +27,16 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**392 operations** in the working tree — 187 GET, 130 POST, 31 DELETE,
+**393 operations** in the working tree — 188 GET, 130 POST, 31 DELETE,
 24 PATCH, 20 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
 |---|---|
 | `design_workshops.py` | 47 |
+| `media.py` | 21 |
 | `questionnaire.py` | 21 |
 | `workshops.py` | 21 |
-| `media.py` | 20 |
 | `questionnaire_forms.py` | 19 |
 | `design_workshop_oversight.py` | 16 |
 | `aadhaar.py` | 14 |
@@ -126,8 +126,8 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 260 | 5318 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 232 | 2871 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Backend unit (`backend/tests/`) | 262 | 5326 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 239 | 2896 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 275 | 3541 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 9 | 25 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
@@ -154,10 +154,10 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 238 | 167,642 | 238 | 167,642 |
-| `frontend/app` | 108 | 58,828 | 108 | 58,828 |
-| `frontend/components` | 322 | 135,277 | 322 | 135,277 |
-| `frontend/lib` | 157 | 76,887 | 157 | 76,887 |
+| `backend/app` | 238 | 167,738 | 238 | 167,738 |
+| `frontend/app` | 108 | 59,027 | 108 | 59,027 |
+| `frontend/components` | 325 | 135,908 | 325 | 135,908 |
+| `frontend/lib` | 158 | 77,064 | 158 | 77,064 |
 | `android/app/src/main/java` | 312 | 245,292 | 312 | 245,292 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is

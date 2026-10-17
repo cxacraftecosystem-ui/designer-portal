@@ -53,12 +53,26 @@
  */
 
 import { ProgressBar } from "@/components/ui/ProgressBar";
-import { Fragment, Suspense, use, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  Suspense,
+  memo,
+  use,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, CloudOff, Layers } from "lucide-react";
 
 import { CustomSectionsForm } from "@/components/designworkshop/CustomSections";
+import { ToolLoadFailed, deferredTool, registerWarm, warmDeferredTools } from "@/components/designworkshop/deferredTool";
 import { HeldPostNotice, useHeldPostRefusal, writesHeld } from "@/components/designworkshop/HeldPostNotice";
 import {
   CollectionTable,
@@ -80,10 +94,10 @@ import {
 } from "@/components/designworkshop/StageRecordingPlace";
 import { PageHeader } from "@/components/PageHeader";
 import {
-  StageDocumentPreview,
   StagePreviewLayout,
+  StagePreviewShell,
   useStagePreviewOpen
-} from "@/components/designworkshop/report/StageDocumentPreview";
+} from "@/components/designworkshop/report/StagePreviewLayout";
 import type { LiveStage } from "@/components/designworkshop/report/liveDocument";
 import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { UploadTray } from "@/components/media/UploadTray";
@@ -151,6 +165,57 @@ import { readStageFocus } from "@/lib/workshopSearch";
   having been handed the route param instead of the resolved id.
 */
 import { reportServerId } from "../../report/reportTarget";
+
+/**
+ * A collection table that is skipped when none of its props changed — which, with the props this page
+ * now holds steady, is every table but the one being typed into. See "what a keystroke re-draws".
+ */
+const MemoCollectionTable = memo(CollectionTable);
+/**
+ * The same for the singleton's field sets and the designer's own questions. A field set re-draws when
+ * the record it holds changes — its boxes then decide one by one whether they need to (see
+ * `StageFieldInput`) — and is skipped on the render that only hands the document preview its copy.
+ */
+const MemoEntityForm = memo(EntityForm);
+const MemoCustomSectionsForm = memo(CustomSectionsForm);
+/** One empty list for every collection with no rows, so an empty table's `rows` is the same array each render. */
+const NO_ROWS: DwRow[] = [];
+
+/**
+ * THE DOCUMENT PREVIEW IS LOADED WHEN IT IS WANTED, NOT WITH THE FORM.
+ *
+ * It carries the report's page renderer, its chart and table blocks and the on-device report builder —
+ * the largest single share of the script this page used to wait for — and it is closed by default.
+ * So the form draws without it: a closed preview is {@link StagePreviewShell}, the same panel and
+ * button, and the real one is fetched when a designer reaches for that button, or at once for a
+ * designer who left it open.
+ */
+const loadStageDocumentPreview = () => import("@/components/designworkshop/report/StageDocumentPreview");
+/**
+ * Start fetching the preview's script the moment a designer points at or tabs to its button — a head
+ * start of a few hundred milliseconds on the click. NOT on idle after the form is up: evaluating that
+ * script is one long task, and on idle it lands while the designer is typing the first words.
+ */
+const preloadStageDocumentPreview = () => void loadStageDocumentPreview().catch(() => undefined);
+// Memoised as well: on the keystroke itself every prop it takes is unchanged (the form's values reach
+// it through `useDeferredValue`, a render later), so the keystroke's render skips it outright.
+//
+// While the script is on its way the placeholder is the real panel's shell with the REAL close
+// button, so a designer can always shut it; if the script cannot be fetched (no signal the first time,
+// or a tab left open across a deploy) the shell says so and offers to try again, in the panel's place.
+// The page always passes both; the fallback only satisfies the optional prop type.
+const closePreviewNoop = () => undefined;
+const StageDocumentPreview = memo(
+  deferredTool(() => loadStageDocumentPreview().then((module) => module.StageDocumentPreview), {
+    placeholder: (props) => <StagePreviewShell open={props.open ?? true} onOpenChange={props.onOpenChange ?? closePreviewNoop} />,
+    failed: (props, retry) => (
+      <StagePreviewShell open={props.open ?? true} onOpenChange={props.onOpenChange ?? closePreviewNoop} failure={<ToolLoadFailed retry={retry} />} />
+    )
+  })
+);
+// Warmed last of every deferred script, and only once the designer has paused (see `warmDeferredTools`):
+// evaluating it is one long task, so it must not land on a keystroke.
+registerWarm(() => loadStageDocumentPreview().then(() => undefined, () => undefined));
 
 /**
  * How long after the last keystroke the stage is written to IndexedDB.
@@ -241,6 +306,30 @@ function stageNeverRead(draft: DwDraft | null, stageKey: string): boolean {
  */
 function knownServerId(routeId: string): string | null | undefined {
   return isLocalWorkshopId(routeId) ? undefined : reportServerId(routeId, null);
+}
+
+/** Each collection's row count, as one comparable string — what moves a per-row refusal. */
+function rowCounts(collections: Record<string, DwRow[]>): string {
+  return Object.keys(collections)
+    .sort()
+    .map((key) => `${key}:${collections[key]?.length ?? 0}`)
+    .join("|");
+}
+
+/** A request's outcome as a value, so it can be started early and awaited later without ever rejecting unseen. */
+type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+function settled<T>(request: Promise<T>): Promise<Settled<T>> {
+  return request.then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error })
+  );
+}
+
+/** The value, or the original error thrown exactly as the request would have thrown it. */
+function outcomeOf<T>(outcome: Settled<T>): T {
+  if (outcome.ok) return outcome.value;
+  throw outcome.error;
 }
 
 function sameSnapshot(a: StageSnapshot, b: StageSnapshot): boolean {
@@ -362,6 +451,14 @@ function DesignWorkshopStagePageBody({
     () => ({ singleton: singleton as LiveStage["singleton"], collections: collections as LiveStage["collections"], custom: custom as LiveStage["singleton"] }),
     [singleton, collections, custom]
   );
+  /**
+   * The same value, handed to the preview at LOW PRIORITY. A keystroke paints the box first and the
+   * preview hears about it afterwards, in a render React may interrupt and fold into the next key's —
+   * so with the paper open beside the form, typing is never held up by the preview noticing the
+   * letter. The preview's own debounce (`LIVE_DEBOUNCE_MS`) still decides when the document is
+   * rebuilt; this only takes the noticing off the keystroke.
+   */
+  const deferredLiveStage = useDeferredValue(liveStage);
   /** The definition's sections for this stage, and how this browser came to hold them. */
   const [customSections, setCustomSections] = useState<DwCustomSection[]>([]);
   const [customSource, setCustomSource] = useState<CustomDefinitionSource>("unknown");
@@ -410,6 +507,17 @@ function DesignWorkshopStagePageBody({
   /** Whether the live document preview is open — remembered in this browser across stages. */
   const [previewOpen, setPreviewOpen] = useStagePreviewOpen();
   /**
+   * Whether the real preview has been drawn on this stage yet — LATCHED, never lowered.
+   *
+   * Until a designer first opens it the page draws {@link StagePreviewShell} and the preview's script
+   * is not needed. Once it has been opened it stays mounted when closed again, exactly as it always
+   * was, so closing and reopening keeps the pages it has already built instead of building them anew.
+   * Raised during render rather than in an effect so the open that raises it draws the real panel in
+   * the same pass.
+   */
+  const [previewMounted, setPreviewMounted] = useState(false);
+  if (previewOpen && !previewMounted) setPreviewMounted(true);
+  /**
    * The id the REPOSITORY knows this workshop by, for the document preview above the form.
    *
    * `undefined` until the draft has been read, `null` once it has been read and carries no
@@ -435,6 +543,9 @@ function DesignWorkshopStagePageBody({
    */
   const [serverId, setServerId] = useState<string | null | undefined>(() => knownServerId(id));
   const [loading, setLoading] = useState(true);
+  // Once the form is up, fetch the scripts of every tool that loads on demand, so the service worker
+  // holds them before the designer walks out of coverage. Paced by `warmDeferredTools` itself.
+  useEffect(() => (loading ? undefined : warmDeferredTools()), [loading]);
   /**
    * True while the form is being held back for the server's copy of a stage this device has never
    * read. It only changes the sentence under the spinner — but which sentence is the whole point:
@@ -678,6 +789,20 @@ function DesignWorkshopStagePageBody({
       // Declared out here so the catch can say WHICH kind of blank the form is showing — it has to
       // know whether this device ever read the server's copy of the stage it is about to draw.
       let draft: DwDraft | null = null;
+      /*
+        THE SERVER'S COPY IS ASKED FOR AT ONCE, BESIDE THE REGISTRY AND THE DRAFT — NOT AFTER THEM.
+
+        It used to be the third link of a chain: the registry, then the draft off disk, then this read.
+        For a workshop the server already knows, the route id IS the id the read needs, so there is
+        nothing to wait for; the answer is only USED below exactly where it always was, under the same
+        conditions, and an answer nobody ends up needing (a stage this build does not know, a draft that
+        is not on this device) is dropped with its error. `settled` holds the outcome rather than the
+        promise so a failure here can never surface as an unhandled rejection.
+      */
+      // When it LEFT, so the answer can be refused if this stage was pushed while it was out — see
+      // `serverReadPredatesPush`.
+      const earlySentAt = Date.now();
+      const early = isLocalWorkshopId(id) ? null : settled(getDesignWorkshopStage(id, stageKey));
       try {
         const loaded = await loadRegistry();
         if (cancelled) return;
@@ -765,7 +890,9 @@ function DesignWorkshopStagePageBody({
         // Nothing to reconcile against for a workshop the server has never seen.
         if (!canReconcile || !spec || !draft.remoteId) return;
 
-        const stageData = await getDesignWorkshopStage(draft.remoteId, stageKey);
+        const useEarly = Boolean(early) && draft.remoteId === id;
+        let readSentAt = useEarly ? earlySentAt : Date.now();
+        let stageData = useEarly && early ? outcomeOf(await early) : await getDesignWorkshopStage(draft.remoteId, stageKey);
         if (cancelled) return;
         /*
           THE SERVER'S DIGEST, READ STRAIGHT OFF THE PAYLOAD AND NEVER STORED AS THOUGH IT DESCRIBED THIS
@@ -780,8 +907,25 @@ function DesignWorkshopStagePageBody({
           case where the definition endpoint alone failed and the sections on screen came off disk.
         */
         setServerCustomVersion(stageData.customSchemaVersion ?? null);
-        const merged = await adoptServerStage(draft.localId, spec, stageData);
+        /*
+          A READ THAT LEFT BEFORE A PUSH OF THIS STAGE LANDED DESCRIBES THE SERVER AS IT WAS BEFORE THAT
+          PUSH, and adopting it would put the older copy over the stage that was just sent — after which
+          the stage looks clean and the next save writes the older content back. Asking early made that
+          window longer, so the store refuses such an answer (`serverReadPredatesPush`) and the stage is
+          read again, now, which is the old serial path. Once: a second push inside the second read's
+          flight is a sync pass racing itself, and the refusal still keeps the local copy.
+        */
+        let stale = false;
+        let merged = await adoptServerStage(draft.localId, spec, stageData, { readSentAt, onStale: () => (stale = true) });
         if (cancelled) return;
+        if (stale) {
+          readSentAt = Date.now();
+          stageData = await getDesignWorkshopStage(draft.remoteId, stageKey);
+          if (cancelled) return;
+          setServerCustomVersion(stageData.customSchemaVersion ?? null);
+          merged = await adoptServerStage(draft.localId, spec, stageData, { readSentAt });
+          if (cancelled) return;
+        }
         const mergedStage = merged?.stages[stageKey];
         // Re-seed only when the fold actually took. A stage the designer has been editing keeps its
         // `dirtyAt`, and re-seeding it would throw away exactly what has not been sent yet.
@@ -1655,8 +1799,7 @@ function DesignWorkshopStagePageBody({
    * are answered the same way — anything that cannot be placed against the CURRENT rows is handed to
    * {@link stranded} and said out loud instead.
    */
-  function collectionErrors(entity: DwEntity): Record<number, FieldErrors> {
-    const rowCount = (collections[entity.key] ?? []).length;
+  function collectionErrors(entity: DwEntity, rowCount: number): Record<number, FieldErrors> {
     const out: Record<number, FieldErrors> = {};
     for (const [key, fields] of Object.entries(errors)) {
       const match = new RegExp(`^${entity.key}\\[(\\d+)\\]$`).exec(key);
@@ -1664,6 +1807,51 @@ function DesignWorkshopStagePageBody({
     }
     return out;
   }
+
+  /*
+    ── WHAT A KEYSTROKE RE-DRAWS ─────────────────────────────────────────────────────────────────────
+
+    Every box on this page writes into one of three pieces of page state, so every keystroke renders
+    this component again. What it must NOT do is hand every table and every field set a brand-new prop
+    while doing so: `CollectionTable` and `EntityForm` are memoised, and a table whose props are the same
+    objects as last time is skipped outright — rows, panels and every field inside them. Measured on a
+    busy stage (see `e2e/stage-form-speed.spec.ts`), re-drawing every table on every key was most of the
+    time a key took. So the three per-table props that used to be rebuilt on every render are held here:
+    the per-row refusals (rebuilt only when the refusals or a row count change), and the row writer
+    (one function per entity, reading the latest rows when it is called — the same decision
+    `patchCollection` has always made, from the same values).
+  */
+  // Each collection's LENGTH, as one string: rows changing in place do not move a refusal, so the rows
+  // themselves are deliberately not what this is rebuilt on.
+  const rowCountKey = rowCounts(collections);
+  const errorsByEntity = useMemo(() => {
+    const counts = new Map(
+      rowCountKey
+        .split("|")
+        .filter(Boolean)
+        .map((part) => [part.slice(0, part.lastIndexOf(":")), Number(part.slice(part.lastIndexOf(":") + 1))] as const)
+    );
+    const out: Record<string, Record<number, FieldErrors>> = {};
+    for (const entity of stage?.entities ?? []) {
+      if (entity.cardinality !== "SINGLETON") out[entity.key] = collectionErrors(entity, counts.get(entity.key) ?? 0);
+    }
+    return out;
+    // `collectionErrors` reads nothing but `errors` and the count it is handed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, errors, rowCountKey]);
+
+  /** The latest `patchCollection`, so the per-entity writers below can stay the same functions. */
+  const patchCollectionRef = useRef(patchCollection);
+  useLayoutEffect(() => {
+    patchCollectionRef.current = patchCollection;
+  });
+  const rowWriters = useMemo(() => {
+    const out: Record<string, (rows: DwRow[], removed?: DwRow) => void> = {};
+    for (const entity of stage?.entities ?? []) {
+      out[entity.key] = (rows, removed) => patchCollectionRef.current(entity.key, rows, removed);
+    }
+    return out;
+  }, [stage]);
 
   /**
    * Refusals that no box on this screen will draw, as `scope.field: message` lines.
@@ -1710,7 +1898,7 @@ function DesignWorkshopStagePageBody({
    * workshop's 244 rows to re-render on a keystroke in an unrelated box the day any of these tables is
    * memoised.
    */
-  const stageEntries = useMemo(
+  const budget = useMemo(
     () =>
       stageEntryBudget(
         stage?.entities ?? [],
@@ -1719,6 +1907,13 @@ function DesignWorkshopStagePageBody({
         custom
       ),
     [stage, collections, singleton, custom]
+  );
+  // THE SAME OBJECT UNTIL ONE OF ITS FOUR NUMBERS MOVES. A keystroke in a singleton box rebuilds the
+  // budget above, and a new object every time would re-draw every table on the stage for an answer that
+  // is almost always identical — see "what a keystroke re-draws" above.
+  const stageEntries = useMemo(
+    () => ({ rows: budget.rows, other: budget.other, otherCertain: budget.otherCertain, otherLabel: budget.otherLabel }),
+    [budget.rows, budget.other, budget.otherCertain, budget.otherLabel]
   );
 
   /**
@@ -1781,7 +1976,7 @@ function DesignWorkshopStagePageBody({
    * state — the source and the staleness — whose whole job is to be said consistently.
    */
   const customBlock = (
-    <CustomSectionsForm
+    <MemoCustomSectionsForm
       sections={customSections}
       values={custom}
       onChange={patchCustom}
@@ -2076,18 +2271,22 @@ function DesignWorkshopStagePageBody({
       <StagePreviewLayout
         open={previewOpen}
         preview={
-          <StageDocumentPreview
-            workshopId={serverId ?? id}
-            draftId={id}
-            stageKey={stageKey}
-            stageTitle={stage?.title ?? ""}
-            refreshToken={previewToken}
-            localOnly={serverId === undefined ? null : serverId === null}
-            // What the form holds right now: the preview is rebuilt from it between keystrokes.
-            live={loading ? null : liveStage}
-            open={previewOpen}
-            onOpenChange={setPreviewOpen}
-          />
+          previewMounted ? (
+            <StageDocumentPreview
+              workshopId={serverId ?? id}
+              draftId={id}
+              stageKey={stageKey}
+              stageTitle={stage?.title ?? ""}
+              refreshToken={previewToken}
+              localOnly={serverId === undefined ? null : serverId === null}
+              // What the form holds right now: the preview is rebuilt from it between keystrokes.
+              live={loading ? null : deferredLiveStage}
+              open={previewOpen}
+              onOpenChange={setPreviewOpen}
+            />
+          ) : (
+            <StagePreviewShell open={false} onOpenChange={setPreviewOpen} onIntent={preloadStageDocumentPreview} />
+          )
         }
       >
 
@@ -2169,7 +2368,7 @@ function DesignWorkshopStagePageBody({
             <Fragment key={entity.key}>
               {entity.key === customBeforeKey ? customBlock : null}
               {entity.cardinality === "SINGLETON" ? (
-                <EntityForm
+                <MemoEntityForm
                   entity={entity}
                   data={singleton}
                   onChange={patchSingleton}
@@ -2183,12 +2382,12 @@ function DesignWorkshopStagePageBody({
                   provenance={provenance?.singleton}
                 />
               ) : (
-                <CollectionTable
+                <MemoCollectionTable
                   entity={entity}
-                  rows={collections[entity.key] ?? []}
-                  onRowsChange={(rows, removed) => patchCollection(entity.key, rows, removed)}
+                  rows={collections[entity.key] ?? NO_ROWS}
+                  onRowsChange={rowWriters[entity.key]}
                   workshopId={id}
-                  errorsByIndex={collectionErrors(entity)}
+                  errorsByIndex={errorsByEntity[entity.key]}
                   disabled={locked}
                   stageKey={stageKey}
                   capture={capture}

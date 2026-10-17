@@ -43,15 +43,39 @@
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { deferredTool, registerWarm } from "@/components/designworkshop/deferredTool";
 
 import { FieldDialog } from "@/components/dialogs";
 import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { apiFetch } from "@/lib/api";
-import { ArtisanForm } from "@/components/forms/ArtisanForm";
-import { ProcessForm } from "@/components/forms/ProcessForm";
-import { ProductForm } from "@/components/forms/ProductForm";
-import { ToolForm } from "@/components/forms/ToolForm";
 import type { ProcessRecord } from "@/components/forms/ProcessForm";
+
+/*
+  THE FOUR RECORD FORMS ARE LOADED WHEN ONE IS FIRST DRAWN, NOT WITH THE STAGE FORM.
+
+  This module is imported by every reference picker on every stage, so a static import put the
+  artisan, product, tool and process forms — some 7,000 lines and their own map, media and
+  identity-card dependencies — into the script the stage form waits for on every open, for a dialog
+  most opens never show. Loaded on demand they cost one short fetch the first time a designer
+  creates or embeds a record, and nothing on the other opens. The placeholder holds the height of a
+  short form so the dialog does not jump when the form arrives.
+*/
+function FormLoading() {
+  return <p className="min-h-40 px-1 py-6 text-sm text-ink-500">Opening the form…</p>;
+}
+const ArtisanForm = deferredTool(() => import("@/components/forms/ArtisanForm").then((m) => m.ArtisanForm), {
+  placeholder: FormLoading
+});
+const ProcessForm = deferredTool(() => import("@/components/forms/ProcessForm").then((m) => m.ProcessForm), {
+  placeholder: FormLoading
+});
+const ProductForm = deferredTool(() => import("@/components/forms/ProductForm").then((m) => m.ProductForm), {
+  placeholder: FormLoading
+});
+const ToolForm = deferredTool(() => import("@/components/forms/ToolForm").then((m) => m.ToolForm), {
+  placeholder: FormLoading
+});
+for (const form of [ArtisanForm, ProcessForm, ProductForm, ToolForm]) registerWarm(form.preload);
 import type { InlineHostSeed, UseExistingArtisan } from "@/components/forms/inlineRecordHost";
 import type { Artisan, ArtisanIdentityMatch, ProductDocumentation, ToolDocumentation } from "@/lib/types";
 

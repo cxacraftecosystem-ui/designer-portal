@@ -48,7 +48,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, GripVertical, Plus, Trash2 } from "lucide-react";
 
-import { FieldInput, type StageCaptureContext } from "@/components/designworkshop/FieldInput";
+import { StageFieldInput, type StageCaptureContext } from "@/components/designworkshop/FieldInput";
 import {
   MirroredFieldsDisclosure,
   StageRecordEmbed,
@@ -366,7 +366,7 @@ function FieldGrid({
               (focus.rowKey ?? null) === (anchorRowKey ?? rowKey ?? null)
             }
           >
-            <FieldInput
+            <StageFieldInput
               field={field}
               value={data[field.key]}
               onChange={(next) => onChange(field.key, next)}

@@ -2705,8 +2705,12 @@ async def get_stage(
     spec = next((s for s in stages() if s.key == stage_key), None)
     if spec is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown stage")
-    entries = await entry_rows(workshop_id, stage_key=stage_key)
-    definition = await load_custom_definition_or_empty(workshop_id)
+    # Two independent reads, issued together: this route is on the critical path of every stage open,
+    # and it used to wait for one round trip before starting the other.
+    entries, definition = await gather_reads(
+        entry_rows(workshop_id, stage_key=stage_key),
+        load_custom_definition_or_empty(workshop_id),
+    )
     payload = _stages_payload(entries).get(stage_key) or {
         "singleton": {},
         "collections": {},
@@ -2718,9 +2722,14 @@ async def get_stage(
     }
     # `_provenance_maps` walks a `{stageKey: bucket}` map; this route holds one bucket, so it is
     # wrapped rather than given a second walker.
-    await resolve_display_names(_provenance_maps({stage_key: payload}))
+    # Likewise: the authors' names and the transcripts are read from different tables and neither
+    # needs the other, so they share one wait.
+    _, transcripts = await gather_reads(
+        resolve_display_names(_provenance_maps({stage_key: payload})),
+        _transcripts_payload(entries, current_user),
+    )
     payload["completeness"] = workshop_completeness(entries, definition=definition).get(stage_key)
-    payload["transcripts"] = await _transcripts_payload(entries, current_user)
+    payload["transcripts"] = transcripts
     payload["customSchemaVersion"] = definition.version
     return payload
 

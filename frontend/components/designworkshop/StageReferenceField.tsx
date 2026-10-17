@@ -54,6 +54,7 @@
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { deferredTool, registerWarm } from "@/components/designworkshop/deferredTool";
 import { Check, ChevronDown, Loader2, Pencil, Plus, ScanLine, Search, X } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -65,7 +66,7 @@ import {
   type InlineCreatableModel
 } from "@/components/designworkshop/InlineRecordDialog";
 import { useLinkedWorkshopId } from "@/components/designworkshop/LinkedWorkshop";
-import { WorkshopCodeScanner, type ScanResolution } from "@/components/designworkshop/WorkshopCodeScanner";
+import type { ScanResolution } from "@/components/designworkshop/WorkshopCodeScanner";
 import type { InlineHostSeed } from "@/components/forms/inlineRecordHost";
 import {
   geoValue,
@@ -92,6 +93,18 @@ import { loadStageReferences } from "@/lib/referenceCache";
 import { workshopRecordTypeLabel, type WorkshopCodeRef, type WorkshopRecordType } from "@/lib/workshopCodes";
 // §3.5's cached-and-stale sentence, shared with the workshop pickers so one fact has one wording.
 import { cachedListLine } from "@/lib/workshopOptions";
+
+/*
+  THE CODE SCANNER IS LOADED WHEN A DESIGNER OPENS IT. It brings the QR decoder and the image
+  straightening it needs — a sizeable script — and it is drawn only after "Scan a code" is pressed,
+  yet as a static import it was part of every stage that has a reference picker. The placeholder
+  holds the camera panel's first line so the row does not jump.
+*/
+const WorkshopCodeScanner = deferredTool(
+  () => import("@/components/designworkshop/WorkshopCodeScanner").then((m) => m.WorkshopCodeScanner),
+  { placeholder: () => <p className="min-h-10 text-xs leading-5 text-ink-500">Getting the scanner ready…</p> }
+);
+registerWarm(WorkshopCodeScanner.preload);
 
 /**
  * How long after the last keystroke the search goes out.
