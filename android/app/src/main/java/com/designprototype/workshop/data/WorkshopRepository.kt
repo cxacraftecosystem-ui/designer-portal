@@ -1178,6 +1178,16 @@ class WorkshopRepository(
     suspend fun designWorkshopStage(id: String, stageKey: String): StageBucketDto =
         api.designWorkshopStage(id, stageKey)
 
+    /** The stage's one-tap suggestions and computed counts; null when the server cannot be reached. */
+    suspend fun designWorkshopStageAssist(id: String, stageKey: String): DwStageAssistDto? =
+        try {
+            api.designWorkshopStageAssist(id, stageKey)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+
     /**
      * One workshop's custom definition, straight off the wire and NOT cached here.
      *

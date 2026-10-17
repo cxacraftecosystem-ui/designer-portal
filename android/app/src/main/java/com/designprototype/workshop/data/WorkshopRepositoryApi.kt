@@ -1356,6 +1356,13 @@ interface WorkshopRepositoryApi {
         @Path("stageKey") stageKey: String
     ): StageBucketDto
 
+    // One-tap suggestions and computed counts for one stage (2026-10-17). Read-only.
+    @GET("design-workshops/{id}/stages/{stageKey}/assist")
+    suspend fun designWorkshopStageAssist(
+        @Path("id") id: String,
+        @Path("stageKey") stageKey: String
+    ): DwStageAssistDto
+
     // A whole stage in ONE write — see [StageSaveBody]. The response carries the field keys the
     // server DROPPED because this build's registry is ahead of its own, which is the only way a
     // client finds out it is running ahead rather than by having its sync rejected.

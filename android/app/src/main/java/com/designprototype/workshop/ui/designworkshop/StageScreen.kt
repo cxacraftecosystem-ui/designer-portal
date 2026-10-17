@@ -114,6 +114,14 @@ import com.designprototype.workshop.data.entityKey
 import com.designprototype.workshop.data.dwTier3ConsentOf
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.liveFields
+import com.designprototype.workshop.data.DwAutoNumber
+import com.designprototype.workshop.data.DwStageAssist
+import com.designprototype.workshop.data.DwStageAssistDto
+import com.designprototype.workshop.data.DwStageComputed
+import com.designprototype.workshop.data.dwComputedPatch
+import com.designprototype.workshop.data.dwDisplayText
+import com.designprototype.workshop.data.entity
+import com.designprototype.workshop.data.field
 import com.designprototype.workshop.data.rowTitleField
 import com.designprototype.workshop.data.rowsFor
 import com.designprototype.workshop.data.singleton
@@ -126,6 +134,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
 
@@ -414,6 +423,11 @@ private fun StageScreenBody(
      * safely saved. The list screen's "Send to server" action is what fills this in.
      */
     var syncId by remember(workshopId) { mutableStateOf<String?>(null) }
+    // One-tap suggestions and computed counts (2026-10-17), re-read after every sync.
+    var assist by remember(stageKey) { mutableStateOf<DwStageAssistDto?>(null) }
+    var assistToken by remember(stageKey) { mutableIntStateOf(0) }
+    var appliedSuggestions by remember(stageKey) { mutableStateOf<Set<String>>(emptySet()) }
+    var venuePrompt by remember(stageKey) { mutableStateOf(false) }
     /**
      * Whether this device has READ the server's copy of the stage — see [StageDraft.stageSeen].
      *
@@ -1564,6 +1578,126 @@ private fun StageScreenBody(
             onMessage = onMessage,
         )
 
+        // ── 2026-10-17: the stage fills in what it already knows ─────────────────────────────────
+        LaunchedEffect(syncId, stageKey, assistToken) {
+            val target = syncId ?: return@LaunchedEffect
+            repository.designWorkshopStageAssist(target, stageKey)?.let {
+                assist = it
+                appliedSuggestions = emptySet()
+            }
+        }
+        LaunchedEffect(saveState) {
+            if (saveState == SaveState.SYNCED) assistToken++
+            if ((saveState == SaveState.SYNCED || saveState == SaveState.ON_DEVICE) && stageKey == DW_SETUP_STAGE) {
+                val venue = state.singleton["venueLocation"]
+                venuePrompt = venue == null || venue is JsonNull
+            }
+        }
+        // C7/C8: keep each computed box equal to what the rows come to (the derived-field pattern).
+        LaunchedEffect(state.collections, assist) {
+            val patch = dwComputedPatch(
+                stageKey = stageKey,
+                assist = assist,
+                singleton = state.singleton,
+                collections = state.collections.mapValues { (_, rows) -> rows.map { it.rowId to it.values } },
+            )
+            if (patch.singleton.isNotEmpty() || patch.rows.isNotEmpty()) {
+                edit { current ->
+                    current.copy(
+                        singleton = current.singleton + patch.singleton,
+                        collections = current.collections + patch.rows.mapValues { (_, rows) ->
+                            rows.map { (rowId, values) -> CollectionRow(rowId = rowId, values = values) }
+                        },
+                    )
+                }
+            }
+        }
+        if (venuePrompt && stageKey == DW_SETUP_STAGE &&
+            state.singleton["venueLocation"].let { it == null || it is JsonNull }
+        ) {
+            DwVenuePrompt { location ->
+                edit { current -> current.copy(singleton = current.singleton.put("venueLocation", dwLocationToValue(location))) }
+                venuePrompt = false
+            }
+        }
+        val asPairs = state.collections.mapValues { (_, rows) -> rows.map { it.rowId to it.values } }
+        DwStageAssistCard(
+            suggestions = assist?.suggestions.orEmpty().filter { suggestion ->
+                !(suggestion.kind == "ADD_ROWS" && suggestion.id in appliedSuggestions) &&
+                    DwStageAssist.stillApplies(suggestion, state.singleton, asPairs)
+            },
+            enabled = saveState != SaveState.SAVING,
+        ) { suggestion ->
+            val (single, nextRows) = dwApplySuggestion(
+                suggestion,
+                state.singleton,
+                asPairs[suggestion.entityKey].orEmpty(),
+            ) { UUID.randomUUID().toString() }
+            appliedSuggestions = appliedSuggestions + suggestion.id
+            edit { current ->
+                current.copy(
+                    singleton = single ?: current.singleton,
+                    collections = if (nextRows == null) current.collections else current.collections +
+                        (suggestion.entityKey to nextRows.map { (rowId, values) -> CollectionRow(rowId = rowId, values = values) }),
+                )
+            }
+        }
+        if (stageKey == DW_ROSTER_STAGE) {
+            DwAttendanceCard(
+                days = DwStageComputed.workshopDays(
+                    state.collections["workshopScheduleDay"].orEmpty().map { it.values },
+                    assist?.attendanceDays.orEmpty(),
+                ),
+                participants = asPairs["participant"].orEmpty(),
+                startDate = assist?.startDate,
+                enabled = saveState != SaveState.SAVING,
+            ) { next ->
+                edit { current ->
+                    current.copy(
+                        collections = current.collections +
+                            ("participant" to next.map { (rowId, values) -> CollectionRow(rowId = rowId, values = values) })
+                    )
+                }
+            }
+        }
+        if (stageKey == DW_PROTOTYPE_STAGE) {
+            DwLogTodayCard(
+                prototypes = asPairs["prototype"].orEmpty(),
+                logs = state.collections["prototypeStageLog"].orEmpty().map { it.values },
+                enabled = saveState != SaveState.SAVING,
+            ) { values ->
+                edit { current ->
+                    val logs = current.collections["prototypeStageLog"].orEmpty() +
+                        CollectionRow(rowId = UUID.randomUUID().toString(), values = values)
+                    current.copy(collections = current.collections + ("prototypeStageLog" to logs))
+                }
+            }
+        }
+        if (stageKey == DW_SURVEY_STAGE) DwSittingsCard(assist?.sittings.orEmpty())
+        DW_ROWS_FROM_PHOTOS[stageKey]?.let { (entityKey, fieldKey, noun) ->
+            val target = spec.entity(entityKey)
+            val imageField = target?.field(fieldKey)
+            if (target != null && imageField != null) {
+                DwRowsFromPhotosCard(title = target.title, noun = noun, enabled = saveState != SaveState.SAVING) { uris ->
+                    media.attach(uris, imageField) { ids ->
+                        edit { current ->
+                            val before = current.collections[entityKey].orEmpty()
+                            val added = ids.map { id ->
+                                CollectionRow(rowId = UUID.randomUUID().toString(), values = mapOf(fieldKey to JsonPrimitive(id)))
+                            }
+                            val numbered = DwAutoNumber.apply(
+                                target,
+                                before.map { it.rowId to it.values },
+                                (before + added).map { it.rowId to it.values },
+                                assist?.startDate,
+                            ).map { (rowId, values) -> CollectionRow(rowId = rowId, values = values) }
+                            current.copy(collections = current.collections + (entityKey to numbered))
+                        }
+                    }
+                }
+            }
+        }
+
         spec.singleton?.let { entity ->
             EntitySection(
                 entity = entity,
@@ -1665,7 +1799,15 @@ private fun StageScreenBody(
                         .map { dwRowId(entity.key, it.rowId) }
                         .filter { it !in nowHeld }
                     deletedRows = (deletedRows + gone) - nowHeld
-                    edit { current -> current.copy(collections = current.collections + (entity.key to rows)) }
+                    // C6: a row just added — or one whose prototype was just chosen — takes the
+                    // next number, and a schedule day its date. Blank boxes only.
+                    val numbered = DwAutoNumber.apply(
+                        entity,
+                        before.map { it.rowId to it.values },
+                        rows.map { it.rowId to it.values },
+                        assist?.startDate,
+                    ).map { (rowId, values) -> CollectionRow(rowId = rowId, values = values) }
+                    edit { current -> current.copy(collections = current.collections + (entity.key to numbered)) }
                 }
             )
         }
@@ -1684,6 +1826,16 @@ private fun StageScreenBody(
             repository = repository,
             rows = remember(state) {
                 state.collections.mapValues { (_, rows) -> rows.map { it.values } }
+            },
+            onUse = { sheetEntryId, key, value ->
+                edit { current ->
+                    val sheets = current.collections["costSheet"].orEmpty().map { row ->
+                        if (row.values["_entryId"]?.let { dwDisplayText(it) } == sheetEntryId) {
+                            row.copy(values = row.values + (key to JsonPrimitive(value)))
+                        } else row
+                    }
+                    current.copy(collections = current.collections + ("costSheet" to sheets))
+                }
             },
         )
 
@@ -1871,7 +2023,7 @@ private fun EntitySection(
     val captions = remember(entity) { entity.liveFields.filter { it.captionFor.isNotBlank() } }
     val captionByTarget = remember(captions) { captions.associateBy { it.captionFor } }
     val visible = remember(entity, captions) {
-        entity.liveFields.filter { it.captionFor.isBlank() }
+        entity.liveFields.filter { it.captionFor.isBlank() && it.widget !in DW_KNOWN_WIDGETS }
     }
     val upfront = remember(visible) { visible.filter { DwTier.of(it.tier) != DwTier.ADVANCED } }
     val advanced = remember(visible) { visible.filter { DwTier.of(it.tier) == DwTier.ADVANCED } }
@@ -1994,6 +2146,9 @@ private fun EntitySection(
                 onPatch = onPatch,
                 stamp = stamps[field.key],
             )
+            if (field.refSuggest != null) {
+                DwRefSuggestion(entity, field, values, services, enabled = true, onPatch = onPatch)
+            }
         }
         if (advanced.isNotEmpty()) {
             DisclosureHeader(
@@ -2022,6 +2177,9 @@ private fun EntitySection(
                         onPatch = onPatch,
                         stamp = stamps[field.key],
                     )
+                    if (field.refSuggest != null) {
+                        DwRefSuggestion(entity, field, values, services, enabled = true, onPatch = onPatch)
+                    }
                 }
             }
         }
