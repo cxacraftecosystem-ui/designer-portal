@@ -34,7 +34,7 @@ ROUTES = Path(design_workshop_roster.__file__).resolve()
 
 def test_the_designer_door_is_the_stage_write_door_and_the_officers_pipeline() -> None:
     source = ROUTES.read_text(encoding="utf-8")
-    assert source.count("for_edit=True") == 2
+    assert source.count("load_workshop_or_404(workshop_id, current_user, for_edit=True)") == 2
     assert source.count("_require_designer(current_user)") == 2
     assert "run_artisan_import(" in source and "artisan_import_history(" in source
     # One pipeline: the import service is never called from the designer's module directly.
@@ -42,12 +42,14 @@ def test_the_designer_door_is_the_stage_write_door_and_the_officers_pipeline() -
 
 
 def test_the_router_is_mounted() -> None:
-    from app.main import app
+    from pathlib import Path as _Path
 
-    paths = {getattr(route, "path", "") for route in app.routes}
-    assert "/api/design-workshops/{workshop_id}/roster/upload" in paths
-    assert "/api/design-workshops/{workshop_id}/roster/pro-forma" in paths
-    assert "/api/design-workshops/{workshop_id}/roster/imports" in paths
+    paths = {getattr(route, "path", "") for route in design_workshop_roster.router.routes}
+    assert "/design-workshops/{workshop_id}/roster/upload" in paths
+    assert "/design-workshops/{workshop_id}/roster/pro-forma" in paths
+    assert "/design-workshops/{workshop_id}/roster/imports" in paths
+    router_source = (_Path(ROUTES).parent.parent / "router.py").read_text(encoding="utf-8")
+    assert "include_router(design_workshop_roster.router)" in router_source
 
 
 def _aadhaar() -> str:
@@ -88,7 +90,8 @@ def world() -> Any:
 
     stamp = uuid.uuid4().hex[:8]
     facts: dict[str, Any] = {"stamp": stamp}
-    craft_name = f"Roster craft {stamp}"
+    # Digits only after the words: the parser title-cases a craft name before it looks it up.
+    craft_name = f"Roster Craft {int(stamp, 16) % 10**8}"
 
     async def seed() -> None:
         await db.connect()
@@ -224,7 +227,7 @@ def test_the_pro_forma_names_the_workshop(world: Any) -> None:
 def test_the_owner_imports_and_the_ledger_records_it(world: Any) -> None:
     assert world["imported"].status_code == 201, world["imported"].text
     report = world["imported"].json()
-    assert report["artisansCreated"] == 1
+    assert report["artisansCreated"] == 1, report["problems"]
     assert report["participantsCreated"] == 1
     assert len(world["ledger"]) == 1
     assert world["ledger"][0].uploadedById == world["owner"].id

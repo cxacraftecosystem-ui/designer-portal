@@ -351,8 +351,11 @@ def test_the_artisan_import_asks_the_write_gate_before_it_reads_the_workbook():
     source = inspect.getsource(routes.upload_artisan_list)
     gate = source.find("posts.refuse_a_holders_write(workshop_id, current_user)")
     assert gate != -1, "the artisan import no longer asks whether its caller serves on the workshop"
-    assert gate < source.find("_read_artisan_upload(file, request)")
-    assert gate < source.find("import_artisans(")
+    # SINCE C11 (2026-10-17) THE READ AND THE IMPORT LIVE IN `run_artisan_import`, shared with the
+    # designer's door, and the gate is asked before the handler hands over to it.
+    assert gate < source.find("run_artisan_import(")
+    shared = inspect.getsource(routes.run_artisan_import)
+    assert shared.find("_read_artisan_upload(file, request)") < shared.find("import_artisans(")
 
 
 def _gate_comes_first(handler: Any, write: str) -> None:
