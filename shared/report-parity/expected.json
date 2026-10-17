@@ -20548,6 +20548,150 @@
          "highlight": false
         }
        ]
+      ],
+      [
+       [
+        {
+         "text": "13. Prototype Development",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "Voice note",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "45 s",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "2",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "14",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ]
+      ],
+      [
+       [
+        {
+         "text": "13. Prototype Development",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "walkthrough.m4a",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "1 h 02 min",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "1",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "1,092",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ]
       ]
      ],
      "caption": "Recordings transcribed during this workshop. The speaker count is the number of voices the transcribing machine separated out of the audio, not a count of the people present.",
@@ -20784,6 +20928,347 @@
      "align": "LEFT"
     },
     {
+     "type": "HEADING",
+     "level": 2,
+     "runs": [
+      {
+       "text": "Voice note",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "number": "28.2",
+     "bookmark": "_S275_28_2_Voice_note"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Transcribed automatically from the workshop recording · 45 s · 2 speakers · 2026-07-15 · recording cmgmedia00000000000000043",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "NOTE",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "The speaker labels in this transcript — who is saying which line — were decided by the machine that transcribed the recording, not by anybody who was present. Nothing recorded how many people were speaking or who they were: the labels are that machine's separation of the voices it heard, and it can merge two speakers into one or split one across two. The numbering is by order of first speaking and is not a name. Check a line against the recording before attributing it to a particular person.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "NOTE",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Weaver: ",
+       "bold": true,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "Indigo first.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "weaver: ",
+       "bold": true,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "Then madder.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Buyer 2: ",
+       "bold": true,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "Too dark for the market.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "HEADING",
+     "level": 2,
+     "runs": [
+      {
+       "text": "walkthrough.m4a",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "number": "28.3",
+     "bookmark": "_S281_28_3_walkthrough_m4a"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Transcribed automatically from the workshop recording · 1 h 02 min · 1 speaker · 2026-07-16 · recording cmgmedia00000000000000042",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "NOTE",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "The walkthrough",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Recorded walking the length of the shed, one voice throughout.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "SPACER",
+     "height_pct": 1.5
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "• the ",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "frame",
+       "bold": false,
+       "italic": true,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": " is levelled first",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "SPACER",
+     "height_pct": 1.5
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "The last ",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "knot",
+       "bold": true,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": " is tied by hand.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
      "type": "PAGEBREAK"
     },
     {
@@ -20804,7 +21289,7 @@
       }
      ],
      "number": "29",
-     "bookmark": "_S276_29_Annexure_Machine_assisted"
+     "bookmark": "_S291_29_Annexure_Machine_assisted"
     },
     {
      "type": "PARAGRAPH",
@@ -21099,7 +21584,7 @@
       }
      ],
      "number": "29.1",
-     "bookmark": "_S279_29_1_AI_cleaned_transcript"
+     "bookmark": "_S294_29_1_AI_cleaned_transcript"
     },
     {
      "type": "PARAGRAPH",
@@ -21188,7 +21673,7 @@
       }
      ],
      "number": "29.2",
-     "bookmark": "_S283_29_2_Prose_written_by_AI_fro"
+     "bookmark": "_S298_29_2_Prose_written_by_AI_fro"
     },
     {
      "type": "PARAGRAPH",
@@ -21265,7 +21750,7 @@
       }
      ],
      "number": "29.3",
-     "bookmark": "_S287_29_3_AI_translation"
+     "bookmark": "_S302_29_3_AI_translation"
     },
     {
      "type": "PARAGRAPH",
@@ -37224,6 +37709,150 @@
          "highlight": false
         }
        ]
+      ],
+      [
+       [
+        {
+         "text": "13. Prototype Development",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "Voice note",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "45 s",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "2",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "14",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ]
+      ],
+      [
+       [
+        {
+         "text": "13. Prototype Development",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "walkthrough.m4a",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "1 h 02 min",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "1",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ],
+       [
+        {
+         "text": "1,092",
+         "bold": false,
+         "italic": false,
+         "underline": false,
+         "strike": false,
+         "script": "LATIN",
+         "color": null,
+         "superscript": false,
+         "subscript": false,
+         "highlight": false
+        }
+       ]
       ]
      ],
      "caption": "Recordings transcribed during this workshop. The speaker count is the number of voices the transcribing machine separated out of the audio, not a count of the people present.",
@@ -37460,6 +38089,347 @@
      "align": "LEFT"
     },
     {
+     "type": "HEADING",
+     "level": 2,
+     "runs": [
+      {
+       "text": "Voice note",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "number": "13.2",
+     "bookmark": "_S160_13_2_Voice_note"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Transcribed automatically from the workshop recording · 45 s · 2 speakers · 2026-07-15 · recording cmgmedia00000000000000043",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "NOTE",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "The speaker labels in this transcript — who is saying which line — were decided by the machine that transcribed the recording, not by anybody who was present. Nothing recorded how many people were speaking or who they were: the labels are that machine's separation of the voices it heard, and it can merge two speakers into one or split one across two. The numbering is by order of first speaking and is not a name. Check a line against the recording before attributing it to a particular person.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "NOTE",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Weaver: ",
+       "bold": true,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "Indigo first.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "weaver: ",
+       "bold": true,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "Then madder.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Buyer 2: ",
+       "bold": true,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "Too dark for the market.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "HEADING",
+     "level": 2,
+     "runs": [
+      {
+       "text": "walkthrough.m4a",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "number": "13.3",
+     "bookmark": "_S166_13_3_walkthrough_m4a"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Transcribed automatically from the workshop recording · 1 h 02 min · 1 speaker · 2026-07-16 · recording cmgmedia00000000000000042",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "NOTE",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "The walkthrough",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "Recorded walking the length of the shed, one voice throughout.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "SPACER",
+     "height_pct": 1.5
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "• the ",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "frame",
+       "bold": false,
+       "italic": true,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": " is levelled first",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "SPACER",
+     "height_pct": 1.5
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening. We set the warp on the frame before the sun is high, because the threads stretch in the heat and a warp set at noon sags by evening.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
+     "type": "PARAGRAPH",
+     "runs": [
+      {
+       "text": "The last ",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": "knot",
+       "bold": true,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      },
+      {
+       "text": " is tied by hand.",
+       "bold": false,
+       "italic": false,
+       "underline": false,
+       "strike": false,
+       "script": "LATIN",
+       "color": null,
+       "superscript": false,
+       "subscript": false,
+       "highlight": false
+      }
+     ],
+     "style": "BODY",
+     "align": "LEFT"
+    },
+    {
      "type": "PAGEBREAK"
     },
     {
@@ -37480,7 +38450,7 @@
       }
      ],
      "number": "14",
-     "bookmark": "_S161_14_Advanced_colour_notes"
+     "bookmark": "_S176_14_Advanced_colour_notes"
     },
     {
      "type": "KEYVALUE",

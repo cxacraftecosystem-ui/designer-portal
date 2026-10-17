@@ -334,12 +334,10 @@ val STAGE_20_SETTINGS: List<SettingSupport> = listOf(
         "The photographic annexure is built here: every photograph in the record, in stage order, " +
             "three across, from the copies already on this device. An explicit false removes the " +
             "section; absent leaves the template alone."),
-    SettingSupport("includeTranscripts", SettingReach.NOT_ON_DEVICE,
-        "The transcript annexure is not built on this device, and the reason is the text and not " +
-            "the drawing: design-workshop audio is transcribed SERVER-SIDE by the media queue onto " +
-            "MediaFile.transcriptText, which no draft on this handset stores and no endpoint this " +
-            "client binds ever asks for. The recordings are here; their transcripts are not. A " +
-            "designer who asks for them is told so on every export."),
+    SettingSupport("includeTranscripts", SettingReach.APPLIED,
+        "The transcript annexure is built here, from the copy of the transcripts DwTranscriptStore " +
+            "keeps from the workshop and stage reads this app makes while online. A recording this " +
+            "copy does not hold yet is counted on the export screen rather than silently omitted."),
     SettingSupport("includeCompletenessAnnexure", SettingReach.APPLIED,
         "The completeness annexure is built here, from the same scorer the stage screens use, plus " +
             "the reference check only a report can make: a REF whose row was deleted counts as " +
@@ -363,12 +361,11 @@ val STAGE_20_SETTINGS: List<SettingSupport> = listOf(
  * means a section that becomes renderable is deleted from here in the same edit, and one that never
  * was cannot be quietly forgotten.
  *
- * THE TWO NULL ENTRIES ARE GAPS, NOT DECISIONS. The transcript annexure and the machine-assisted
- * text annexure are not built on a handset; customer-facing copy does not narrate that (2026-10-10),
- * so the gap is recorded in docs/OPEN_FINDINGS.md instead of on the export screen.
+ * THE NULL ENTRY IS A GAP, NOT A DECISION. The machine-assisted text annexure is not built on a
+ * handset; customer-facing copy does not narrate that (2026-10-10). The transcript annexure left this
+ * map when the phone gained a copy of the transcripts (DA-29) — see `DwTranscriptStore`.
  */
 val UNSUPPORTED_SECTIONS: Map<SpecialSection, String?> = mapOf(
-    SpecialSection.ANNEXURE_TRANSCRIPTS to null,
     // THE ANNEXURE IS DRAWN ON THIS DEVICE NOW — see `renderQuestionnaireAnnexure` — and this entry
     // survives because it stopped being universally true rather than because it stopped being true.
     // `DwQuestionnaireStore` holds the answers this handset has been shown, and the section prints
@@ -429,7 +426,6 @@ internal fun unsupportedSectionsIn(
     for (section in template.sections) {
         val special = section.special ?: continue
         if (special !in UNSUPPORTED_SECTIONS) continue
-        if (special == SpecialSection.ANNEXURE_TRANSCRIPTS && !wantsTranscripts(null, settings)) continue
         if (special == SpecialSection.ANNEXURE_QUESTIONNAIRES &&
             questionnaires != DwQuestionnaireCopy.UNKNOWN
         ) continue

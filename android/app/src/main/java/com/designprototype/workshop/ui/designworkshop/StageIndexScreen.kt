@@ -329,6 +329,12 @@ fun StageIndexScreen(
                 // Left for the stage screens, which read one stage and never the workshop's status,
                 // and for the report, whose Certification section prints the sign-off.
                 DwReportFreeze.rememberRead(workshopId, remote)
+                // The transcripts this read carries, kept for the phone's own report (DA-29): the
+                // ordinary open of a workshop while online is what makes an export in a courtyard
+                // with no signal carry what the artisans said.
+                com.designprototype.workshop.data.DwTranscriptStore.keep(
+                    appContext, workshopId, schema, remote.stages, remote.transcripts,
+                )
             }
             // Refreshed opportunistically, and only ever ADDING to what was read off disk above: a
             // failure leaves the cached copy exactly where it was — see [dwCustomDefinition].

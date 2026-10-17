@@ -106,14 +106,13 @@ class ReportSettingsLedgerTest {
     }
 
     @Test
-    fun `the transcript annexure is the only toggle this device cannot honour`() {
-        // Pinned as a LIST rather than a count so that honouring one of them is a deliberate edit to
-        // this line and not a number that quietly drifts. The photographic and completeness
-        // annexures are now built here; the transcript one is not, and the reason is DATA rather
-        // than drawing — workshop audio is transcribed server-side and its text never reaches this
-        // handset. Closing that gap means giving the device the transcripts, not the renderer.
+    fun `every toggle is honoured on this device now, transcripts included`() {
+        // Pinned as a LIST rather than a count so that a toggle falling back to unsupported is a
+        // deliberate edit to this line and not a number that quietly drifts. The transcript
+        // annexure was the last one: its gap was DATA rather than drawing, and DA-29 closed it by
+        // giving the device the transcripts (`DwTranscriptStore`), not by changing the renderer.
         assertEquals(
-            listOf("includeTranscripts"),
+            emptyList<String>(),
             STAGE_20_SETTINGS.filter { it.reach == SettingReach.NOT_ON_DEVICE }.map { it.key },
         )
         assertEquals(
