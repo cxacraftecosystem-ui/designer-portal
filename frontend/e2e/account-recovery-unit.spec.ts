@@ -181,7 +181,7 @@ test("a first password on a two-step account asks for the code and sends it", ()
   expect(firstPasswordNeedsCode(null)).toBe(false);
   expect(SIGN_IN).toMatch(/twoFactorCode: code/);
   expect(CARD).toMatch(/Code from your authenticator app/);
-  expect(CARD).toMatch(/setFirstPassword\(next, askCode \? code : undefined\)/);
+  expect(CARD).toMatch(/setFirstPassword\(next, proof, askCode \? code : undefined\)/);
 });
 
 test("a refusal for the two-step code is read off its header, not its words", () => {

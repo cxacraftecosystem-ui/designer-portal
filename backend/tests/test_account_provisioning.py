@@ -825,8 +825,8 @@ def test_the_flag_cannot_be_raised_on_an_account_with_no_password(world, client)
     assert "link" not in refused.json()["detail"]
     assert _link(client, world, "ministry", google_only).status_code == 422
 
-    # Its own way to a password is to SET one from its account screen, on a fresh sign-in; a session
-    # an hour old is sent to sign in again, and nothing is written (2026-10-17).
+    # Its own way to a password is to SET one from its account screen, with a fresh provider sign-in;
+    # without one it is asked to confirm with its provider, and nothing is written (2026-10-17).
     settings = get_settings()
     now = int(time.time())
     stale = jwt.encode(
@@ -840,7 +840,7 @@ def test_the_flag_cannot_be_raised_on_an_account_with_no_password(world, client)
         headers=_bearer(stale),
     )
     assert told.status_code == 400, told.text
-    assert told.headers.get("x-sign-in-again") == "1"
+    assert told.headers.get("x-confirm-provider") == "GOOGLE"
 
 
 @pytest.mark.parametrize("actor", ["ministry", "admin", "master"])

@@ -15,9 +15,12 @@
  *
  * An account that signs in with Google, Microsoft or Yahoo has no current password to type, so the
  * same card asks only for the new one (`setFirstPassword`) — the same route, which accepts that only
- * from a session opened in the last few minutes. An older session is answered 400 with
- * `X-Sign-In-Again` (`signInAgainRequired`), and the card then offers to sign out so the person can
- * sign straight back in and finish. Either way the account keeps the way it signs in now.
+ * with a FRESH provider sign-in for this account (2026-10-17; it used to accept any session opened in
+ * the last fifteen minutes). So the card first asks the person to confirm it's you with the provider
+ * the account signs in with — Google's own button, or a round trip to Microsoft or Yahoo that comes
+ * back here (`CONFIRM_STATE_PREFIX`) — and only then draws the password boxes. A proof the server
+ * refuses as stale or mismatched (`providerConfirmationRequired`) is dropped and asked for again.
+ * Either way the account keeps the way it signs in now.
  *
  * ── THE SAME RULES AS THE GATE, FROM THE SAME PLACE ────────────────────────────────────────────
  *
@@ -39,19 +42,34 @@ import { Eye, EyeOff, KeyRound } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { setToken } from "@/lib/api";
 import { isUnreachable } from "@/lib/failureTriage";
+import { googleClientId, loadGoogleIdentity } from "@/lib/googleIdentity";
 import {
+  CONFIRM_STATE_PREFIX,
+  beginSignIn,
+  callbackErrorMessage,
+  configuredOidcProviders,
+  loginBody,
+  parseCallbackFragment,
+  takePendingSignIn
+} from "@/lib/oidcSignIn";
+import {
+  CONFIRMED_NOTE,
   FIRST_PASSWORD_NOTE,
   PASSWORD_CHANGE_SESSIONS,
+  type ConfirmProvider,
   canSetFirstPassword,
+  confirmPrompt,
+  confirmProviderFor,
   currentPasswordRefused,
   firstPasswordNeedsCode,
   newPasswordProblem,
-  signInAgainRequired,
+  providerConfirmationRequired,
   twoFactorCodeRequired
 } from "@/lib/passwordChange";
 import {
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
+  type ProviderProof,
   changeOwnPassword,
   passwordRuleLine,
   setFirstPassword
@@ -64,7 +82,7 @@ const CHANGED = "Password changed. Use the new one the next time you sign in.";
 const PASSWORD_ADDED = "Password set. You can now sign in with your email address and this password too.";
 
 export function ChangePasswordCard() {
-  const { user, refreshMe, logout } = useAuth();
+  const { user, refreshMe } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -78,23 +96,46 @@ export function ChangePasswordCard() {
   const [changed, setChanged] = useState<string | null>(null);
   /** Refusals of the current password, counted so that EVERY one puts the caret back in its box. */
   const [currentRefusals, setCurrentRefusals] = useState(0);
-  /** The server asked for a fresh sign-in before a first password may be set. */
-  const [needsSignIn, setNeedsSignIn] = useState(false);
+  /** The provider's answer to "confirm it's you", held until the first password is sent. Never stored. */
+  const [proof, setProof] = useState<ProviderProof | null>(null);
+  /** Which provider the server last asked to confirm with, when it named one. */
+  const [askedProvider, setAskedProvider] = useState<ConfirmProvider | null>(null);
   const currentBox = useRef<HTMLInputElement | null>(null);
+  const section = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (currentRefusals > 0) currentBox.current?.focus();
   }, [currentRefusals]);
 
+  // BACK FROM MICROSOFT OR YAHOO. `/login/callback` sends a confirmation here with the answer in the
+  // fragment; it is taken off the address bar before anything else, because a code is single use.
+  useEffect(() => {
+    const callback = parseCallbackFragment(window.location.hash);
+    if (!callback || !callback.state.startsWith(CONFIRM_STATE_PREFIX)) return;
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    const pending = takePendingSignIn(callback.state);
+    if (pending && callback.code) {
+      setProof(loginBody(pending, callback.code));
+      setChanged(CONFIRMED_NOTE);
+    } else {
+      setError(callbackErrorMessage(pending?.provider ?? "MICROSOFT", callback.error));
+    }
+    section.current?.scrollIntoView({ block: "start" });
+  }, []);
+
   if (!user) return null;
   // No password of its own: the same card asks only for the new one. Decided after every hook.
   const settingFirst = canSetFirstPassword(user);
   const askCode = settingFirst && firstPasswordNeedsCode(user);
+  const confirmWith = askedProvider ?? confirmProviderFor(user);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setChanged(null);
-    setNeedsSignIn(false);
+    if (settingFirst && !proof) {
+      setError(confirmPrompt(confirmWith));
+      return;
+    }
     const problem = settingFirst
       ? next !== confirm
         ? newPasswordProblem({ current: "", next, confirm })
@@ -111,7 +152,8 @@ export function ChangePasswordCard() {
     setSaving(true);
     setError(null);
     try {
-      const fresh = settingFirst ? await setFirstPassword(next, askCode ? code : undefined) : await changeOwnPassword(current, next);
+      const fresh =
+        settingFirst && proof ? await setFirstPassword(next, proof, askCode ? code : undefined) : await changeOwnPassword(current, next);
       // Emptied, all three: a form still holding both passwords after it worked is a form somebody
       // walks away from with the secret sitting in it.
       setCurrent("");
@@ -119,6 +161,7 @@ export function ChangePasswordCard() {
       setConfirm("");
       setCode("");
       setShow(false);
+      setProof(null);
       if (fresh) {
         // THE TOKEN THIS TAB HOLDS WAS JUST RETIRED with every other session of the account — the
         // server binds a session to the password it was opened with. The fresh one came back in the
@@ -137,8 +180,11 @@ export function ChangePasswordCard() {
         setChanged(CHANGED);
       }
     } catch (err) {
-      if (settingFirst && signInAgainRequired(err)) {
-        setNeedsSignIn(true);
+      const confirmAgain = settingFirst ? providerConfirmationRequired(err) : null;
+      if (confirmAgain) {
+        // Stale, or for another mailbox: drop it and ask again. The passwords are kept.
+        setProof(null);
+        setAskedProvider(confirmAgain);
       } else if (settingFirst && twoFactorCodeRequired(err)) {
         // The code was missing or wrong. Only the code is emptied: the passwords were not refused.
         setCode("");
@@ -161,7 +207,7 @@ export function ChangePasswordCard() {
   }
 
   return (
-    <section className="panel p-5">
+    <section ref={section} className="panel scroll-mt-28 p-5">
       {/* `PersonalSettingsCards.CardHeading`'s anatomy, copied because that component is private to
           its file — the same treatment `GrievanceRedressalCard` gives it. */}
       <div className="flex items-center gap-2.5">
@@ -194,12 +240,16 @@ export function ChangePasswordCard() {
         >
           {error ?? ""}
         </div>
-        {needsSignIn ? (
-          <div>
-            <button type="button" className="field-button-secondary" onClick={() => void logout()}>
-              Sign out and sign in again
-            </button>
-          </div>
+        {settingFirst && !proof ? (
+          <ConfirmItsYou
+            provider={confirmWith}
+            onProof={(value) => {
+              setProof(value);
+              setError(null);
+              setChanged(CONFIRMED_NOTE);
+            }}
+            onError={setError}
+          />
         ) : null}
         <p
           role="status"
@@ -228,6 +278,8 @@ export function ChangePasswordCard() {
         </div>
         )}
 
+        {settingFirst && !proof ? null : (
+        <>
         <div>
           <label htmlFor="settings-new-password" className="field-label">
             New password
@@ -309,7 +361,94 @@ export function ChangePasswordCard() {
             {saving ? "Saving…" : settingFirst ? "Set password" : "Change password"}
           </button>
         </div>
+        </>
+        )}
       </form>
     </section>
+  );
+}
+
+/**
+ * "Confirm it's you" before a first password: the provider's own sign-in, run again just now.
+ *
+ * GOOGLE draws Google's button (the same script `/login` uses, `lib/googleIdentity.ts`) and hands the
+ * ID token straight back. MICROSOFT and YAHOO leave for the provider and come back to `/settings`
+ * (`beginSignIn(…, "confirm")`), where the card picks the code up. A provider this build has not
+ * configured cannot be confirmed with here, so the sentence names the way that still works.
+ */
+function ConfirmItsYou({
+  provider,
+  onProof,
+  onError
+}: {
+  provider: ConfirmProvider;
+  onProof: (proof: ProviderProof) => void;
+  onError: (message: string) => void;
+}) {
+  const host = useRef<HTMLDivElement | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const onProofRef = useRef(onProof);
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onProofRef.current = onProof;
+    onErrorRef.current = onError;
+  });
+  const clientId = provider === "GOOGLE" ? googleClientId() : null;
+  const oidc = provider === "GOOGLE" ? null : (configuredOidcProviders().find((item) => item.id === provider) ?? null);
+
+  useEffect(() => {
+    if (!clientId) return;
+    let cancelled = false;
+    loadGoogleIdentity()
+      .then(() => {
+        if (cancelled || !host.current || !window.google) return;
+        window.google.accounts.id.initialize({
+          client_id: clientId,
+          callback: (response) => onProofRef.current({ googleIdToken: response.credential })
+        });
+        window.google.accounts.id.renderButton(host.current, {
+          type: "standard",
+          theme: "outline",
+          size: "large",
+          text: "continue_with",
+          shape: "rectangular"
+        });
+      })
+      .catch(() => {
+        if (!cancelled) onErrorRef.current("Couldn't reach Google. Check your connection and try again.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  async function leaveForProvider() {
+    if (!oidc) return;
+    setLeaving(true);
+    try {
+      window.location.assign(await beginSignIn(oidc, window.location.origin, null, window.sessionStorage, "confirm"));
+    } catch {
+      setLeaving(false);
+      onError(callbackErrorMessage(oidc.id, null));
+    }
+  }
+
+  return (
+    <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
+      <p className="text-sm text-ink-700">{confirmPrompt(provider)}</p>
+      {clientId ? <div ref={host} className="min-h-10" /> : null}
+      {oidc ? (
+        <div>
+          <button type="button" className="field-button-secondary" disabled={leaving} onClick={() => void leaveForProvider()}>
+            {leaving ? "Opening…" : `Continue with ${oidc.label}`}
+          </button>
+        </div>
+      ) : null}
+      {!clientId && !oidc ? (
+        <p className="text-xs leading-5 text-ink-500">
+          To add a password, ask an administrator to send you a link to set one.
+        </p>
+      ) : null}
+    </div>
   );
 }

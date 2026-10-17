@@ -1698,18 +1698,14 @@ jobs:
           # "Forgot your password?" limits per client address (backend/app/scale/rate_limit.py,
           # `client_address`), counted from the RIGHT of X-Forwarded-For because the left is
           # whatever the caller typed. Production is CloudFront -> nginx -> uvicorn: CloudFront
-          # appends the viewer, nginx appends the CloudFront edge.
-          #
-          # 1, NOT 2, UNTIL THE ORIGIN IS LOCKED TO CLOUDFRONT. The origin still accepts connections
-          # that did not come through CloudFront, so a client reaching the box directly could write
-          # the "viewer" slot (2nd from the right) itself and meet a fresh bucket every request. 1
-          # keys on the CloudFront edge — the address nginx appends, which nobody can forge — at the
-          # cost of sharing a bucket with the edge's other viewers. When the owner approves locking
-          # the origin to CloudFront, change this to 2. The documentation portal pins the same
-          # (TRUSTED_PROXY_HOPS=1).
+          # appends the viewer, nginx appends the CloudFront edge, so the client is 2nd from the
+          # right. The origin is locked to CloudFront (its security group admits only CloudFront's
+          # origin-facing ranges, and nginx answers 403 without CloudFront's X-Origin-Verify header:
+          # "Require CloudFront's origin header in nginx" below), so every request came through an edge. The code's default
+          # is also 2 since 2026-10-17; this pin keeps the box explicit whatever BACKEND_ENV says.
           sed -i '/^FORWARDED_CLIENT_HOPS=/d' .env
-          printf 'FORWARDED_CLIENT_HOPS=%s\n' '1' >> .env
-          grep -qxF 'FORWARDED_CLIENT_HOPS=1' .env || { echo "forwarded hops did not land on their own line"; exit 1; }
+          printf 'FORWARDED_CLIENT_HOPS=%s\n' '2' >> .env
+          grep -qxF 'FORWARDED_CLIENT_HOPS=2' .env || { echo "forwarded hops did not land on their own line"; exit 1; }
           echo "forwarded client hops pinned"
           REMOTE
 
@@ -1836,6 +1832,43 @@ jobs:
             echo "::error::CloudFront got $code from the box after the origin check went in, so the previous nginx config was put back. ORIGIN_VERIFY_SECRET must equal the X-Origin-Verify header on the CloudFront origin: docs/INFRA_ORIGIN_LOCK.md."
             exit 1
           fi
+
+      # The two-step verification key (2026-10-17): the AES key every stored authenticator secret is
+      # encrypted under, independent of JWT_SECRET (backend/app/services/two_factor.py). Actions
+      # SECRETS, on ssh's STDIN like the provider secrets above. WRITTEN ONLY WHEN THE SECRET EXISTS,
+      # with TWO_FACTOR_KEY_REQUIRED=true beside it. Every release .env is rebuilt from BACKEND_ENV, so
+      # an unset secret would ship a release with NO key: if the live release already has a key (or
+      # the required flag), the secret was lost, and this step FAILS before anything switches over,
+      # because booting without it would lock every two-step account out. Only a box that never had
+      # a key passes with a warning (the transition). The app also refuses to boot when stored
+      # secrets are under a versioned key and no key is set. Rotation: docs/SECURITY.md.
+      - name: Pin the two-step verification key
+        env:
+          SHA: ${{ env.REL_ID }}
+          TWO_FACTOR_ENCRYPTION_KEY: ${{ secrets.TWO_FACTOR_ENCRYPTION_KEY }}
+          TWO_FACTOR_PREVIOUS_KEYS: ${{ secrets.TWO_FACTOR_PREVIOUS_KEYS }}
+        run: |
+          if [ -z "$TWO_FACTOR_ENCRYPTION_KEY" ]; then
+            live=$(ssh ubuntu@${{ secrets.EC2_HOST }} "grep -c -E '^(TWO_FACTOR_ENCRYPTION_KEY=.|TWO_FACTOR_KEY_REQUIRED=true)' /home/ubuntu/app/current/backend/.env 2>/dev/null || true")
+            if [ "${live:-0}" != "0" ]; then
+              echo "::error::The TWO_FACTOR_ENCRYPTION_KEY secret is empty or missing, but the live release has a two-step key. Restore the secret before deploying; shipping without it would lock every two-step account out (docs/SECURITY.md)."
+              exit 1
+            fi
+            echo "::warning::TWO_FACTOR_ENCRYPTION_KEY is not set; the box keeps the legacy two-step key"
+            exit 0
+          fi
+          frag="TWO_FACTOR_ENCRYPTION_KEY=$TWO_FACTOR_ENCRYPTION_KEY"$'\n'"TWO_FACTOR_KEY_REQUIRED=true"$'\n'
+          if [ -n "$TWO_FACTOR_PREVIOUS_KEYS" ]; then
+            frag+="TWO_FACTOR_PREVIOUS_KEYS=$TWO_FACTOR_PREVIOUS_KEYS"$'\n'
+          fi
+          printf '%s' "$frag" | ssh ubuntu@${{ secrets.EC2_HOST }} "ENVFILE='/home/ubuntu/app/releases/$SHA/backend/.env' bash -c '
+            set -euo pipefail
+            frag=\$(cat)
+            [ -s \"\$ENVFILE\" ] && [ -n \"\$(tail -c1 \"\$ENVFILE\")\" ] && printf \"\n\" >> \"\$ENVFILE\"
+            sed -i \"/^TWO_FACTOR_ENCRYPTION_KEY=/d;/^TWO_FACTOR_PREVIOUS_KEYS=/d;/^TWO_FACTOR_KEY_REQUIRED=/d\" \"\$ENVFILE\"
+            printf \"%s\" \"\$frag\" >> \"\$ENVFILE\"
+            echo \"two-step key pinned: \$(grep -c -E \"^TWO_FACTOR_(ENCRYPTION_KEY|PREVIOUS_KEYS)=\" \"\$ENVFILE\" || true) line(s)\"
+          '"
 
       # ─── THE VENV, AND WHY IT IS COPIED RATHER THAN REBUILT OR HARD-LINKED ──────────────────
       #

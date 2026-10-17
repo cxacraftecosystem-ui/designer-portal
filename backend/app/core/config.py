@@ -224,6 +224,18 @@ class Settings(BaseSettings):
     # JWT_SECRET — otherwise the rotation makes every stored secret undecryptable and each one has to
     # be re-entered in the Settings hub. Accepts a Fernet key or any high-entropy passphrase.
     secrets_encryption_key: str | None = Field(default=None, alias="SECRETS_ENCRYPTION_KEY")
+    # THE TWO-STEP VERIFICATION KEY (2026-10-17): 32 random bytes, base64. Encrypts every stored TOTP
+    # secret, independently of JWT_SECRET, so rotating JWT_SECRET no longer locks two-step users out.
+    # Unset = the transition: the legacy key derived from JWT_SECRET is used and the boot logs a
+    # WARNING. Rotation: move the old value into TWO_FACTOR_PREVIOUS_KEYS (comma-separated), set a
+    # new one, run scripts/reencrypt_two_factor_secrets.py --apply, then drop the previous key. See
+    # app/services/two_factor.py and docs/SECURITY.md. Never reuse JWT_SECRET for it.
+    two_factor_encryption_key: str | None = Field(default=None, alias="TWO_FACTOR_ENCRYPTION_KEY")
+    two_factor_previous_keys: str | None = Field(default=None, alias="TWO_FACTOR_PREVIOUS_KEYS")
+    # On: the boot FAILS when the key is unset and any account has two-step on. The deploy turns it
+    # on together with writing the key, so a box that loses the key refuses to serve rather than
+    # quietly falling back to a key nothing is encrypted under.
+    two_factor_key_required: bool = Field(default=False, alias="TWO_FACTOR_KEY_REQUIRED")
 
     # --- Security response headers (see app.main.SecurityHeadersMiddleware) ---------------------
     # HSTS tells browsers to refuse plaintext HTTP to this host for max_age seconds. It is only
@@ -349,12 +361,12 @@ class Settings(BaseSettings):
     # anonymous limits (``rate_limit.client_address``, "Forgot your password?") key on it, and the
     # left-most entry is whatever the caller typed. 1 is the entry the nearest proxy appended — nginx
     # facing the internet. Production is CloudFront -> nginx -> uvicorn: CloudFront appends the viewer
-    # and nginx then appends the CloudFront edge. The viewer (2) is per person but forgeable by
-    # anybody who reaches the origin directly, and the origin is not yet locked to CloudFront, so the
-    # default and the deploy pin (.github/workflows/deploy-backend.yml) are 1: the CloudFront edge,
-    # which nginx appends and nobody can forge. 2 once the owner approves locking the origin. The
-    # documentation portal's TRUSTED_PROXY_HOPS=1 is the same choice. Never 0.
-    forwarded_client_hops: int = Field(default=1, ge=1, le=5, alias="FORWARDED_CLIENT_HOPS")
+    # and nginx then appends the CloudFront edge, so the client is the 2nd from the right and the
+    # deploy pins FORWARDED_CLIENT_HOPS=2 (.github/workflows/deploy-backend.yml). Never 0.
+    # DEFAULT 2 SINCE 2026-10-17: the origin is locked to CloudFront (its security group admits only
+    # CloudFront's origin-facing ranges), so every request that reaches nginx came through an edge
+    # and the 2nd-from-right entry is the viewer. A box serving without CloudFront in front must set 1.
+    forwarded_client_hops: int = Field(default=2, ge=1, le=5, alias="FORWARDED_CLIENT_HOPS")
 
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
     google_android_client_id: str | None = Field(default=None, alias="GOOGLE_ANDROID_CLIENT_ID")

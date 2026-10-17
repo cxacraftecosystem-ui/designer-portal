@@ -76,7 +76,16 @@ fun providerLabel(authProvider: String?): String = when (authProvider?.trim()?.u
     else -> "another sign-in"
 }
 
-const val SIGN_IN_AGAIN_ACTION = "Sign out and sign in again"
+/**
+ * Under the set-password boxes: a first password is confirmed by signing in with the account's
+ * provider again when Set password is tapped (2026-10-17). Plain words, the provider named.
+ */
+fun firstPasswordConfirmNote(provider: String?): String =
+    "When you tap Set password, sign in with ${providerLabel(provider)} again to confirm it's you."
+
+/** The provider sign-in was closed or failed before it answered. */
+fun firstPasswordConfirmCancelled(provider: String?): String =
+    "Signing in with ${providerLabel(provider)} didn't finish, so no password was set. Try again."
 
 /** Setting a first password on an account with two-step verification on needs a current code. */
 fun firstPasswordNeedsCode(hasPassword: Boolean, user: UserDto?): Boolean =

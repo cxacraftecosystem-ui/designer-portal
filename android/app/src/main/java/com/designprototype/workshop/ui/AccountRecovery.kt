@@ -1,5 +1,11 @@
 package com.designprototype.workshop.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -31,18 +37,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.designprototype.workshop.data.SignInAgainRequired
+import com.designprototype.workshop.data.FirstPasswordProof
+import com.designprototype.workshop.data.GoogleAuthClient
+import com.designprototype.workshop.data.OidcAuthClient
+import com.designprototype.workshop.data.OidcLoginRequest
+import com.designprototype.workshop.data.ProviderConfirmationRequired
+import com.designprototype.workshop.data.confirmProviderFor
 import com.designprototype.workshop.data.TwoFactorCodeRequired
 import com.designprototype.workshop.data.FIRST_PASSWORD_CODE_MISSING
 import com.designprototype.workshop.data.UserDto
@@ -174,8 +187,6 @@ fun ForgotPasswordScreen(
 fun AccountPasswordScreen(
     repository: WorkshopRepository,
     onBack: () -> Unit,
-    /** Sign this device out — the way forward when the server asks for a fresh sign-in. */
-    onSignOut: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -194,13 +205,13 @@ fun AccountPasswordScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            item { AccountPasswordCard(repository, onSignOut) }
+            item { AccountPasswordCard(repository) }
         }
     }
 }
 
 @Composable
-fun AccountPasswordCard(repository: WorkshopRepository, onSignOut: () -> Unit) {
+fun AccountPasswordCard(repository: WorkshopRepository) {
     val scope = rememberCoroutineScope()
     var user by remember { mutableStateOf(repository.cachedUser()) }
     // Re-read once, so an account that gained a password on the web is not offered "Set a password".
@@ -216,8 +227,83 @@ fun AccountPasswordCard(repository: WorkshopRepository, onSignOut: () -> Unit) {
     var reveal by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var signInAgain by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf<String?>(null) }
+    // ── THE PROVIDER PROOF A FIRST PASSWORD TRAVELS WITH (2026-10-17) ─────────────────────────
+    // The sign-in code paths the sign-in screen uses, run again here: Credential Manager for
+    // Google, AppAuth in a browser tab for Microsoft and Yahoo. Built lazily from the activity,
+    // so an account that already has a password never binds a browser service.
+    val activity = LocalContext.current.componentActivity()
+    val oidcClient = remember(activity) { activity?.let { lazy { OidcAuthClient(it) } } }
+    // Saveable: the browser tab can outlive this activity (rotation, or the process reclaimed while
+    // it is open), and the nonce is the one thing the result does not carry back.
+    var pendingNonce by rememberSaveable { mutableStateOf<String?>(null) }
+    // The proof that went with a send refused only for its two-step code. Sent again with the
+    // corrected code: the server remembers that it already verified, so no second provider trip.
+    var heldProof by remember { mutableStateOf<FirstPasswordProof?>(null) }
+    val confirmWith = confirmProviderFor(user)
+
+    suspend fun send(proof: FirstPasswordProof?) {
+        busy = true
+        error = null
+        val hadPassword = hasPassword
+        runCatching {
+            repository.saveOwnPassword(if (hadPassword) current else null, next, if (askCode) code else null, proof)
+        }
+            .onSuccess {
+                heldProof = null
+                saved = passwordSavedLine(hadPassword)
+                current = ""
+                next = ""
+                confirm = ""
+                code = ""
+                user = repository.cachedUser()
+            }
+            .onFailure { failure ->
+                if (failure is ProviderConfirmationRequired) {
+                    // Stale, or for another mailbox: tapping Set password asks the provider again.
+                    heldProof = null
+                    error = failure.message
+                } else if (failure is TwoFactorCodeRequired) {
+                    // Only the code is emptied: the passwords and the provider proof were not refused.
+                    heldProof = proof
+                    error = failure.message
+                    code = ""
+                } else {
+                    error = failure.apiErrorMessage(PASSWORD_CHANGE_NOT_SENT)
+                }
+            }
+        busy = false
+    }
+
+    val oidcLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val rawNonce = pendingNonce
+        pendingNonce = null
+        val client = oidcClient?.value
+        if (rawNonce == null || client == null) {
+            error = firstPasswordConfirmCancelled(confirmWith)
+            busy = false
+            return@rememberLauncherForActivityResult
+        }
+        when (val outcome = client.finish(result.data)) {
+            is OidcAuthClient.Outcome.Failed -> {
+                error = firstPasswordConfirmCancelled(confirmWith)
+                busy = false
+            }
+            is OidcAuthClient.Outcome.Code -> scope.launch {
+                send(
+                    FirstPasswordProof.Oidc(
+                        OidcLoginRequest(
+                            oidcProvider = confirmWith,
+                            oidcCode = outcome.code,
+                            oidcCodeVerifier = outcome.codeVerifier,
+                            oidcRedirectUri = outcome.redirectUri,
+                            oidcNonce = rawNonce,
+                        )
+                    )
+                )
+            }
+        }
+    }
 
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -292,10 +378,8 @@ fun AccountPasswordCard(repository: WorkshopRepository, onSignOut: () -> Unit) {
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }
                 )
             }
-            if (signInAgain) {
-                OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) {
-                    Text(SIGN_IN_AGAIN_ACTION)
-                }
+            if (!hasPassword) {
+                Text(firstPasswordConfirmNote(confirmWith), color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
             }
             Button(
                 enabled = !busy && (!hasPassword || current.isNotEmpty()),
@@ -309,34 +393,46 @@ fun AccountPasswordCard(repository: WorkshopRepository, onSignOut: () -> Unit) {
                         error = FIRST_PASSWORD_CODE_MISSING
                         return@Button
                     }
-                    scope.launch {
-                        busy = true
-                        error = null
-                        signInAgain = false
-                        val hadPassword = hasPassword
-                        runCatching { repository.saveOwnPassword(if (hadPassword) current else null, next, if (askCode) code else null) }
-                            .onSuccess {
-                                saved = passwordSavedLine(hadPassword)
-                                current = ""
-                                next = ""
-                                confirm = ""
-                                code = ""
-                                user = repository.cachedUser()
-                            }
-                            .onFailure { failure ->
-                                if (failure is SignInAgainRequired) {
-                                    error = failure.message
-                                    signInAgain = true
-                                } else if (failure is TwoFactorCodeRequired) {
-                                    // Only the code is emptied: the passwords were not refused.
-                                    error = failure.message
-                                    code = ""
-                                } else {
-                                    error = failure.apiErrorMessage(PASSWORD_CHANGE_NOT_SENT)
-                                }
-                            }
-                        busy = false
+                    if (hasPassword) {
+                        scope.launch { send(null) }
+                        return@Button
                     }
+                    // A first password: confirm with the provider first, then send with its proof.
+                    heldProof?.let { held ->
+                        scope.launch { send(held) }
+                        return@Button
+                    }
+                    if (activity == null) {
+                        error = firstPasswordConfirmCancelled(confirmWith)
+                        return@Button
+                    }
+                    if (confirmWith == "GOOGLE") {
+                        scope.launch {
+                            busy = true
+                            error = null
+                            runCatching { GoogleAuthClient(activity).getIdToken() }
+                                .onSuccess { send(FirstPasswordProof.Google(it)) }
+                                .onFailure {
+                                    error = firstPasswordConfirmCancelled(confirmWith)
+                                    busy = false
+                                }
+                        }
+                        return@Button
+                    }
+                    val client = oidcClient?.value
+                    val provider = client?.providers?.firstOrNull { it.id.name == confirmWith }
+                    if (client == null || provider == null) {
+                        error = firstPasswordConfirmCancelled(confirmWith)
+                        return@Button
+                    }
+                    runCatching { client.start(provider) }
+                        .onSuccess { started ->
+                            busy = true
+                            error = null
+                            pendingNonce = started.rawNonce
+                            oidcLauncher.launch(started.intent)
+                        }
+                        .onFailure { error = firstPasswordConfirmCancelled(confirmWith) }
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -498,4 +594,12 @@ private fun TemporaryPasswordDialog(
         },
         dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } }
     )
+}
+
+/** The [ComponentActivity] this composition runs in, or null outside one (previews, tests). */
+private tailrec fun Context.componentActivity(): ComponentActivity? = when (this) {
+    is ComponentActivity -> this
+    is Activity -> null
+    is ContextWrapper -> baseContext.componentActivity()
+    else -> null
 }

@@ -20,8 +20,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.router import api_router
 from app.api.routes.auth import (
+    CONFIRM_PROVIDER_HEADER,
     SESSION_TOKEN_HEADER,
-    SIGN_IN_AGAIN_HEADER,
     TWO_FACTOR_REQUIRED_HEADER,
 )
 from app.api.routes.usage import UNRECORDED_TEMPLATES
@@ -31,7 +31,7 @@ from app.core.deps import PASSWORD_CHANGE_REQUIRED_HEADER
 from app.core.idempotency import IdempotencyMiddleware
 from app.core.security import verify_jwt_configuration
 from app.scale import install_rate_limit
-from app.services import usage
+from app.services import two_factor, usage
 from app.services.account_provisioning import EXISTING_ACCOUNT_HEADER
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
@@ -137,6 +137,15 @@ async def lifespan(app: FastAPI):
             "so a saturated pooler cannot crash-loop the service",
             exc,
         )
+    # THE TWO-STEP KEY, checked against what is stored (2026-10-17). Raises — and the boot fails —
+    # only when TWO_FACTOR_KEY_REQUIRED is on, the key is missing and somebody has two-step on; every
+    # other finding is a log line. A database that is not up yet skips the census, never the boot.
+    try:
+        await two_factor.check_keys_at_boot()
+    except RuntimeError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the census is advisory when the database is down
+        logger.warning("two-factor: key census skipped at boot (%s)", type(exc).__name__)
     # The watchdog runs for the app's whole life (its probe only ACTS when the connection is broken):
     # it both finishes a failed startup connect and heals a connection that dies later.
     db_reconnect_task: asyncio.Task[None] = asyncio.create_task(_keep_db_connected())
@@ -949,6 +958,8 @@ def create_app() -> FastAPI:
     # Refuse to serve with a guessable token-signing secret. Done before anything else so the
     # failure is the first thing in the log rather than a subtle weakness nobody notices.
     verify_jwt_configuration()
+    # The two-step key: a malformed TWO_FACTOR_ENCRYPTION_KEY or previous key stops the boot here.
+    two_factor.verify_key_configuration()
     # Passing None for the three doc URLs is what actually unregisters the routes; leaving them at
     # their defaults and trying to block the paths in nginx would only move the problem, because the
     # origin is reachable directly as well as through CloudFront.
@@ -1081,8 +1092,8 @@ def create_app() -> FastAPI:
             "X-Sign-In-Hint",
             PASSWORD_CHANGE_REQUIRED_HEADER,
             SESSION_TOKEN_HEADER,
-            # A first password asked for on a stale session: the client offers "sign in again".
-            SIGN_IN_AGAIN_HEADER,
+            # A first password needs a fresh provider sign-in: which provider to confirm with.
+            CONFIRM_PROVIDER_HEADER,
             # ...and on an account with two-step on, the code box (2026-10-17).
             TWO_FACTOR_REQUIRED_HEADER,
             # A duplicate account's 409 names the account that holds the address.

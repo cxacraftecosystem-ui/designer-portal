@@ -1,9 +1,14 @@
 package com.designprototype.workshop.ui
 
 import com.designprototype.workshop.data.AccessRosterCreateBody
+import com.designprototype.workshop.data.FirstPasswordProof
 import com.designprototype.workshop.data.FirstPasswordRequest
+import com.designprototype.workshop.data.OidcLoginRequest
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.accountHasPassword
+import com.designprototype.workshop.data.confirmProviderFor
+import com.designprototype.workshop.data.firstPasswordConfirmPrompt
+import com.designprototype.workshop.data.firstPasswordRequest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -132,6 +137,45 @@ class AccountRecoveryCopyTest {
     fun `a first password carries the two-step code only when there is one`() {
         val body = wire.encodeToString(FirstPasswordRequest(newPassword = "long enough", twoFactorCode = "123456"))
         assertEquals("{\"newPassword\":\"long enough\",\"twoFactorCode\":\"123456\"}", body)
+    }
+
+    @Test
+    fun `a first password carries a fresh Google proof as the sign-in does`() {
+        val body = wire.encodeToString(firstPasswordRequest("long enough", " ", FirstPasswordProof.Google("id-token")))
+        assertEquals("{\"newPassword\":\"long enough\",\"googleIdToken\":\"id-token\"}", body)
+    }
+
+    @Test
+    fun `a first password carries a Microsoft or Yahoo code with its verifier, redirect and nonce`() {
+        val proof = FirstPasswordProof.Oidc(
+            OidcLoginRequest(
+                oidcProvider = "MICROSOFT",
+                oidcCode = "c",
+                oidcCodeVerifier = "v",
+                oidcRedirectUri = "r",
+                oidcNonce = "n",
+            )
+        )
+        val body = wire.encodeToString(firstPasswordRequest("long enough", "123456", proof))
+        assertTrue(body.contains("\"twoFactorCode\":\"123456\""))
+        assertTrue(body.contains("\"oidcProvider\":\"MICROSOFT\""))
+        assertTrue(body.contains("\"oidcCodeVerifier\":\"v\""))
+        assertTrue(body.contains("\"oidcNonce\":\"n\""))
+        assertFalse(body.contains("googleIdToken"))
+    }
+
+    @Test
+    fun `the provider to confirm with is the one the account signs in with`() {
+        assertEquals("GOOGLE", confirmProviderFor(user(provider = "GOOGLE")))
+        assertEquals("MICROSOFT", confirmProviderFor(user(provider = "microsoft")))
+        assertEquals("YAHOO", confirmProviderFor(user(provider = "YAHOO")))
+        assertEquals("GOOGLE", confirmProviderFor(user(provider = "LOCAL")))
+        assertEquals("GOOGLE", confirmProviderFor(null))
+        assertEquals(
+            "To add a password, first confirm it's you by signing in with Microsoft again.",
+            firstPasswordConfirmPrompt("MICROSOFT"),
+        )
+        assertTrue(firstPasswordConfirmNote("YAHOO").contains("Yahoo"))
     }
 
     @Test

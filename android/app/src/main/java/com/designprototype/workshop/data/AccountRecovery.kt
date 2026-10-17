@@ -15,8 +15,8 @@ import retrofit2.http.Path
  *     answer for a well-formed address, known or not; only a malformed address (422) or too many
  *     requests from this connection (429) answers differently, and both carry the server's sentence.
  *   * `POST /auth/change-password` with no current password — a Google, Microsoft or Yahoo account
- *     adding its first password. Allowed only on a fresh sign-in; otherwise a 400 carrying
- *     [SIGN_IN_AGAIN_HEADER].
+ *     adding its first password. Allowed only with a provider sign-in run again just now for this
+ *     account ([FirstPasswordProof]); otherwise a 400 carrying [CONFIRM_PROVIDER_HEADER].
  *   * `POST /auth/password-links` with `delivery: "EMAIL"` — an administrator e-mailing the person a
  *     link instead of copying one. The answer carries no link.
  *   * `PATCH /users/{id}` with a password — a temporary password, changed at the next sign-in.
@@ -109,11 +109,59 @@ data class ForgotPasswordAnswer(val message: String = "")
 
 /**
  * No `currentPassword` key at all: there is none to send, and the server reads its absence.
- * [twoFactorCode] is sent only for an account with two-step verification on, which the server
- * requires before a session alone may add a password; null is left out of the body.
+ * [twoFactorCode] is sent only for an account with two-step verification on. The provider proof
+ * (2026-10-17) is either [googleIdToken] or the five `oidc*` fields, exactly as `POST /auth/login`
+ * takes them; every null is left out of the body.
  */
 @Serializable
-data class FirstPasswordRequest(val newPassword: String, val twoFactorCode: String? = null)
+data class FirstPasswordRequest(
+    val newPassword: String,
+    val twoFactorCode: String? = null,
+    val googleIdToken: String? = null,
+    val oidcProvider: String? = null,
+    val oidcCode: String? = null,
+    val oidcCodeVerifier: String? = null,
+    val oidcRedirectUri: String? = null,
+    val oidcNonce: String? = null,
+)
+
+/**
+ * What a first password travels with: the provider's own answer to a sign-in run again just now.
+ * The server accepts it only when it was issued in the last few minutes and names this account's
+ * mailbox, so a session on its own can no longer add a password.
+ */
+sealed interface FirstPasswordProof {
+    data class Google(val idToken: String) : FirstPasswordProof
+    data class Oidc(val request: OidcLoginRequest) : FirstPasswordProof
+}
+
+/** The request body for [proof]. */
+fun firstPasswordRequest(newPassword: String, twoFactorCode: String?, proof: FirstPasswordProof?): FirstPasswordRequest {
+    val code = twoFactorCode?.trim()?.takeIf { it.isNotEmpty() }
+    return when (proof) {
+        is FirstPasswordProof.Google -> FirstPasswordRequest(newPassword, code, googleIdToken = proof.idToken)
+        is FirstPasswordProof.Oidc -> FirstPasswordRequest(
+            newPassword,
+            code,
+            oidcProvider = proof.request.oidcProvider,
+            oidcCode = proof.request.oidcCode,
+            oidcCodeVerifier = proof.request.oidcCodeVerifier,
+            oidcRedirectUri = proof.request.oidcRedirectUri,
+            oidcNonce = proof.request.oidcNonce,
+        )
+        null -> FirstPasswordRequest(newPassword, code)
+    }
+}
+
+/**
+ * Which provider an account confirms with before a first password: the one it signs in with, or
+ * Google for an account that names none — the server's own fallback.
+ */
+fun confirmProviderFor(user: UserDto?): String = when (user?.authProvider?.trim()?.uppercase()) {
+    "MICROSOFT" -> "MICROSOFT"
+    "YAHOO" -> "YAHOO"
+    else -> "GOOGLE"
+}
 
 @Serializable
 data class PasswordLinkDeliveryRequest(
@@ -136,13 +184,23 @@ data class MailStatusDto(val available: Boolean = false)
 const val PASSWORD_LINK_BY_EMAIL = "EMAIL"
 
 /**
- * The header a refused first-password answer carries when the sign-in it was sent from is too old.
- * The person signs out and in again, then sets the password straight away.
+ * The header a refused first-password answer carries when the provider proof was missing, stale or
+ * for another mailbox. Its value names the provider to confirm with: GOOGLE, MICROSOFT or YAHOO.
  */
-const val SIGN_IN_AGAIN_HEADER = "X-Sign-In-Again"
+const val CONFIRM_PROVIDER_HEADER = "X-Confirm-Provider"
 
-/** Thrown by `WorkshopRepository.saveOwnPassword` for the [SIGN_IN_AGAIN_HEADER] refusal. */
-class SignInAgainRequired(message: String) : Exception(message)
+/** Thrown by `WorkshopRepository.saveOwnPassword` for the [CONFIRM_PROVIDER_HEADER] refusal. */
+class ProviderConfirmationRequired(message: String, val provider: String) : Exception(message)
+
+/** The sentence the set-password card shows before it asks the provider — the server's words. */
+fun firstPasswordConfirmPrompt(provider: String?): String {
+    val label = when (provider?.trim()?.uppercase()) {
+        "MICROSOFT" -> "Microsoft"
+        "YAHOO" -> "Yahoo"
+        else -> "Google"
+    }
+    return "To add a password, first confirm it's you by signing in with $label again."
+}
 
 /**
  * The header a refused first-password answer carries when the account has two-step verification on

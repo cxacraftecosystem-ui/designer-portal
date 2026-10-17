@@ -124,8 +124,9 @@ class ChangePasswordRequest(APIModel):
     ``currentPassword`` is required for every account that HAS a password, even one carrying
     ``mustChangePassword``: that flag means "the password you were given was not chosen by you", not
     "anybody at this keyboard may replace it". An account with NO password at all (Google, Microsoft
-    or Yahoo only) sends none and SETS a first password instead — allowed only on a session opened in
-    the last ``auth.PASSWORD_REAUTH_MINUTES`` minutes (see ``routes/auth.change_password``). It is
+    or Yahoo only) sends none and SETS a first password instead — allowed only with a provider sign-in
+    made in the last few minutes for this account: ``googleIdToken``, or the five ``oidc*`` fields the
+    Microsoft and Yahoo sign-in sends (see ``routes/auth._require_fresh_provider_proof``). It is
     optional on the wire for that reason; an empty one for an account with a password is simply wrong.
 
     Both fields share the one ceiling (``security.MAX_PASSWORD_LENGTH``) the admin forms use, so any
@@ -138,6 +139,27 @@ class ChangePasswordRequest(APIModel):
     #: (2026-10-17): a six-digit code or a recovery code. Ignored on an ordinary change, where the
     #: current password is the proof. The bound is a budget, like ``TwoFactorCodeRequest.code``'s.
     twoFactorCode: str | None = Field(default=None, max_length=64)
+    #: THE FRESH PROVIDER PROOF for a first password (2026-10-17), shaped exactly like the sign-in's:
+    #: a Google ID token, or a Microsoft/Yahoo authorization code with what proves this caller started
+    #: the flow. Ignored on an ordinary change. Same bounds as ``LoginRequest``'s.
+    googleIdToken: str | None = Field(default=None, max_length=8192)
+    oidcProvider: Literal["MICROSOFT", "YAHOO"] | None = None
+    oidcCode: str | None = Field(default=None, min_length=1, max_length=4096)
+    oidcCodeVerifier: str | None = Field(
+        default=None, min_length=43, max_length=128, pattern=r"^[A-Za-z0-9\-._~]+$"
+    )
+    oidcRedirectUri: str | None = Field(default=None, min_length=1, max_length=2048)
+    oidcNonce: str | None = Field(default=None, min_length=16, max_length=256)
+
+    @property
+    def has_oidc_proof(self) -> bool:
+        return bool(
+            self.oidcProvider
+            and self.oidcCode
+            and self.oidcCodeVerifier
+            and self.oidcRedirectUri
+            and self.oidcNonce
+        )
 
 
 class ForgotPasswordRequest(APIModel):

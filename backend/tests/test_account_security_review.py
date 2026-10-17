@@ -222,6 +222,15 @@ def _read(client: Any, call: Any, **kwargs: Any) -> Any:
     return client.portal.call(functools.partial(call, **kwargs))
 
 
+def _fresh_google(monkeypatch: Any, email: str) -> dict[str, str]:
+    """A just-issued Google ID token for ``email``: the proof a first password now needs."""
+    from app.api.routes import auth as auth_routes
+
+    claims = {"email": email, "email_verified": True, "iat": int(time.time())}
+    monkeypatch.setattr(auth_routes, "verify_google_token", lambda _token: claims)
+    return {"googleIdToken": "a-google-id-token"}
+
+
 def _notices(client: Any, email: str) -> list[str]:
     rows = _read(client, db.emailmessage.find_many, where={"toAddress": email})
     return [row.kind for row in rows]
@@ -259,7 +268,7 @@ def test_a_password_change_ends_tokens_that_carry_no_fingerprint(world, mail_on)
 
 
 @needs_db
-def test_a_first_password_ends_tokens_that_carry_no_fingerprint(world, mail_on):
+def test_a_first_password_ends_tokens_that_carry_no_fingerprint(world, mail_on, monkeypatch):
     client = world["client"]
     person = world["people"]["googler"]
     legacy = create_access_token(subject=person.id)
@@ -267,7 +276,9 @@ def test_a_first_password_ends_tokens_that_carry_no_fingerprint(world, mail_on):
     current = create_access_token(subject=person.id, credential=password_credential(person))
 
     answer = client.post(
-        "/api/auth/change-password", json={"newPassword": "a-first-password-9"}, headers=_bearer(current)
+        "/api/auth/change-password",
+        json={"newPassword": "a-first-password-9", **_fresh_google(monkeypatch, world["address"]("googler"))},
+        headers=_bearer(current),
     )
     assert answer.status_code == 200, answer.text
     fresh = answer.headers["x-session-token"]
@@ -280,11 +291,14 @@ def test_a_first_password_ends_tokens_that_carry_no_fingerprint(world, mail_on):
 
 
 @needs_db
-def test_a_first_password_on_a_two_step_account_needs_the_code(world, mail_on):
+def test_a_first_password_on_a_two_step_account_needs_the_code(world, mail_on, monkeypatch):
     client = world["client"]
     person = world["people"]["googlerTwoStep"]
     headers = _bearer(create_access_token(subject=person.id, credential=password_credential(person)))
-    body = {"newPassword": "a-first-password-10"}
+    body = {
+        "newPassword": "a-first-password-10",
+        **_fresh_google(monkeypatch, world["address"]("googlerTwoStep")),
+    }
 
     missing = client.post("/api/auth/change-password", json=body, headers=headers)
     assert missing.status_code == 400
