@@ -226,6 +226,15 @@ export type RegisterSummary = {
     unclassified: number;
     scope: string;
     scopeLabel: string;
+    /** C14 — counted over the same scope; each key is the list's `attention=` word. Optional: an
+     *  older server sends none. */
+    attention?: Partial<Record<RegisterAttention, number>>;
+    /** True when "setup incomplete" stopped at its scan cap — the figure is then a floor. */
+    setupIncompleteCapped?: boolean;
+    /** Workshops per state, most first. `state: null` is "not recorded". */
+    byState?: { state: string | null; count: number }[];
+    /** The sanctioned rupees on the orders that opened these workshops — a decimal STRING. */
+    sanctioned?: { orders: number; amount: string };
   };
   otherWorkshops: { total: number; scope: string; scopeLabel: string };
   /** The DESIGN half's, repeated — the register the page opens on, and what the heading is about. */
@@ -247,7 +256,21 @@ export type RegisterQuery = {
   pageSize?: number;
   search?: string | null;
   standing?: string | null;
+  /** C14: the attention card clicked. Design register only. */
+  attention?: RegisterAttention | null;
+  /** C14: one row of the state breakdown; `"none"` is "not recorded". Design register only. */
+  state?: string | null;
 };
+
+/** C14: the four attention cards, in the server's order (`ministry_dashboard.ATTENTION_KEYS`). */
+export type RegisterAttention = "awaitingApproval" | "returned" | "overdue" | "setupIncomplete";
+
+export const REGISTER_ATTENTION: readonly { value: RegisterAttention; label: string }[] = [
+  { value: "awaitingApproval", label: "Awaiting approval" },
+  { value: "returned", label: "Returned" },
+  { value: "overdue", label: "Overdue" },
+  { value: "setupIncomplete", label: "Setup incomplete" }
+];
 
 /**
  * `buildQuery` drops `""` exactly as it drops null, so `standing: ""` — the "Everything" position —
@@ -260,8 +283,57 @@ function registerQuery(params: RegisterQuery) {
     page: params.page,
     pageSize: params.pageSize,
     search: params.search ?? undefined,
-    standing: params.standing ?? undefined
+    standing: params.standing ?? undefined,
+    attention: params.attention ?? undefined,
+    state: params.state ?? undefined
   });
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * C15 — the background stage-data export
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export type StageDataExport = {
+  id: string;
+  status: "QUEUED" | "RUNNING" | "READY" | "FAILED" | "EXPIRED" | string;
+  filters: Record<string, string>;
+  workshopCount: number | null;
+  rowCount: number | null;
+  fileName: string | null;
+  fileSizeBytes: number | null;
+  error: string | null;
+  createdAt: string | null;
+  finishedAt: string | null;
+  expiresAt: string | null;
+};
+
+const EXPORTS = "/ministry-dashboard/stage-data-exports";
+
+export function requestStageDataExport(filters: {
+  search?: string;
+  standing?: string;
+  attention?: string;
+  state?: string;
+}) {
+  return apiFetch<StageDataExport>(EXPORTS, { method: "POST", body: JSON.stringify(filters) });
+}
+
+export function listStageDataExports() {
+  return apiFetch<{ items: StageDataExport[]; keepDays: number }>(EXPORTS, undefined, {
+    redirectOn401: false
+  });
+}
+
+export function downloadStageDataExport(item: StageDataExport) {
+  return downloadFile(
+    `${EXPORTS}/${encodeURIComponent(item.id)}/download`,
+    item.fileName ?? "ministry-stage-data.xlsx"
+  );
+}
+
+/** Whether a list still holds work the worker has not finished — the panel polls while it does. */
+export function exportsInFlight(items: readonly StageDataExport[]): boolean {
+  return items.some((item) => item.status === "QUEUED" || item.status === "RUNNING");
 }
 
 export function listRegisterDesignWorkshops(params: RegisterQuery) {
