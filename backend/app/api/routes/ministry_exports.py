@@ -74,14 +74,9 @@ async def request_stage_data_export(
 async def list_stage_data_exports(
     current_user: Any = Depends(require_ministry_dashboard_reader),
 ) -> dict[str, Any]:
-    """The caller's own exports, newest first. The file is never in this list."""
-    rows = await db.ministrydataexport.find_many(
-        where={"requestedById": current_user.id},
-        order={"createdAt": "desc"},
-        take=20,
-    )
+    """The caller's own exports, newest first. The file is never in this list — nor read for it."""
     return {
-        "items": [exports.job_payload(row) for row in rows],
+        "items": await exports.list_jobs(str(current_user.id)),
         "keepDays": exports.EXPORT_TTL_DAYS,
     }
 

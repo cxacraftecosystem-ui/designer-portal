@@ -92,6 +92,66 @@ def test_the_workbook_masks_identity_numbers_and_withholds_custom_questions() ->
     assert "Sita" in text
 
 
+def test_the_workbook_built_in_batches_matches_the_one_built_at_once() -> None:
+    """The job reads and flattens one batch of workshops at a time; the file must not change."""
+    first = SimpleNamespace(id="w1", title="Ajrakh", state="Gujarat", status="IN_PROGRESS")
+    second = SimpleNamespace(id="w2", title="Ikat", state="Odisha", status="IN_PROGRESS")
+    pairs = [
+        (first, [_entry("participant", {"name": "Sita", "aadhaarNumber": "234567890124"})]),
+        (second, [_entry("participant", {"name": "Gita"}), _entry("_custom", {"q": "x"})]),
+    ]
+    at = datetime(2026, 10, 17, tzinfo=UTC)
+    whole = exports.build_workbook(
+        pairs, filters={}, scope_label="All.", workshops_total=2, generated_at=at
+    )
+    collector = exports.WorkbookCollector()
+    collector.add(pairs[:1])
+    collector.add(pairs[1:])
+    batched = collector.workbook(filters={}, scope_label="All.", workshops_total=2, generated_at=at)
+    assert batched[1] == whole[1] == 2
+
+    def cells(payload: bytes) -> list[tuple[Any, ...]]:
+        wb = load_workbook(BytesIO(payload))
+        return [tuple(row) for sheet in wb.worksheets for row in sheet.iter_rows(values_only=True)]
+
+    assert cells(batched[0]) == cells(whole[0])
+
+
+def test_the_job_list_never_reads_the_stored_file_and_the_build_is_off_the_loop() -> None:
+    """The list is polled while a job runs; each stored workbook is megabytes."""
+    assert '"content"' not in exports._LIST_SQL
+    service = (ROUTES.parents[1] / "services" / "ministry_export.py").read_text(encoding="utf-8")
+    body = service[service.index("async def run_export(") : service.index("async def recover_and_purge(")]
+    assert "asyncio.to_thread(" in body
+    assert "EXPORT_READ_BATCH" in body
+    assert "ministrydataexport.update(" not in body.split("ministrydataexport.update_many(")[-1]
+    route = (ROUTES / "ministry_exports.py").read_text(encoding="utf-8")
+    listing = route[route.index("async def list_stage_data_exports(") :]
+    listing = listing[: listing.index("@router.get", 1)]
+    assert "find_many" not in listing and "exports.list_jobs(" in listing
+
+
+def test_a_raw_job_row_reads_like_a_model_row() -> None:
+    row = {
+        "id": "e1",
+        "status": "READY",
+        "filters": '{"state": "Gujarat"}',
+        "workshopCount": 1,
+        "rowCount": 2,
+        "fileName": "f.xlsx",
+        "fileSizeBytes": 10,
+        "error": None,
+        "createdAt": "2026-10-17T10:00:00+00:00",
+        "finishedAt": None,
+        "expiresAt": None,
+    }
+    payload = exports.job_payload(row)
+    assert payload["filters"] == {"state": "Gujarat"}
+    assert payload["createdAt"] == "2026-10-17T10:00:00+00:00"
+    assert payload["finishedAt"] is None
+    assert "content" not in payload
+
+
 def test_the_export_routes_are_their_own_module_and_the_register_stays_read_only() -> None:
     register_source = (ROUTES / "ministry_dashboard.py").read_text(encoding="utf-8")
     assert "@router.post" not in register_source
@@ -279,6 +339,9 @@ def test_the_export_is_built_in_the_background_and_masked(world: Any) -> None:
     )
     assert item["status"] == exports.READY, item
     assert item["workshopCount"] == 1
+    # Read without the file (a raw select): the dates and the filters still come through.
+    assert item["createdAt"] and item["finishedAt"] and item["expiresAt"]
+    assert item["filters"].get("attention") == "overdue"
     assert world["download"].status_code == 200, world["download"].text
     wb = load_workbook(BytesIO(world["download"].content))
     text = "\n".join(
