@@ -23,6 +23,7 @@ import { useId, useState } from "react";
 import { X } from "lucide-react";
 
 import { DateField } from "@/components/forms/DateTimeField";
+import { RequiredMark } from "@/components/ui/RequiredMark";
 
 export type CalendarFieldProps = {
   label: string;
@@ -79,6 +80,8 @@ export function CalendarField({
     <div className={`grid min-w-0 gap-1.5 ${className}`}>
       <label htmlFor={fieldId} className="field-label">
         {label}
+        {/* The same asterisk `Field` draws, so a required date reads like every other required box. */}
+        <RequiredMark when={required} />
       </label>
       <div className="flex min-w-0 items-start gap-2">
         <div className="min-w-0 flex-1">

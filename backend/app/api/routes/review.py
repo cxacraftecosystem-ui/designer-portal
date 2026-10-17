@@ -532,6 +532,8 @@ _EDIT_SCHEMAS: dict[str, type[APIModel]] = {
 #   could re-file any record under any workshop with no filing gate at all.
 # - the relation lists and ``location`` — those are separate writes (join rows, a Location row), not
 #   column updates, and a review edit is for correcting field values.
+# - ``formContract`` — a statement about the artisan FORM a save came from, not a column; a review
+#   edit corrects fields and is not that form (``services/artisan_form_contract``).
 _NOT_REVIEW_EDITABLE = frozenset(
     {
         "status",
@@ -545,6 +547,7 @@ _NOT_REVIEW_EDITABLE = frozenset(
         "steps",
         "recordedAt",
         "recordedTimezone",
+        "formContract",
     }
 )
 

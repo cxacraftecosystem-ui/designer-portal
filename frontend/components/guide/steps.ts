@@ -555,7 +555,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     // entirely for the other), and they are the one part of this form nobody can improvise in front
     // of an artisan: you either brought the card to the sitting or you did not. A list that looks
     // complete and omits them sends somebody to a village unprepared for exactly the questions that
-    // cannot be answered later over the phone. `Date of birth`, `Practising since` and `Experience`
+    // cannot be answered later over the phone. `Date of birth`, `Craft start date` and `Experience`
     // were missing on the same reading — they arrived with the workshop's participant table, which is
     // what the report prints an age and years of experience from.
     //
@@ -578,8 +578,8 @@ export const GUIDE_STEPS: GuideStep[] = [
     // every NEW artisan, which is the screen this card links to, and stands down only on an old
     // record that predates the rule. `PehchanFields` sets `required={available}` on the number, so
     // the Yes/No box directly above it decides: answering No disables the number and clears it.
-    // "Experience" is the FieldBlock heading over the Years and Months pair, which is how this file
-    // already names a two-box group (see the designer profile card's "Designer’s experience").
+    // Since 2026-10-17 the form is the documentation portal's: both dates required, and experience
+    // two boxes, "Experience (years)" and "Experience (months)" (`shared/artisan-form-contract.json`).
     fields: [
       "Type of workshop",
       "Workshop",
@@ -589,9 +589,10 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Or new craft name",
       "Place (required)",
       "Gender",
-      "Date of birth",
-      "Practising since",
-      "Experience",
+      "Date of birth (required)",
+      "Craft start date (required)",
+      "Experience (years)",
+      "Experience (months)",
       "Phone",
       "Email",
       "Address",
@@ -599,8 +600,8 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Aadhaar number (required)",
       "Artisan Pehchan Card available",
       "Artisan Pehchan Card number (required if the card is available)",
-      "Do's (positive prompt) (required)",
-      "Don'ts (negative prompt) (required)",
+      "Do's (required)",
+      "Don'ts (required)",
       "Status",
       "Artisan media",
       "Location (GPS fix or map pin)"
@@ -618,7 +619,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Aadhaar prevents duplicate artisans. If the person exists, you're shown their record to add to. Required for new artisans.",
       "Shared and exported numbers are masked (“XXXX XXXX 9012”). Leave a masked box as it is.",
       "Answer “Artisan Pehchan Card available” first. Yes makes the card number required; No clears and locks the number box.",
-      "Enter “Date of birth” and “Practising since” as dates; age and experience follow. Use “Experience” only if the start date is unknown.",
+      "“Date of birth” and “Craft start date” are required; age and experience follow from them.",
       DESIGN_WORKSHOP_FIELD,
       DICTATION_ON_THIS_FORM
     ]

@@ -90,14 +90,6 @@ import com.designprototype.workshop.ui.parseDraftList
 import com.designprototype.workshop.ui.rememberFormDraft
 import com.designprototype.workshop.ui.FieldDateField
 import com.designprototype.workshop.ui.parseFieldDate
-// The handset's ports of `records.derive_age` and `records.derive_experience_years` — the two
-// numbers the artisan form SHOWS and never stores. See DateTimeFields.kt for why they are ports.
-import com.designprototype.workshop.ui.deriveAgeYears
-import com.designprototype.workshop.ui.deriveExperienceYears
-// Req 14's Android half: the shared years+months pair `DesignerProfileScreen.kt` already draws.
-// See `ExperienceFields.kt`'s own file header — it named this exact call site as the one caller
-// that had not caught up, because that file could not be edited from the workflow that added it.
-import com.designprototype.workshop.ui.ExperienceFields
 import com.designprototype.workshop.ui.FieldIslandNav
 import com.designprototype.workshop.ui.accountLastSignIn
 import com.designprototype.workshop.ui.accountSignInMethod
@@ -259,7 +251,12 @@ import com.designprototype.workshop.data.OutboxCounts
 import com.designprototype.workshop.data.offlineSavedMessage
 import com.designprototype.workshop.data.outboxDeviceBanner
 import com.designprototype.workshop.data.ArtisanIdentity
+import com.designprototype.workshop.data.ARTISAN_FORM_CONTRACT
 import com.designprototype.workshop.data.ArtisanCreateRequest
+import com.designprototype.workshop.data.EXPERIENCE_MONTH_OPTIONS
+import com.designprototype.workshop.data.EXPERIENCE_NOT_STATED
+import com.designprototype.workshop.data.experienceMonthsLabel
+import com.designprototype.workshop.data.missingArtisanDatesSentence
 import com.designprototype.workshop.data.CarryContext
 import com.designprototype.workshop.data.CarryContextStore
 import com.designprototype.workshop.data.CarryNode
@@ -11376,6 +11373,10 @@ private fun ArtisanForm(
     var emailError by remember { mutableStateOf<String?>(null) }
     var aadhaarError by remember { mutableStateOf<String?>(null) }
     var pehchanError by remember { mutableStateOf<String?>(null) }
+    // The two required dates (2026-10-17). A calendar field takes no focus requester, so the
+    // sentence goes under the box and into the banner.
+    var dateOfBirthError by remember { mutableStateOf<String?>(null) }
+    var craftStartDateError by remember { mutableStateOf<String?>(null) }
     // Non-blocking: an artisan already recorded with the Aadhaar number being typed.
     var aadhaarDuplicate by remember(editing) { mutableStateOf<String?>(null) }
     // Kept on disk until saved, so a killed app gives the typing and the photographs back.
@@ -11482,6 +11483,14 @@ private fun ArtisanForm(
                 RequiredCheck(dosText.isBlank(), { dosError = it }, dosFocus),
                 RequiredCheck(dontsText.isBlank(), { dontsError = it }, dontsFocus)
             ))) { onError("Fill in the highlighted field."); return }
+        // BOTH DATES ARE REQUIRED ON EVERY SAVE FROM THIS FORM (2026-10-17), the documentation
+        // portal's form adopted whole. An edit of a record saved before the rule asks for them here.
+        // The sentence is the server's refusal word for word (`missingArtisanDatesSentence`).
+        dateOfBirthError = if (dateOfBirth == null) "Enter the date of birth." else null
+        craftStartDateError = if (craftStartDate == null) "Enter the craft start date." else null
+        missingArtisanDatesSentence(dateOfBirth?.toString(), craftStartDate?.toString())?.let { sentence ->
+            onError(sentence); return
+        }
         // Phone (optional) must be a valid number for its ISD code when present.
         artisanPhoneValidationError(phone)?.let { msg -> phoneError = msg; onError("Fix the phone number highlighted above."); return }
         phoneError = null
@@ -11563,7 +11572,9 @@ private fun ArtisanForm(
                 designWorkshopId = link.designWorkshopId(),
                 status = status,
                 recordedAt = if (isEdit) null else Instant.now().toString(),
-                location = locationForBody(isEdit, media.location, editing?.location)
+                location = locationForBody(isEdit, media.location, editing?.location),
+                // The server holds this save to both dates. In the body, so the outbox keeps it.
+                formContract = ARTISAN_FORM_CONTRACT
             )
             // No connection: save to the device and sync on reconnect, instead of failing the upload.
             // An EDIT now takes this door too, and for this record type it is the one that mattered
@@ -11697,78 +11708,61 @@ private fun ArtisanForm(
             label = "Gender",
             options = genderOptions.map { it to it },
             selectedValue = gender,
-            placeholder = "Not stated"
+            placeholder = "Select…",
+            includeNone = true
         ) { gender = it }
         /*
          * ── TWO DATES, AND NO BOX FOR EITHER NUMBER THEY PRODUCE ─────────────────────────────
          *
          * There is no age field on this screen and there never was one, and the absence is the
          * feature: an age written down is wrong within a year with nothing anywhere to say so, so
-         * what is stored is the birthday and the age is a READOUT — the supporting line under the
-         * box, computed by the server's own rule (`deriveAgeYears`, the port). Web parity: the
-         * record page shows the same sentence under the same control.
+         * what is stored is the birthday and the age is derived from it wherever it is read — the
+         * record page, the workshop's participant table and the report.
+         */
+        /*
+         * THE DOCUMENTATION PORTAL'S FORM, ADOPTED WHOLE (owner decision, 2026-10-17): both dates
+         * required, "Craft start date", and experience as two boxes — "Experience (years)" and
+         * "Experience (months)", whose empty option is "Not stated". `shared/artisan-form-contract.json`
+         * holds both portals and both clients to it.
          */
         CalendarField(
-            label = "Date of birth",
+            label = "Date of birth *",
             value = dateOfBirth,
-            onValueChange = { dateOfBirth = it },
-            // Nobody is born tomorrow, and a future date derives nothing at all.
-            //
-            // THE UTC DAY, AND NOT `LocalDate.now()`, WHICH IS THE DEVICE'S. `deriveAgeYears` below
-            // resolves "today" as `LocalDate.now(ZoneOffset.UTC)` because that is the day the server
-            // derives against and agreeing with the filed report matters more than agreeing with the
-            // handset's clock. Two different "today" on one screen is a real state in IST, not a
-            // theoretical one: between 00:00 and 05:30 the device day is a day ahead, so the picker
-            // offered a day the derivation then treated as the future and printed no age for.
+            onValueChange = { dateOfBirth = it; dateOfBirthError = null },
+            // Nobody is born tomorrow, and a future date derives nothing at all. The UTC day, because
+            // that is the day the server derives the age against.
             maximum = java.time.LocalDate.now(java.time.ZoneOffset.UTC),
             clearable = true,
-            supportingText = deriveAgeYears(dateOfBirth).let { age ->
-                if (age == null) "Used to show the artisan's age."
-                else "Age $age."
-            }
+            supportingText = dateOfBirthError ?: "Shown as an age."
         )
         CalendarField(
-            label = "Practising since",
+            label = "Craft start date *",
             value = craftStartDate,
-            onValueChange = { craftStartDate = it },
-            // Nobody took up a craft tomorrow either. The UTC day for the same reason as the
-            // birthday above — `deriveExperienceYears` derives against the UTC day, and a ceiling
-            // taken from the device clock hands an IST early morning a day the derivation refuses.
+            onValueChange = { craftStartDate = it; craftStartDateError = null },
             maximum = java.time.LocalDate.now(java.time.ZoneOffset.UTC),
             clearable = true,
-            supportingText = deriveExperienceYears(craftStartDate).let { years ->
-                if (years == null) {
-                    "When they started the craft — sets years of experience."
-                } else {
-                    "$years years of experience."
-                }
-            }
+            supportingText = craftStartDateError ?: "Shown as years of experience."
         )
-        ExperienceFields(
-            years = experienceYears,
-            months = experienceMonths,
-            // WHY THIS PAIR IS STILL HERE on a form whose experience is derived, and why it is not
-            // merely disabled while a date is set: see the two state declarations above, and the
-            // web form's own note (`frontend/components/forms/ArtisanForm.tsx`). A disabled control
-            // is omitted from the request body, `WorkshopRepository.ARTISAN_CLEARABLE_COLUMNS` reads
-            // the absence as an instruction to clear the column, and clearing the joining date a
-            // week later would leave the artisan with no experience at all.
-            enabled = true,
-            // 0..90 mirrors the stage registry's own bound for `participant.experienceYears`, so
-            // this form cannot accept a number the workshop would then refuse on a row it filled in
-            // from this very record.
-            maxYears = 90,
-            onYearsChange = { experienceYears = it },
-            onMonthsChange = { experienceMonths = it },
-            help = deriveExperienceYears(craftStartDate).let { years ->
-                if (years == null) {
-                    "Used only if there's no start date."
-                } else {
-                    "The start date gives $years years; this is used only if that date is empty."
-                }
-            },
+        // WHY THE STATED PAIR STAYS, AND STAYS ENABLED, on a form whose experience is derived from
+        // the date above: an artisan who says "about thirty years" is the ordinary case, and a
+        // disabled box is left out of the body, which `ARTISAN_CLEARABLE_COLUMNS` reads as "clear it".
+        OutlinedTextField(
+            value = experienceYears,
+            // 0..90 is `participant.experienceYears`' bound; two digits, and the server refuses 91+.
+            onValueChange = { typed -> experienceYears = typed.filter { it.isDigit() }.take(2) },
+            label = { Text("Experience (years)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
+        DropdownField(
+            label = "Experience (months)",
+            options = EXPERIENCE_MONTH_OPTIONS.map { it.toString() to experienceMonthsLabel(it) },
+            selectedValue = experienceMonths,
+            // "Not stated" submits nothing, never 0 — 0 is a real answer.
+            placeholder = EXPERIENCE_NOT_STATED,
+            includeNone = true
+        ) { experienceMonths = it }
         ArtisanPhoneField(value = phone, error = phoneError) { phone = it; phoneError = null }
         OutlinedTextField(
             value = email,
@@ -11798,7 +11792,7 @@ private fun ArtisanForm(
         // "holds a card" and "card number" legible instead of reading as three unrelated boxes.
         Text("Identity", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
         Text(
-            "Prevents duplicate records across workshops. Stored securely and masked.",
+            "Stored securely; masked when shared or exported.",
             color = Muted,
             fontSize = 12.sp
         )
@@ -11872,9 +11866,9 @@ private fun ArtisanForm(
             supportingText = {
                 val hint = pehchanError
                     ?: if (pehchanAvailable) {
-                        "The PM Vishwakarma ID on the card."
+                        "The PM Vishwakarma artisan ID printed on the card."
                     } else {
-                        "Set “available” to Yes to enter a number."
+                        "Set \"available\" to Yes to enter a number."
                     }
                 Text(hint, color = if (pehchanError != null) MaterialTheme.colorScheme.error else Muted, fontSize = 12.sp)
             },
@@ -11902,18 +11896,18 @@ private fun ArtisanForm(
             )
         }
         NumberedListInput(
-            label = "Do's (positive prompt)",
+            label = "Do's",
             items = dosItems,
             error = dosError,
             focusRequester = dosFocus,
             helper = "What the artisan has learnt to do. One point per line."
         ) { dosItems = it; dosError = null }
         NumberedListInput(
-            label = "Don'ts (negative prompt)",
+            label = "Don'ts",
             items = dontsItems,
             error = dontsError,
             focusRequester = dontsFocus,
-            helper = "What the artisan has learnt to avoid. One point per line."
+            helper = "What the artisan avoids. One point per line."
         ) { dontsItems = it; dontsError = null }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
         if (isEdit) {
@@ -17621,8 +17615,8 @@ private fun ViewDataDetail(
                 // "On file", never the number — the web's read-only page says the same, and no list
                 // shows it. The form shows it to the person about to correct it, as with the Aadhaar.
                 DetailRow("Pehchan card number", v.pehchanCardNumber?.takeIf { it.isNotBlank() }?.let { "On file" })
-                NumberedListDisplay("Do's (positive prompt)", v.dos)
-                NumberedListDisplay("Don'ts (negative prompt)", v.donts)
+                NumberedListDisplay("Do's", v.dos)
+                NumberedListDisplay("Don'ts", v.donts)
                 DetailRow("Status", v.status)
                 RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError, readOnly)
             }

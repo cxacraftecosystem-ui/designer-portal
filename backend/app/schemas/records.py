@@ -92,7 +92,7 @@ class ArtisanCreate(APIModel):
     # them the moment this ships. None means "not answered" and is resolved below.
     pehchanCardAvailable: bool | None = None
     pehchanCardNumber: str | None = None
-    # Required on create: newline-separated Do's (positive prompt) and Don'ts (negative prompt).
+    # Required on create: newline-separated Do's and Don'ts.
     dos: str = Field(min_length=1)
     donts: str = Field(min_length=1)
     craftId: str | None = None
@@ -194,6 +194,10 @@ class ArtisanCreate(APIModel):
     experienceMonths: int | None = Field(default=None, ge=0, le=11)
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
+    # THE ARTISAN FORM CONTRACT THIS SAVE WAS MADE UNDER — not a column. ``2`` makes both dates above
+    # required (a 422 naming the missing ones); absent is the old shape and is accepted unchanged, so
+    # an outbox entry queued before the contract still replays. See services/artisan_form_contract.
+    formContract: int | None = Field(default=None, ge=1, le=2)
 
     # Mandatory on create. See services/common.require_location for what that does and does not
     # mean — and note it is the ONLY half of the pair the clients cannot omit, because create is
@@ -297,6 +301,9 @@ class ArtisanUpdate(APIModel):
     # is deliberately no server-side default — a precondition the server invents is one the caller
     # never agreed to, and it would start refusing edits nobody asked to have guarded.
     expectedUpdatedAt: datetime | None = None
+    # The artisan form contract, as on ``ArtisanCreate``. On an edit the two dates are checked against
+    # the row as it will be after the write, so a record saved before the contract must gain them.
+    formContract: int | None = Field(default=None, ge=1, le=2)
 
     # Omit it to keep the stored one (which is how a record that predates the rule stays
     # editable); send one to replace it; you may not send null. See forbid_clearing_location.
