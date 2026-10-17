@@ -13,6 +13,7 @@ import { EmailNotificationsCard } from "@/components/settings/EmailNotifications
 import { GetTheAppPanel } from "@/components/settings/GetTheAppPanel";
 import { GrievanceRedressalCard } from "@/components/settings/GrievanceRedressalCard";
 import { PublishAppUpdatePanel } from "@/components/settings/PublishAppUpdatePanel";
+import { ReportDeliverySettingsCard } from "@/components/settings/ReportDeliverySettingsCard";
 import { MyAiKeysPanel } from "@/components/settings/MyAiKeysPanel";
 import { AccessibilityCard, AppearanceCard } from "@/components/settings/PersonalSettingsCards";
 import { TwoStepVerificationCard } from "@/components/settings/TwoStepVerificationCard";
@@ -235,6 +236,8 @@ export default function SettingsPage() {
             rather than replaced by a lock panel for everyone below the master admin. The provider
             RANKING is deliberately not here: it lives on the API keys page, next to the providers it
             ranks, where admins can reach it too. */}
+        {/* Where "Approve and hand on" e-mails approved reports — `require_admin` on the server. */}
+        {admin ? <ReportDeliverySettingsCard /> : null}
         {master ? <AppSettingsPanel /> : null}
         {master ? <PublishAppUpdatePanel /> : null}
       </div>

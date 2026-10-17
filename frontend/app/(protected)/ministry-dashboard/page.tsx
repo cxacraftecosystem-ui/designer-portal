@@ -86,6 +86,7 @@ import {
   listRegisterPeople,
   personProgressSentence,
   progressSentence,
+  receivedWords,
   standingMembersSentence,
   standingsFor,
   unclassifiedSentence,
@@ -1152,6 +1153,9 @@ function DesignTable({ rows }: { rows: DesignRegisterPage["items"] }) {
                 <span className="mt-1 block text-xs text-ink-500">
                   Handed on {formatDate(row.handedOnAt)}
                   {row.handedOnTo?.trim() ? ` to ${row.handedOnTo.trim()}` : ""}
+                  {receivedWords(row.received, formatDate) ? (
+                    <span className="mt-0.5 block font-medium text-success-600">{receivedWords(row.received, formatDate)}</span>
+                  ) : null}
                 </span>
               ) : row.approvedAt ? (
                 <span className="mt-1 block text-xs text-ink-500">Approved {formatDate(row.approvedAt)}</span>

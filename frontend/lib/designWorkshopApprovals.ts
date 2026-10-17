@@ -102,7 +102,117 @@ export type DwApprovalDetail = DwSummary &
     latestExport?: DwApprovalExport | null;
     /** True on the answer to an approve that found the report already approved: nothing was written. */
     alreadyApproved?: boolean;
+    /** "Approve and hand on" (2026-10-18): whether the office's addresses are set, and the newest e-mail. */
+    delivery?: DwReportDelivery;
   };
+
+/** One e-mail of the report to the office, as the outbox reports it. */
+export type DwDeliveryEmail = {
+  address: string;
+  status: "QUEUED" | "SENT" | "FAILED";
+  at: string | null;
+  error: string | null;
+};
+
+export type DwReportDelivery = {
+  /** True when an administrator set the office's addresses and this deployment sends e-mail. */
+  configured: boolean;
+  addressCount: number;
+  officeName: string;
+  linkDays: number;
+  latest: {
+    id: string;
+    sentAt: string | null;
+    expiresAt: string | null;
+    state: "LIVE" | "EXPIRED" | "REVOKED";
+    officeName: string;
+    fileName: string;
+    firstOpenedAt: string | null;
+    lastOpenedAt: string | null;
+    openCount: number;
+    emails: DwDeliveryEmail[];
+  } | null;
+};
+
+/**
+ * WHAT THE DELIVERY ROW OFFERS. `send`: the one-step action, labelled for where the report stands —
+ * "Approve and hand on" while it waits, "Hand on by e-mail" once approved. `setup`: the same moment
+ * with no office addresses set, so the screen says where to set them and the ordinary hand-on stays.
+ * `none`: nothing to offer. Gated on the server's own `mayDecide`, never on a guess.
+ */
+export function deliveryOffer(
+  detail: DwApprovalDetail | null | undefined
+): { kind: "send" | "setup" | "none"; label: string } {
+  if (!detail || detail.deletedAt || detail.decisionRefusal) return { kind: "none", label: "" };
+  const status = String(detail.status ?? "").toUpperCase();
+  let label = "";
+  if (status === "PRE_SUBMISSION" && detail.mayDecide?.approve === true) label = "Approve and hand on";
+  if (status === "APPROVED" && detail.mayDecide?.handOn === true) label = "Hand on by e-mail";
+  if (!label) return { kind: "none", label: "" };
+  return { kind: detail.delivery?.configured ? "send" : "setup", label };
+}
+
+/** The few words for the newest delivery: when it went, how long the link lasts, whether it was opened. */
+export function deliveryLines(delivery: DwReportDelivery | null | undefined, format: (iso: string) => string): string[] {
+  const latest = delivery?.latest;
+  if (!latest) return [];
+  const lines = [`E-mailed to ${latest.officeName}${latest.sentAt ? ` on ${format(latest.sentAt)}` : ""}.`];
+  if (latest.state === "LIVE" && latest.expiresAt) lines.push(`The link works until ${format(latest.expiresAt)}.`);
+  if (latest.state === "EXPIRED") lines.push("The link has expired.");
+  lines.push(latest.firstOpenedAt ? `Opened ${format(latest.firstOpenedAt)}.` : "Not opened yet.");
+  return lines;
+}
+
+/** Approve (when waiting), make the report file, hand it on and e-mail the office a 7-day link. */
+export function approveAndHandOn(
+  workshopId: string,
+  body: { note?: string | null; round?: number; readAt?: string; format?: "PDF" | "DOCX" }
+) {
+  return apiFetch<DwApprovalDetail>(`/design-workshop-approvals/${workshopId}/approve-and-hand-on`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+/** A new link to the office; the old one stops working. */
+export function resendReportDelivery(workshopId: string) {
+  return apiFetch<DwApprovalDetail>(`/design-workshop-approvals/${workshopId}/delivery/resend`, { method: "POST" });
+}
+
+export type ReportDeliverySettings = {
+  addresses: string[];
+  officeName: string;
+  defaultOfficeName: string;
+  mailAvailable: boolean;
+};
+
+/** The office addresses "Approve and hand on" uses — an administrator's setting. */
+export function fetchReportDeliverySettings() {
+  return apiFetch<ReportDeliverySettings>("/settings/report-delivery");
+}
+
+export function saveReportDeliverySettings(body: { addresses: string[]; officeName: string | null }) {
+  return apiFetch<ReportDeliverySettings>("/settings/report-delivery", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** What the office's download page reads. */
+export type ReportDownloadInfo = { workshopTitle: string | null; fileName: string; officeName: string; expiresAt: string };
+
+export function lookupReportDownload(token: string) {
+  return apiFetch<ReportDownloadInfo>(
+    "/report-deliveries/lookup",
+    { method: "POST", body: JSON.stringify({ token }) },
+    { redirectOn401: false }
+  );
+}
+
+export function openReportDownload(token: string) {
+  return apiFetch<{ url: string; fileName: string }>(
+    "/report-deliveries/download",
+    { method: "POST", body: JSON.stringify({ token }) },
+    { redirectOn401: false }
+  );
+}
 
 export type DwApprovalQueueParams = {
   state?: DwApprovalQueueState;
