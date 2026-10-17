@@ -117,7 +117,9 @@ def test_a_value_cannot_be_relabelled_to_another_key(keys):
     other = two_factor.key_id(two_factor.parse_key(second))
     assert two_factor.decrypt_secret(f"v2:{other}.{rest}") is None
     version, iv, tag, body = stored.split(".")
-    flipped = body[:-1] + ("A" if body[-1] != "A" else "B")
+    # The FIRST character: the last one of an unpadded base64url body carries padding bits, so
+    # flipping it can decode to the same bytes and the tamper goes unseen (a flake, ~1 run in 16).
+    flipped = ("A" if body[0] != "A" else "B") + body[1:]
     assert two_factor.decrypt_secret(".".join((version, iv, tag, flipped))) is None
 
 

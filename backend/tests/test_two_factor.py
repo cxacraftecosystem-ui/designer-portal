@@ -93,7 +93,9 @@ def test_the_secret_is_encrypted_at_rest_and_tampering_is_refused():
     assert two_factor.encrypt_secret(RFC_SECRET) != stored, "a fresh IV every time"
     assert two_factor.decrypt_secret(stored) == RFC_SECRET
     version, iv, tag, body = stored.split(".")
-    flipped = body[:-1] + ("A" if body[-1] != "A" else "B")
+    # The FIRST character: the last one of an unpadded base64url body carries padding bits, so
+    # flipping it can decode to the same bytes and the tamper goes unseen (a flake, ~1 run in 16).
+    flipped = ("A" if body[0] != "A" else "B") + body[1:]
     assert two_factor.decrypt_secret(".".join((version, iv, tag, flipped))) is None
     assert two_factor.decrypt_secret("v2." + stored[3:]) is None
     assert two_factor.decrypt_secret(None) is None
