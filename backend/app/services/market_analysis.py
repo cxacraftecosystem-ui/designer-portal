@@ -287,6 +287,20 @@ class BandVerdict:
     message: str
 
 
+def _count(count: int, noun: str) -> str:
+    """A count and its noun, agreed: "1 price observation", "3 price observations" (DA-38)."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _were(count: int) -> str:
+    return "was" if count == 1 else "were"
+
+
+def _observations(count: int) -> str:
+    """Count, noun and verb agreed: "1 price observation exists", "2 ... exist"."""
+    return f"{_count(count, 'price observation')} {'exists' if count == 1 else 'exist'}"
+
+
 def _band_message(
     verdict: str,
     category: str,
@@ -366,7 +380,7 @@ def judge_band(
             0,
             0.0,
             "NO_EVIDENCE",
-            f"{dist.count} price observation(s) exist for "
+            f"{_observations(dist.count)} for "
             f"{category or 'this category'}, but the band itself is incomplete.",
         )
 
@@ -386,7 +400,7 @@ def judge_band(
             above,
             coverage,
             "UNVERIFIABLE",
-            f"Only {dist.count} price observation(s) were recorded for "
+            f"Only {_count(dist.count, 'price observation')} {_were(dist.count)} recorded for "
             f"{category or 'this category'} — too few to judge the band against. "
             f"{inside} of them fall inside it.",
         )
@@ -762,7 +776,7 @@ def analyse(
     cautions: list[str] = []
     if respondent_values and len(respondent_values) < MIN_SAMPLE_FOR_VERDICT:
         cautions.append(
-            f"Only {len(respondent_values)} respondent price expectation(s) were recorded. "
+            f"Only {_count(len(respondent_values), 'respondent price expectation')} {_were(len(respondent_values))} recorded. "
             f"The figures below describe what was collected; they are not a market estimate."
         )
     if group_counts:

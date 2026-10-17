@@ -53,7 +53,7 @@ class ReceivedQuestionnaireTest {
     fun `a file that has not been adopted says what is in it`() {
         val text = receivedQuestionnaireStatus(row())
         assertTrue(text, text.contains("Not added yet"))
-        assertTrue(text, text.contains("285 question(s) in 24 section(s)"))
+        assertTrue(text, text.contains("285 questions in 24 sections"))
         assertFalse(row().started)
         assertFalse(row().adopted)
     }

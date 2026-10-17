@@ -558,8 +558,8 @@ class ReportSourceShippedRegistryTest {
         )
         val source = sourceFor(onDevice)
         assertTrue("nothing to warn about once the server answered", source.deviceOnlyNote == null)
-        assertTrue(source.builtFromLine.contains("${schema.stages.size - 1} stage(s) downloaded"))
-        assertTrue(source.builtFromLine.contains("1 stage(s) saved on this device"))
+        assertTrue(source.builtFromLine.contains("${schema.stages.size - 1} stages downloaded"))
+        assertTrue(source.builtFromLine.contains("1 stage saved on this device"))
     }
 
     // ── 4. THE FILE ITSELF ADMITS WHAT IT MAY BE MISSING ─────────────────────────────────────────

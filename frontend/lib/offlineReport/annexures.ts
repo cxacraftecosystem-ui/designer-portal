@@ -373,7 +373,7 @@ function sittingProvenance(sitting: QuestionnaireSitting): string {
     String(sitting.source).toUpperCase()
   ] ?? "";
   return [
-    `${answeredCount(sitting)} question(s) answered`,
+    `${answeredCount(sitting)} question${answeredCount(sitting) === 1 ? "" : "s"} answered`,
     source,
     sitting.recorded_at ? sitting.recorded_at.slice(0, 10) : "",
     sitting.recorded_by ? `recorded by ${sitting.recorded_by}` : ""
@@ -395,8 +395,8 @@ function questionnaireProvenance(item: QuestionnaireItem, stageTitles: Record<st
   const printed = printedSittings(item);
   const parts = [
     stageGroup(item, stageTitles)[2],
-    `${printed.length} sitting(s)`,
-    item.question_count ? `${item.question_count} question(s)` : "",
+    `${printed.length} sitting${printed.length === 1 ? "" : "s"}`,
+    item.question_count ? `${item.question_count} question${item.question_count === 1 ? "" : "s"}` : "",
     `version ${item.version}`,
     item.source_filename ? `from ${item.source_filename}` : "",
     `questionnaire ${item.questionnaire_id}`
@@ -512,8 +512,8 @@ export function appendQuestionnaireAnnexure(
       }
       if (dropped > 0) {
         doc.para(
-          `[${dropped} further sitting(s) were recorded against this questionnaire and ` +
-            `are not printed here. The full set is in the online workshop record.]`,
+          `[${dropped} further ${dropped === 1 ? "sitting was" : "sittings were"} recorded against this ` +
+            `questionnaire and ${dropped === 1 ? "is" : "are"} not printed here. The full set is in the online workshop record.]`,
           "NOTE"
         );
       }

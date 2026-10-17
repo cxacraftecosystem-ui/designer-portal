@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.data.userMessage
 
 import android.content.Context
@@ -1014,7 +1015,7 @@ private fun StageScreenBody(
                     // The server did not recognise these keys and threw them away. Said out loud
                     // because a field that vanishes on every sync, silently, is a data loss nobody
                     // notices until the report is short a column.
-                    "${push.result.droppedKeys.size} field(s) weren't saved because the form changed. Nothing you typed is lost."
+                    "${plural(push.result.droppedKeys.size, "field")} ${if (push.result.droppedKeys.size == 1) "wasn't" else "weren't"} saved because the form changed. Nothing you typed is lost."
                 }
                 /*
                   THE ANSWERS THE REPOSITORY REFUSED, DECODED AGAINST THE PAYLOAD THAT PRODUCED THEM.
@@ -1096,7 +1097,7 @@ private fun StageScreenBody(
                 // looks broken; a stage that says which photographs it is waiting for is a stage the
                 // designer knows will finish itself the next time there is signal.
                 saveState = SaveState.ON_DEVICE
-                syncNote = "Saved. Waiting for ${push.files} file(s) to upload."
+                syncNote = "Saved. Waiting for ${plural(push.files, "file")} to upload."
             }
             StagePush.NoRemoteYet, StagePush.NothingToSend, StagePush.NotSent -> {
                 saveState = SaveState.ON_DEVICE

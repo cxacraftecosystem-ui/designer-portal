@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.data.DwCustomCache
 import com.designprototype.workshop.data.DwQuestionnaireCopy
 import com.designprototype.workshop.data.DwReportSignOff
@@ -214,5 +215,5 @@ private fun unknownStageWarning(schema: SchemaResponse): String? {
     val unknown = unknownStages(schema)
     if (unknown.isEmpty()) return null
     val titles = schema.stages.filter { it.key in unknown }.map { it.title.ifBlank { it.key } }
-    return "${unknown.size} stage(s) printed at the end (${titles.joinToString(", ")}). Update the app to fix the order."
+    return "${plural(unknown.size, "stage")} printed at the end (${titles.joinToString(", ")}). Update the app to fix the order."
 }

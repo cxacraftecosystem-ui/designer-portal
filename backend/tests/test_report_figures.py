@@ -595,7 +595,7 @@ def test_a_participant_who_stated_no_place_is_counted_in_the_caption_not_pinned(
     block = _maps(document)[0]
     assert len([p for p in block.points if p.kind is MapPointKind.ARTISAN]) == 1
     assert "1 of 2" in block.caption
-    assert "1 participant(s) recorded no address" in block.caption
+    assert "1 participant recorded no address" in block.caption
 
 
 def test_a_place_the_atlas_cannot_resolve_says_so_in_the_caption():

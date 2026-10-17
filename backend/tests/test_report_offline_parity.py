@@ -60,7 +60,7 @@ def test_the_fixture_reaches_the_branches_it_exists_to_reach():
     charts = {block["title"] for block in every if block["type"] == "CHART"}
     assert len(charts) == 7, charts
     warnings = " ".join(w for case in cases.values() for w in case["warnings"])
-    for phrase in ("capture tier", "photograph cap", "attached file(s) are named", "cover field(s)",
+    for phrase in ("capture tier", "photograph cap", "attached files are named", "cover field(s)",
                    "required field(s) not recorded", "own section(s)"):
         assert phrase in warnings, phrase
     # Odia text sits in table cells and key/value pairs, so the whole output is searched.

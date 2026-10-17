@@ -115,6 +115,11 @@ def _money(value: Any) -> float | None:
     return as_number(value)
 
 
+def _lines(count: int, noun: str) -> str:
+    """Noun and verb agreed: "1 material line adds", "2 material lines add" (DA-38)."""
+    return f"{count} {noun} line adds" if count == 1 else f"{count} {noun} lines add"
+
+
 def _rupees(value: float) -> str:
     """A figure as a message prints it.
 
@@ -255,7 +260,7 @@ def check_subtotal(
 
     if declared is None:
         message = (
-            f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
+            f"{sheet_label}: the {_lines(rolled.count, noun)} up to "
             f"{_rupees(rolled.total)}; no {noun} cost is declared on the sheet."
         )
         return Check(
@@ -266,13 +271,13 @@ def check_subtotal(
     verdict = _compare(declared, rolled.total, TOLERANCE_RUPEES)
     if verdict == "AGREES":
         message = (
-            f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
+            f"{sheet_label}: the {_lines(rolled.count, noun)} up to "
             f"{_rupees(rolled.total)}, which is what the sheet declares."
         )
     else:
         direction = "less" if difference < 0 else "more"
         message = (
-            f"{sheet_label}: the {rolled.count} {noun} line(s) add up to "
+            f"{sheet_label}: the {_lines(rolled.count, noun)} up to "
             f"{_rupees(rolled.total)}, but the sheet declares {_rupees(declared)} — "
             f"{_rupees(abs(difference))} {direction} than the lines account for."
         )

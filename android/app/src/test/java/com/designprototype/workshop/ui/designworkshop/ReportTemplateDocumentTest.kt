@@ -1194,11 +1194,11 @@ class ReportTemplateDocumentTest {
 
         assertTrue(
             "the caption must state how many of how many were placed: ${map.caption}",
-            map.caption.contains("Home places of 2 of 3 participating artisans, at 1 location(s)."),
+            map.caption.contains("Home places of 2 of 3 participating artisans, at 1 location."),
         )
         assertTrue(
             "the row this copy cannot place must be counted, not silently dropped: ${map.caption}",
-            map.caption.contains("1 participant(s) have no surveyed position"),
+            map.caption.contains("1 participant has no surveyed position"),
         )
         // AND THE OLD BLANKET SENTENCE IS GONE. It said the home places "are not plotted on this
         // copy" for every roster row, which is now false for the surveyed ones.

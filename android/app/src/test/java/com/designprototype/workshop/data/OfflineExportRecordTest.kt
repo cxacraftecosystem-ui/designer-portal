@@ -73,7 +73,7 @@ class OfflineExportRecordTest {
         fileSizeBytes = 31_457_280L,
         pageCount = 48,
         checksumSha256 = "9f3c1b7ea4d05e2c8b1f6a3d7e90c4b25f8a1d6e3c07b9f24a8d5e1c6b3f70a9",
-        warnings = "Stage 14 — Costing: 2 required field(s) missing",
+        warnings = "Stage 14 — Costing: 2 required fields missing",
     )
 
     // ── 1. The queued export log ────────────────────────────────────────────────────────────────

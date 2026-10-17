@@ -1338,10 +1338,8 @@ internal fun SearchResultRow(row: SearchRow, onOpen: () -> Unit, openable: Boole
             .background(MaterialTheme.field.surface50, MaterialTheme.shapes.medium)
             .border(1.dp, MaterialTheme.field.hairline, MaterialTheme.shapes.medium)
             // The whole card opens the record's read-only page (RecordOpen); announced as "Open …".
-            .then(
-                if (openable) Modifier.clickable(onClickLabel = RecordOpen.openClickLabel(row.title), role = Role.Button, onClick = onOpen)
-                else Modifier
-            )
+            // Clipped before the click, so the ripple follows the rounded corner ([openable]).
+            .openable(row.title, MaterialTheme.shapes.medium, enabled = openable, onOpen = onOpen)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {

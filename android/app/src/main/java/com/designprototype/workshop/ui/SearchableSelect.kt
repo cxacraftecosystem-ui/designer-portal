@@ -229,6 +229,35 @@ data class SelectOption(val value: String, val label: String, val hint: String? 
  * kinds: a fixed label still draws, and a term-aware one draws nothing — a row inviting somebody to
  * use what they typed, on a surface with nowhere to type, is an affordance with no route to it.
  */
+/**
+ * The foot of a SERVER-PAGED list: how many of how many are here, and the control that fetches the
+ * next page. Offered only with [SearchableSelectField.onSearch], because a locally filtered list is
+ * already the whole list. See `DwWorkshopPagedList`.
+ */
+@Immutable
+data class SelectLoadMore(
+    val shown: Int,
+    val total: Int,
+    val loading: Boolean,
+    /** The last page did not arrive; the footer offers the same fetch again. */
+    val failed: Boolean,
+    val onClick: () -> Unit
+)
+
+/** The footer button's words. */
+internal fun loadMoreLabel(more: SelectLoadMore): String = when {
+    more.loading -> "Loading…"
+    more.failed -> "Couldn't load. Try again"
+    else -> "Load more"
+}
+
+/** The count line over a server-paged list: "20 of 45 shown" until the last page is in. */
+internal fun pagedCountLine(shown: Int, total: Int): String = when {
+    total == 0 -> "0 options"
+    shown >= total -> if (total == 1) "1 option" else "$total options"
+    else -> "$shown of $total shown"
+}
+
 @Immutable
 data class SelectCreateAction(
     /**
@@ -467,6 +496,8 @@ fun SearchableSelectField(
      * needs it yet, so it is not invented here.
      */
     onSearch: ((String) -> Unit)? = null,
+    /** The next server page, for a list behind [onSearch]. Null draws no footer. */
+    loadMore: SelectLoadMore? = null,
     onSelect: (String) -> Unit
 ) {
     var sheetOpen by remember { mutableStateOf(false) }
@@ -685,6 +716,7 @@ fun SearchableSelectField(
             emptyMessage = emptyMessage ?: GENERIC_EMPTY_LINE,
             createAction = createAction,
             onSearch = onSearch,
+            loadMore = loadMore,
             onDismiss = { sheetOpen = false },
             onApply = { next -> onSelect(next.firstOrNull().orEmpty()) }
         )
@@ -1015,6 +1047,8 @@ private fun SearchablePickerSheet(
      * [SearchableSelectField]'s parameter of the same name for the whole argument.
      */
     onSearch: ((String) -> Unit)? = null,
+    /** See [SearchableSelectField.loadMore]. */
+    loadMore: SelectLoadMore? = null,
     onDismiss: () -> Unit,
     onApply: (Set<String>) -> Unit
 ) {
@@ -1106,6 +1140,8 @@ private fun SearchablePickerSheet(
     // found the workshop, and typing is the only route to the rest; popping the IME is then what the
     // reader came for at four rows exactly as much as at forty.
     LaunchedEffect(Unit) {
+        // A paged list opens on its first page: the box opens empty, so the last term is retired.
+        if (loadMore != null) onSearch?.invoke("")
         if (searchable && (serverFiltered || options.size >= AUTOFOCUS_THRESHOLD)) {
             focusRequester.requestFocus()
         }
@@ -1210,7 +1246,8 @@ private fun SearchablePickerSheet(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        countLine(filtered.size, options.size, searching),
+                        if (loadMore != null) pagedCountLine(loadMore.shown, loadMore.total)
+                        else countLine(filtered.size, options.size, searching),
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                         modifier = Modifier
@@ -1292,6 +1329,19 @@ private fun SearchablePickerSheet(
                         muted = false,
                         onClick = { if (multiple) toggle(option.value) else commitSingle(option.value) }
                     )
+                }
+                // THE REST OF A SERVER-PAGED LIST, one tap away. Under the rows, as the web's
+                // "Load more" sits under its table.
+                if (loadMore != null && (loadMore.shown < loadMore.total || loadMore.failed)) {
+                    item {
+                        TextButton(
+                            onClick = loadMore.onClick,
+                            enabled = !loadMore.loading,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                        ) { Text(loadMoreLabel(loadMore), fontWeight = FontWeight.Medium) }
+                    }
                 }
                 if (filtered.isEmpty()) {
                     item {

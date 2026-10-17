@@ -673,7 +673,7 @@ fun offlineSavedMessage(
     }
     if (result.allFilesQueued) return head
     val names = result.unreadableFiles.joinToString(", ")
-    return "$head ${result.unreadableFiles.size} file(s) couldn't be read and weren't kept ($names) — the record is safe. Take them again if you still can."
+    return "$head ${plural(result.unreadableFiles.size, "file")} couldn't be read and ${if (result.unreadableFiles.size == 1) "wasn't" else "weren't"} kept ($names) — the record is safe. Take them again if you still can."
 }
 
 /**

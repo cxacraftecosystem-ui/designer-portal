@@ -390,7 +390,7 @@ def _sitting_provenance(sitting: QuestionnaireSitting) -> str:
     parts = [
         p
         for p in (
-            f"{sitting.answered_count} question(s) answered",
+            f"{sitting.answered_count} question{'' if sitting.answered_count == 1 else 's'} answered",
             source,
             sitting.recorded_at[:10] if sitting.recorded_at else "",
             f"recorded by {sitting.recorded_by}" if sitting.recorded_by else "",
@@ -416,8 +416,8 @@ def _questionnaire_provenance(item: QuestionnaireItem) -> str:
             # keeps the line byte-identical to what it was for every questionnaire recorded before
             # the column existed — the same rule the grouping above follows.
             _stage_group(item)[2],
-            f"{len(printed)} sitting(s)",
-            f"{item.question_count} question(s)" if item.question_count else "",
+            f"{len(printed)} sitting{'' if len(printed) == 1 else 's'}",
+            f"{item.question_count} question{'' if item.question_count == 1 else 's'}" if item.question_count else "",
             f"version {item.version}",
             f"from {item.source_filename}" if item.source_filename else "",
             f"questionnaire {item.questionnaire_id}",
@@ -681,8 +681,8 @@ def append_questionnaire_annexure(
                     doc.add(block)
             if dropped > 0:
                 doc.para(
-                    f"[{dropped} further sitting(s) were recorded against this questionnaire and "
-                    f"are not printed here. The full set is in the online workshop record.]",
+                    f"[{dropped} further {'sitting was' if dropped == 1 else 'sittings were'} recorded against this "
+                    f"questionnaire and {'is' if dropped == 1 else 'are'} not printed here. The full set is in the online workshop record.]",
                     style=ParaStyle.NOTE,
                 )
     return len(printed)
@@ -728,6 +728,7 @@ def questionnaire_warnings(
     names = ", ".join(clean_text(item.title) or item.questionnaire_id for item in empty[:3])
     more = "…" if len(empty) > 3 else ""
     return [
-        f"{len(empty)} questionnaire(s) attached to this workshop have no recorded answers and "
-        f"were left out of the questionnaire annexure ({names}{more})."
+        f"{len(empty)} questionnaire{'' if len(empty) == 1 else 's'} attached to this workshop "
+        f"{'has' if len(empty) == 1 else 'have'} no recorded answers and "
+        f"{'was' if len(empty) == 1 else 'were'} left out of the questionnaire annexure ({names}{more})."
     ]

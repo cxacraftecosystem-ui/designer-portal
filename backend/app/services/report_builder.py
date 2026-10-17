@@ -2374,11 +2374,12 @@ class ReportBuilder:
         if artisans.placed:
             sentences.append(
                 f"Home places of {artisans.placed} of {artisans.total} participating artisans, "
-                f"at {len(artisans.points)} location(s)."
+                f"at {len(artisans.points)} location{'' if len(artisans.points) == 1 else 's'}."
             )
         if artisans.total > artisans.placed:
             sentences.append(
-                f"{artisans.total - artisans.placed} participant(s) recorded no address that "
+                f"{artisans.total - artisans.placed} participant{'' if artisans.total - artisans.placed == 1 else 's'} "
+                f"recorded no address that "
                 f"could be placed."
             )
         if facts.approximate:
@@ -2583,7 +2584,7 @@ class ReportBuilder:
             kind=ChartKind.DONUT,
             series=tuple((label, float(count)) for label, count in tally.items()),
             title="Prototypes by review decision",
-            caption=f"{sum(tally.values())} prototype(s) reviewed.",
+            caption=f"{sum(tally.values())} prototype{'' if sum(tally.values()) == 1 else 's'} reviewed.",
         )
 
     def _survey_responses(self) -> list[dict[str, Any]]:
@@ -2771,7 +2772,7 @@ class ReportBuilder:
             series=tuple(bands),
             title="Products by price band",
             unit="products",
-            caption=f"{len(prices)} product(s) with a recorded price, in rupees.",
+            caption=f"{len(prices)} product{'' if len(prices) == 1 else 's'} with a recorded price, in rupees.",
         )
 
     def _chart_adoption(self) -> ChartBlock | None:
@@ -3426,8 +3427,8 @@ def build_report(
         total = sum(count for _spec, count in over_cap)
         where = ", ".join(f"stage {spec.number}" for spec, _count in over_cap[:4])
         warnings.append(
-            f"{total} photograph(s) recorded in this workshop did not fit {template.name}'s "
-            f"photograph cap and are not in this file — {where}"
+            f"{total} photograph{'' if total == 1 else 's'} recorded in this workshop did not fit "
+            f"{template.name}'s photograph cap and {'is' if total == 1 else 'are'} not in this file — {where}"
             + ("…" if len(over_cap) > 4 else "")
             + ". Generate the report with a template that prints every photograph to include them."
         )
@@ -3462,8 +3463,12 @@ def build_report(
         total = sum(count for _spec, count in attachments)
         where = ", ".join(f"stage {spec.number}" for spec, _count in attachments[:4])
         warnings.append(
-            f"{total} attached file(s) are named in this report but the files themselves are not "
-            f"inside it — {where}"
+            (
+                f"1 attached file is named in this report but the file itself is not "
+                if total == 1
+                else f"{total} attached files are named in this report but the files themselves are not "
+            )
+            + f"inside it — {where}"
             + ("…" if len(attachments) > 4 else "")
             + ". A report file cannot carry a document, a recording or a video; send them "
             "alongside it."

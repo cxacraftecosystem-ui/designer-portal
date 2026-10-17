@@ -211,7 +211,7 @@
       "difference": 0.0,
       "key": "materialCost",
       "lineCount": 2,
-      "message": "Indigo saree: the 2 material line(s) add up to ₹1,650.00, which is what the sheet declares.",
+      "message": "Indigo saree: the 2 material lines add up to ₹1,650.00, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -221,7 +221,7 @@
       "difference": 0.0,
       "key": "labourCost",
       "lineCount": 1,
-      "message": "Indigo saree: the 1 labour line(s) add up to ₹800.00, which is what the sheet declares.",
+      "message": "Indigo saree: the 1 labour line adds up to ₹800.00, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -275,7 +275,7 @@
       "difference": 90.0,
       "key": "materialCost",
       "lineCount": 2,
-      "message": "Cost sheet 1: the 2 material line(s) add up to ₹1,560.00, but the sheet declares ₹1,650.00 — ₹90.00 more than the lines account for.",
+      "message": "Cost sheet 1: the 2 material lines add up to ₹1,560.00, but the sheet declares ₹1,650.00 — ₹90.00 more than the lines account for.",
       "unit": "INR",
       "verdict": "MISMATCH"
      },
@@ -325,7 +325,7 @@
    }
   ],
   "warnings": [
-   "Cost sheet 1: the 2 material line(s) add up to ₹1,560.00, but the sheet declares ₹1,650.00 — ₹90.00 more than the lines account for."
+   "Cost sheet 1: the 2 material lines add up to ₹1,560.00, but the sheet declares ₹1,650.00 — ₹90.00 more than the lines account for."
   ]
  },
  "cost/k06-mismatch-less": {
@@ -341,7 +341,7 @@
       "difference": -90.0,
       "key": "materialCost",
       "lineCount": 2,
-      "message": "Cost sheet 1: the 2 material line(s) add up to ₹1,650.00, but the sheet declares ₹1,560.00 — ₹90.00 less than the lines account for.",
+      "message": "Cost sheet 1: the 2 material lines add up to ₹1,650.00, but the sheet declares ₹1,560.00 — ₹90.00 less than the lines account for.",
       "unit": "INR",
       "verdict": "MISMATCH"
      },
@@ -391,7 +391,7 @@
    }
   ],
   "warnings": [
-   "Cost sheet 1: the 2 material line(s) add up to ₹1,650.00, but the sheet declares ₹1,560.00 — ₹90.00 less than the lines account for."
+   "Cost sheet 1: the 2 material lines add up to ₹1,650.00, but the sheet declares ₹1,560.00 — ₹90.00 less than the lines account for."
   ]
  },
  "cost/k07-tolerance-exactly-one-rupee": {
@@ -407,7 +407,7 @@
       "difference": 1.0,
       "key": "materialCost",
       "lineCount": 1,
-      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,649.00, which is what the sheet declares.",
+      "message": "Cost sheet 1: the 1 material line adds up to ₹1,649.00, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -471,7 +471,7 @@
       "difference": 1.01,
       "key": "materialCost",
       "lineCount": 1,
-      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,648.99, but the sheet declares ₹1,650.00 — ₹1.01 more than the lines account for.",
+      "message": "Cost sheet 1: the 1 material line adds up to ₹1,648.99, but the sheet declares ₹1,650.00 — ₹1.01 more than the lines account for.",
       "unit": "INR",
       "verdict": "MISMATCH"
      },
@@ -521,7 +521,7 @@
    }
   ],
   "warnings": [
-   "Cost sheet 1: the 1 material line(s) add up to ₹1,648.99, but the sheet declares ₹1,650.00 — ₹1.01 more than the lines account for."
+   "Cost sheet 1: the 1 material line adds up to ₹1,648.99, but the sheet declares ₹1,650.00 — ₹1.01 more than the lines account for."
   ]
  },
  "cost/k09-unreadable-line-incomplete": {
@@ -601,7 +601,7 @@
       "difference": null,
       "key": "materialCost",
       "lineCount": 1,
-      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,000.00; no material cost is declared on the sheet.",
+      "message": "Cost sheet 1: the 1 material line adds up to ₹1,000.00; no material cost is declared on the sheet.",
       "unit": "INR",
       "verdict": "NOT_DECLARED"
      },
@@ -611,7 +611,7 @@
       "difference": 0.0,
       "key": "labourCost",
       "lineCount": 1,
-      "message": "Cost sheet 1: the 1 labour line(s) add up to ₹800.00, which is what the sheet declares.",
+      "message": "Cost sheet 1: the 1 labour line adds up to ₹800.00, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -1380,7 +1380,7 @@
       "difference": 0.0,
       "key": "materialCost",
       "lineCount": 1,
-      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,000.00, which is what the sheet declares.",
+      "message": "Cost sheet 1: the 1 material line adds up to ₹1,000.00, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -1390,7 +1390,7 @@
       "difference": 0.0,
       "key": "labourCost",
       "lineCount": 1,
-      "message": "Cost sheet 1: the 1 labour line(s) add up to ₹800.00, which is what the sheet declares.",
+      "message": "Cost sheet 1: the 1 labour line adds up to ₹800.00, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -1589,7 +1589,7 @@
       "difference": 0.0,
       "key": "materialCost",
       "lineCount": 1,
-      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,000.00, which is what the sheet declares.",
+      "message": "Cost sheet 1: the 1 material line adds up to ₹1,000.00, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -2146,7 +2146,7 @@
       "difference": -0.0,
       "key": "materialCost",
       "lineCount": 7,
-      "message": "Bandha table runner — phoda kumbha border: the 7 material line(s) add up to ₹235.45, which is what the sheet declares.",
+      "message": "Bandha table runner — phoda kumbha border: the 7 material lines add up to ₹235.45, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -2156,7 +2156,7 @@
       "difference": 0.0,
       "key": "labourCost",
       "lineCount": 5,
-      "message": "Bandha table runner — phoda kumbha border: the 5 labour line(s) add up to ₹427.50, which is what the sheet declares.",
+      "message": "Bandha table runner — phoda kumbha border: the 5 labour lines add up to ₹427.50, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -2202,7 +2202,7 @@
       "difference": 0.0,
       "key": "materialCost",
       "lineCount": 7,
-      "message": "Silk-cotton bandha stole — macha and phula scatter: the 7 material line(s) add up to ₹359.64, which is what the sheet declares.",
+      "message": "Silk-cotton bandha stole — macha and phula scatter: the 7 material lines add up to ₹359.64, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -2212,7 +2212,7 @@
       "difference": 0.0,
       "key": "labourCost",
       "lineCount": 6,
-      "message": "Silk-cotton bandha stole — macha and phula scatter: the 6 labour line(s) add up to ₹697.50, which is what the sheet declares.",
+      "message": "Silk-cotton bandha stole — macha and phula scatter: the 6 labour lines add up to ₹697.50, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -2258,7 +2258,7 @@
       "difference": 0.0,
       "key": "materialCost",
       "lineCount": 7,
-      "message": "Bandha cushion cover set of two — chakra medallion: the 7 material line(s) add up to ₹156.43, which is what the sheet declares.",
+      "message": "Bandha cushion cover set of two — chakra medallion: the 7 material lines add up to ₹156.43, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -2268,7 +2268,7 @@
       "difference": 0.0,
       "key": "labourCost",
       "lineCount": 5,
-      "message": "Bandha cushion cover set of two — chakra medallion: the 5 labour line(s) add up to ₹315.00, which is what the sheet declares.",
+      "message": "Bandha cushion cover set of two — chakra medallion: the 5 labour lines add up to ₹315.00, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -2314,7 +2314,7 @@
       "difference": 0.0,
       "key": "materialCost",
       "lineCount": 7,
-      "message": "Bandha yardage — micro shankha repeat: the 7 material line(s) add up to ₹175.61, which is what the sheet declares.",
+      "message": "Bandha yardage — micro shankha repeat: the 7 material lines add up to ₹175.61, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -2324,7 +2324,7 @@
       "difference": 0.0,
       "key": "labourCost",
       "lineCount": 6,
-      "message": "Bandha yardage — micro shankha repeat: the 6 labour line(s) add up to ₹373.50, which is what the sheet declares.",
+      "message": "Bandha yardage — micro shankha repeat: the 6 labour lines add up to ₹373.50, which is what the sheet declares.",
       "unit": "INR",
       "verdict": "AGREES"
      },
@@ -2565,7 +2565,7 @@
    }
   },
   "cautions": [
-   "Only 1 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 1 respondent price expectation was recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [],
   "competitorPrices": null,
@@ -2602,7 +2602,7 @@
    }
   },
   "cautions": [
-   "Only 4 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 4 respondent price expectations were recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [],
   "competitorPrices": null,
@@ -2640,7 +2640,7 @@
    }
   },
   "cautions": [
-   "Only 5 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 5 respondent price expectations were recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [],
   "competitorPrices": null,
@@ -2683,7 +2683,7 @@
      "quantilesReported": true
     },
     "inside": 4,
-    "message": "Only 7 price observation(s) were recorded for SAREE — too few to judge the band against. 4 of them fall inside it.",
+    "message": "Only 7 price observations were recorded for SAREE — too few to judge the band against. 4 of them fall inside it.",
     "verdict": "UNVERIFIABLE"
    }
   ],
@@ -2700,7 +2700,7 @@
    }
   },
   "cautions": [
-   "Only 7 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 7 respondent price expectations were recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [],
   "competitorPrices": null,
@@ -2816,7 +2816,7 @@
    }
   },
   "cautions": [
-   "Only 1 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 1 respondent price expectation was recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [],
   "competitorPrices": null,
@@ -2889,7 +2889,7 @@
      "quantilesReported": false
     },
     "inside": 2,
-    "message": "Only 3 price observation(s) were recorded for this category — too few to judge the band against. 2 of them fall inside it.",
+    "message": "Only 3 price observations were recorded for this category — too few to judge the band against. 2 of them fall inside it.",
     "verdict": "UNVERIFIABLE"
    }
   ],
@@ -2906,7 +2906,7 @@
    }
   },
   "cautions": [
-   "Only 3 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 3 respondent price expectations were recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [],
   "competitorPrices": null,
@@ -2941,7 +2941,7 @@
    }
   },
   "cautions": [
-   "Only 1 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 1 respondent price expectation was recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [],
   "competitorPrices": null,
@@ -3201,7 +3201,7 @@
      "quantilesReported": false
     },
     "inside": 0,
-    "message": "2 price observation(s) exist for SAREE, but the band itself is incomplete.",
+    "message": "2 price observations exist for SAREE, but the band itself is incomplete.",
     "verdict": "NO_EVIDENCE"
    },
    {
@@ -3222,7 +3222,7 @@
      "quantilesReported": false
     },
     "inside": 0,
-    "message": "2 price observation(s) exist for BAG, but the band itself is incomplete.",
+    "message": "2 price observations exist for BAG, but the band itself is incomplete.",
     "verdict": "NO_EVIDENCE"
    }
   ],
@@ -3239,7 +3239,7 @@
    }
   },
   "cautions": [
-   "Only 2 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 2 respondent price expectations were recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [],
   "competitorPrices": null,
@@ -3629,7 +3629,7 @@
      "quantilesReported": true
     },
     "inside": 4,
-    "message": "Only 5 price observation(s) were recorded for SAREE — too few to judge the band against. 4 of them fall inside it.",
+    "message": "Only 5 price observations were recorded for SAREE — too few to judge the band against. 4 of them fall inside it.",
     "verdict": "UNVERIFIABLE"
    },
    {
@@ -3650,7 +3650,7 @@
      "quantilesReported": false
     },
     "inside": 3,
-    "message": "Only 4 price observation(s) were recorded for DUPATTA_STOLE — too few to judge the band against. 3 of them fall inside it.",
+    "message": "Only 4 price observations were recorded for DUPATTA_STOLE — too few to judge the band against. 3 of them fall inside it.",
     "verdict": "UNVERIFIABLE"
    }
   ],
@@ -3687,7 +3687,7 @@
    }
   },
   "cautions": [
-   "Only 3 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 3 respondent price expectations were recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [
    {
@@ -4188,7 +4188,7 @@
      "quantilesReported": false
     },
     "inside": 4,
-    "message": "Only 4 price observation(s) were recorded for SAREE — too few to judge the band against. 4 of them fall inside it.",
+    "message": "Only 4 price observations were recorded for SAREE — too few to judge the band against. 4 of them fall inside it.",
     "verdict": "UNVERIFIABLE"
    }
   ],
@@ -4215,7 +4215,7 @@
    }
   },
   "cautions": [
-   "Only 3 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 3 respondent price expectations were recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [
    {
@@ -4291,7 +4291,7 @@
    }
   },
   "cautions": [
-   "Only 4 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+   "Only 4 respondent price expectations were recorded. The figures below describe what was collected; they are not a market estimate."
   ],
   "clusters": [],
   "competitorPrices": null,

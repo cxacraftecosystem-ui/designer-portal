@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.plural
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -505,12 +506,11 @@ private fun ConsolidatedDocument(
         cachedNote?.let { CachedCopyNote(it) }
         if (current != null) {
             val count = current.summary.interviewCount
-            val plural = if (count == 1) "" else "s"
             Text(
                 if (!scope.isAllRecords) {
-                    "Answers from $count interview$plural in the chosen workshops."
+                    "Answers from ${plural(count, "interview")} in the chosen workshops."
                 } else {
-                    "All answers from $count interview$plural."
+                    "All answers from ${plural(count, "interview")}."
                 },
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
@@ -586,7 +586,7 @@ private fun ConsolidatedSummaryBlock(data: ConsolidatedQuestionnaireDto) {
         )
         if (summary.groupSittingCount > 0) {
             Notice(
-                text = "${summary.groupSittingCount} group sitting(s) — speakers not recorded.",
+                text = "${plural(summary.groupSittingCount, "group sitting")} — speakers not recorded.",
                 container = AmberSurface,
                 ink = AmberInk
             )

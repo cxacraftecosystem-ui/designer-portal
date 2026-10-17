@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -197,7 +198,15 @@ fun SketchesAndPrototypesScreen(
     }
 
     var workshops by remember { mutableStateOf<List<DesignWorkshopDto>?>(null) }
-    var truncated by remember { mutableIntStateOf(0) }
+    /**
+     * THE PICKER'S OWN PAGED, SERVER-SEARCHED LIST (UX audit DA-39). [workshops] stays the first page,
+     * which the status line and the default read; this holds whatever the box last asked the server
+     * for, plus every "Load more" page after it, so a designer on forty workshops reaches all forty.
+     */
+    val picker = remember { DwWorkshopPagedList(PAGE_SIZE) }
+    val pickerScope = rememberCoroutineScope()
+    val fetchWorkshops: suspend (Int, Int, String?) -> com.designprototype.workshop.data.DesignWorkshopPageDto =
+        { page, size, search -> repository.designWorkshops(page = page, pageSize = size, search = search) }
     /**
      * Why the list is not here, in words — or null when it IS here.
      *
@@ -236,7 +245,7 @@ fun SketchesAndPrototypesScreen(
         workshops = null
         listFailure = null
         listCachedNote = null
-        truncated = 0
+        picker.reset()
         // The last list this phone read, when nothing reaches the server (2026-10-16).
         runCatching {
             com.designprototype.workshop.data.ReadCache.read(
@@ -251,10 +260,8 @@ fun SketchesAndPrototypesScreen(
         }
             .onSuccess { page ->
                 workshops = page.items
-                // RULE 10: EVERY CAP SAYS SO. A designer with forty workshops must not read a list of
-                // twenty as "these are my workshops" — an absence that reads as non-existence is the
-                // single most repeated defect class in this repository.
-                truncated = (page.total - page.items.size).coerceAtLeast(0)
+                // The picker starts from the same first page and pages on from it.
+                picker.seed(page.items, page.total)
             }
             .onFailure { error ->
                 /*
@@ -438,9 +445,11 @@ fun SketchesAndPrototypesScreen(
           another workshop.
         */
         val rows = workshops.orEmpty()
+        // The chosen workshop stays an option while a search shows others, so the field keeps its name.
+        val shown = picker.rowsKeeping(chosen, rows)
         SearchableSelectField(
             label = "Which design workshop",
-            options = rows.map { workshop ->
+            options = shown.map { workshop ->
                 SelectOption(
                     value = workshop.id,
                     label = designWorkshopLabel(workshop),
@@ -462,6 +471,11 @@ fun SketchesAndPrototypesScreen(
             },
             includeNone = false,
             enabled = rows.isNotEmpty(),
+            // Always the searchable sheet: the box asks the SERVER, so a workshop on page four is
+            // one word away rather than "Nothing matches" over the first twenty.
+            searchable = true,
+            onSearch = { term -> picker.search(pickerScope, term, fetchWorkshops) },
+            loadMore = picker.loadMoreAction(pickerScope, fetchWorkshops),
             onSelect = { id ->
                 chosen = id
                 // A person picked. Retires the explanation, which was about a choice that is no
@@ -471,17 +485,6 @@ fun SketchesAndPrototypesScreen(
         )
         prefillNote?.let { note ->
             Text(note, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
-        }
-        if (truncated > 0) {
-            // RULE 10: EVERY CAP SAYS SO — and only when it bites, so an ordinary designer on four
-            // workshops never reads a sentence about a ceiling they cannot reach.
-            Text(
-                // A pointer to where the rest are, not a sentence about a ceiling (UX audit DA-39).
-                "$truncated more in Design workshops.",
-                color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
-                lineHeight = 16.sp
-            )
         }
 
         DwSketchChooserTabStrip(
@@ -881,8 +884,8 @@ internal const val DW_PROTOTYPE_MODEL_FORMATS: String =
  *
  * The same 20 the list screen's first page uses. Deliberately NOT the server's ceiling: a longer list
  * behind one picker is a longer scroll to the same answer, and `SearchableSelectField` grows its own
- * filter box at eight options, so a designer on twenty is not scrolling blind. The sentence below the
- * picker names what was left out and where to search for it.
+ * filter box at eight options, so a designer on twenty is not scrolling blind. The rest are one
+ * "Load more" or one search away ([DwWorkshopPagedList]).
  */
 private const val PAGE_SIZE = 20
 

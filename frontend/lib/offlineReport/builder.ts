@@ -946,11 +946,11 @@ export class ReportBuilder {
     if (venue.points.length && statedVenue) sentences.push(`Workshop venue: ${statedVenue}.`);
     if (artisans.placed) {
       sentences.push(
-        `Home places of ${artisans.placed} of ${artisans.total} participating artisans, at ${artisans.points.length} location(s).`
+        `Home places of ${artisans.placed} of ${artisans.total} participating artisans, at ${artisans.points.length} location${artisans.points.length === 1 ? "" : "s"}.`
       );
     }
     if (artisans.total > artisans.placed) {
-      sentences.push(`${artisans.total - artisans.placed} participant(s) recorded no address that could be placed.`);
+      sentences.push(`${artisans.total - artisans.placed} participant${artisans.total - artisans.placed === 1 ? "" : "s"} recorded no address that could be placed.`);
     }
     if (approximate) {
       sentences.push(
@@ -1096,7 +1096,7 @@ export class ReportBuilder {
         }
         if (tally.size < MIN_CHART_CATEGORIES) return null;
         const total = [...tally.values()].reduce((a, b) => a + b, 0);
-        return chart("DONUT", [...tally.entries()], "Prototypes by review decision", `${total} prototype(s) reviewed.`);
+        return chart("DONUT", [...tally.entries()], "Prototypes by review decision", `${total} prototype${total === 1 ? "" : "s"} reviewed.`);
       }
       case "SURVEY_RESPONDENTS": {
         const entity = this.entityIn("MARKET_SURVEY_CAPTURE", "surveyResponse");
@@ -1160,7 +1160,7 @@ export class ReportBuilder {
         }
         const bands = priceBands(prices);
         if (bands.length < MIN_CHART_CATEGORIES) return null;
-        return chart("BAR", bands, "Products by price band", `${prices.length} product(s) with a recorded price, in rupees.`, "products");
+        return chart("BAR", bands, "Products by price band", `${prices.length} product${prices.length === 1 ? "" : "s"} with a recorded price, in rupees.`, "products");
       }
       case "ADOPTION": {
         const entity = this.entityIn("POST_WORKSHOP_FOLLOWUP", "followUp");
@@ -1462,8 +1462,8 @@ export function buildReport(
     const total = overCap.reduce((sum, [, n]) => sum + n, 0);
     const where = overCap.slice(0, 4).map(([s]) => `stage ${s.number}`).join(", ");
     warnings.push(
-      `${total} photograph(s) recorded in this workshop did not fit ${template.name}'s ` +
-        `photograph cap and are not in this file — ${where}` +
+      `${total} photograph${total === 1 ? "" : "s"} recorded in this workshop did not fit ${template.name}'s ` +
+        `photograph cap and ${total === 1 ? "is" : "are"} not in this file — ${where}` +
         (overCap.length > 4 ? "…" : "") +
         ". Generate the report with a template that prints every photograph to include them."
     );
@@ -1473,7 +1473,9 @@ export function buildReport(
     const total = attachments.reduce((sum, [, n]) => sum + n, 0);
     const where = attachments.slice(0, 4).map(([s]) => `stage ${s.number}`).join(", ");
     warnings.push(
-      `${total} attached file(s) are named in this report but the files themselves are not ` +
+      (total === 1
+        ? `1 attached file is named in this report but the file itself is not `
+        : `${total} attached files are named in this report but the files themselves are not `) +
         `inside it — ${where}` +
         (attachments.length > 4 ? "…" : "") +
         ". A report file cannot carry a document, a recording or a video; send them alongside it."

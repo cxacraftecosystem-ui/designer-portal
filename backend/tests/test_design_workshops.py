@@ -702,7 +702,7 @@ def test_a_semicolon_inside_a_warning_does_not_split_it_on_the_designers_screen(
     what the designer reads, not what the header contains.
     """
     typed_by_a_designer = (
-        "1 questionnaire(s) attached to this workshop have no recorded answers and were left out "
+        "1 questionnaire attached to this workshop has no recorded answers and was left out "
         "of the questionnaire annexure (Loom survey; round two)."
     )
     header = _header([typed_by_a_designer, "Stage 3 (Workshop Plan): 1 required field(s)."])

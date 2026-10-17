@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.data.DraftRow
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.StageBucketDto
@@ -239,15 +240,15 @@ private fun builtFromLine(serverAnswered: Boolean, fromServer: Int, fromDevice: 
     !serverAnswered && fromDevice == 0 ->
         "Nothing recorded yet."
     !serverAnswered ->
-        "From ${fromDevice} stage(s) saved on this device."
+        "From ${plural(fromDevice, "stage")} saved on this device."
     fromServer == 0 && fromDevice == 0 ->
         "Nothing recorded yet."
     fromServer == 0 ->
-        "From ${fromDevice} stage(s) saved on this device."
+        "From ${plural(fromDevice, "stage")} saved on this device."
     fromDevice == 0 ->
-        "From ${fromServer} stage(s) downloaded."
+        "From ${plural(fromServer, "stage")} downloaded."
     else ->
-        "From ${fromServer} stage(s) downloaded and $fromDevice stage(s) saved on this device (this device's copy wins)."
+        "From ${plural(fromServer, "stage")} downloaded and ${plural(fromDevice, "stage")} saved on this device (this device's copy wins)."
 }
 
 /**

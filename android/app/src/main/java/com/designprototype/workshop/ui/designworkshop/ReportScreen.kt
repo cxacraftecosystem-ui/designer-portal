@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.data.userMessage
 
@@ -427,7 +428,7 @@ fun ReportScreen(
             // half-filled workshop is still worth having in the field — the warnings are there so the
             // designer knows what the officer will notice, not to block the export.
             warnings = scores.filter { it.missing.isNotEmpty() }.map { stage ->
-                "Stage ${stage.number} — ${stage.title}: ${stage.missing.size} required field(s) " +
+                "Stage ${stage.number} — ${stage.title}: ${plural(stage.missing.size, "required field")} " +
                     "missing (${stage.missing.take(3).joinToString(", ")}" +
                     (if (stage.missing.size > 3) ", …" else "") + ")"
             }
@@ -871,7 +872,7 @@ fun ReportScreen(
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        "${warnings.size} stage(s) are incomplete",
+                        "${plural(warnings.size, "stage")} ${if (warnings.size == 1) "is" else "are"} incomplete",
                         color = MaterialTheme.field.onWarningContainer,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
@@ -1170,7 +1171,7 @@ fun ReportScreen(
                     // Reported, not thrown. A report missing one photograph is still worth having;
                     // an export that aborted after twenty minutes of rendering is not.
                     Text(
-                        "${exported.droppedImages.size} photo(s) couldn't be embedded.",
+                        "${plural(exported.droppedImages.size, "photo")} couldn't be embedded.",
                         color = MaterialTheme.field.warning,
                         fontSize = 11.sp
                     )
@@ -1807,8 +1808,8 @@ internal fun dwPhotographsOverCapNote(
 ): String? {
     if (counted.isEmpty()) return null
     val total = counted.sumOf { it.second }
-    return "$total photograph(s) recorded in this workshop did not fit ${template.name}'s " +
-        "photograph cap and are not in this file — " + stagesNamed(counted) +
+    return "${plural(total, "photograph")} recorded in this workshop did not fit ${template.name}'s " +
+        "photograph cap and ${if (total == 1) "is" else "are"} not in this file — " + stagesNamed(counted) +
         ". Generate the report with a template that prints every photograph to include them."
 }
 
@@ -1906,7 +1907,8 @@ internal fun dwAttachmentsNamedButNotCarried(
 internal fun dwAttachmentsNotCarriedNote(counted: List<Pair<StageDto, Int>>): String? {
     if (counted.isEmpty()) return null
     val total = counted.sumOf { it.second }
-    return "$total attached file(s) are named in this report but the files themselves are not " +
+    return "${plural(total, "attached file")} " +
+        (if (total == 1) "is named in this report but the file itself is not " else "are named in this report but the files themselves are not ") +
         "inside it — " + stagesNamed(counted) +
         ". A report file cannot carry a document, a recording or a video; send them alongside it."
 }

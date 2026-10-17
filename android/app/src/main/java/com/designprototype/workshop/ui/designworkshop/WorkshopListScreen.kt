@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.data.userMessage
 
@@ -999,7 +1000,7 @@ fun WorkshopListScreen(
                         )
                         result.didAnything -> onMessage(
                             buildString {
-                                append("Sent ${result.stagesSent} stage(s) and ${result.mediaUploaded} file(s).")
+                                append("Sent ${plural(result.stagesSent, "stage")} and ${plural(result.mediaUploaded, "file")}.")
                                 if (result.stoppedOffline) {
                                     append(" The connection dropped — the rest is still here.")
                                 }
@@ -1010,7 +1011,7 @@ fun WorkshopListScreen(
                                 // the first one's else-branch, so the two clauses would have been
                                 // mutually exclusive.
                                 if (result.refused > 0) {
-                                    append(" ${result.refused} item(s) refused — open the workshop to see why.")
+                                    append(" ${plural(result.refused, "item")} refused — open the workshop to see why.")
                                 }
                                 // A stage that WAS sent and came back with some of its answers
                                 // declined is counted by neither `stagesSent` (it went) nor
@@ -1034,7 +1035,7 @@ fun WorkshopListScreen(
                                 // "0 stage(s)" for a pass whose whole achievement was that.
                                 if (result.workshopsResumed > 0) {
                                     append(
-                                        " ${result.workshopsResumed} workshop(s) were already online and are now linked."
+                                        " ${plural(result.workshopsResumed, "workshop")} ${if (result.workshopsResumed == 1) "was already online and is" else "were already online and are"} now linked."
                                     )
                                 }
                             }
@@ -1052,7 +1053,7 @@ fun WorkshopListScreen(
                         // of the news and it is the half that says nothing was lost.
                         result.refused > 0 -> onMessage(
                             buildString {
-                                append("${result.refused} item(s) couldn't upload. Open the workshop to see why.")
+                                append("${plural(result.refused, "item")} couldn't upload. Open the workshop to see why.")
                                 if (result.stoppedOffline) {
                                     append(" Connection lost; the rest is still here.")
                                 }
@@ -1168,7 +1169,7 @@ fun WorkshopListScreen(
                                     "Offline. “${row.title}” is saved and will upload later."
                                 )
                                 result.refused > 0 -> onError(
-                                    "${result.refused} item(s) of “${row.title}” couldn't upload. Open the row for details."
+                                    "${plural(result.refused, "item")} of “${row.title}” couldn't upload. Open the row for details."
                                 )
                                 // "Try again" CLEARS a create failure before the pass runs (see
                                 // `retryWorkshop`), so what reaches this arm is the refusal the pass
@@ -1179,8 +1180,8 @@ fun WorkshopListScreen(
                                     "“${row.title}” needs your attention before it can upload. Open the row for details."
                                 )
                                 result.didAnything -> onMessage(
-                                    "“${row.title}”: sent ${result.stagesSent} stage(s) and " +
-                                        "${result.mediaUploaded} file(s)." +
+                                    "“${row.title}”: sent ${plural(result.stagesSent, "stage")} and " +
+                                        "${plural(result.mediaUploaded, "file")}." +
                                         // The id was recovered rather than a workshop filed; the two
                                         // counts above are both 0 on the pass that does only that.
                                         if (result.workshopsResumed > 0) {
@@ -1210,7 +1211,7 @@ fun WorkshopListScreen(
                                 onMessage("Nothing to remove.")
                             } else {
                                 onMessage(
-                                    "Freed ${syncBytes(bytes)} ($count file(s)). They stay online but leave reports made on this phone."
+                                    "Freed ${syncBytes(bytes)} (${plural(count, "file")}). They stay online but leave reports made on this phone."
                                 )
                             }
                             busy = false

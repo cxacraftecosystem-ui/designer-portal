@@ -582,7 +582,7 @@ class DwDesignRatingsTest {
         */
         assertEquals("Nobody has rated this piece yet.", dwLedgerEmptyNote(ledger(count = 0)))
         val withheld = dwLedgerEmptyNote(ledger(count = 5, canRead = false)).orEmpty()
-        assertTrue(withheld.contains("5 designer(s) have rated this piece"))
+        assertTrue(withheld.contains("5 designers have rated this piece"))
         assertTrue(withheld.contains("You can see the score, not who gave it."))
         // A third state, and it is neither of the two: rows were readable and none came back.
         assertEquals(
