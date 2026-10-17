@@ -225,8 +225,7 @@ fun UsageScreen(
             // ANSWERED AND EMPTY is a real state here and it is not "nothing happened": the page may
             // simply be past the end, or every route on it may have been withheld. Both are said,
             // because "no screens in this window" alone would be read as a quiet week.
-            emptyLine = "No screens to show on this page. Screens used by too few accounts are not " +
-                "shown; how many is given above."
+            emptyLine = "No screens on this page. Rarely used screens are hidden."
         )?.let { notice ->
             Text(
                 notice,
@@ -246,7 +245,9 @@ fun UsageScreen(
             }
         }
         if (routesRead is UsageReadState.Failed) {
-            Button(onClick = { scope.launch { loadRoutes() } }) { Text("Try again") }
+            ActionRow {
+                Button(onClick = { scope.launch { loadRoutes() } }) { Text("Try again") }
+            }
         }
 
         routes?.let { data ->
@@ -271,9 +272,7 @@ fun UsageScreen(
                 StatLine("Screens withheld", usageCount(data.totalsForThisPage.routesWithheld))
                 if (data.totalsForThisPage.routesWithheld > 0) {
                     Text(
-                        "Fewer than ${data.limits.minimumIdentifiedUsers} identified accounts used " +
-                            "them in this period, so their figures are not shown and are left out " +
-                            "of the totals above.",
+                        "Used by fewer than ${data.limits.minimumIdentifiedUsers} accounts — hidden and excluded from totals.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                         lineHeight = 17.sp
@@ -299,7 +298,7 @@ fun UsageScreen(
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ActionRow {
                         OutlinedButton(
                             enabled = data.page > 1 && routesRead !is UsageReadState.Loading,
                             onClick = { page = (page - 1).coerceAtLeast(1) }
@@ -369,7 +368,7 @@ private fun CollectionPostureCard(
                             state = state,
                             noun = "collection method",
                             online = online,
-                            emptyLine = "How these figures were collected could not be shown."
+                            emptyLine = "Collection method unavailable."
                         ).orEmpty(),
                         color = MaterialTheme.field.onWarningContainer,
                         fontSize = 13.sp,
@@ -380,24 +379,25 @@ private fun CollectionPostureCard(
                         // is a problem rather than hiding them: an admin reading counts with no
                         // stated posture cannot tell whether the rows below carry names.
                         Text(
-                            "The figures below are still shown, but nothing on this screen can tell " +
-                                "you whether they are attributed to accounts until this loads.",
+                            "Figures shown; attribution unknown until this loads.",
                             color = MaterialTheme.field.onWarningContainer,
                             fontSize = 12.sp,
                             lineHeight = 17.sp
                         )
-                        Button(onClick = onRetry) { Text("Try again") }
+                        ActionRow {
+                            Button(onClick = onRetry) { Text("Try again") }
+                        }
                     }
                 } else {
                     val attributed = method.consent.unaskedPolicy == "ATTRIBUTED"
                     Text(
                         if (method.consent.flowExists) {
-                            "Consent is asked, and the rows below reflect what each account answered."
+                            "Consent is asked; rows reflect each account's answer."
                         } else {
                             if (attributed) {
-                                "Accounts are not asked first, and activity is recorded against each account."
+                                "Not asked first; recorded per account."
                             } else {
-                                "Accounts are not asked first, and activity is recorded without names."
+                                "Not asked first; recorded anonymously."
                             }
                         },
                         color = MaterialTheme.field.onWarningContainer,

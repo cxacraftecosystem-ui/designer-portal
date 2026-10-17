@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -510,7 +511,7 @@ internal fun DwReportSheets(
         if (drawPacked != null && focusPages.size < drawPacked.pages.size) {
             Text(
                 (if (focusPages.size == 1) "Page ${focusPages.first().pageNumber}" else "Pages ${focusPages.first().pageNumber}–${focusPages.last().pageNumber}") +
-                    " of ${drawPacked.pages.size} — where this stage falls in the document",
+                    " of ${drawPacked.pages.size}",
                 color = chrome,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
@@ -611,7 +612,7 @@ private fun DwSheetStrip(
     Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
         Text(
             if (packed == null) {
-                "Measuring the pages… · ${geometry.label} · ${geometry.marginLabel}"
+                "Measuring pages… · ${geometry.label} · ${geometry.marginLabel}"
             } else {
                 "$total page${if (total == 1) "" else "s"} · ${geometry.label} · ${geometry.marginLabel}"
             },
@@ -651,9 +652,7 @@ private fun DwSheetStrip(
 
         if (fontScaleOverridden) {
             Text(
-                "This device is set to a larger text size. The sheets are drawn at the document's own " +
-                    "type size, so that they show where the file's pages really break — pinch, or use " +
-                    "Actual size, to read them.",
+                "Shown at the document's own text size. Pinch or tap Actual size to read.",
                 color = color,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
@@ -667,10 +666,7 @@ private fun DwSheetStrip(
         // (`PdfWriter.kt:1645`). So the pages AFTER a figure are the ones to check in the file.
         if (figures > 0) {
             Text(
-                "· $figures figure${if (figures == 1) "" else "s"} (charts and maps) " +
-                    "${if (figures == 1) "is" else "are"} named here rather than drawn, and a named " +
-                    "card is shorter than the picture the file puts in its place — up to 0.58 of the " +
-                    "text column. Breaks after a figure can therefore fall later here than in the file.",
+                "· $figures figure${if (figures == 1) "" else "s"} shown as a placeholder, so breaks may shift.",
                 color = MaterialTheme.field.warning,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
@@ -684,10 +680,7 @@ private fun DwSheetStrip(
         if (scaledPages.isNotEmpty()) {
             val count = packed?.scaled?.size ?: 0
             Text(
-                "· $count block${if (count == 1) "" else "s"} taller than one page " +
-                    "${if (count == 1) "is" else "are"} shown scaled down to fit " +
-                    "(page${if (scaledPages.size == 1) " " else "s "}${scaledPages.joinToString(", ")}) — " +
-                    "nothing is cut off here, and the file divides such a block across pages instead.",
+                "· $count tall block${if (count == 1) "" else "s"} scaled to fit (page${if (scaledPages.size == 1) " " else "s "}${scaledPages.joinToString(", ")}).",
                 color = MaterialTheme.field.warning,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
@@ -697,9 +690,7 @@ private fun DwSheetStrip(
         val abandoned = packed?.abandoned.orEmpty()
         if (abandoned.isNotEmpty()) {
             Text(
-                "· ${abandoned.size} block${if (abandoned.size == 1) "" else "s"} could not be laid " +
-                    "out and ${if (abandoned.size == 1) "is" else "are"} missing from the sheets " +
-                    "below. Export the file to see the document in full.",
+                "· ${abandoned.size} block${if (abandoned.size == 1) "" else "s"} couldn't be laid out. Export to see everything.",
                 color = MaterialTheme.field.warning,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
@@ -710,7 +701,7 @@ private fun DwSheetStrip(
         // put in the file — so unlike the web, which has to guess when the template's accent is not
         // on the preview wire, this one is exact and is worth saying.
         Text(
-            "Drawn in the accent colour this report will be written in.",
+            "In this report's accent colour.",
             color = color,
             fontSize = 11.sp,
             lineHeight = 15.sp,
@@ -771,11 +762,7 @@ private fun DwSheetStage(
         val overflows = pageWidth > available
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            ActionRow {
                 TextButton(
                     onClick = {
                         animate = true
@@ -801,7 +788,7 @@ private fun DwSheetStage(
             // not be printed at, and has to be told which.
             if (scale < 0.995f || scale > 1.005f) {
                 Text(
-                    "Shown at ${(scale * 100).roundToInt()}% of the paper's size; the file is at 100%." +
+                    "Shown at ${(scale * 100).roundToInt()}%." +
                         if (overflows) " Drag sideways to see the rest of the sheet." else "",
                     color = chromeColor,
                     fontSize = 11.sp,

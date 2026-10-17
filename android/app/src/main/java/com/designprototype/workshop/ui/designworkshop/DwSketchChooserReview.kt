@@ -359,7 +359,7 @@ private fun DwChooserPeerRound(
                             held = written
                             stamp = plan.stamp
                             orderNote = if (plan.stamp == null) {
-                                "Back to score order, saved on this phone. Sending it…"
+                                "Back to score order. Sending…"
                             } else {
                                 "Saved on this phone. Sending it…"
                             }
@@ -500,20 +500,13 @@ private fun DwChooserPeerRound(
                 disabledReason = when {
                     canArrange -> null
                     !seesWholeCollection ->
-                        "The order here is the score order, and it is not yours to rearrange: the " +
-                            "placed order is the makers' own stage row order, which only that " +
-                            "workshop's designers and an admin can change."
+                        "Score order. Only this workshop's designers or an admin can rearrange it."
 
                     stageSpec == null ->
-                        "This arrangement cannot be changed from here yet. Open the workshop " +
-                            "once with a connection."
+                        "Open the workshop once online to rearrange."
 
                     else ->
-                        "The pieces are here but the rows they are arranged in are not: this phone " +
-                            "has not read the stage these ${entity.label.lowercase()} live in, so " +
-                            "there is nothing on it to rearrange. Open the Upload tab beside this " +
-                            "one with a connection, or open the stage, and the arrows and the drag " +
-                            "handle come back."
+                        "Open this stage once online to rearrange."
                 },
             ) { id, position, total, _ ->
                 DwChooserReviewRow(
@@ -644,22 +637,19 @@ internal const val DW_CHOOSER_UNTITLED: String = "Untitled piece"
 
 /** COULD NOT ASK, with no signal — worded so it cannot be read as "this round is empty". */
 internal const val DW_SKETCH_CHOOSER_ROUND_OFFLINE: String =
-    "No connection, so this workshop's peer round couldn't be loaded. Try again."
+    "No connection — couldn't load the peer round. Try again."
 
 /** The arrangement is on the phone; the request that would carry it did not complete. */
 internal const val DW_SKETCH_CHOOSER_ARRANGEMENT_NOT_SENT: String =
-    "This arrangement is saved on this phone but sending it did not complete. It goes up with the " +
-        "next sync — the sync tray follows it — and nothing has been lost."
+    "Saved. Upload didn't finish; it retries next sync."
 
 /** The arrangement could not even be written locally. Nothing was claimed and nothing was stored. */
 internal const val DW_SKETCH_CHOOSER_ARRANGEMENT_NOT_SAVED: String =
-    "This arrangement has NOT been saved: the local copy of this stage has gone. Reload this " +
-        "screen and try again — the pieces themselves are untouched."
+    "NOT saved — this stage's local copy is gone. Reload and retry."
 
 /** No registry for the stage the pieces live in, so there is nothing to write an order into. */
 internal const val DW_SKETCH_CHOOSER_NO_REGISTRY_FOR_ORDER: String =
-    "This arrangement has not been saved. Open the workshop once with a connection, then try " +
-        "again."
+    "Not saved. Open the workshop once online, then retry."
 
 /**
  * WHERE THE STARS ARE, said on the tab that does not have them.
@@ -670,6 +660,4 @@ internal const val DW_SKETCH_CHOOSER_NO_REGISTRY_FOR_ORDER: String =
  * comes to look for the wrong gap.
  */
 internal const val DW_SKETCH_CHOOSER_RATING_LIVES_IN_REVIEW: String =
-    "This tab shows the round and the order it stands in. Giving a piece a score and writing what " +
-        "you would change is Design review, in the menu — it opens the same round for the same " +
-        "workshop, with the ledger of who said what."
+    "Scoring and comments are in Design review (menu)."

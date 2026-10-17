@@ -55,10 +55,7 @@ val DW_WORKSHOP_CREATOR_ROLES = setOf("ADMIN", "MASTER_ADMIN")
  * everything they came to do still works as soon as an admin has opened the workshop.
  */
 const val DW_WORKSHOP_CREATE_REFUSAL =
-    "Only admins and the master admin can start a new design & prototype workshop. Ask an admin to " +
-        "create it for your cluster and give you access — you can then fill in all 22 stages, add " +
-        "artisans, products and photographs, and generate the report exactly as before. Any workshop " +
-        "you already have access to is open to you now."
+    "Only admins can start a workshop. Ask an admin to create it and add you; you can then fill in all 22 stages. Any workshop you already have access to is open to you now."
 
 /**
  * May this ROLE start a design workshop?
@@ -153,9 +150,7 @@ fun createMustBeDeclined(alreadyOnServer: Boolean, sessionMayCreate: Boolean): B
  */
 const val DW_WORKSHOP_CREATE_DECLINED_BY_APP =
     DW_WORKSHOP_CREATE_REFUSAL +
-        " Nothing on this phone has been deleted or changed: every stage, photograph and recording " +
-        "you captured is still here. Once an admin has created the workshop, use “Move into a " +
-        "workshop” on this row and the whole fortnight goes up into it on the next pass."
+        " Nothing here has been deleted or changed. Once it exists, use “Move into a workshop” on this row."
 
 // ---------------------------------------------------------------------------------------------
 // STARTING ONE WITH NO SIGNAL - the owner's last unmet clause
@@ -248,7 +243,7 @@ const val DW_LOCAL_START_ACTION = "Start one on this device"
  * is never coming.
  */
 const val DW_LOCAL_START_NOTE =
-    "Not a workshop yet. You will link it to one of your workshops when the connection returns."
+    "Not a workshop yet. Link it to one when online."
 
 /** The row's marker, once such a draft exists. */
 const val DW_LOCAL_DRAFT_UNLINKED = "Started on this device. Not a workshop yet."
@@ -607,16 +602,11 @@ fun dwAdoptCandidateNotice(
     listTruncated: Boolean,
 ): String? = when {
     offline ->
-        "Could not connect, so this list holds only the workshops already on this phone. Moving " +
-            "waits for a connection, and nothing is sent before then."
+        "Could not connect — showing workshops on this phone only. Moving waits for a connection, and nothing is sent before then."
     searched ->
-        "This list is narrowed by what you typed in the search box on the workshops screen. If the " +
-            "workshop you are moving this into is not here, close this, clear that box, and open " +
-            "it again."
+        "Filtered by the search box on the workshops screen. Clear it to see all."
     listTruncated ->
-        "There are more workshops than this screen could read in one go, so this list may not hold " +
-            "all of them. Close this, search the workshops screen for the one you want, and open " +
-            "it again."
+        "There are more workshops than this screen could read. Search for the one you want."
     else -> null
 }
 
@@ -637,13 +627,7 @@ fun dwAdoptCandidateNotice(
  * workshop the admin already made is how a person walks up a hill for nothing.
  */
 fun dwAdoptNoCandidatesMessage(offline: Boolean): String = if (offline) {
-    "There are no workshops on this phone to move it into, and the app could not connect — " +
-        "so this list may not be complete. Ask an admin to create the workshop, then open " +
-        "this list once with a connection and try again."
+    "No workshops here and the app could not connect. Ask an admin to create one, then try again online."
 } else {
-    "No design workshop is open to this account yet. A design workshop is visible only to " +
-        "the designers named on it, so ask an admin to create one for your cluster and name you " +
-        "as one of its designers — or to send you its join card, which lets you in yourself from " +
-        "“Workshop access”. It appears here and this draft can then be moved into it. Nothing on " +
-        "this phone is at risk in the meantime."
+    "No workshop is open to you yet — only designers named on it can see it. Ask an admin to add you, or use a join card from “Workshop access”. Nothing on this phone is at risk."
 }

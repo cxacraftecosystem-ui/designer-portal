@@ -386,7 +386,7 @@ class DwModelLanguagesTest {
             canAsk = false,
         )
         assertEquals(
-            "This Android version cannot be asked which packs it has \u00B7 speech model installed",
+            "Can't list installed packs on this Android version \u00B7 speech model installed",
             line
         )
         // And with no model, no clause: a designer who has never heard of the speech model is not told

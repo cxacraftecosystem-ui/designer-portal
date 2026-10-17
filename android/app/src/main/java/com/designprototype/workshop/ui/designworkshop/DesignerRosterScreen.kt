@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -335,7 +336,7 @@ fun DesignerRosterScreen(
      */
     fun mutate(what: String, block: suspend () -> Unit) {
         if (!mayManageDesignerRoster(repository.cachedUser())) {
-            onError("Only an administrator can change the designer roster.")
+            onError("Only an admin can change the roster.")
             return
         }
         busy = true
@@ -363,9 +364,7 @@ fun DesignerRosterScreen(
 
         if (!canManage) {
             Text(
-                "The designer roster is an administrator's list of named individuals and their " +
-                    "institutional standing, so it is not open to other accounts — reading it is " +
-                    "restricted for the same reason changing it is.",
+                "The designer roster is admin-only.",
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 13.sp,
                 modifier = Modifier
@@ -377,9 +376,7 @@ fun DesignerRosterScreen(
         }
 
         Text(
-            "A designer can sign in only while an active entry here carries their email. Add somebody " +
-                "before they have an account and the account creates itself the first time they " +
-                "sign in with Google.",
+            "Only emails on this roster can sign in as designers. Accounts are created on first Google sign-in.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -400,8 +397,7 @@ fun DesignerRosterScreen(
             fontSize = 11.sp
         )
         RosterHint(
-            "To see who has not turned up, order by \"First signed in\" — outstanding invitations " +
-                "come first. To see who cannot sign in, use the standing chips."
+            "Sort by “First signed in” to see who hasn't joined; use the chips to see who can't sign in."
         )
 
         // Web parity, and the same sentence: the account list stops at a cap, so the profile action
@@ -409,9 +405,7 @@ fun DesignerRosterScreen(
         // is simply not there on some rows and there on others.
         if (directoryCapped) {
             RosterNotice(
-                "Only the first $DESIGNER_DIRECTORY_CAP accounts can be matched to this roster, so " +
-                    "\"Open designer profile\" may be missing from an entry whose account does exist. " +
-                    "The roster itself is unaffected."
+                "Only the first $DESIGNER_DIRECTORY_CAP accounts are matched, so some profile links may be missing."
             )
         }
 
@@ -464,8 +458,7 @@ fun DesignerRosterScreen(
         roleMatchCutNotice(roleMatchTruncated)?.let { RosterNotice(it) }
         if (readFailure != null && rows.isNotEmpty()) {
             RosterNotice(
-                "These rows are the last answer that arrived. The most recent refresh failed, so an " +
-                    "empanelment or a suspension made since then may not be shown here yet."
+                "Last refresh failed — recent changes may not show."
             )
         }
 
@@ -478,30 +471,24 @@ fun DesignerRosterScreen(
             readFailure != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 RosterEmptyState(
                     title = "The roster could not be loaded",
-                    body = "This does not mean nobody is empanelled — the list did not load. " +
-                        "Nothing has been changed. Try again when you have a connection.",
+                    body = "Couldn't load the roster. Nothing changed. Try again online.",
                 )
                 rosterFilterRefusalHint(grammarUnderstood, grammarKeysSent)?.let { RosterNotice(it) }
             }
 
             rows.isEmpty() && rosterTotal > 0 -> RosterEmptyState(
                 title = "Nothing on this page",
-                body = "None of the $rosterTotal empanelments could be listed on this page — this " +
-                    "is not an empty roster. Step back a page.",
+                body = "Nothing on this page. Go back a page.",
             )
 
             rows.isEmpty() && hasActiveRosterFilters(RosterKind.DESIGNER, filters) -> RosterEmptyState(
                 title = "Nobody matches these filters",
-                body = "The filters search the whole roster, not only the entries already shown, so " +
-                    "nobody on it matches. Clear every filter to see everybody again, suspended " +
-                    "entries included.",
+                body = "No matches. Clear filters to see everyone.",
             )
 
             rows.isEmpty() -> RosterEmptyState(
                 title = "Nobody is on the designer roster yet",
-                body = "Until somebody is, no account can hold the Designer role and sign in with " +
-                    "it. Add the first address above — the account creates itself when that person " +
-                    "signs in.",
+                body = "Add the first email above to let a designer sign in.",
             )
 
             else -> rows.forEach { row ->
@@ -574,7 +561,7 @@ fun DesignerRosterScreen(
             onDismiss = { adding = false },
             onSubmit = { email, fullName, institution, notes ->
                 adding = false
-                mutate("$email has been added to the designer roster.") {
+                mutate("$email added to the roster.") {
                     repository.addDesignerToRoster(email, fullName, institution, notes)
                 }
             }
@@ -612,13 +599,9 @@ fun DesignerRosterScreen(
             text = {
                 Text(
                     if (suspending) {
-                        "${row.email} will be refused at sign-in from their next attempt, and told " +
-                            "in words that their access was withdrawn. The roster row, and the " +
-                            "record that they were empanelled, are kept — nothing is deleted, and " +
-                            "you can restore them here at any time."
+                        "${row.email} won't be able to sign in. Nothing is deleted; you can restore them any time."
                     } else {
-                        "${row.email} will be able to sign in again from their next attempt. Their " +
-                            "existing workshops and reports were never touched by the suspension."
+                        "${row.email} can sign in again."
                     }
                 )
             },
@@ -828,13 +811,13 @@ private fun RosterCard(
                 Text("Empanelled by $it", color = MaterialTheme.field.muted, fontSize = 11.sp)
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onEdit, enabled = !busy, modifier = Modifier.weight(1f)) {
+            ActionRow {
+                OutlinedButton(onClick = onEdit, enabled = !busy) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(RecordOpen.UPDATE_LABEL)
                 }
-                OutlinedButton(onClick = onToggleAccess, enabled = !busy, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onToggleAccess, enabled = !busy) {
                     Icon(
                         if (row.isActive) Icons.Filled.Block else Icons.Filled.Restore,
                         contentDescription = null,
@@ -915,11 +898,9 @@ private fun RosterEditDialog(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     if (existing == null) {
-                        "The email is the whole gate. It does not need an account behind it yet — " +
-                            "one is created the first time this person signs in with Google."
+                        "This email is their access. An account is created on first Google sign-in."
                     } else {
-                        "Changing the email moves the gate to the new address. Anyone signing in " +
-                            "with the old one will be refused."
+                        "The old email will no longer sign in."
                     },
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp

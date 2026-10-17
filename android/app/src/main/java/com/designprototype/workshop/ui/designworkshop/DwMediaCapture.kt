@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.data.userMessage
 
 import android.Manifest
@@ -607,7 +608,7 @@ internal fun DwMediaCaptureCard(
         if (!granted) {
             pendingCapture = null
             runCatching { file?.delete() }
-            onError("The camera permission was refused, so nothing can be photographed here. Grant it in Settings, or attach a picture from the gallery instead.")
+            onError("Camera permission denied. Allow it in Settings, or pick from the gallery.")
             return@rememberLauncherForActivityResult
         }
         if (file != null) takePhoto.launch(dwCaptureUri(context, file))
@@ -633,7 +634,7 @@ internal fun DwMediaCaptureCard(
             // be the wrong one to resume through, so the recorder simply asks and the designer taps
             // again. One extra tap, once, on a handset where the permission was previously refused.
             cameraPermission.launch(Manifest.permission.CAMERA)
-            onError("Grant the camera permission and tap Record video again.")
+            onError("Allow the camera, then tap Record video again.")
         }
     }
 
@@ -671,7 +672,7 @@ internal fun DwMediaCaptureCard(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (!granted) {
-            onError("The microphone permission was refused, so nothing can be recorded here. Grant it in Settings, or attach an existing audio file.")
+            onError("Microphone permission denied. Allow it in Settings, or attach a file.")
         }
     }
 
@@ -695,7 +696,7 @@ internal fun DwMediaCaptureCard(
             recorder = null
             recordingFile = null
             recording = false
-            onError(error.userMessage("This device would not start an audio recording."))
+            onError(error.userMessage("Couldn't start recording."))
         }
     }
 
@@ -962,8 +963,7 @@ internal fun DwMediaCaptureCard(
          */
         if (declaredFloor == null && screening.screening > 0) {
             Text(
-                "Checking ${screening.screening} photograph${if (screening.screening == 1) "" else "s"} " +
-                    "before ${if (screening.screening == 1) "it is" else "they are"} attached…",
+                "Checking ${screening.screening} photo${if (screening.screening == 1) "" else "s"}…",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
             )
@@ -1107,7 +1107,7 @@ internal fun DwMediaCaptureCard(
                     // route every other file takes.
                     logScope.launch {
                         WorkshopSyncEngine.retryOneFile(context, media.workshopId, id)
-                        onMessage("This file will upload the next time there is a connection.")
+                        onMessage("Will upload when you're online.")
                     }
                 },
             )
@@ -1496,17 +1496,19 @@ private fun DwAttachmentRow(
                 // Under the status line, in the same place on every row, while the file uploads and after.
                 DwAttachmentDownload(item = item, exists = exists, fileUri = fileUri, downloader = downloader)
                 if (status.canRetry && onRetry != null) {
-                    TextButton(
-                        onClick = onRetry,
-                        enabled = enabled,
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                    ) {
-                        Text(
-                            "Try this file again",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
+                    ActionRow {
+                        TextButton(
+                            onClick = onRetry,
+                            enabled = enabled,
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        ) {
+                            Text(
+                                "Try this file again",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
                     }
                 }
             }

@@ -1062,14 +1062,10 @@ fun dwVerbMediaRefusal(remoteMediaId: String?): String? =
 fun dwTranslationTargetRefusal(value: String): String? {
     val token = value.trim()
     if (token.isEmpty()) {
-        return "Name the language to translate into — a name or a code, such as “Odia”, " +
-            "“or” or “English”."
+        return "Name the language, e.g. “Odia” or “or”."
     }
     if (token.equals("multi", ignoreCase = true)) {
-        return "“multi” is something a recording can BE, not something a translation can be " +
-            "INTO. It is a real answer for the language a passage came FROM — these interviews " +
-            "code-switch mid-sentence — but a target is a choice somebody makes. Name the one " +
-            "language you want it in."
+        return "A recording can BE multi-language, but a translation needs one target. Pick one."
     }
     return dwVerbLanguageRefusal(token, what = "the target language")
 }
@@ -1085,9 +1081,7 @@ fun dwVerbLanguageRefusal(raw: String?, what: String): String? {
     val token = raw?.trim().orEmpty()
     if (token.isEmpty()) return null
     if (DW_VERB_LANGUAGE_TOKEN.matches(token)) return null
-    return "“${token.take(DW_VERB_MAX_LANGUAGE_CHARS)}” cannot be used as a language name for " +
-        "$what. Type the language as a name or a code — “Odia”, “or”, “Hindi”, “multi” — of at " +
-        "most $DW_VERB_MAX_LANGUAGE_CHARS characters, with no punctuation."
+    return "“${token.take(DW_VERB_MAX_LANGUAGE_CHARS)}” isn't a language. Use a name or code like “Odia” or “or”."
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1127,8 +1121,7 @@ fun dwVerbLanguageRefusal(raw: String?, what: String): String? {
 
 /** Nothing is selected, so there is nothing to send. */
 const val DW_VERBS_NOTHING_SELECTED: String =
-    "Select the words you want worked on first. Only what you select is sent, and it is kept with " +
-        "the result as its source."
+    "Select some text first."
 
 /**
  * The selection is longer than the server will accept as evidence for one layer.
@@ -1147,9 +1140,7 @@ const val DW_VERBS_NOTHING_SELECTED: String =
  * because the alternative is a reader believing the two clients print the same string here.
  */
 fun dwVerbPassageTooLong(chars: Int): String =
-    "That selection is ${groupIndian(chars.toString())} characters, and at most " +
-        "${groupIndian(DW_VERB_MAX_TEXT_CHARS.toString())} can be sent at once. Select a " +
-        "shorter passage."
+    "Selection is ${groupIndian(chars.toString())} characters; max ${groupIndian(DW_VERB_MAX_TEXT_CHARS.toString())}. Select a shorter passage."
 
 /**
  * There is no connection, so the verb genuinely cannot happen — **AND NOTHING HAS BEEN QUEUED.**
@@ -1162,8 +1153,7 @@ fun dwVerbPassageTooLong(chars: Int): String =
  * perfectly safe: the words are in the draft in `filesDir` and are untouched.
  */
 const val DW_VERBS_NEED_A_CONNECTION: String =
-    "These need a connection. Nothing has been queued to run later. Your words are on this phone " +
-        "and are untouched — connect and try again."
+    "Needs a connection. Nothing has been queued; your text is untouched."
 
 /**
  * The workshop has not been cleared to send anything, so no verb can run.
@@ -1179,27 +1169,20 @@ const val DW_VERBS_NEED_A_CONNECTION: String =
  */
 fun dwVerbConsentRefusal(consent: DwTier3Consent): String = when (consent) {
     DwTier3Consent.REFUSED ->
-        "This workshop's material may not be sent out — that is the answer on record — so nothing " +
-            "here can be proofread, written out, translated, described or subtitled. Nothing was " +
-            "sent, and your words are exactly as you left them. If the artisan has since agreed, " +
-            "change that answer on the workshop's own screen."
+        "The artisan declined sharing — that is the answer on record — so these are off. Change it on the workshop's own screen if they've agreed."
     DwTier3Consent.NOT_RECORDED ->
-        "Nobody has recorded yet whether material from this workshop may be sent out, so nothing " +
-            "here can be proofread, written out, translated, described or subtitled. Open the " +
-            "workshop's own screen and record the artisan's answer to that question — until " +
-            "somebody does, this stays unavailable."
+        "Needs the artisan's sharing consent first. record the artisan's answer on the workshop's own screen."
     // GRANTED never reaches here through [dwVerbGate], which tests for it first. It is spelled out
     // rather than left to an `else` so that a fourth consent state added to the enum fails to compile
     // here instead of silently inheriting the "nobody has been asked" sentence — which is the one
     // reading that would be false about every workshop.
     DwTier3Consent.GRANTED ->
-        "This workshop's material may be sent out; there is nothing standing in the way of these."
+        "Sharing allowed."
 }
 
 /** A photograph the server has never seen cannot be described by a model running on the server. */
 const val DW_VERBS_MEDIA_NOT_UPLOADED: String =
-    "This file is still waiting to upload. Once it uploads with the next sync, you can use these " +
-        "on it."
+    "Available once this file uploads."
 
 /**
  * **THE WORKSHOP ITSELF HAS NEVER REACHED THE SERVER**, so no verb has a record to run over.
@@ -1216,8 +1199,7 @@ const val DW_VERBS_MEDIA_NOT_UPLOADED: String =
  * The verbs would have walked through it a lane later.
  */
 const val DW_VERBS_WORKSHOP_NOT_ON_SERVER: String =
-    "This workshop is still only on this phone. These become available once it uploads with the " +
-        "next sync. Nothing you have written is at risk — it is saved on this phone."
+    "Available once this workshop uploads."
 
 /**
  * Today's ceiling in this client's words — **the fallback, used only when the server supplied none.**
@@ -1229,8 +1211,7 @@ const val DW_VERBS_WORKSHOP_NOT_ON_SERVER: String =
  * run nothing all morning).
  */
 const val DW_AI_VERBS_SPENT: String =
-    "Today's runs of the writing and captioning models are used up on this account. Dictation has " +
-        "its own separate allowance and is unaffected — and everything you have written is untouched."
+    "Today's AI runs are used up. Dictation has its own separate allowance."
 
 /**
  * Said before the press on the one verb that costs an upload of bytes the archive already holds.
@@ -1242,8 +1223,7 @@ const val DW_AI_VERBS_SPENT: String =
  * data out of a designer's own bundle, per recording.
  */
 const val DW_SUBTITLES_SECOND_UPLOAD_NOTE: String =
-    "Subtitling uploads this recording again to work out the timings, even if it has already been " +
-        "transcribed. It uses your mobile data and one run of today's allowance."
+    "Uploads the recording again and uses one of today's runs."
 
 // ---------------------------------------------------------------------------------------------
 // Reading a stored cue list
@@ -1258,7 +1238,7 @@ const val DW_SUBTITLES_SECOND_UPLOAD_NOTE: String =
  */
 enum class DwSubtitleFormat(val extension: String, val mimeType: String, val label: String) {
     /** What a phone gallery, VLC and every desktop player open, and what a designer attaches to an email. */
-    SRT("srt", "application/x-subrip", "SubRip (.srt) — the phone gallery, VLC, an email attachment"),
+    SRT("srt", "application/x-subrip", "SubRip (.srt)"),
 
     /** What a browser's `<track>` element takes. */
     VTT("vtt", "text/vtt", "WebVTT (.vtt) — a browser video player"),

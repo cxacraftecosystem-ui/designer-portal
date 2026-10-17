@@ -298,7 +298,7 @@ private fun DwPhotoQualityCard(entry: DwPhotoFindings, onDismiss: () -> Unit) {
             Text(
                 // Said outright, every time. A warning a designer cannot tell the difference between
                 // "advice" and "refusal" about is a warning they will stop attaching photographs over.
-                "This photograph is already saved on this device. Nothing here removes it.",
+                "Already saved on this phone.",
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 11.sp,
             )

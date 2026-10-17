@@ -130,14 +130,14 @@ internal fun DwStageDocumentPreview(
         }
         if (open) {
             Text(
-                "Updates as you type — the pages this stage falls on, as this device writes the report.",
+                "Live preview of this stage's pages.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
             )
             if (failed) {
                 Text(
-                    "The newest change couldn't be laid out just now; the pages below are from the change before it.",
+                    "Latest change couldn't render yet; showing the previous one.",
                     color = MaterialTheme.field.warning,
                     fontSize = 11.sp,
                     lineHeight = 15.sp,
@@ -150,8 +150,7 @@ internal fun DwStageDocumentPreview(
                 val hasStage = remember(current, stageTitle) { stageBlockRange(current.blocks, stageTitle) != null }
                 if (!hasStage) {
                     Text(
-                        "This stage has no heading of its own in the document yet — usually because nothing in it has " +
-                            "been filled in. The whole document is shown instead.",
+                        "This stage has no heading yet, so the whole document is shown.",
                         color = MaterialTheme.field.warning,
                         fontSize = 11.sp,
                         lineHeight = 15.sp,

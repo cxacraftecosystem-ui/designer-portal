@@ -594,8 +594,7 @@ fun undrawableCustomFieldsWithValues(
  * `data={}, dropped=('other',)`).
  */
 fun dwCustomUnsupportedNote(type: String): String =
-    "Update the app to answer this question. Whatever is already recorded for it is kept and is " +
-        "not changed by anything you do here."
+    "Update the app to answer this question. Existing answers are kept."
 
 /**
  * What to say beside the export buttons about this workshop's own questions.
@@ -650,15 +649,12 @@ fun dwCustomUnsupportedNote(type: String): String =
  */
 fun dwCustomSectionWarnings(copy: DwCustomCopy, answersHeld: Boolean = false): List<String> {
     if (copy != DwCustomCopy.UNKNOWN) return emptyList()
-    val tail = "Open this workshop on this phone once while you have a connection and they are " +
-        "included in every export afterwards, including offline ones."
+    val tail = "Open this workshop once with a connection to include them."
     return listOf(
         if (answersHeld) {
-            "This device holds answers to this workshop's own questions, but not the questions " +
-                "themselves, so those answers are not in this file. $tail"
+            "This device holds answers to this workshop's own questions, but not the questions, so they aren't in this file. $tail"
         } else {
-            "If this workshop has questions of its own, the answers recorded against them are not in " +
-                "this file. $tail"
+            "If this workshop has its own questions, their answers may be missing. $tail"
         }
     )
 }

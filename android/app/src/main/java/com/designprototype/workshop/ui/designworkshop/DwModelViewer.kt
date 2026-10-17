@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import android.annotation.SuppressLint
 import android.content.Context
 import android.view.MotionEvent
@@ -182,7 +183,7 @@ internal fun DwModelViewer(
         scope.launch {
             val file = localFile ?: fetch?.invoke()
             phase = if (file == null) {
-                ModelPhase.Failed("No connection, so the model could not be fetched to show here. Try again when there is signal.")
+                ModelPhase.Failed("Offline — can't load the model.")
             } else {
                 pageState = "loading"
                 pageMessage = ""
@@ -211,7 +212,9 @@ internal fun DwModelViewer(
                     modifier = Modifier.padding(16.dp),
                 ) {
                     Text(shown.message, color = MaterialTheme.field.muted, fontSize = 12.sp)
-                    OutlinedButton(onClick = { show() }) { Text("Try again") }
+                    ActionRow {
+                        OutlinedButton(onClick = { show() }) { Text("Try again") }
+                    }
                 }
                 is ModelPhase.Showing -> {
                     AndroidView(
@@ -239,7 +242,7 @@ internal fun DwModelViewer(
             ) {
                 Text(
                     if (pageState == "failed") pageMessage
-                    else "$displayName — drag to turn it, pinch to zoom, two fingers to move it.",
+                    else "$displayName — drag to rotate, pinch to zoom.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 15.sp,

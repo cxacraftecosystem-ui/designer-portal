@@ -320,9 +320,7 @@ fun dwTier2LayerBody(draft: DwTier2Draft): Map<String, String> {
  * artifact download and has a test that it imports neither module; this note is that rule for the verb.
  */
 const val DW_TIER2_NO_GATES_NOTE: String =
-    "A model that runs on this phone sends nothing off it, so there is nothing to consent to and " +
-        "nothing to pay for. Consent and the daily limit are about recordings leaving the phone and " +
-        "money spent at a provider; neither applies here, and neither is asked."
+    "Runs on this phone and sends nothing off it, so no consent or allowance is needed."
 
 /** Why a draft cannot be posted yet. **Every value is a thing that does not exist, not a refusal.** */
 enum class DwTier2WriteBlocker {

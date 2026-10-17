@@ -341,12 +341,9 @@ internal fun dwRecordProposalNote(dimension: DwRecordDimension, proposed: JsonEl
     val offered = DwValues.text(proposed)
     val clamped = dwClampedToColumn(offered) ?: return null
     if (clamped.signum() == 0) {
-        return "That measures about $offered ${dimension.unit}, which rounds to zero in " +
-            "“${dimension.label}” — that box holds $DW_RECORD_DECIMALS decimal places. A stored 0 " +
-            "would read as “measured, and it is nothing”, so nothing was put in it."
+        return "≈ $offered ${dimension.unit} rounds to zero in “${dimension.label}” ($DW_RECORD_DECIMALS decimals), so nothing was put in it."
     }
-    return "“${dimension.label}” holds $DW_RECORD_DECIMALS decimal places, so the measured " +
-        "$offered ${dimension.unit} went in as ${clamped.toPlainString()}."
+    return "Rounded to ${clamped.toPlainString()} (“${dimension.label}” holds $DW_RECORD_DECIMALS decimals)."
 }
 
 /**

@@ -2684,7 +2684,7 @@ object StageSchemaStore {
             context.assets.open(ASSET_FILE).bufferedReader().use { it.readText() }
         }.getOrElse {
             throw IOException(
-                "The form layout could not be loaded. Update or reinstall the app.",
+                "Couldn't load the form layout. Update or reinstall the app.",
                 it
             )
         }

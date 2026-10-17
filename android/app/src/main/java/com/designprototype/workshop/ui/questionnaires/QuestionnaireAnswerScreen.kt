@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -162,7 +163,7 @@ fun QuestionnaireAnswerScreen(
             form = loaded
             val entry = loaded.entries.firstOrNull { it.id == entryId }
             if (entry == null) {
-                loadError = "That sitting is no longer on this questionnaire. Go back and open it again."
+                loadError = "This sitting no longer exists. Go back and reopen."
             } else {
                 answers.clear()
                 notes.clear()
@@ -261,9 +262,7 @@ fun QuestionnaireAnswerScreen(
         // some of it got through.
         if (cachedNotice != null) {
             onError(
-                "These answers cannot be saved: the questionnaire on screen is the copy this phone " +
-                    "kept, and this app will not record an answer against wording it cannot confirm " +
-                    "is still in use. Your typing is still here — save when you have a signal."
+                "Can't save offline — this is a saved copy. Your answers are still here; save when online."
             )
             return
         }
@@ -353,8 +352,7 @@ fun QuestionnaireAnswerScreen(
                     fontSize = 20.sp
                 )
                 EmptyNote(
-                    "This questionnaire has no questions that can be answered. Add them from the " +
-                        "questionnaire screen, or upload the filled-in .xlsx pro-forma on a computer."
+                    "No questions yet. Add them from the questionnaire screen."
                 )
             }
 
@@ -421,17 +419,15 @@ fun QuestionnaireAnswerScreen(
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                ActionRow {
                     Button(
                         onClick = { save(questions, thenAdvance = false) },
                         enabled = !saving,
-                        modifier = Modifier.weight(1f)
                     ) { Text(if (saving) "Saving…" else "Save this section") }
                     if (index < sections.lastIndex) {
                         OutlinedButton(
                             onClick = { save(questions, thenAdvance = true) },
                             enabled = !saving,
-                            modifier = Modifier.weight(1f)
                         ) { Text("Save & next") }
                     }
                 }
@@ -562,8 +558,10 @@ private fun AnswerHeader(
                     )
                 }
             }
-            TextButton(onClick = onEditSitting, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                Text("Who is answering?", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+            ActionRow {
+                TextButton(onClick = onEditSitting, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                    Text("Who is answering?", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                }
             }
         }
     }
@@ -689,8 +687,7 @@ private fun AnswerField(
         )
         when {
             locked -> Text(
-                "Someone else recorded this answer. Only they, or an admin, can change it — a " +
-                    "change here would stop this whole section from saving.",
+                "Recorded by someone else. Only they or an admin can change it.",
                 color = MaterialTheme.field.warning,
                 fontSize = 11.sp
             )
@@ -718,8 +715,7 @@ private fun EntryDetailsDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "A sitting is one filled-in copy of this questionnaire. Naming the person " +
-                        "answering is what tells two sittings apart in the download.",
+                    "Name who's answering to tell sittings apart.",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp
                 )

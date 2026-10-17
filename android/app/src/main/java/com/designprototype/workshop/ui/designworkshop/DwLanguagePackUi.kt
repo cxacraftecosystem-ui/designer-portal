@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -314,8 +315,7 @@ internal class DwLanguagePackController(
         val engine = engine()
         if (engine == null) {
             checking = false
-            cannotAsk = "This phone has no speech recogniser installed, so there are no language " +
-                "packs to manage here and no dictation to use them."
+            cannotAsk = "No speech recogniser on this phone."
             return
         }
         val answer = withTimeoutOrNull(PACK_CHECK_TIMEOUT_MS) {
@@ -375,13 +375,10 @@ internal class DwLanguagePackController(
             // good list and replace nineteen honest rows with nineteen "unknown"s.
             answer != null -> {
                 val code = (answer.exceptionOrNull() as? DwPackCheckFailure)?.code
-                cannotAsk = "This phone would not say which language packs it has. " +
-                    "Dictation still works and still says when a language is missing."
+                cannotAsk = "Couldn't list language packs. Dictation still works."
             }
             else -> {
-                cannotAsk = "This phone's speech service did not answer, so which packs are " +
-                    "installed is unknown. Dictation still works and still says when a language " +
-                    "is missing."
+                cannotAsk = "Speech service didn't respond. Dictation still works."
             }
         }
     }
@@ -405,8 +402,7 @@ internal class DwLanguagePackController(
             requests[tag] = DwPackRequestNote(DW_PACK_NO_PROGRESS_ON_13)
             runCatching { engine.triggerModelDownload(intent) }.onFailure {
                 requests[tag] = DwPackRequestNote(
-                    "This phone's speech service refused the request for $label. Try adding it in " +
-                        "the phone's own speech or keyboard settings.",
+                    "Request for $label refused. Add it in the phone's speech settings.",
                     failed = true,
                 )
             }
@@ -506,7 +502,7 @@ internal class DwLanguagePackController(
 
             override fun onSuccess() {
                 requests[tag] = DwPackRequestNote(
-                    "$label is on this phone now. Dictation in $label works with no signal."
+                    "$label installed — works offline."
                 )
                 // The list behind it is now wrong by one row, and this is the one moment the app
                 // knows that for certain.
@@ -515,15 +511,13 @@ internal class DwLanguagePackController(
 
             override fun onScheduled() {
                 requests[tag] = DwPackRequestNote(
-                    "Android has queued $label and will fetch it when it decides to — it gives no " +
-                        "further word than that. Tap “Check again” later to see whether it arrived."
+                    "Android queued $label. Tap “Check again” later."
                 )
             }
 
             override fun onError(error: Int) {
                 requests[tag] = DwPackRequestNote(
-                    "$label could not be fetched. Check the connection and try again, " +
-                        "or add it in the phone's own speech or keyboard settings.",
+                    "Couldn't fetch $label. Check the connection, or add it in speech settings.",
                     failed = true,
                 )
             }
@@ -531,7 +525,7 @@ internal class DwLanguagePackController(
         runCatching { engine.triggerModelDownload(intent, ContextCompat.getMainExecutor(context), listener) }
             .onFailure {
                 requests[tag] = DwPackRequestNote(
-                    "This phone's speech service refused the request for $label.",
+                    "Request for $label refused.",
                     failed = true,
                 )
             }
@@ -688,7 +682,7 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
         }
         val downloadable = askable.size
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        ActionRow {
             /*
              * The download button exists only where a download could actually happen.
              *
@@ -712,7 +706,6 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
                         selected = emptySet()
                     },
                     enabled = ticked.isNotEmpty(),
-                    modifier = Modifier.weight(1f)
                 ) {
                     Text(
                         when (ticked.size) {
@@ -907,7 +900,7 @@ internal fun DwLanguagePackOfferDialog(
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                         Text(
-                            "Asking this phone whether the $label pack is installed…",
+                            "Checking $label…",
                             color = MaterialTheme.field.muted,
                             fontSize = 13.sp
                         )

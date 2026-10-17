@@ -229,10 +229,7 @@ fun DwProvenanceScreen(
         // a sentence and not a form: it names the rule and the fact that costs a designer nothing.
         if (!mayAudit) {
             Text(
-                "Comparing a workshop against the shared records is an admin view: it reports one " +
-                    "account's data beside another's, which is the line drawn everywhere else in " +
-                    "this app. Nothing is missing from your own work — who set each field is still " +
-                    "shown under every box on every stage.",
+                "Comparing with shared records is admin-only. Who set each field is shown under every box.",
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp
             )
@@ -241,8 +238,7 @@ fun DwProvenanceScreen(
 
         if (!onServer) {
             Text(
-                "This workshop is still only on this phone, so there is nothing to compare yet. " +
-                    "Send it from the workshop list first.",
+                "Upload this workshop first to compare.",
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp
             )
@@ -473,19 +469,17 @@ private fun Throwable.provenanceFailure(): String {
         // The server's own refusal is a good sentence and already names the next move ("Ask a master
         // admin if you need it for an audit."), so it is preferred over anything invented here.
         403 -> served
-            ?: "Comparing a workshop against the shared records is an admin view. Ask a master " +
-                "admin if you need it for an audit."
+            ?: "Admin-only. Ask a master admin if you need it."
         // The workshop is gone, or this account cannot see it. `load_workshop_or_404` deliberately
         // admits admins to SOFT-DELETED workshops — an audit of who wrote what is most needed on a
         // record somebody deleted — so a 404 reaching an admin means the row is not there at all.
-        404 -> "This workshop could not be found online. Nothing has been deleted from this phone."
+        404 -> "Not found online. Nothing was deleted here."
         // NOT AN HTTP ANSWER AT ALL: no signal, a dropped socket, a body this build cannot parse.
         // Nothing was refused and nothing was found missing — the request never got an answer — so
         // the sentence says what is actually known, which is that the phone could not reach the
         // repository. Naming it as a missing workshop would send an admin looking for a deletion
         // that did not happen.
-        null -> "Could not connect, so there is nothing to compare against yet. This comparison needs a " +
-            "connection. Check your connection and try again."
+        null -> "Offline — needs a connection."
         else -> served ?: DW_PROVENANCE_LOAD_FAILED
     }
 }

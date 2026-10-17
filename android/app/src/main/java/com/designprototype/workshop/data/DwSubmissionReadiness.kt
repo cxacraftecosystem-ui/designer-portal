@@ -547,11 +547,9 @@ object DwSubmissionReadiness {
                         stageKey = spec.key,
                         stageNumber = spec.number,
                         stageTitle = spec.title,
-                        title = "The report template chosen in stage 20 is not available",
+                        title = "Stage 20's report template isn't available",
                         detail =
-                            "Stage 20 names \"$token\", which is not in the list of templates available here. The " +
-                                "report will be generated from the workshop's own template instead, and the file will not " +
-                                "match the format named on the form. Re-pick the template to settle it.",
+                            "Stage 20 names \"$token\", which isn't available. The workshop's default template will be used. Re-pick it to fix.",
                         href = at(TEMPLATE_FIELD_KEY),
                     )
                 )
@@ -580,11 +578,9 @@ object DwSubmissionReadiness {
                     stageKey = target.key,
                     stageNumber = target.number,
                     stageTitle = target.title,
-                    title = "Stage ${target.number} is excluded from the report but has answers in it",
+                    title = "Stage ${target.number} is excluded from the report but has answers",
                     detail =
-                        "${score.requiredFilled + score.optionalFilled} field(s) are filled in on \"${target.title}\", and " +
-                            "stage 20 leaves this stage out of the generated report. That is a legitimate choice — but the " +
-                            "work will not appear in the file that is submitted.",
+                        "${score.requiredFilled + score.optionalFilled} field(s) filled on \"${target.title}\", but stage 20 excludes it from the report.",
                     // The link goes to STAGE 20, not to the excluded stage the entry names: the box
                     // that would settle this is the exclusion list, and sending a designer to the
                     // stage itself offers them nothing to change.

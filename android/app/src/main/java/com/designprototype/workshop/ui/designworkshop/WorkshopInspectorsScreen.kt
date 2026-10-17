@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -325,7 +326,7 @@ fun WorkshopInspectorsScreen(
      */
     fun save() {
         if (!mayAdministerInspections(repository.cachedUser())) {
-            saveError = "Only an administrator can decide who inspects a design workshop."
+            saveError = "Only an admin can assign inspectors."
             return
         }
         saving = true
@@ -334,7 +335,7 @@ fun WorkshopInspectorsScreen(
             val remoteId = WorkshopDraftStore.load(appContext, workshopId)?.remoteId
                 ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
             if (remoteId == null) {
-                saveError = "This workshop could not be found — it may have been deleted."
+                saveError = "Workshop not found."
                 saving = false
                 return@launch
             }
@@ -349,11 +350,9 @@ fun WorkshopInspectorsScreen(
                     val count = selection.baseline.size
                     onMessage(
                         if (count == 0) {
-                            "Nobody is assigned to inspect this workshop. The designers who run it " +
-                                "are unaffected."
+                            "No inspectors assigned."
                         } else {
-                            "$count ${if (count == 1) "inspector" else "inspectors"} assigned to " +
-                                "this workshop. They can read every stage of it and change nothing."
+                            "$count ${if (count == 1) "inspector" else "inspectors"} assigned (read-only)."
                         }
                     )
                 }
@@ -379,16 +378,14 @@ fun WorkshopInspectorsScreen(
         // ── The refusal, first, and never as a greyed control ────────────────────────────────────
         if (!canAdminister) {
             InspectionNotice(
-                "Only an administrator decides who inspects a design & prototype workshop — not the " +
-                    "designer who created it, and not the designers who run it, so the review stays " +
-                    "independent. Ask an administrator.",
+                "Only an admin assigns inspectors, to keep reviews independent.",
                 warning = true
             )
             return@Column
         }
 
         Text(
-            "Who may read one design & prototype workshop in order to inspect and review it.",
+            "Who can inspect this workshop.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -396,12 +393,7 @@ fun WorkshopInspectorsScreen(
         // here": since 2026-10-09 the server offers this screen admin accounts as well (see the hint
         // under the picker), so a sentence naming only the tier was false on the screen it described.
         Text(
-            "An inspection is READ-ONLY: whoever is assigned here can open every stage of this " +
-                "workshop and change none of it — an admin appointed to inspect it loses their own " +
-                "write access to it for as long as they hold the post. A Ministry Admin, an admin " +
-                "or the master admin decides who inspects what, and never appoints themselves; the " +
-                "designers who run a workshop have no say in who examines it, and cannot be its " +
-                "inspector themselves.",
+            "Inspectors can read every stage but change nothing. Admins appointed here lose edit access while they hold the post.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -409,15 +401,14 @@ fun WorkshopInspectorsScreen(
         // Said before anything is attempted, not only when it fails. An admin who does not know this
         // reads a failure as the app being broken rather than as the signal being gone.
         Text(
-            "This screen needs a connection. Try again when you have signal.",
+            "Needs a connection.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
 
         if (!onServer) {
             InspectionNotice(
-                "This workshop has not been uploaded yet, so nobody else can open it. Upload it " +
-                    "from the workshop list first, then come back.",
+                "Upload this workshop from the list first.",
                 warning = true
             )
             return@Column
@@ -537,7 +528,7 @@ fun WorkshopInspectorsScreen(
             // typed, and the whole defect this pattern was fixed for is those two looking identical.
             // The web panel's two, word for word. "Else", because the reader is never offered.
             emptyMessage = if (offer.search != null) {
-                "No account that may inspect matches that search."
+                "No matches."
             } else {
                 "Nobody else may be appointed to inspect yet"
             },
@@ -548,11 +539,7 @@ fun WorkshopInspectorsScreen(
         // its own menus keep ministry and admin work web-only. The list it describes arrives here
         // unfiltered, so the sentence follows the list (the web panel's hint, word for word).
         Text(
-            "Inspector / Reviewer accounts are offered, and so are Ministry Admin, admin and master " +
-                "admin accounts — never you — and only those who can still sign in. Somebody who worked on this " +
-                "workshop, or who is its Assistant Director or Regional Director, is refused when " +
-                "you save, with the reason. Unticking somebody ends their inspection when you save. " +
-                "At most $DW_INSPECTOR_LIMIT accounts.",
+            "Inspector and admin accounts that can sign in (not you). People who worked on this workshop are refused. Max $DW_INSPECTOR_LIMIT.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
@@ -567,7 +554,7 @@ fun WorkshopInspectorsScreen(
         // inspection by any route other than a row in this table, so this sentence may say so flatly.
         if (served.isEmpty()) {
             Text(
-                "This workshop is not under inspection. Nobody has been assigned to review it.",
+                "Not under inspection.",
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp
             )
@@ -591,8 +578,7 @@ fun WorkshopInspectorsScreen(
         if (selection.overLimit) {
             val over = selection.payload().size - DW_INSPECTOR_LIMIT
             InspectionNotice(
-                "${selection.payload().size} accounts are selected and a workshop may have at most " +
-                    "$DW_INSPECTOR_LIMIT. Untick $over of them to save.",
+                "Max $DW_INSPECTOR_LIMIT. Untick $over to save.",
                 warning = true
             )
         }
@@ -602,21 +588,23 @@ fun WorkshopInspectorsScreen(
         // nothing.
         saveError?.let { InspectionNotice(it, warning = false) }
 
-        Button(
-            onClick = { save() },
-            enabled = selection.dirty && !saving && !selection.overLimit,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(if (saving) "Saving…" else "Save who inspects this")
+        ActionRow {
+            Button(
+                onClick = { save() },
+                enabled = selection.dirty && !saving && !selection.overLimit,
+            ) {
+                Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (saving) "Saving…" else "Save")
+            }
+            if (selection.dirty) {
+                OutlinedButton(
+                    onClick = { selection = selection.discard(); saveError = null },
+                    enabled = !saving,
+                ) { Text("Discard") }
+            }
         }
         if (selection.dirty) {
-            OutlinedButton(
-                onClick = { selection = selection.discard(); saveError = null },
-                enabled = !saving,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Discard changes") }
             val pending = selection.added.size + selection.removed.size
             // The WORD carries the meaning, never the colour on its own.
             Text(

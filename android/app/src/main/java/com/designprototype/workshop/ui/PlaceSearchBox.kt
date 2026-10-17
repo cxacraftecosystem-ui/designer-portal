@@ -115,15 +115,14 @@ internal fun placeSearchStatusLine(
     hits: List<PlaceHit>,
     problem: String?
 ): String = when (state) {
-    PlaceSearchState.Short -> "Type at least $PLACE_SEARCH_MIN_QUERY_LENGTH letters to search."
+    PlaceSearchState.Short -> "Type at least $PLACE_SEARCH_MIN_QUERY_LENGTH letters."
     PlaceSearchState.Searching -> "Searching…"
     PlaceSearchState.Failed -> problem ?: "The place search did not answer."
     PlaceSearchState.Done ->
         if (hits.isNotEmpty()) {
             "${hits.size} place${if (hits.size == 1) "" else "s"} found."
         } else {
-            "No place in India is called “${query.trim()}”. Check the spelling, try the nearest town, " +
-                "or place the pin by hand."
+            "No place called “${query.trim()}”. Try a nearby town, or place the pin by hand."
         }
     PlaceSearchState.Idle -> ""
 }
@@ -155,8 +154,7 @@ fun PlaceSearchOverlay(
             modifier = modifier.fillMaxWidth()
         ) {
             Text(
-                "Place search is not available right now. Move the map or type the coordinates — " +
-                    "both work with no network.",
+                "Place search unavailable. Move the map or type coordinates.",
                 color = Muted,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
@@ -266,7 +264,7 @@ fun PlaceSearchOverlay(
 
             // THE PROMISE, IN THE PLACE IT IS MADE, and before it is used.
             Text(
-                "Searching only moves the map. Nothing is filled in until you place the pin yourself.",
+                "Search only moves the map; place the pin yourself.",
                 color = Muted,
                 fontSize = 11.sp,
                 lineHeight = 14.sp

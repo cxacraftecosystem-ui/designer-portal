@@ -254,65 +254,44 @@ fun dwTraceSentence(kind: DwTraceFailureKind, detail: String = ""): String {
     val trimmed = detail.trim().let { if (it.isNotEmpty() && it.length <= DW_TRACE_DETAIL_MAX) it else "" }
     return when (kind) {
         DwTraceFailureKind.SANDBOX_UNSUPPORTED ->
-            "This phone's Android System WebView is too old to trace a sketch — tracing needs the " +
-                "version released in January 2022 or later. Update Android System WebView from the " +
-                "Play Store next time you have a connection. The photograph and the straightened " +
-                "plate are unaffected."
+            "Android System WebView is too old to trace. Update it from the Play Store; the photo is unaffected."
 
         DwTraceFailureKind.SANDBOX_FEATURE_MISSING ->
-            "This phone's Android System WebView started but will not accept an image to trace. " +
-                "Update Android System WebView from the Play Store next time you have a connection, " +
-                "and report this phone's model if the update does not fix it."
+            "Android System WebView won't accept the image. Update it from the Play Store; the photo is unaffected."
 
         DwTraceFailureKind.SANDBOX_DIED ->
-            "The trace stopped because Android reclaimed it while this app was in the background. " +
-                "Start it again and leave this screen on until it finishes — a full-resolution " +
-                "trace takes from several seconds to about a minute on this phone."
+            "Android stopped the trace in the background. Retry and keep this screen open; the photo is unaffected."
 
         DwTraceFailureKind.OUT_OF_MEMORY ->
-            "This phone ran out of memory part-way through the trace. Set the trace resolution to " +
-                "Fast, or choose a different edge engine — Canny needs about three times the memory " +
-                "of the others. Closing other apps first also helps."
+            "Out of memory. Use Fast resolution or another edge engine, and close other apps. The photo is unaffected."
 
         DwTraceFailureKind.RESULT_TOO_LARGE ->
-            "The trace found more separate shapes than can be handed back in one piece. Raise " +
-                "\u201cMinimum speck\u201d so grit on the paper stops becoming shapes, or set the " +
-                "trace resolution to Fast, and trace it again."
+            "Too many shapes. Raise “Minimum speck” or use Fast resolution, then retrace. The photo is unaffected."
 
         DwTraceFailureKind.ENGINE_ERROR ->
             if (trimmed.isEmpty()) {
-                "The tracing engine could not finish this photograph. Try a different edge engine, " +
-                    "or set the trace resolution to Fast."
+                "Couldn't finish tracing. Try another edge engine or Fast resolution; the photo is unaffected."
             } else {
-                "The tracing engine could not finish this photograph: $trimmed"
+                "Couldn't finish tracing: $trimmed"
             }
 
         DwTraceFailureKind.FRAME_MISMATCH ->
-            "The trace finished in a different frame from the photograph, so the two cannot be laid " +
-                "over each other and there is no comparison to show. The drawing itself is " +
-                "unaffected and can still be attached. Turn off “Rectify the page” and trace " +
-                "again if you want the comparison as well — this plate has already been " +
-                "straightened." + if (trimmed.isEmpty()) "" else " ($trimmed)"
+            "The trace frame doesn't match the photo, so there's no comparison; the drawing is unaffected. Turn off “Rectify the page” to compare." + if (trimmed.isEmpty()) "" else " ($trimmed)"
 
         DwTraceFailureKind.IMAGE_UNREADABLE ->
-            "This phone could not read that photograph, so there is nothing to trace. The " +
-                "photograph on the record is unaffected and can still be attached as it is."
+            "Couldn't read this photo. The original is unaffected."
 
         DwTraceFailureKind.IMAGE_EMPTY ->
-            "That photograph decoded to no pixels at all, so there is nothing to trace. Take or " +
-                "choose another photograph of the sheet."
+            "This photo is empty, so there's nothing to trace; the original is unaffected. Choose another."
 
         DwTraceFailureKind.BUNDLE_MISSING ->
-            "Tracing could not start on this phone. Update the app to the latest version and try " +
-                "again; the photograph and its straightened plate are unaffected."
+            "Tracing couldn't start. Update the app and retry; the photo is unaffected."
 
         DwTraceFailureKind.BUNDLE_CONTRACT_MISMATCH ->
-            "The tracing part of the app needs updating before it can run. Update the app to the " +
-                "latest version; nothing has been attached and the photograph is unaffected."
+            "Tracing needs an app update. Nothing has been attached; the photo is unaffected."
 
         DwTraceFailureKind.PROTOCOL_UNREADABLE ->
-            "The trace did not finish properly, so nothing has been attached and the photograph " +
-                "is unaffected. Try once more; if it happens again, update the app."
+            "Trace didn't finish; nothing has been attached and the photo is unaffected. Retry or update the app."
     }
 }
 

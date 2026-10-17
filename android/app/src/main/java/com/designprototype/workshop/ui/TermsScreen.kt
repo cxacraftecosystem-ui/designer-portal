@@ -265,7 +265,9 @@ fun TermsScreen(
                     lineHeight = 19.sp
                 )
                 onRetryNotice?.let { retry ->
-                    TextButton(onClick = retry) { Text("Try again", fontSize = 13.sp) }
+                    ActionRow {
+                        TextButton(onClick = retry) { Text("Try again", fontSize = 13.sp) }
+                    }
                 }
             }
         }

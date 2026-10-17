@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -102,16 +103,13 @@ fun InspectionAwaitingSection(
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                "Design & prototype workshops you were appointed to inspect whose report has been " +
-                    "handed in and is waiting for an officer. Open one to read it and file suggestions " +
-                    "or send it back.",
+                "Handed-in reports waiting for you. Open one to file suggestions or send it back.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
             savedAt?.let {
                 InspectionNotice(
-                    "No connection — this is the list this phone last saw, on ${it.take(10)}. A report " +
-                        "may have moved since; each one is checked again before anything you write is sent.",
+                    "Offline — list from ${it.take(10)}. Reports are rechecked before anything is sent.",
                     warning = true
                 )
             }
@@ -154,16 +152,14 @@ fun InspectionAwaitingSection(
                     if (served.notHandedIn.isNotEmpty()) {
                         val n = served.notHandedIn.size
                         Text(
-                            "$n other assigned ${if (n == 1) "workshop has" else "workshops have"} not been " +
-                                "handed in yet; ${if (n == 1) "it is" else "they are"} on Workshops to inspect.",
+                            "$n more assigned ${if (n == 1) "workshop isn't" else "workshops aren't"} handed in yet.",
                             color = MaterialTheme.field.muted,
                             fontSize = 11.sp
                         )
                     }
                     if (more) {
                         Text(
-                            "You hold more assignments than this screen reads at once. Search Workshops " +
-                                "to inspect to reach the rest.",
+                            "Too many to load. Search Workshops to inspect.",
                             color = MaterialTheme.field.warning,
                             fontSize = 11.sp
                         )
@@ -199,8 +195,7 @@ private fun QueueRow(row: DesignWorkshopDto, notes: List<DwQueuedInspectionNote>
         if (notes.isNotEmpty()) {
             val held = notes.count { !it.waiting }
             Text(
-                "${notes.size} ${if (notes.size == 1) "note" else "notes"} of yours on this phone, not yet " +
-                    "on the record" + if (held > 0) " — $held need${if (held == 1) "s" else ""} your attention." else ".",
+                "${notes.size} unsent ${if (notes.size == 1) "note" else "notes"}" + if (held > 0) " — $held need${if (held == 1) "s" else ""} your attention." else ".",
                 color = if (held > 0) MaterialTheme.field.warning else MaterialTheme.field.muted,
                 fontSize = 11.sp
             )

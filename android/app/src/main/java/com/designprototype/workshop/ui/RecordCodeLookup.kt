@@ -162,8 +162,7 @@ suspend fun lookUpRecordCode(repository: WorkshopRepository, ref: DwWorkshopCode
         // it, in a village with no signal — so there is no endpoint to ask. Saying which screen DOES
         // resolve it is the useful answer; "no prototype matches" would be a claim this cannot support.
         return RecordCodeOutcome.Refused(
-            "That is a prototype tag. A prototype belongs to one design workshop and is looked up inside " +
-                "it — open that workshop and use its Cards & tags screen."
+            "That's a prototype tag. Look it up from its workshop's Cards & tags."
         )
     }
     return try {
@@ -221,8 +220,7 @@ suspend fun lookUpRecordCode(repository: WorkshopRepository, ref: DwWorkshopCode
         RecordCodeOutcome.Refused(unresolvedWorkshopCodeMessage(ref.recordType))
     } catch (e: Exception) {
         RecordCodeOutcome.Refused(
-            "No connection, so that code could not be looked up. Try again when there " +
-                "is signal — the code itself is valid, so the card is fine."
+            "Offline — couldn't look up the code. It's valid; retry online."
         )
     }
 }
@@ -431,9 +429,7 @@ fun RecordCodeLookupPanel(
                 )
             }
             Text(
-                "The code printed under the QR on any card, tag or record screen — an artisan, a craft, a workshop, " +
-                    "a product, a process, a tool, an interview or a media file. Nothing about the record is inside " +
-                    "the code: it holds a reference and a check digit, and nothing else.",
+                "The code under the QR on any card, tag or record. Contains no personal details.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -513,8 +509,7 @@ fun RecordCodeLookupPanel(
                 if (busy) CircularProgressIndicator(modifier = Modifier.size(16.dp))
             }
             Text(
-                "Spaces and capitals do not matter. The four characters at the end are a check — if they do not " +
-                    "match, the app says so rather than opening the wrong record.",
+                "Spaces and capitals don't matter. The last four characters are a check.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,

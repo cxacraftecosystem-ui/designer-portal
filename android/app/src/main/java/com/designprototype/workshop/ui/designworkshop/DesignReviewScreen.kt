@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -217,11 +218,10 @@ fun DesignReviewScreen(
                 // and keeps working, which the sentence beside it says.
                 workshops = emptyList()
                 listFailure = if (repository.isConnectionFailure(error)) {
-                    "Could not connect, so your workshops could not be listed. Opening a round " +
-                        "also needs a connection — try again when you have signal."
+                    "Offline — couldn't list workshops."
                 } else {
                     error.apiErrorMessage(
-                        "The design workshops you can open could not be listed. Try again."
+                        "Couldn't list workshops. Try again."
                     )
                 }
             }
@@ -247,10 +247,7 @@ fun DesignReviewScreen(
           it has not.
         */
         Text(
-            "Sketches and prototypes from a workshop's round: for a workshop you are a member of, " +
-                "or any workshop if you are an admin, the same pieces its own stages list; for " +
-                "everyone else, the ones it has declared finished and opened beyond itself. Rate " +
-                "them, say what you would change, and see where the scores put them.",
+            "Rate sketches and prototypes, suggest changes, and see the ranking.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp,
             lineHeight = 17.sp,
@@ -315,10 +312,7 @@ fun DesignReviewScreen(
             },
         )
         Text(
-            "This list holds the design workshops you can already open — the ones you created, " +
-                "the ones an admin added you to, and every workshop if you are an admin. A workshop " +
-                "can also open its finished pieces to designers outside it; reach one of those from " +
-                "the link or id its designers sent you, in the box below.",
+            "Workshops you can open. For others, paste the link or ID below.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -332,8 +326,7 @@ fun DesignReviewScreen(
         val hidden = (workshopTotal - (workshops?.size ?: 0)).coerceAtLeast(0)
         if (hidden > 0) {
             Text(
-                "Showing the first ${workshops?.size ?: 0} of $workshopTotal you can open. Reach " +
-                    "any of the rest from its link or its id below.",
+                "Showing ${workshops?.size ?: 0} of $workshopTotal. Paste a link or ID for others.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -344,40 +337,40 @@ fun DesignReviewScreen(
         OutlinedTextField(
             value = typedId,
             onValueChange = { typedId = it },
-            label = { Text("Or any other workshop, from its link or its id") },
+            label = { Text("Another workshop's link or ID") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            "A round opens one workshop at a time, because each workshop ranks its own pieces. " +
-                "For a workshop outside your own, paste the link or id its designers sent you.",
+            "Paste a link or ID shared by its designers.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
         )
-        OutlinedButton(
-            enabled = typedId.isNotBlank(),
-            onClick = {
-                /*
-                  A PASTED LINK IS ACCEPTED AS WELL AS A BARE ID, exactly as the web accepts one. A
-                  designer sent "come and look at this" has the workshop's URL on their clipboard and
-                  not its cuid, and refusing it would send them editing a string by hand. Anything
-                  that is not a workshop URL is passed through untouched and the API answers for it.
-
-                  THE BOX IS NOT CLEARED. The only feedback a wrong id gets is the round's
-                  one-sentence 404 — which by design cannot say whether the id was mistyped, revoked
-                  or never existed — so the reader needs the string they pasted still in front of
-                  them to compare against the link they were sent.
-                */
-                workshopId = WORKSHOP_URL.find(typedId.trim())?.groupValues?.get(1)
-                    ?: typedId.trim()
-            },
-        ) { Text("Open this round") }
+        ActionRow {
+            OutlinedButton(
+                enabled = typedId.isNotBlank(),
+                onClick = {
+                    /*
+                      A PASTED LINK IS ACCEPTED AS WELL AS A BARE ID, exactly as the web accepts one. A
+                      designer sent "come and look at this" has the workshop's URL on their clipboard and
+                      not its cuid, and refusing it would send them editing a string by hand. Anything
+                      that is not a workshop URL is passed through untouched and the API answers for it.
+    
+                      THE BOX IS NOT CLEARED. The only feedback a wrong id gets is the round's
+                      one-sentence 404 — which by design cannot say whether the id was mistyped, revoked
+                      or never existed — so the reader needs the string they pasted still in front of
+                      them to compare against the link they were sent.
+                    */
+                    workshopId = WORKSHOP_URL.find(typedId.trim())?.groupValues?.get(1)
+                        ?: typedId.trim()
+                },
+            ) { Text("Open this round") }
+        }
 
         if (workshopId.isBlank()) {
             Text(
-                "Nothing is open yet. Choose one of your own workshops above, or paste the link a " +
-                    "workshop's designers sent you, to read its sketches and prototypes.",
+                "Choose a workshop above, or paste a link.",
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
@@ -506,14 +499,13 @@ private fun DesignReviewAccessRefusal(roleLabel: String) {
             )
         }
         Text(
-            "Rating another workshop's finished pieces is part of the design work itself, so " +
-                "Design review is open to designers, admins and the master admin.",
+            "Design review is for designers and admins.",
             color = MaterialTheme.field.muted,
             fontSize = 13.sp,
             lineHeight = 18.sp,
         )
         Text(
-            "You are signed in as $roleLabel. An admin can raise your access.",
+            "You're signed in as $roleLabel. Ask an admin for access.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
         )
@@ -682,10 +674,9 @@ private fun DesignReviewRound(
                 // in doubt here. Only the sending is, so only the sending is what this sentence is
                 // about.
                 orderNote = if (repository.isConnectionFailure(error)) {
-                    "Saved on this phone. It will upload when you have a connection."
+                    "Saved. Uploads when you're online."
                 } else {
-                    "Saved on this phone, but the upload did not finish. It will be sent again with " +
-                        "the next sync."
+                    "Saved. Upload didn't finish; it retries next sync."
                 }
             }
     }
@@ -753,8 +744,7 @@ private fun DesignReviewRound(
         val spec = stageSpec
         if (spec == null) {
             orderProblem =
-                "This arrangement has not been saved because this phone does not have the form " +
-                    "layout for these pieces. Open the workshop once with a connection, then try again."
+                "Not saved — open the workshop once online, then retry."
             return
         }
         when (val plan = dwPlanArrangement(held, next, nextStamp, stageSeen)) {
@@ -790,7 +780,7 @@ private fun DesignReviewRound(
                             held = written
                             stamp = plan.stamp
                             orderNote = if (plan.stamp == null) {
-                                "Back to score order, saved on this phone. Sending it…"
+                                "Back to score order. Sending…"
                             } else {
                                 "Saved on this phone. Sending it…"
                             }
@@ -805,8 +795,7 @@ private fun DesignReviewRound(
                             // renames), so a cancellation mid-write cannot leave a half-written stage.
                             orderNote = null
                             orderProblem =
-                                "This arrangement could not be saved on this phone. Reload this " +
-                                    "screen and try again."
+                                "Couldn't save on this phone. Reload and retry."
                         }
                 }
             }
@@ -894,16 +883,16 @@ private fun DesignReviewRound(
                 when {
                     stamp != null -> {
                         Text(
-                            "This order was set by ${stamp?.by} on " +
-                                "${dwRatingDay(stamp?.at)}. A new rating changes the scores on the " +
-                                "cards and does not move them.",
+                            "Order set by ${stamp?.by} on ${dwRatingDay(stamp?.at)}. New ratings won't move it.",
                             color = MaterialTheme.field.body,
                             fontSize = 12.sp,
                             lineHeight = 17.sp,
                         )
                         if (canArrange) {
-                            OutlinedButton(onClick = { returnToDefault() }) {
-                                Text("Return to score order", fontSize = 12.sp)
+                            ActionRow {
+                                OutlinedButton(onClick = { returnToDefault() }) {
+                                    Text("Return to score order", fontSize = 12.sp)
+                                }
                             }
                         }
                     }
@@ -913,17 +902,13 @@ private fun DesignReviewRound(
                       write neither of the two settled sentences is true of this screen.
                     */
                     arranged -> Text(
-                        "You have arranged this list — it is yours from here, and it is being " +
-                            "recorded against your name. A new rating will change the scores on the " +
-                            "cards and will not move them.",
+                        "You've arranged this list; it's recorded under your name.",
                         color = MaterialTheme.field.body,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
                     )
                     canArrange -> Text(
-                        "This is the default order — highest score first, and pieces nobody has " +
-                            "rated yet at the end. Move one and the arrangement becomes yours, " +
-                            "recorded against your name.",
+                        "Highest score first; unrated last. Moving one makes the order yours.",
                         color = MaterialTheme.field.body,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
@@ -936,8 +921,7 @@ private fun DesignReviewRound(
                       this, and it used to say the opposite while every card under it disagreed.
                     */
                     else -> Text(
-                        "These are in score order — highest first, and pieces nobody has rated yet " +
-                            "at the end.",
+                        "Highest score first; unrated last.",
                         color = MaterialTheme.field.body,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
@@ -1046,7 +1030,7 @@ private fun DesignReviewRound(
                         )
                         Text(
                             dwRowSubtitle(row).ifBlank {
-                                "On this phone. Its score and reviews appear when you have a connection."
+                                "On this phone. Scores load when online."
                             },
                             color = MaterialTheme.field.muted,
                             fontSize = 11.sp,
@@ -1075,14 +1059,9 @@ private fun DesignReviewRound(
                 val open = dwPoolOpenCount(held)
                 Text(
                     if (open == 0) {
-                        "None of the ${held.size} ${entity.label.lowercase()} this phone holds for " +
-                            "this workshop carries a \"Peer review closed on\" date, and that date " +
-                            "is what opens one piece to designers outside the workshop. It is set " +
-                            "on the piece's own stage form, one piece at a time."
+                        "None of the ${held.size} ${entity.label.lowercase()} have a “Peer review closed on” date, which opens them to others. Set it on each piece's stage."
                     } else {
-                        "$open of the ${held.size} ${entity.label.lowercase()} this phone holds " +
-                            "carry a \"Peer review closed on\" date. If they are not listed above, " +
-                            "they are still waiting to upload."
+                        "$open of ${held.size} ${entity.label.lowercase()} have that date. Missing ones may still be uploading."
                     },
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
@@ -1108,13 +1087,9 @@ private fun DesignReviewRound(
                 disabledReason = when {
                     canArrange -> null
                     !seesWholeCollection ->
-                        "This list is in score order. Only this workshop's designers and an admin " +
-                            "can change the makers' own order; your rating is what you add to the " +
-                            "ranking here."
+                        "Score order. Only this workshop's designers or an admin can rearrange it."
                     stageSpec == null ->
-                        "This arrangement cannot be changed from here because this phone does not " +
-                            "have the form layout for these pieces. Open the workshop once with a " +
-                            "connection."
+                        "Open the workshop once online to rearrange."
                     /*
                       THE ONE THAT IS ORDINARY RATHER THAN EXCEPTIONAL ON A HANDSET — see the
                       three-questions block above. The cards on screen came from the repository; the
@@ -1124,9 +1099,7 @@ private fun DesignReviewRound(
                       offers, and the sentence has to say so or the list reads as somebody else's.
                     */
                     else ->
-                        "To rearrange these ${entity.label.lowercase()}, open one of them once with " +
-                            "a connection — use “Open the record” on any card below. The arrows and " +
-                            "the drag handle then appear."
+                        "Open any card once online (“Open the record”) to rearrange."
                 },
             ) { id, _, _, _ ->
                 val item = byId[id]
@@ -1313,7 +1286,9 @@ private fun DwReviewCard(
             lineHeight = 16.sp,
         )
         openStage?.let { open ->
-            OutlinedButton(onClick = open) { Text("Open the record", fontSize = 12.sp) }
+            ActionRow {
+                OutlinedButton(onClick = open) { Text("Open the record", fontSize = 12.sp) }
+            }
         }
 
         HorizontalDivider()
@@ -1372,7 +1347,7 @@ private fun DwReviewCard(
             value = suggestion,
             onValueChange = { suggestion = it },
             label = "What you would change",
-            placeholder = "A suggestion or recommendation the maker can act on.",
+            placeholder = "A suggestion the maker can act on.",
         )
 
         /*
@@ -1391,10 +1366,7 @@ private fun DwReviewCard(
           for their own paragraph.
         */
         Text(
-            "Scores, assessments and suggestions stay with this workshop's reviews and are read " +
-                "here and in the ranking; they are not printed in the report. The report shows the " +
-                "order the pieces end up in and who set it. Anything that must appear in the report " +
-                "belongs on the piece's own stage form.",
+            "Ratings and comments aren't printed in the report — only the final order. Put report content on the piece's stage.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -1790,10 +1762,7 @@ private fun DwReviewTextBox(
         ) {
             if (dropped > 0) {
                 Text(
-                    "$dropped character${if (dropped == 1) "" else "s"} " +
-                        "${if (dropped == 1) "was" else "were"} not kept. This box holds at most " +
-                        "$MAX_REVIEW_TEXT characters, so the extra text was left out and will not " +
-                        "be sent. Shorten what is here, or put the rest on the piece's own stage form.",
+                    "$dropped character${if (dropped == 1) "" else "s"} cut — max $MAX_REVIEW_TEXT.",
                     color = MaterialTheme.colorScheme.error,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,

@@ -87,9 +87,7 @@ fun questionnaireMergeOffer(
         targetId = id,
         targetTitle = title,
         heading = "“$title” already covers these artisans",
-        body = "Two interviews cannot cover the same set of artisans. Move this interview's " +
-            "${moving.joinToString(", ")} into “$title”? This interview is then removed — nothing " +
-            "recorded in it is deleted.",
+        body = "Another interview already covers these artisans. Move ${moving.joinToString(", ")} into “$title”? This interview is then removed; nothing recorded is deleted.",
         confirmLabel = "Move into “$title”",
     )
 }
@@ -131,9 +129,9 @@ fun questionnaireMergeConflictReport(refusal: QuestionnaireSaveRefusal): Questio
     }
     return QuestionnaireMergeConflictReport(
         heading = if (labels.size == 1) {
-            "Nothing was moved. 1 question is answered differently in the two interviews:"
+            "Nothing was moved — 1 question is answered differently:"
         } else {
-            "Nothing was moved. ${labels.size} questions are answered differently in the two interviews:"
+            "Nothing was moved — ${labels.size} questions are answered differently:"
         },
         questions = labels,
         remedy = "Open each one, keep the wording that is right, then merge.",
@@ -148,5 +146,4 @@ fun questionnaireMergeConflictReport(refusal: QuestionnaireSaveRefusal): Questio
  * they return to, which is indistinguishable from having deleted it by accident.
  */
 fun questionnaireMergedSentence(targetTitle: String): String =
-    "Moved into “$targetTitle”. Its answers and recordings are now on that interview, and this one " +
-        "has been removed."
+    "Moved into “$targetTitle”. This interview was removed."

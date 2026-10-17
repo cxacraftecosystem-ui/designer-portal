@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -372,7 +373,7 @@ fun WorkshopViewersScreen(
      */
     fun save() {
         if (!mayAdministerViewers(repository.cachedUser())) {
-            saveError = "Only an administrator can decide who may open a design workshop."
+            saveError = "Only an admin can change who opens a workshop."
             return
         }
         saving = true
@@ -381,7 +382,7 @@ fun WorkshopViewersScreen(
             val remoteId = WorkshopDraftStore.load(appContext, workshopId)?.remoteId
                 ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
             if (remoteId == null) {
-                saveError = "This workshop could not be found — it may have been deleted."
+                saveError = "Workshop not found."
                 saving = false
                 return@launch
             }
@@ -396,11 +397,9 @@ fun WorkshopViewersScreen(
                     val count = selection.baseline.size
                     onMessage(
                         if (count == 0) {
-                            "Nobody else can open this workshop. The designer who created it always " +
-                                "can, and is not affected by this list."
+                            "Only the creator can open this workshop."
                         } else {
-                            "$count designer${if (count == 1) "" else "s"} can open this workshop, in " +
-                                "addition to the designer who created it."
+                            "$count more designer${if (count == 1) "" else "s"} can open this workshop."
                         }
                     )
                 }
@@ -426,18 +425,14 @@ fun WorkshopViewersScreen(
         // ── The refusal, first, and never as a greyed control ─────────────────────────────────────
         if (!canAdminister) {
             Notice(
-                "Deciding who may open a design & prototype workshop is " +
-                    "open to admins and the master admin only — not to the designer who created it. " +
-                    "Ask an administrator to add your co-designer to this workshop.",
+                "Only admins can change access. Ask one to add your co-designer.",
                 warning = true
             )
             return@Column
         }
 
         Text(
-            "Besides the designer who created it. A workshop is usually run by two designers " +
-                "alongside a master craftsperson and a reviewing officer, and only the designers named " +
-                "here can open it — so name the designers who should see this one.",
+            "Besides the creator, only designers named here can open this workshop.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -446,15 +441,14 @@ fun WorkshopViewersScreen(
         // the app that cannot be done from a courtyard, and an admin who does not know that reads a
         // failure as the app being broken rather than as the signal being gone.
         Text(
-            "This screen needs a connection. Try again when you have signal.",
+            "Needs a connection.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
 
         if (!onServer) {
             Notice(
-                "This workshop has not been uploaded yet, so nobody else can open it. Upload it " +
-                    "from the workshop list first, then come back.",
+                "Upload this workshop from the list first.",
                 warning = true
             )
             return@Column
@@ -604,16 +598,13 @@ fun WorkshopViewersScreen(
             emptyMessage = if (offer.search != null) {
                 "No eligible account matches that search."
             } else {
-                "No designers are eligible. An account has to be able to run a design " +
-                    "workshop, and be on the active designer roster, before it can be let into one."
+                "No eligible designers."
             },
             enabled = !saving,
             onSelectedChange = { picked -> selection = selection.withSelection(picked) }
         )
         Text(
-            "Only accounts that could actually run a design workshop are offered — a designer whose " +
-                "roster entry is suspended cannot sign in. Unticking somebody removes " +
-                "their access when you save.",
+            "Unticking removes access when you save.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
@@ -625,8 +616,7 @@ fun WorkshopViewersScreen(
         val granted = served.filter { it.userId != creator }
         if (granted.isEmpty()) {
             Text(
-                "Nobody else can open this workshop yet. Only the designer who created it, and " +
-                    "admins, can.",
+                "Only the creator and admins can open this workshop.",
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp
             )
@@ -647,8 +637,7 @@ fun WorkshopViewersScreen(
 
         if (selection.overLimit) {
             Notice(
-                "A workshop can hold at most $DW_VIEWER_LIMIT designers, and this list has " +
-                    "${selection.payload().size}. Take some off before saving.",
+                "Max $DW_VIEWER_LIMIT designers. Remove ${selection.payload().size - DW_VIEWER_LIMIT} to save.",
                 warning = true
             )
         }
@@ -658,27 +647,27 @@ fun WorkshopViewersScreen(
         // nothing.
         saveError?.let { Notice(it, warning = false) }
 
-        Button(
-            onClick = { save() },
-            enabled = selection.dirty && !saving && !selection.overLimit,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(if (saving) "Saving…" else "Save who can see this")
+        ActionRow {
+            Button(
+                onClick = { save() },
+                enabled = selection.dirty && !saving && !selection.overLimit,
+            ) {
+                Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (saving) "Saving…" else "Save")
+            }
+            if (selection.dirty) {
+                OutlinedButton(
+                    onClick = { selection = selection.discard(); saveError = null },
+                    enabled = !saving,
+                ) { Text("Discard") }
+            }
         }
         if (selection.dirty) {
-            OutlinedButton(
-                onClick = { selection = selection.discard(); saveError = null },
-                enabled = !saving,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Discard changes") }
             val pending = selection.added.size + selection.removed.size
             // The WORD carries the meaning, never the colour on its own.
             Text(
-                "$pending unsaved change${if (pending == 1) "" else "s"} · " +
-                    "${selection.resultingCount} designer${if (selection.resultingCount == 1) "" else "s"} " +
-                    "would be able to open this workshop.",
+                "$pending unsaved change${if (pending == 1) "" else "s"} · ${selection.resultingCount} designer${if (selection.resultingCount == 1) "" else "s"} with access.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp
             )
@@ -784,7 +773,7 @@ private fun CreatorCard(
                 Text(FieldPermissions.label(it), color = MaterialTheme.field.muted, fontSize = 12.sp)
             }
             Text(
-                "They created this workshop, so they can always open it. Nothing below removes that.",
+                "Creator — always has access.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -794,9 +783,7 @@ private fun CreatorCard(
             // neither: `_deduplicate` drops the creator from every payload that names them.
             if (creatorId.isBlank()) {
                 Text(
-                    "The workshop's creator could not be identified, so they may appear " +
-                        "in the list below; ticking or unticking them there changes nothing, because " +
-                        "the creator can always open the workshop.",
+                    "Creator unknown; they always have access regardless of this list.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
                 )

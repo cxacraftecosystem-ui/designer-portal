@@ -324,8 +324,7 @@ fun readQuestionnaireBundle(bytes: ByteArray?): QuestionnaireBundleRead {
     if (bytes == null || bytes.isEmpty()) {
         return QuestionnaireBundleRead.Refused(
             QuestionnaireBundleRefusal.EMPTY,
-            "That file is empty. Ask for it again — a transfer that was interrupted often leaves an " +
-                "empty file behind."
+            "That file is empty. Ask for it again."
         )
     }
     val text = runCatching {
@@ -346,28 +345,24 @@ fun readQuestionnaireBundle(bytes: ByteArray?): QuestionnaireBundleRead {
         return if (error.message == "inflated past the ceiling") {
             QuestionnaireBundleRead.Refused(
                 QuestionnaireBundleRefusal.TOO_LARGE,
-                "That file is far too big to be a questionnaire. It has not been opened."
+                "That file is too big to be a questionnaire."
             )
         } else {
             QuestionnaireBundleRead.Refused(
                 QuestionnaireBundleRefusal.DAMAGED,
-                "That file is damaged or did not arrive whole. Ask for it again — Bluetooth and " +
-                    "nearby sharing cannot resume a transfer, so a half-sent file looks exactly like " +
-                    "this."
+                "That file is damaged or incomplete — Bluetooth and Nearby Share cannot resume a transfer. Ask for it again."
             )
         }
     }
     val bundle = runCatching { bundleJson.decodeFromString<QuestionnaireBundle>(text) }.getOrNull()
         ?: return QuestionnaireBundleRead.Refused(
             QuestionnaireBundleRefusal.NOT_A_QUESTIONNAIRE,
-            "That is not a questionnaire from this app. A spreadsheet, a photograph or a workshop " +
-                "export will not open here — ask for the .$QUESTIONNAIRE_BUNDLE_EXTENSION file."
+            "Not a questionnaire file. Ask for the .$QUESTIONNAIRE_BUNDLE_EXTENSION file."
         )
     if (bundle.format != QUESTIONNAIRE_BUNDLE_FORMAT) {
         return QuestionnaireBundleRead.Refused(
             QuestionnaireBundleRefusal.NOT_A_QUESTIONNAIRE,
-            "That file came from this app but it is not a questionnaire — ask for the questionnaire " +
-                "file, the one ending .$QUESTIONNAIRE_BUNDLE_EXTENSION."
+            "Not a questionnaire file. Ask for the .$QUESTIONNAIRE_BUNDLE_EXTENSION file."
         )
     }
     if (bundle.schemaVersion > QUESTIONNAIRE_BUNDLE_SCHEMA_VERSION) {
@@ -378,14 +373,13 @@ fun readQuestionnaireBundle(bytes: ByteArray?): QuestionnaireBundleRead {
         // likely to be up to date, so it is the one that meets the newer file.
         return QuestionnaireBundleRead.Refused(
             QuestionnaireBundleRefusal.NEWER_VERSION,
-            "Update the app to open this questionnaire, or ask them to send the question set as a " +
-                "spreadsheet instead."
+            "Update the app to open this, or ask for it as a spreadsheet."
         )
     }
     if (bundle.sections.none { it.questions.isNotEmpty() }) {
         return QuestionnaireBundleRead.Refused(
             QuestionnaireBundleRefusal.NOTHING_IN_IT,
-            "That questionnaire file has no questions in it. Ask them to check they sent the right one."
+            "This questionnaire has no questions. Check it's the right file."
         )
     }
     return QuestionnaireBundleRead.Ok(bundle)
@@ -513,20 +507,18 @@ fun readQuestionnaireHandoffCode(input: String?): QuestionnaireHandoffRead {
     val parts = raw.split(":")
     if (parts.size != 4 || !parts[0].startsWith(WORKSHOP_CODE_NAMESPACE)) {
         return QuestionnaireHandoffRead.Refused(
-            "That is not a questionnaire check code. They begin “DPW” — a shop barcode or a web " +
-                "address will not check a file."
+            "Not a questionnaire check code. They start with “DPW”."
         )
     }
     val versionText = parts[0].substring(WORKSHOP_CODE_NAMESPACE.length)
     if (versionText.isEmpty() || !versionText.all { it in '0'..'9' }) {
         return QuestionnaireHandoffRead.Refused(
-            "That is not a questionnaire check code. They begin “DPW” followed by a version number."
+            "Not a questionnaire check code. They start with “DPW” and a version."
         )
     }
     if (parts[1] != QUESTIONNAIRE_HANDOFF_LETTER) {
         return QuestionnaireHandoffRead.Refused(
-            "That code belongs to this app but it is not a questionnaire check code — it says " +
-                "something else. Scan the code shown beside the questionnaire that was sent to you."
+            "Not a questionnaire check code. Scan the one shown with the questionnaire."
         )
     }
     // `toDouble`, as every other parser in this app does with a version read off a card or a screen:
@@ -542,8 +534,7 @@ fun readQuestionnaireHandoffCode(input: String?): QuestionnaireHandoffRead {
     }
     if (digest.length != HANDOFF_DIGEST_LENGTH || digest.any { it !in HANDOFF_ALPHABET }) {
         return QuestionnaireHandoffRead.Refused(
-            "This check code is incomplete or was typed wrongly. Read it off the screen again, " +
-                "character by character."
+            "Check code incomplete. Re-read it carefully."
         )
     }
     val typedCheck = buildString(parts[3].length) {
@@ -553,8 +544,7 @@ fun readQuestionnaireHandoffCode(input: String?): QuestionnaireHandoffRead {
         "$QUESTIONNAIRE_HANDOFF_LETTER:$digest"
     if (typedCheck.length != 4 || typedCheck != workshopCodeCheck(prefix)) {
         return QuestionnaireHandoffRead.Refused(
-            "This check code does not check out, so one of its characters is wrong. Read it off the " +
-                "screen again, character by character."
+            "Check code doesn't match — a character is wrong. Re-read it."
         )
     }
     return QuestionnaireHandoffRead.Ok(digest = digest, code = "$prefix:$typedCheck")
@@ -570,11 +560,9 @@ fun readQuestionnaireHandoffCode(input: String?): QuestionnaireHandoffRead {
  */
 fun questionnaireHandoffVerdict(expected: String, fileDigest: String): String =
     if (expected == fileDigest) {
-        "This is the same questionnaire, whole. Nothing was lost in the transfer."
+        "This is the same questionnaire, whole."
     } else {
-        "This is NOT the file that code was made for. Either it did not arrive whole — Bluetooth and " +
-            "nearby sharing cannot resume a transfer — or the questionnaire was changed after the code " +
-            "was shown. Ask them to send it again and show you a fresh code."
+        "This is NOT the file that code was made for — it's incomplete, or was changed after the code was shown. Ask them to resend it with a fresh code."
     }
 
 // --------------------------------------------------------------------------------------
@@ -781,9 +769,7 @@ fun readableStamp(
  * says so in the same voice — in terms of PEOPLE, not of columns.
  */
 const val QUESTIONNAIRE_BUNDLE_CONTENTS_NOTICE: String =
-    "The questions only — no answers, no respondents' names, no recorded sittings, and nobody's " +
-        "name as the author. It is built on this phone, so it can be sent with no internet at all: " +
-        "nearby share, Bluetooth, a cable or a shared folder."
+    "Questions only — no answers, no respondents' names, no author. Can be sent offline."
 
 /**
  * What the person ADOPTING one is told, before they accept it.
@@ -794,6 +780,4 @@ const val QUESTIONNAIRE_BUNDLE_CONTENTS_NOTICE: String =
  * form under the colleague's name would be wrong, and would only find out from an audit column.
  */
 const val QUESTIONNAIRE_BUNDLE_ADOPT_NOTICE: String =
-    "This creates a NEW questionnaire on your account. It copies the questions only — no answers " +
-        "and no respondents come with it, and nothing on the sender's copy is changed. Once created " +
-        "it is YOURS: it is recorded as uploaded by you, not by whoever sent the file."
+    "Creates a NEW questionnaire on your account with the questions only — no answers. It is recorded as uploaded by you; the sender's copy is unchanged."

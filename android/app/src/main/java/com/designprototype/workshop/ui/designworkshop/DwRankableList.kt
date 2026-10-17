@@ -574,10 +574,9 @@ internal fun DwRankableList(
                             .bringIntoViewRequester(gripRequester)
                             .semantics {
                                 contentDescription = if (locked) {
-                                    "Reordering is not available here. ${disabledReason.orEmpty()}"
+                                    "Reordering unavailable. ${disabledReason.orEmpty()}"
                                 } else {
-                                    "Reorder ${labelFor(id)}. Drag this handle, or use the move up " +
-                                        "and move down buttons above it."
+                                    "Reorder ${labelFor(id)}. Drag, or use the move buttons."
                                 }
                             }
                             .pointerInput(id, locked) {
@@ -640,9 +639,7 @@ internal fun DwRankableList(
                                                 // committing them would move the wrong one and then
                                                 // stamp the result with this designer's name on it.
                                                 announcement =
-                                                    "${currentLabel(current.key)} was not moved: " +
-                                                    "the list changed while it was being dragged. " +
-                                                    "Try again."
+                                                    "${currentLabel(current.key)} was not moved — the list changed. Try again."
                                             } else {
                                                 val next =
                                                     dwMoveTo(currentOrder, current.from, current.to)

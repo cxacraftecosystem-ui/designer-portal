@@ -374,8 +374,7 @@ fun dwTier2InstallMayBeOffered(
 
 /** The one line above the Tier 2 list: what the models are for, and that nothing downloads by itself. */
 const val DW_TIER2_LIST_INTRO: String =
-    "Language models, for tidying and translating what is already written. Each shows its " +
-        "download size and what this phone makes of it. Nothing is downloaded unless you ask for it."
+    "Language models for tidying and translating text. Nothing downloads unless you ask."
 
 /**
  * One judged row, in one sentence: **what it costs, whose figure that is, and what this phone makes
@@ -408,11 +407,11 @@ fun dwTier2RowSentence(choice: DwModelChoice, measurement: DwDeviceMeasurement):
     append(dwBytesLabel(plan.onDiskBytes))
     append(" to download. It needs about ")
     append(dwBytesLabel(plan.peakRssBytes))
-    append(" of memory while it runs (Google's published figure, from a Galaxy S26 Ultra).")
+    append(" of memory while it runs (Google's figure, Galaxy S26 Ultra).")
     dwTier2GpuClaimBytes(plan.modelId)?.let { gpu ->
         append(" Google also publish ")
         append(dwBytesLabel(gpu))
-        append(" for the graphics backend; the larger figure is used here.")
+        append(" on GPU; the larger figure is used.")
     }
     append(" ")
     append(dwTier2FitClause(choice, measurement))
@@ -450,7 +449,7 @@ fun dwTier2FitClause(choice: DwModelChoice, measurement: DwDeviceMeasurement): S
 
     DwModelFit.UNMEASURED -> buildString {
         append(choice.notes.joinToString(" ") { dwTier2NoteClause(it, choice, measurement) })
-        append(" So this phone cannot be judged against it — tap “Check again”.")
+        append(" Tap “Check again”.")
     }
 }
 
@@ -461,37 +460,33 @@ private fun dwTier2NoteClause(
     measurement: DwDeviceMeasurement,
 ): String = when (note) {
     DwFitNote.LARGER_THAN_THIS_PHONE_S_MEMORY ->
-        "it needs more memory than this phone has in total (${dwBytesLabel(measurement.totalRamBytes)})."
+        "needs more memory than this phone has (${dwBytesLabel(measurement.totalRamBytes)})."
 
     DwFitNote.LARGER_THAN_THE_FREE_STORAGE ->
-        "the file is larger than the free storage, so the download could not finish."
+        "larger than the free storage."
 
     DwFitNote.NO_BUILD_FOR_THIS_PROCESSOR ->
-        "it does not run on this phone's processor (it needs ${choice.plan.abi})."
+        "not built for this processor (needs ${choice.plan.abi})."
 
     DwFitNote.LOAD_FAILED_HERE_BEFORE ->
-        "it was tried on this phone and would not load, so it will not be tried here again."
+        "failed to load here before."
 
     DwFitNote.PROCESSOR_UNMEASURED -> "this phone would not say what processor it has."
     DwFitNote.TOTAL_MEMORY_UNMEASURED -> "this phone would not say how much memory it has."
-    DwFitNote.FREE_STORAGE_UNMEASURED -> "this phone would not say how much storage is free."
+    DwFitNote.FREE_STORAGE_UNMEASURED -> "free storage unknown."
     DwFitNote.FREE_MEMORY_UNMEASURED -> "this phone would not say how much memory is free."
 
     DwFitNote.ANDROID_CALLS_THIS_A_LOW_MEMORY_DEVICE ->
-        "Android flags this handset as a low-memory device."
+        "Android marks this as a low-memory phone."
 
     DwFitNote.LITTLE_MEMORY_LEFT_OVER ->
-        "this phone has ${dwBytesLabel(measurement.totalRamBytes)} in total, so even with " +
-            "everything closed there is less than the ${dwBytesLabel(DW_MODEL_FREE_RAM_MARGIN_BYTES)} " +
-            "spare this app keeps."
+        "only ${dwBytesLabel(measurement.totalRamBytes)} memory in total — too little to spare."
 
     DwFitNote.LITTLE_FREE_MEMORY_RIGHT_NOW ->
-        "${dwBytesLabel(measurement.availableRamBytes)} is free right now; closing apps changes that, " +
-            "and it is the one figure here that moves."
+        "only ${dwBytesLabel(measurement.availableRamBytes)} free now; close apps to free more."
 
     DwFitNote.LITTLE_STORAGE_LEFT_OVER ->
-        "it would leave ${dwBytesLabel(choice.freeStorageHeadroomBytes)} of storage free, under the " +
-            "${dwBytesLabel(DW_MODEL_FREE_STORAGE_MARGIN_BYTES)} this app keeps for a workshop day."
+        "would leave only ${dwBytesLabel(choice.freeStorageHeadroomBytes)} free (below ${dwBytesLabel(DW_MODEL_FREE_STORAGE_MARGIN_BYTES)})."
 }
 
 // ---------------------------------------------------------------------------------------------

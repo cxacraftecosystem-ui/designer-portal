@@ -34,11 +34,11 @@ fun Throwable.userMessage(fallback: String): String {
 
 /** A plain sentence for a status code whose answer carried nothing readable, or null to keep the caller's. */
 internal fun statusSentence(code: Int): String? = when (code) {
-    401 -> "Your sign-in has expired. Sign in again to carry on."
-    403 -> "This account is not allowed to do that. Ask an administrator if you need it."
-    404 -> "That could not be found. It may have been deleted. Go back and try again."
+    401 -> "Your sign-in expired. Sign in again."
+    403 -> "You don't have permission for that. Ask an admin."
+    404 -> "That could not be found — it may have been deleted."
     408, 429 -> "The server is busy. Wait a moment and try again."
-    in 500..599 -> "The server could not answer just now. Try again in a moment."
+    in 500..599 -> "The server couldn't respond. Try again shortly."
     else -> null
 }
 

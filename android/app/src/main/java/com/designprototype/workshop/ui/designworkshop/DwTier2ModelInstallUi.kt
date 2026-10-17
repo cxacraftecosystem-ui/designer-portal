@@ -357,7 +357,7 @@ private const val DW_TIER2_BUFFER: Int = 256 * 1024
 
 /** Said when a fetch failed for a reason that is not the disk. The part-file is kept for a resume. */
 internal const val DW_TIER2_FETCH_FAILED_SENTENCE: String =
-    "The download stopped before it finished. What arrived is kept; Try again carries on from there."
+    "Download stopped. Tap Try again to resume."
 
 /**
  * What the disk says about one model, without hashing gigabytes on every look.

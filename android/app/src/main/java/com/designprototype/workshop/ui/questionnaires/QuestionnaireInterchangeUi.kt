@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.ui.ActionRow
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -89,9 +90,9 @@ internal fun ArtefactNotice(artefact: DwQuestionnaireArtefact) {
         )
         Text(
             if (carries) {
-                "This file carries respondents' names and their answers."
+                "Contains respondents' names and answers."
             } else {
-                "This file carries nobody's name and no answers."
+                "No names or answers."
             },
             color = if (carries) MaterialTheme.field.warning else MaterialTheme.field.muted,
             fontSize = 11.sp,
@@ -121,10 +122,7 @@ internal fun ArtefactDownloadRow(
     onDownload: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        ActionRow {
             OutlinedButton(
                 onClick = onDownload,
                 enabled = !busy,
@@ -193,7 +191,7 @@ internal fun WorkbookUploadRow(
     onPick: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ActionRow {
             OutlinedButton(onClick = onPick, enabled = !busy, modifier = Modifier.heightIn48()) {
                 if (working) {
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -267,9 +265,7 @@ internal fun UploadReportPanel(
         Text(qFormUploadSummary(report), color = MaterialTheme.field.body, fontSize = 12.sp)
         if (report.versionAfter > report.versionBefore) {
             Text(
-                "The questionnaire moved from version ${report.versionBefore} to " +
-                    "${report.versionAfter}. A sitting somebody is part-way through was recorded " +
-                    "against the older one.",
+                "Version changed from ${report.versionBefore} to ${report.versionAfter}; an in-progress sitting uses the older one.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
             )
@@ -321,14 +317,13 @@ internal fun UploadReportPanel(
         if (problems.isNotEmpty()) {
             HorizontalDivider(color = MaterialTheme.field.hairline)
             Text(
-                "Rows the import could not read cleanly (${problems.size})",
+                "Rows that couldn't be read (${problems.size})",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "Each one names the sheet and the row exactly as Excel's row gutter shows it — press " +
-                    "Ctrl+G in the spreadsheet and type the number.",
+                "Sheet and row as shown in Excel (Ctrl+G to jump).",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
             )
@@ -346,7 +341,9 @@ internal fun UploadReportPanel(
             }
         }
 
-        TextButton(onClick = onDismiss) { Text("Done", fontSize = 13.sp) }
+        ActionRow {
+            TextButton(onClick = onDismiss) { Text("Done", fontSize = 13.sp) }
+        }
     }
 }
 

@@ -507,8 +507,7 @@ fun dwStalledSentence(readout: DwTransferReadout, phase: DwTransferPhase): Strin
     if (!readout.stalled) return null
     return when (phase) {
         DwTransferPhase.FETCHING ->
-            "Nothing has arrived for a while. It will carry on if the connection comes back; " +
-                "pausing keeps what has arrived so far."
+            "Stalled. It resumes if the connection returns; pausing keeps what has arrived."
         else -> "This has been sitting still for a while."
     }
 }
@@ -623,12 +622,10 @@ fun dwIsPartialFileName(name: String): Boolean = name.endsWith(".part")
  */
 fun dwTransferSpaceRefusal(freeBytes: Long?, needBytes: Long): String? {
     if (freeBytes == null) {
-        return "This phone would not say how much storage is free, so whether this fits is unknown " +
-            "and nothing this size is fetched on a guess."
+        return "Free storage unknown, so nothing this size is fetched."
     }
     if (freeBytes >= needBytes) return null
-    return "There is not enough room: this needs ${dwBytesLabel(needBytes)} free and this phone " +
-        "reports ${dwBytesLabel(freeBytes)}. Delete what you can spare and try again."
+    return "Not enough room: needs ${dwBytesLabel(needBytes)}, ${dwBytesLabel(freeBytes)} free."
 }
 
 /**
@@ -640,9 +637,7 @@ fun dwTransferSpaceRefusal(freeBytes: Long?, needBytes: Long): String? {
  * "free some space and carry on" rather than "start the 292 MB again".
  */
 const val DW_TRANSFER_DISK_FULL_SENTENCE: String =
-    "This phone ran out of storage while the file was arriving. What had already arrived has been " +
-        "kept, so freeing some space and tapping Resume carries on from where it stopped rather " +
-        "than starting again."
+    "Storage full. What arrived is kept — Free some space and tap Resume."
 
 /**
  * Whether a write failure was **the volume filling up**, off the message the platform gave us.
@@ -681,8 +676,7 @@ fun dwIsDiskFull(message: String?): Boolean {
  */
 fun dwTransferDiskFullSentence(phase: DwTransferPhase): String = when (phase) {
     DwTransferPhase.FETCHING -> DW_TRANSFER_DISK_FULL_SENTENCE
-    else -> "This phone ran out of storage part-way through, so nothing has been installed and " +
-        "nothing has been kept. Free some space and try again."
+    else -> "Storage full; nothing installed. Free some space and retry."
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -723,5 +717,4 @@ fun dwPauseLabel(state: DwTransferControlState): String = when (state) {
  * [dwResumePlan]'s caller, and there is nothing in memory but a length.
  */
 fun dwPausedSentence(keptBytes: Long): String =
-    "${dwBytesLabel(keptBytes)} kept on this phone. Resume carries on from there; Cancel deletes " +
-        "it and gives the space back."
+    "${dwBytesLabel(keptBytes)} kept on this phone. Resume to continue; Cancel deletes it."

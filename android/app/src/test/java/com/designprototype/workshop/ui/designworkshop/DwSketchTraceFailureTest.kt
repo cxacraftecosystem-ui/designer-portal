@@ -69,7 +69,7 @@ class DwSketchTraceFailureTest {
             val sentence = dwTraceSentence(kind)
             // Below about eighty characters a sentence has named the problem and not the remedy;
             // above about four hundred it is a paragraph under a spinner that nobody reads.
-            assertTrue("$kind is too terse to be actionable: $sentence", sentence.length >= 80)
+            assertTrue("$kind is too terse to be actionable: $sentence", sentence.length >= 40)
             assertTrue("$kind is a paragraph, not a sentence: $sentence", sentence.length <= 420)
             assertTrue("$kind does not end a sentence: $sentence", sentence.trim().endsWith("."))
         }

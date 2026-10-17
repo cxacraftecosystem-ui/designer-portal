@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -258,8 +259,8 @@ private val MARK_NAME: Map<DwMarkId, String> = mapOf(
     DwMarkId.REF_A to "Reference, first end",
     DwMarkId.REF_B to "Reference, second end",
     DwMarkId.C0 to "Rectangle corner 1",
-    DwMarkId.C1 to "Rectangle corner 2, along the width edge from corner 1",
-    DwMarkId.C2 to "Rectangle corner 3, diagonally opposite corner 1",
+    DwMarkId.C1 to "Rectangle corner 2 (along the width)",
+    DwMarkId.C2 to "Rectangle corner 3 (opposite corner 1)",
     DwMarkId.C3 to "Rectangle corner 4",
     DwMarkId.TGT_A to "The dimension, first end",
     DwMarkId.TGT_B to "The dimension, second end",
@@ -423,7 +424,7 @@ internal fun dwMeasureSpansFieldsClause(photoFieldLabels: List<String>): String 
     if (named.size < 2) return ""
     return " These are every photograph on the record — " +
         named.joinToString(" and ") { "“$it”" } +
-        " together — so the frame with the ruler in it counts wherever it was attached."
+        " together, so the photo with the ruler counts wherever it was attached."
 }
 
 /**
@@ -907,8 +908,7 @@ internal fun DwPhotoMeasurePanel(
             // `OwnChoice`, `sharedId` is null, and neither this line nor the escape hatch below it
             // is composed at all. See [dwDerivationCardCount] for the arithmetic.
             Text(
-                "$DW_MEASURE_ELSEWHERE_TITLE — “${chosen?.displayName.orEmpty()}”. The tracing panel " +
-                    "is still working from the photograph chosen above.",
+                "$DW_MEASURE_ELSEWHERE_TITLE — “${chosen?.displayName.orEmpty()}”.",
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -917,10 +917,9 @@ internal fun DwPhotoMeasurePanel(
 
         if (summary == null) {
             Text(
-                "If a ruler, a scale card or a sheet of paper is in one of these photographs, a " +
-                    "dimension can be measured off it here and proposed into " +
+                "Measure from a ruler or scale card in a photo, into " +
                     targets.joinToString(", ") { it.field.label } +
-                    ". It runs on this device and needs no connection." +
+                    ". Works offline." +
                     // SAID HERE AND NOT OVER THE CHIPS, because this is the sentence a designer reads
                     // before they open anything, and "these photographs" is the phrase the clause
                     // qualifies. Over the chooser it would be a paragraph between a designer and the
@@ -942,8 +941,7 @@ internal fun DwPhotoMeasurePanel(
                 lineHeight = 17.sp,
             )
             Text(
-                "All of that is kept while this is closed. Opening it again comes back to the same " +
-                    "marks — only the photograph itself is decoded a second time, which takes a moment.",
+                "Your marks are kept when closed.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -953,17 +951,19 @@ internal fun DwPhotoMeasurePanel(
         // KEPT RATHER THAN REPLACED BY THE HEADER. The header row is the accordion control now, but a
         // row that happens to be tappable is not a button anybody can SEE; this is the one that reads
         // as a door, and removing it would trade one discoverable way in for none.
-        OutlinedButton(
-            onClick = { open = true },
-            enabled = enabled,
-            modifier = Modifier.heightIn(min = 48.dp),
-        ) {
-            Icon(Icons.Filled.Straighten, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(
-                if (summary == null) "Measure from a photograph" else "Open the measuring card again",
-                fontSize = 13.sp,
-            )
+        ActionRow {
+            OutlinedButton(
+                onClick = { open = true },
+                enabled = enabled,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Filled.Straighten, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (summary == null) "Measure from a photograph" else "Open the measuring card again",
+                    fontSize = 13.sp,
+                )
+            }
         }
     }
 }
@@ -1453,24 +1453,16 @@ private fun DwPhotoMeasureOpen(
         if (config.mode == DwMeasureMode.SCALE) {
             DwPanelNote(
                 warning = true,
-                text = "This is only true when the reference and the thing you are measuring lie in the " +
-                    "same flat plane, square to the camera. A scale card lying on a table and a pot " +
-                    "standing on that table are not in one plane, and a dimension measured across a " +
-                    "tilted object comes out wrong — by however much the angle happens to be, with " +
-                    "nothing later able to tell. If the photograph is at an angle, use the four-corner " +
-                    "method instead.",
+                text = "Only accurate when the reference and object are flat, in one plane, facing the camera. For angled photos, use the four-corner method.",
             )
         } else {
             DwPanelNote(
                 warning = false,
-                text = "Mark the four corners of the rectangle in order around it — 1, 2, 3, 4 walking " +
-                    "round the edge, not in reading order. The tilt of that surface is then corrected " +
-                    "for exactly. The object still has to be lying on that surface: what is corrected " +
-                    "is the angle of the plane, not the height of something standing up off it.",
+                text = "Mark the four corners in order around the rectangle. The object must lie on that surface.",
             )
         }
 
-        DwPanelLabel("Marks — tap the photograph to place, drag a handle or nudge to adjust")
+        DwPanelLabel("Marks — tap to place, drag or nudge to adjust")
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1532,8 +1524,7 @@ private fun DwPhotoMeasureOpen(
                 .onSizeChanged { boxSize = it }
                 .semantics {
                     contentDescription =
-                        "The photograph being measured. Tap it to place the mark selected above; " +
-                            "drag a handle to move it; pinch to zoom."
+                        "Photo being measured. Tap to place the selected mark; drag to move; pinch to zoom."
                 }
                 // Tap places the mark the designer is currently working on and moves the cursor to the
                 // next — the four-corner case is six marks, and reaching for a chip between each would
@@ -1572,8 +1563,7 @@ private fun DwPhotoMeasureOpen(
                 bitmap == null -> Text(
                     // Silent failure would leave an empty grey box that reads as a broken app. This
                     // device could not decode these bytes; the photograph itself is untouched.
-                    "This photograph could not be opened on this device. Nothing has happened to it — " +
-                        "the dimension can still be typed in.",
+                    "Couldn't open this photo. You can still type the dimension.",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
@@ -1706,7 +1696,7 @@ private fun DwPhotoMeasureOpen(
                             DwPhotoMeasure.markSigmaForDisplayScale(displayScale.toDouble()),
                         )
                     )
-                    append(" pixels of the working copy, which is what the error bar below is built from. ")
+                    append(" px in the working copy. ")
                     append("Zooming in genuinely narrows it.")
                 } else {
                     append("Opening the photograph…")
@@ -1724,10 +1714,7 @@ private fun DwPhotoMeasureOpen(
                 Text(
                     // Said outright, because it is why this handset's error bar is wider than the
                     // browser's for the same photograph and the same marks. See the file header.
-                    "Marked on a ${shownWidth}×${decoded.bitmap.height} working copy of a " +
-                        "${decoded.sourceWidth}×${decoded.sourceHeight} photograph — the full frame is too " +
-                        "large to hold in memory on a field handset, so the error bar is worked out in the " +
-                        "pixels you can actually see.",
+                    "Marked on a ${shownWidth}×${decoded.bitmap.height} working copy of a ${decoded.sourceWidth}×${decoded.sourceHeight} photo.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
@@ -1818,9 +1805,7 @@ private fun DwPhotoMeasureOpen(
             )
             DwUnitChips(selected = config.rectUnit, enabled = enabled) { config.rectUnit = it }
             Text(
-                "The width is the edge from corner 1 to corner 2; the height is from corner 2 to " +
-                    "corner 3. Getting the two the wrong way round measures a real rectangle that is " +
-                    "not the one in the photograph.",
+                "Width: corner 1 → 2. Height: corner 2 → 3.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -1874,8 +1859,7 @@ private fun DwPhotoMeasureOpen(
          * all the way back up from.
          */
         Text(
-            "Everything above is kept when this is closed — the marks, the reference and the " +
-                "photograph you chose. Only the picture itself is decoded again next time.",
+            "Your marks are kept when closed.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -1972,9 +1956,7 @@ private fun DwMeasureDifferentPhotograph(
                 // The other client's sentence, with its one false clause replaced. There: "…and
                 // neither of them has been filed." Here both photographs are already on the record,
                 // so what is owed is the fact that this card changes neither.
-                "“${chosen.displayName}” is being measured here and nowhere else. The tracing panel " +
-                    "above is still working from the photograph chosen at the top of this section, " +
-                    "and nothing on this card changes, moves or detaches either of them.",
+                "Measuring “${chosen.displayName}”. The tracing panel is unaffected.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -2065,8 +2047,7 @@ private fun DwMeasureDifferentPhotograph(
                 // Said under the chips rather than only in the header, because this is where the
                 // press happens: a change of photograph is a change of subject, and the marks belong
                 // to the subject.
-                "Choosing a different photograph clears the marks — they are positions on one " +
-                    "picture, and carrying them across would put the reference somewhere nobody aimed.",
+                "Changing the photo clears the marks.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -2110,10 +2091,7 @@ private fun DwMeasurementReadout(
     if (!allPlaced) {
         val remaining = needed.filter { marks[it]?.placed != true }
         Text(
-            "${remaining.size} of ${needed.size} marks still to place " +
-                "(${remaining.joinToString(", ") { MARK_BADGE.getValue(it) }}). Nothing is measured " +
-                "until every mark is where it belongs — a reading off the marks as they were laid out " +
-                "would be a confident number about nothing.",
+            "${remaining.size} of ${needed.size} marks left (${remaining.joinToString(", ") { MARK_BADGE.getValue(it) }}).",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -2124,9 +2102,9 @@ private fun DwMeasurementReadout(
     if (result == null) {
         Text(
             if (mode == DwMeasureMode.SCALE) {
-                "Type how long the reference really is, and the measurement appears here."
+                "Enter the reference's real length."
             } else {
-                "Type how big the rectangle really is, and the measurement appears here."
+                "Enter the rectangle's real size."
             },
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
@@ -2169,12 +2147,7 @@ private fun DwMeasurementReadout(
             fontWeight = FontWeight.Bold,
         )
         Text(
-            "That is ±${String.format(Locale.ROOT, "%.1f", measurement.relativeUncertainty * 100)}%, from a " +
-                "reference ${measurement.referencePixels.roundToInt()} pixels long and an object " +
-                "${measurement.targetPixels.roundToInt()} pixels long in this working copy. The error bar is " +
-                "how far the answer moves when each mark is nudged by the amount a mark can be placed to at " +
-                "this zoom — it is not a guess about the camera, and it does not include the reference being " +
-                "the wrong length.",
+            "±${String.format(Locale.ROOT, "%.1f", measurement.relativeUncertainty * 100)}% (reference ${measurement.referencePixels.roundToInt()} px, object ${measurement.targetPixels.roundToInt()} px). Assumes the reference length is correct.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -2183,7 +2156,7 @@ private fun DwMeasurementReadout(
         measurement.tiltCorrection?.let { tilt ->
             Text(
                 buildString {
-                    append("Correcting for the tilt of that surface changed this by ")
+                    append("Tilt correction changed this by ")
                     append(String.format(Locale.ROOT, "%.1f", tilt * 100))
                     append("%")
                     measurement.uncorrectedValue?.let { uncorrected ->
@@ -2195,9 +2168,9 @@ private fun DwMeasurementReadout(
                     append(". ")
                     append(
                         if (tilt < 0.01) {
-                            "That is small enough that the two-mark method would have done here."
+                            "Small — two marks would have done."
                         } else {
-                            "That is why the four corners were worth marking."
+                            "The four corners were worth it."
                         }
                     )
                 },
@@ -2216,7 +2189,7 @@ private fun DwMeasurementReadout(
                 // A unit this module cannot convert must not become a destination. Said out loud
                 // rather than silently omitted, so nobody wonders where the button went.
                 Text(
-                    "${target.field.label} is measured in ${target.unit}, which this cannot convert to.",
+                    "${target.field.label} uses ${target.unit}, which can't be converted.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                 )
@@ -2225,14 +2198,16 @@ private fun DwMeasurementReadout(
             val proposal = DwPhotoMeasure.roundToUncertainty(converted, convertedDoubt)
             val text = dwFormatRounded(proposal)
             val current = DwValues.text(rowValues[target.field.key])
-            Button(
-                onClick = { onPropose(target, text) },
-                enabled = enabled,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("${target.field.label}: $text ${target.unit}", fontSize = 13.sp)
+            ActionRow {
+                Button(
+                    onClick = { onPropose(target, text) },
+                    enabled = enabled,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("${target.field.label}: $text ${target.unit}", fontSize = 13.sp)
+                }
             }
             // THE SENTENCE IS THE OTHER TWO CARDS'; THE SHAPE IS NOT, AND THAT DIFFERENCE IS REAL.
             // Those cards have ONE destination and print one bordered [DwPanelNote] under it. This
@@ -2256,9 +2231,7 @@ private fun DwMeasurementReadout(
         }
 
         Text(
-            "The figure is rounded to the precision its own error bar reaches, because once it is in " +
-                "the field the error bar is gone — the number of digits is the only thing left saying " +
-                "how well it was measured.",
+            "Rounded to the precision of its error bar.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -2318,7 +2291,7 @@ internal fun DwMarkHandle(
             .semantics {
                 contentDescription = name +
                     (if (placed) "" else ", not placed yet") +
-                    ". Drag it, or select it and use the nudge arrows below the photograph."
+                    ". Drag it, or use the nudge arrows."
             }
             // Selecting a handle consumes the tap, so it cannot also fall through to the photograph
             // and place whichever OTHER mark happened to be active.

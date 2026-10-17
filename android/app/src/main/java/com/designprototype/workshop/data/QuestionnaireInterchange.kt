@@ -200,16 +200,11 @@ fun artefactCarriesRespondents(artefact: DwQuestionnaireArtefact): Boolean =
  */
 fun artefactContents(artefact: DwQuestionnaireArtefact): String = when (artefact) {
     DwQuestionnaireArtefact.PRO_FORMA ->
-        "A blank workbook. It carries no questions, no answers and nobody's name — it is the form " +
-            "you type your own questions into."
+        "A blank workbook to type your questions into."
     DwQuestionnaireArtefact.QUESTION_SET ->
-        "The questions only — no answers, no respondents' names, no recorded sittings. This is the " +
-            "one to send to another designer: uploading it creates a NEW questionnaire that belongs " +
-            "to them, rather than editing yours."
+        "Questions only — no answers, no respondents. Send this to another designer — it creates their own questionnaire."
     DwQuestionnaireArtefact.FULL_WORKBOOK ->
-        "EVERYTHING: the questions, every recorded sitting, every respondent's name and every " +
-            "answer. Do not send this to somebody who is only meant to run the questionnaire — " +
-            "send the question set instead."
+        "Everything: questions, sittings, names and answers. Share only with people who need the data."
 }
 
 // --------------------------------------------------------------------------------------
@@ -259,7 +254,7 @@ fun qFormUploadSummary(report: QFormChangeReportDto): String {
         report.unchanged.takeIf { it > 0 }?.let { "$it unchanged" },
     )
     return if (parts.isEmpty()) {
-        "The workbook was read and nothing in the questionnaire needed changing."
+        "Read; nothing needed changing."
     } else {
         parts.joinToString(", ")
     }
@@ -303,7 +298,7 @@ fun qFormProvenanceNotice(report: QFormChangeReportDto): QFormProvenanceNotice? 
             // Not amber. A reuse copying no answers is the whole point of a reuse, and colouring the
             // correct outcome as a problem is the same mistake the import branch below avoids.
             warn = false,
-            heading = "The questions were copied. No sittings and no answers came across.",
+            heading = "Questions copied; no answers.",
             reason = provenance.reason,
             tally = null,
         )
@@ -322,7 +317,7 @@ fun qFormProvenanceNotice(report: QFormChangeReportDto): QFormProvenanceNotice? 
         reason = provenance.reason,
         tally = when {
             skipped && count > 0 -> "$count answer(s) left where they already are"
-            !skipped && count > 0 && entries > 0 -> "$count answer(s) in $entries sitting(s), attributed to you"
+            !skipped && count > 0 && entries > 0 -> "$count answer(s) in $entries sitting(s), credited to you"
             !skipped && count > 0 -> "$count answer(s), attributed to you"
             else -> null
         },

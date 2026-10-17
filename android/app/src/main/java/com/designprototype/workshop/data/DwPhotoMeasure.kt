@@ -730,32 +730,30 @@ object DwPhotoMeasure {
         referenceLengthSigma: Double = 0.0,
     ): DwMeasureResult {
         if (!pointsFinite(listOf(reference.from, reference.to, target.from, target.to))) {
-            return DwMeasureResult.Refusal("One of the marks has no position. Place all four marks again.")
+            return DwMeasureResult.Refusal("A mark is missing. Place all four again.")
         }
         if (!finite(reference.length, markSigmaPx, referenceLengthSigma) ||
             markSigmaPx < 0.0 || referenceLengthSigma < 0.0
         ) {
-            return DwMeasureResult.Refusal("The reference length is not a number this can measure against.")
+            return DwMeasureResult.Refusal("The reference length isn't a number.")
         }
         if (LENGTH_UNITS[reference.unit] == null) {
-            return DwMeasureResult.Refusal("“${reference.unit}” is not a length unit this can convert.")
+            return DwMeasureResult.Refusal("“${reference.unit}” isn't a length unit.")
         }
         if (reference.length <= 0.0) {
-            return DwMeasureResult.Refusal("The reference must have a real length greater than zero.")
+            return DwMeasureResult.Refusal("The reference length must be above zero.")
         }
 
         val referencePixels = distanceBetween(reference.from, reference.to)
         val targetPixels = distanceBetween(target.from, target.to)
         if (referencePixels < MIN_REFERENCE_PIXELS) {
             return DwMeasureResult.Refusal(
-                "The reference is only ${jsRound(referencePixels).toLong()} pixels long in this photograph, " +
-                    "which is too short to measure against — the error bar would be wider than the answer. " +
-                    "Zoom in and place the two marks further apart, or photograph the object closer to the scale."
+                "The reference is only ${jsRound(referencePixels).toLong()} pixels — too short. Zoom in and place the marks further apart."
             )
         }
         if (targetPixels == 0.0) {
             return DwMeasureResult.Refusal(
-                "The two marks on the object are in the same place, so there is nothing to measure."
+                "Both object marks are in the same place."
             )
         }
 
@@ -770,7 +768,7 @@ object DwPhotoMeasure {
         )
         val uncertainty = relative * value
         if (!finite(value, relative, uncertainty)) {
-            return DwMeasureResult.Refusal("These marks do not produce a measurement that can be stood behind.")
+            return DwMeasureResult.Refusal("These marks don't give a reliable measurement.")
         }
 
         return DwMeasureResult.Measurement(
@@ -806,35 +804,33 @@ object DwPhotoMeasure {
         // a crash here loses whatever else the designer was in the middle of recording.
         if (corners.size != 4) {
             return DwMeasureResult.Refusal(
-                "The rectangle needs four marked corners and there ${if (corners.size == 1) "is" else "are"} " +
-                    "${corners.size}. Mark each corner once, in order around the sheet."
+                "Mark all four corners (${corners.size} so far), in order around the sheet."
             )
         }
         if (!pointsFinite(corners) || !pointsFinite(listOf(target.from, target.to))) {
             return DwMeasureResult.Refusal(
-                "One of the marks has no position. Place the corners and the two ends again."
+                "A mark is missing. Place the corners and both ends again."
             )
         }
         if (!finite(rectangle.width, rectangle.height, markSigmaPx) || markSigmaPx < 0.0) {
             return DwMeasureResult.Refusal(
-                "The rectangle's size is not a pair of numbers this can measure against."
+                "Rectangle size isn't a pair of numbers."
             )
         }
         if (LENGTH_UNITS[rectangle.unit] == null) {
-            return DwMeasureResult.Refusal("“${rectangle.unit}” is not a length unit this can convert.")
+            return DwMeasureResult.Refusal("“${rectangle.unit}” isn't a length unit.")
         }
         if (rectangle.width <= 0.0 || rectangle.height <= 0.0) {
-            return DwMeasureResult.Refusal("The rectangle must have a real width and height greater than zero.")
+            return DwMeasureResult.Refusal("Width and height must be above zero.")
         }
         if (distanceBetween(target.from, target.to) == 0.0) {
             return DwMeasureResult.Refusal(
-                "The two marks on the object are in the same place, so there is nothing to measure."
+                "Both object marks are in the same place."
             )
         }
         if (!isSimpleConvexQuad(corners)) {
             return DwMeasureResult.Refusal(
-                "Those four corners cross over one another, so they do not enclose the rectangle. Mark them in " +
-                    "order around it — each corner next to the one before it — rather than in reading order."
+                "Corners cross over. Mark them in order around the rectangle."
             )
         }
 
@@ -905,13 +901,11 @@ object DwPhotoMeasure {
 
         val value = evaluate(coordinates)
             ?: return DwMeasureResult.Refusal(
-                "Those four corners do not define a plane this can rectify — three of them are in a straight " +
-                    "line, or an end of the object falls where the surface runs out of view. Re-mark the corners " +
-                    "of the rectangle, and keep both ends of the object on it."
+                "Those corners can't be used. Re-mark them, keeping both ends of the object on the rectangle."
             )
         if (value == 0.0) {
             return DwMeasureResult.Refusal(
-                "Both ends of the object rectify to the same place, so there is nothing to measure."
+                "Both ends land in the same place."
             )
         }
 
@@ -921,9 +915,7 @@ object DwPhotoMeasure {
             // not one this module can put an error bar next to, and it does not offer numbers without
             // one.
             ?: return DwMeasureResult.Refusal(
-                "These marks are too close to an arrangement this cannot measure for an error bar to be worked " +
-                    "out, and a measurement is not offered without one. Photograph the rectangle less edge-on " +
-                    "and mark it again."
+                "Can't estimate the error. Photograph less edge-on and mark again."
             )
 
         val referencePixels = distanceBetween(corners[0], corners[1])
@@ -942,7 +934,7 @@ object DwPhotoMeasure {
                 targetPixels, uncorrectedValue, tiltCorrection,
             )
         ) {
-            return DwMeasureResult.Refusal("These marks do not produce a measurement that can be stood behind.")
+            return DwMeasureResult.Refusal("These marks don't give a reliable measurement.")
         }
 
         return DwMeasureResult.Measurement(

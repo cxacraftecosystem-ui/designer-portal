@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import android.Manifest
 import android.content.Context
 import android.net.Uri
@@ -626,8 +627,7 @@ internal fun DwIdentityCardControl(
                             // The seam ran and produced nothing to stamp. Said rather than treated as
                             // success: "kept" with no row behind it is the claim this whole feature
                             // exists to stop anybody making.
-                            "That photograph could NOT be kept — nothing was attached to the record. " +
-                                "The number can still be read below."
+                            "Photo NOT kept — nothing attached. The number can still be read below."
                         } else {
                             null // filled in by the stamp below, which names who decided
                         }
@@ -635,7 +635,7 @@ internal fun DwIdentityCardControl(
                     .onFailure { error ->
                         if (error is CancellationException) throw error
                         keptNote = error.apiErrorMessage(
-                            "That photograph could NOT be kept. The number can still be read below."
+                            "Photo NOT kept. The number can still be read below."
                         )
                     }
             }
@@ -652,9 +652,7 @@ internal fun DwIdentityCardControl(
                         // The photograph IS on the record; only the stamp failed. Saying "kept" alone
                         // would be true and would hide the part a supervisor needs, so both facts go
                         // in one sentence.
-                        keptNote = "That photograph is on the record, but the app could not record " +
-                            "WHO decided to keep it. Tell an admin, so the decision can be written " +
-                            "against the file."
+                        keptNote = "Photo kept, but who kept it wasn't recorded. Tell an admin."
                     }
             }
 
@@ -711,14 +709,9 @@ internal fun DwIdentityCardControl(
                         onError(
                             (localRejected + result.rejectedAadhaarCount).let { rejected ->
                                 if (rejected > 0) {
-                                    "$rejected number(s) were read off that card and every one failed " +
-                                        "its checksum, so at least one digit was wrong in each. Take " +
-                                        "another photograph in better light with no glare across the " +
-                                        "digits, or type the number in."
+                                    "$rejected number(s) read but none valid, and there's no connection to try online. Retake in better light, or type it."
                                 } else {
-                                    "No number could be read from that photograph. " +
-                                        "Fill the frame with the card, hold it flat and try " +
-                                        "again — or type the number in."
+                                    "No number found, and there's no connection to try online. Fill the frame, hold flat and retry — or type it."
                                 }
                             }
                         )
@@ -739,12 +732,10 @@ internal fun DwIdentityCardControl(
                             // The phone had already tried and found nothing, so this is not "we lost
                             // the only reader" — say what actually happened rather than implying the
                             // card is unreadable.
-                            "This phone could not read that card, and the connection dropped before " +
-                                "it could be read online. Type the number in, or try again where " +
-                                "there is signal."
+                            "Couldn't read the card and the connection dropped. Type it, or retry online."
                         } else {
                             error.apiErrorMessage(
-                                "That card could not be read. Type the number in instead."
+                                "Couldn't read the card. Type the number instead."
                             )
                         }
                     )
@@ -796,10 +787,7 @@ internal fun DwIdentityCardControl(
     fun refuseOffline(): Boolean {
         if (readableOnDevice || ConnectivityObserver.isOnline(context)) return false
         onError(
-            "A Pehchan card number can only be read with a connection: this phone reads Aadhaar " +
-                "numbers, which prove themselves with a checksum, and a Pehchan number has none — so " +
-                "guessing at one would put a number nothing downstream could catch in front of you. " +
-                "Type it in now, or photograph the card and come back here in signal."
+            "Pehchan cards need a connection to read. Type it now, or retry online."
         )
         return true
     }
@@ -874,7 +862,7 @@ internal fun DwIdentityCardControl(
                 }
             }
         }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ActionRow {
             OutlinedButton(onClick = ::startCamera, enabled = usable) {
                 if (working) {
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -922,21 +910,13 @@ internal fun DwIdentityCardControl(
                 // The disabled reason, in the disabled state, where the disabled control is. A greyed
                 // button with the explanation elsewhere is a button people tap repeatedly.
                 !readableOnDevice && !online ->
-                    "Reading a Pehchan card needs a connection. " +
-                        "Type the number in; photograph the card with the camera app and you " +
-                        "can check it here later."
+                    "Reading Pehchan needs a connection. Type the number instead."
                 !readableOnDevice ->
-                    "Photograph the card, or pick a photograph of it already on this phone, and the " +
-                        "number is read from it online. You confirm it before anything is " +
-                        "filled in." + notKeptSuffix(canKeep)
+                    "Photograph or pick the card. It's read online; you confirm it first." + notKeptSuffix(canKeep)
                 online ->
-                    "Photograph the card, or pick a photograph of it already on this phone. The " +
-                        "number is read on this phone; if it cannot be read here, it is read online " +
-                        "instead. You confirm it before anything is filled in, and you are told which " +
-                        "one read it." + notKeptSuffix(canKeep)
+                    "Photograph or pick the card. You confirm the number before it's filled in." + notKeptSuffix(canKeep)
                 else ->
-                    "This works with no connection — the number is read on this phone. You confirm it " +
-                        "before anything is filled in." + notKeptSuffix(canKeep)
+                    "Works offline. You confirm the number before it's filled in." + notKeptSuffix(canKeep)
             },
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
@@ -957,7 +937,7 @@ internal fun DwIdentityCardControl(
         // [photographWasNotStored] for why an absent key is silence rather than reassurance.
         if (serverConfirmedDiscard) {
             Text(
-                "Nothing was kept: the photograph was read and discarded.",
+                "The photo was read and discarded.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )
@@ -974,16 +954,13 @@ internal fun DwIdentityCardControl(
         ) {
             Text(
                 if (choices.size == 1) "Check this against the card before using it"
-                else "Check these against the card — ${choices.size} numbers were read",
+                else "Check these ${choices.size} numbers against the card",
                 color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                "Nothing is saved into $targetLabel until you tap the number below. A single wrong " +
-                    "digit creates a second record for an artisan who is already in the system, and " +
-                    "nothing downstream can detect it — so read it off the card itself, not off this " +
-                    "screen.",
+                "Nothing is saved into $targetLabel until you tap a number. Check it against the card itself.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )
@@ -1002,24 +979,21 @@ internal fun DwIdentityCardControl(
                 // the same thing in the same place — `FieldInput`'s "only the last four digits of
                 // this number are stored", under the box, while the digits are still on screen.
                 Text(
-                    "$targetLabel keeps only the last four digits. Check the whole number here — " +
-                        "what is SAVED is “XXXX XXXX ####”, which is also all the " +
-                        "report prints.",
+                    "$targetLabel stores only the last four digits (“XXXX XXXX ####”).",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
                 )
             }
             if (unconfirmedByServer) {
                 Text(
-                    "Check this reading against the card — an identity number is never saved " +
-                        "without a person checking it.",
+                    "Check this against the card.",
                     color = MaterialTheme.colorScheme.error,
                     fontSize = 11.sp
                 )
             }
             choices.forEach { choice ->
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    ActionRow {
                         Button(
                             onClick = {
                                 // THE FULL NUMBER, THROUGH THE ONE DOOR, IN THE ONE ORDER. See
@@ -1063,10 +1037,12 @@ internal fun DwIdentityCardControl(
                     )
                 }
             }
-            TextButton(onClick = {
-                choices = emptyList()
-                discardPhoto()
-            }) { Text("None of these — discard", fontSize = 13.sp) }
+            ActionRow {
+                TextButton(onClick = {
+                    choices = emptyList()
+                    discardPhoto()
+                }) { Text("None of these — discard", fontSize = 13.sp) }
+            }
         }
     }
 }
@@ -1089,23 +1065,16 @@ internal fun nothingFoundOffline(
 ): String = when {
     // Not something a photograph can fix: this phone has no Pehchan reader at all.
     !readableOnDevice ->
-        "A Pehchan card number can only be read with a connection, and there is none. Type it in now."
+        "Pehchan needs a connection. Type it now."
     // The card WAS found and misread — better light, no glare. Distinct from "not found".
     rejected > 0 ->
-        "$rejected number(s) were read off that card and every one failed its checksum, so at least " +
-            "one digit was wrong in each. There is no connection to read it online, so take " +
-            "another photograph in better light with no glare across the digits, or type the " +
-            "number in."
+        "$rejected number(s) read but none valid, and there's no connection to try online. Retake in better light, or type it."
     // Nothing found at all — fill the frame. Says the server was NOT asked, so a designer who moves
     // into signal knows there is something left to try rather than concluding the card is unreadable.
     kind == DwIdentityKind.PEHCHAN || kind == DwIdentityKind.ANY ->
-        "No Aadhaar number could be read from that photograph on this phone, and there is no " +
-            "connection to read it online. Fill the frame with the card and hold it flat, or type " +
-            "the number in — a Pehchan card can only be read with a connection."
+        "No Aadhaar number found, and you're offline. Retry or type it (Pehchan needs a connection)."
     else ->
-        "No number could be read from that photograph on this phone, and there is no connection to " +
-            "read it online. Fill the frame with the card, hold it flat and try again — or type the " +
-            "number in."
+        "No number found, and there's no connection to try online. Fill the frame, hold flat and retry — or type it."
 }
 
 /**

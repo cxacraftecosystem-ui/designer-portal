@@ -19,9 +19,9 @@ fun reviewQueueCutNotice(truncated: Boolean, shown: Int, total: Int, cap: Int): 
     // `cap` is kept in the signature for the older server, which sends it without paging; the
     // sentence no longer prints it, because it described the server rather than the queue.
     if (!truncated) return null
-    if (shown == 0) return "None of the $total waiting records could be listed. Try again."
-    if (total <= shown) return "More records are waiting. Load older to see them."
-    return "Showing $shown of $total waiting, newest first."
+    if (shown == 0) return "Couldn't list the $total waiting records. Try again."
+    if (total <= shown) return "More waiting — Load older to see them."
+    return "$shown of $total waiting, newest first."
 }
 
 /** How many records the queue asks for per page, on both clients. */

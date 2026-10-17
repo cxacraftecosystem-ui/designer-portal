@@ -249,8 +249,7 @@ internal const val OFFLINE_DESIGNER_PROFILE = "designerProfile"
 
 /** What the tray says over a correction the record moved under. Pinned by `OfflineEverywhereTest`. */
 const val STALE_CORRECTION_SENTENCE =
-    "Someone changed this record after you edited it on this phone, so your changes were not sent " +
-        "over theirs. Tap Review changes to compare and choose. Nothing has been deleted."
+    "Someone changed this record after your edit, so yours wasn't sent. Tap Review changes to compare."
 
 /**
  * [PendingEntry.type] for an entry that CREATES NOTHING and only carries files to a record that is
@@ -711,8 +710,8 @@ fun Throwable.signInHint(): SignInHint {
  */
 fun Throwable.signInErrorMessage(): String {
     val fallback = when ((this as? HttpException)?.code()) {
-        401 -> "That email and password were not accepted. Check them and try again."
-        403 -> "This account is not allowed to sign in. Contact your administrator."
+        401 -> "Email or password not accepted."
+        403 -> "This account can't sign in. Contact your admin."
         null -> CONNECTION_FAILED_SENTENCE
         else -> "Sign-in failed. Please try again."
     }
@@ -1456,7 +1455,7 @@ class WorkshopRepository(
         val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
         val bytes = withContext(Dispatchers.IO) {
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: throw IllegalStateException("That photograph could not be opened on this device.")
+                ?: throw IllegalStateException("Couldn't open that photo.")
         }
         val part = okhttp3.MultipartBody.Part.createFormData(
             "file",
@@ -1917,7 +1916,7 @@ class WorkshopRepository(
             throw DwAiVerbRefused(response.code(), errorBodyDetail(response.errorBody()?.string()))
         }
         val body = response.body()
-            ?: throw IllegalStateException("The subtitle download came back with no file in it.")
+            ?: throw IllegalStateException("The subtitle download was empty.")
         val name = filenameFromContentDisposition(response.headers()["Content-Disposition"])
             ?: buildString {
                 append("subtitles-")
@@ -3206,7 +3205,7 @@ class WorkshopRepository(
         val bundle = questionnaireBundleOf(read.form)
         if (bundle.sections.none { it.questions.isNotEmpty() }) {
             throw IllegalStateException(
-                "This questionnaire has no questions in it yet, so there is nothing to hand over."
+                "No questions yet — nothing to send."
             )
         }
         val bytes = encodeQuestionnaireBundle(bundle)
@@ -3268,7 +3267,7 @@ class WorkshopRepository(
                     if (n <= 0) break
                     if (out.size() + n > QUESTIONNAIRE_HANDOFF_MAX_FILE) {
                         throw IllegalStateException(
-                            "That file is far too big to be a questionnaire. It has not been opened."
+                            "That file is too big to be a questionnaire."
                         )
                     }
                     out.write(buffer, 0, n)
@@ -3278,13 +3277,12 @@ class WorkshopRepository(
         }.getOrElse { error ->
             return@withContext Result.failure(
                 IllegalStateException(
-                    error.message ?: "That file could not be opened from where it is stored."
+                    error.message ?: "Couldn't open that file."
                 )
             )
         } ?: return@withContext Result.failure(
             IllegalStateException(
-                "That file could not be opened. If it came from a chat app, save it to the phone first " +
-                    "and pick it from there."
+                "Couldn't open that file. Save it to the phone first, then pick it."
             )
         )
         when (val read = readQuestionnaireBundle(bytes)) {
@@ -3362,7 +3360,7 @@ class WorkshopRepository(
         val bytes = QuestionnaireBundleInbox.bytes(context, row)
             ?: return Result.failure(
                 IllegalStateException(
-                    "The copy of that file this app kept has gone. Ask for it again."
+                    "The saved copy is gone. Ask for it again."
                 )
             )
         val bundle = when (val read = readQuestionnaireBundle(bytes)) {
@@ -3433,9 +3431,7 @@ class WorkshopRepository(
                         sectionRemoteId = matchAdoptedSection(afterSection, section)
                             ?: return Result.failure(
                                 IllegalStateException(
-                                    "Section “${section.title}” was created but could not be found " +
-                                        "again to put its questions in. Nothing has been lost — try " +
-                                        "again."
+                                    "Section “${section.title}” couldn't be filled. Nothing was lost — try again."
                                 )
                             )
                     }
@@ -3645,7 +3641,7 @@ class WorkshopRepository(
             val resolved = resolveTempId(id, map)
             if (resolved == null || isTempId(resolved)) {
                 throw QFormParentMissing(
-                    "This waits for the $what it belongs to, which has not been saved. Nothing has been deleted."
+                    "Waiting for its $what to be saved."
                 )
             }
             return resolved
@@ -3737,7 +3733,7 @@ class WorkshopRepository(
                 idempotencyKey = key,
             )
         )
-        return "Kept on this phone. It is added to the questionnaire as soon as there is a connection."
+        return "Saved on this phone; added when online."
     }
 
     suspend fun createCustomQuestionnaire(
@@ -4098,13 +4094,11 @@ class WorkshopRepository(
         val bytes = withContext(Dispatchers.IO) {
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: throw IllegalStateException(
-                    "That file could not be opened on this device. Pick it again from Downloads, or " +
-                        "copy it onto the phone first — some cloud folders hand out a link rather " +
-                        "than the file."
+                    "Couldn't open that file. Pick it from Downloads, or copy it to the phone first."
                 )
         }
         if (bytes.isEmpty()) {
-            throw IllegalStateException("That file is empty, so there is nothing to read out of it.")
+            throw IllegalStateException("That file is empty.")
         }
         return okhttp3.MultipartBody.Part.createFormData(
             "file",
@@ -4411,7 +4405,7 @@ class WorkshopRepository(
             if (answer.headers()[SIGN_IN_AGAIN_HEADER] != null) {
                 throw SignInAgainRequired(
                     refused.apiErrorMessage(
-                        "For your security, sign out and sign in again, then set your password within 15 minutes."
+                        "For security, sign out and back in, then set your password within 15 minutes."
                     )
                 )
             }
@@ -8082,8 +8076,7 @@ class WorkshopRepository(
             // here — and re-attempting it every app run would re-POST a record that is ALREADY on the
             // server. This one really does wait for a person.
             return ReplayOutcome.Rejected(
-                "It was saved, but ${refused.size} file(s) could not be uploaded: ${refused.distinct().joinToString(" ")} " +
-                    "Attach them to the record again."
+                "Saved, but ${refused.size} file(s) didn't upload: ${refused.distinct().joinToString(" ")} Re-attach them."
             )
         }
         return ReplayOutcome.Synced
@@ -8127,8 +8120,7 @@ class WorkshopRepository(
                     landed.add(
                         FileOutcome.Refused(
                             index,
-                            "\"${pm.originalFilename}\" had nowhere to attach — the saved record has fewer " +
-                                "process steps than were captured."
+                            "\"${pm.originalFilename}\" couldn't attach — the record has fewer steps than captured."
                         )
                     )
                     return@launch
@@ -8146,9 +8138,7 @@ class WorkshopRepository(
                     landed.add(
                         FileOutcome.Refused(
                             index,
-                            "\"${pm.originalFilename}\" is no longer on this device — the copy this app " +
-                                "made of it has gone. Nothing can send it now. If the original is still " +
-                                "in the gallery, attach it to the record again."
+                            "\"${pm.originalFilename}\" is no longer on this phone. Re-attach it from the gallery if you still have it."
                         )
                     )
                     return@launch

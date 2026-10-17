@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -398,7 +399,7 @@ internal fun designerProfileRequiredRefusal(missing: List<String>): String {
 internal fun designerEmailRefusal(email: String): String? {
     val text = email.trim()
     if (text.isEmpty()) return null
-    val fault = "An email address needs one @ with a domain after it — meera@nid.ac.in, for example."
+    val fault = "Enter a valid email, e.g. meera@nid.ac.in."
     if (text.any { it.isWhitespace() }) return fault
     val at = text.indexOf('@')
     if (at <= 0 || at != text.lastIndexOf('@')) return fault
@@ -872,8 +873,7 @@ fun DesignerProfileScreen(
         // `canEdit`. The disabled button above is a courtesy; this is the rule.
         if (!mayEditDesignerProfile(repository.cachedUser(), targetUserId)) {
             onError(
-                "You can only edit your own designer profile. Ask an administrator to change " +
-                    "somebody else's."
+                "You can only edit your own profile."
             )
             return
         }
@@ -898,7 +898,7 @@ fun DesignerProfileScreen(
         // the asterisk is unconditional, and the refusal fires only where the server would
         // 422 anyway (`_assert_empanelment_number` in app/api/routes/designers.py).
         val empanelmentFault = if (!form.empanelmentGrace && form.empanelmentNo.isBlank()) {
-            "An empanelment number is required to create a designer profile."
+            "Empanelment number is required."
         } else {
             null
         }
@@ -914,7 +914,7 @@ fun DesignerProfileScreen(
         // the designer would be told their workshop has an error in a box they never typed in.
         val parsedYears = years.toIntOrNull()
         val yearsFault = if (years.isNotEmpty() && (parsedYears == null || parsedYears !in 0..70)) {
-            "Years of experience must be a whole number between 0 and 70."
+            "Years must be 0–70."
         } else {
             null
         }
@@ -932,8 +932,7 @@ fun DesignerProfileScreen(
         val months = form.experienceMonths.trim()
         val parsedMonths = months.toIntOrNull()
         val monthsFault = if (months.isNotEmpty() && (parsedMonths == null || parsedMonths !in 0..11)) {
-            "Months of experience must be a whole number between 0 and 11 — twelve months is a " +
-                "year, and the box beside this one holds the years."
+            "Months must be 0–11."
         } else {
             null
         }
@@ -953,10 +952,7 @@ fun DesignerProfileScreen(
          * keeps none of it.
          */
         val addressFault = if (addressNeedsCoordinate) {
-            "The state, district and village are stored with the coordinates, so this profile needs " +
-                "a point before they can be saved. Press 'Use current GPS' under 'Captured " +
-                "coordinates', drop a pin on the map, or type the two numbers — or clear the " +
-                "address fields under '${DESIGNER_LOCATION_SUBJECT.heading}' to save the rest."
+            "Add a map point (GPS, pin or coordinates) to save the address — or clear the fields under '${DESIGNER_LOCATION_SUBJECT.heading}'."
         } else {
             null
         }
@@ -996,8 +992,7 @@ fun DesignerProfileScreen(
                         saved = form
                         profileDraft.discard()
                         onMessage(
-                            "No connection, so your profile has been kept on this phone. It is sent by " +
-                                "itself as soon as there is signal."
+                            "Offline — saved on this phone; it uploads automatically."
                         )
                         return@onSuccess
                     }
@@ -1079,7 +1074,7 @@ fun DesignerProfileScreen(
                     ProfileMediaSlot.SIGNATURE -> form.copy(signatureMediaId = uploaded.id)
                     ProfileMediaSlot.CV -> form.copy(cvMediaId = uploaded.id)
                 }
-                onMessage("${slot.caption()} uploaded. Save the profile to keep it.")
+                onMessage("${slot.caption()} uploaded. Save to keep it.")
             }.onFailure { error ->
                 // The durable copy is deliberately LEFT ON DISK on a failure. It costs a few hundred
                 // kilobytes and it is the difference between "tap upload again" and "go back and
@@ -1113,7 +1108,7 @@ fun DesignerProfileScreen(
                 */
                 .onFailure {
                     if (it is CancellationException) throw it
-                    onError("That file could not be read. Try picking it again.")
+                    onError("Couldn't read that file. Try again.")
                 }
         }
     }
@@ -1143,7 +1138,7 @@ fun DesignerProfileScreen(
                 // abandoned by leaving the screen must not raise a snackbar on the next one.
                 .onFailure {
                     if (it is CancellationException) throw it
-                    onError("That document could not be read. Try picking it again.")
+                    onError("Couldn't read that document. Try again.")
                 }
         }
     }
@@ -1189,11 +1184,9 @@ fun DesignerProfileScreen(
         )
         Text(
             if (editingSomebodyElse) {
-                "You are editing ${targetLabel ?: "another designer"}'s profile as an administrator. " +
-                    "These values are printed on every report they generate."
+                "Editing ${targetLabel ?: "another designer"}'s profile as admin. Printed on their reports."
             } else {
-                "Typed once. Every design & prototype workshop report you generate prints these " +
-                    "values on its cover, in its signature block and in its designer's profile."
+                "Printed on the cover and signature of your reports."
             },
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
@@ -1212,9 +1205,7 @@ fun DesignerProfileScreen(
             // screen: an empty form after a failed read invites the designer to retype twenty values
             // over the top of ones the server still holds, and the save would then be a real edit.
             loadFailed -> Text(
-                "This profile could not be read, so nothing below is safe to edit — the boxes are " +
-                    "empty because the request failed, not because the profile is. Go back and open " +
-                    "this screen again once you have a connection.",
+                "Couldn't load this profile. Go back and reopen online — don't edit the empty fields.",
                 color = MaterialTheme.field.warning,
                 fontSize = 13.sp
             )
@@ -1237,7 +1228,7 @@ fun DesignerProfileScreen(
                 // TERSE, and the wording is the web's, verbatim.
                 if (form.empanelmentGrace) {
                     Text(
-                        "Add your empanelment number — it is required on every report.",
+                        "Add your empanelment number — required on reports.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         modifier = Modifier
@@ -1252,7 +1243,7 @@ fun DesignerProfileScreen(
                 ProfileSection("Name and standing") {
                     ProfileText(
                         "Name as printed", form.displayName, canEdit,
-                        help = "How your name appears on the cover and in the signature block.",
+                        help = "As shown on the cover and signature.",
                         required = true,
                         // A MANDATORY BOX AND A DICTATED ONE, which the record forms already pair:
                         // `RequiredInput` in `MainActivity.kt` defaults `dictate` to true precisely
@@ -1271,7 +1262,7 @@ fun DesignerProfileScreen(
                     // Whatever comes back is stored and printed verbatim, exactly as typing is.
                     ProfileText(
                         "Name in local script", form.localName, canEdit,
-                        help = "Printed verbatim, in whatever script you type it in.",
+                        help = "Printed exactly as typed.",
                         dictate = dictates("localName"),
                         resetKey = targetUserId
                     ) { form = form.copy(localName = it) }
@@ -1336,7 +1327,7 @@ fun DesignerProfileScreen(
 
                 ProfileSection("Profile paragraph") {
                     Text(
-                        "Printed under \"Designer's profile\" in stage 3 of every report.",
+                        "Printed in stage 3 of every report.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )
@@ -1404,7 +1395,7 @@ fun DesignerProfileScreen(
                     ProfileText(
                         "Email", form.email, canEdit,
                         keyboard = KeyboardType.Email,
-                        help = "The address printed on the report, which need not be your sign-in address.",
+                        help = "Printed on reports; can differ from your sign-in email.",
                         required = true,
                         // Required AND silent, which is the one combination the record forms do not
                         // have: `RequiredInput` gives every mandatory box a microphone by default,
@@ -1450,8 +1441,7 @@ fun DesignerProfileScreen(
                  */
                 ProfileSection("Postal address") {
                     Text(
-                        "What is printed on your reports. The district and the map point are asked " +
-                            "for separately, below.",
+                        "Printed on your reports.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )
@@ -1527,8 +1517,7 @@ fun DesignerProfileScreen(
                             */
                             if (designerProfileAddressIsFormatted(storedAddressLine)) {
                                 Text(
-                                    "This address has bold or other styling. Your edits here are " +
-                                        "saved as plain text.",
+                                    "This address has bold or other styling. It will be saved as plain text.",
                                     color = MaterialTheme.field.muted,
                                     fontSize = 11.sp
                                 )
@@ -1550,8 +1539,7 @@ fun DesignerProfileScreen(
                             */
                             if (form.addressLine.length >= ADDRESS_LINE_MAX) {
                                 Text(
-                                    "This box is full — it holds $ADDRESS_LINE_MAX characters. " +
-                                        "Anything spoken or typed beyond that is not added.",
+                                    "Full — $ADDRESS_LINE_MAX characters max.",
                                     color = MaterialTheme.field.muted,
                                     fontSize = 11.sp
                                 )
@@ -1681,10 +1669,7 @@ fun DesignerProfileScreen(
                  */
                 ProfileSection("District and map point") {
                     Text(
-                        "Your district and your map point are stored the way every other record in " +
-                            "this system stores an address, which is what makes them comparable with " +
-                            "it. The four boxes above are the postal address printed on your " +
-                            "reports; they have not moved and they are still what the report reads.",
+                        "Used to place you on the map. The address above is what reports print.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                         lineHeight = 17.sp
@@ -1818,11 +1803,7 @@ fun DesignerProfileScreen(
                       is true.
                     */
                     Text(
-                        "Two of these are printed in the report: the photograph on the designer's " +
-                            "profile page, and the signature with the report's photographs under " +
-                            "its own heading. The CV is not. The report NAMES it — " +
-                            "\"1 document attached\" — but a report file cannot carry a document, " +
-                            "so send the CV alongside the report.",
+                        "Photo and signature appear in reports. The CV is not. Reports name it, but a report file cannot carry a document, so send the CV alongside the report.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                         lineHeight = 17.sp
@@ -1878,8 +1859,7 @@ fun DesignerProfileScreen(
                     ) {
                         Text("CV", color = MaterialTheme.field.muted, fontSize = 12.sp)
                         Text(
-                            "One document — PDF, .docx, .odt, or a scan. A PDF is shown here as soon " +
-                                "as it uploads; anything else opens in the app that handles it.",
+                            "PDF, .docx, .odt or a scan.",
                             color = MaterialTheme.field.muted,
                             fontSize = 11.sp
                         )
@@ -1894,7 +1874,7 @@ fun DesignerProfileScreen(
                             displayName = cvDescriptor.first ?: localPreview[ProfileMediaSlot.CV]?.name,
                             mimeType = cvDescriptor.second
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ActionRow {
                             OutlinedButton(
                                 onClick = {
                                     pendingSlot = ProfileMediaSlot.CV
@@ -1909,7 +1889,6 @@ fun DesignerProfileScreen(
                                     )
                                 },
                                 enabled = canEdit && uploading == null,
-                                modifier = Modifier.weight(1f)
                             ) {
                                 Icon(
                                     Icons.Filled.AttachFile,
@@ -1971,10 +1950,7 @@ fun DesignerProfileScreen(
                       screen where deleting what is on screen does not delete what is stored.
                     */
                     Text(
-                        "Emptying a box and saving clears that value. Two exceptions: the four " +
-                            "boxes marked * cannot be emptied, because every report you generate is " +
-                            "signed with them; and your district and map point can be replaced but " +
-                            "not removed.",
+                        "Clearing a box clears the value, except the * fields and your district/map point.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -2018,7 +1994,7 @@ private fun ReadOnlyNotice(viewer: UserDto?) {
                 if (viewer == null) {
                     "Sign in again and reopen this screen."
                 } else {
-                    "Only the designer it belongs to, or an administrator, can change it."
+                    "Only its owner or an admin can change it."
                 }
             )
         },
@@ -2265,8 +2241,7 @@ private fun ProfileText(
 private fun StoredLocationSummary(location: LocationRequest?) {
     if (location == null) {
         Text(
-            "No district or map point is recorded on this profile. The postal address above is " +
-                "separate and may well be filled in.",
+            "No district or map point yet.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -2285,9 +2260,7 @@ private fun StoredLocationSummary(location: LocationRequest?) {
             fontSize = 12.sp
         )
         Text(
-            "Captured at: ${readableCoordinate(location.latitude)}, " +
-                "${readableCoordinate(location.longitude)} — where the device was, not necessarily " +
-                "where the designer works.",
+            "Captured at ${readableCoordinate(location.latitude)}, ${readableCoordinate(location.longitude)} (the device's location).",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -2374,7 +2347,7 @@ private fun DistrictOrTown(
             )
         } else if (state.isNotBlank()) {
             Text(
-                "No district list is available for $state. Type the town above.",
+                "No districts listed for $state. Type the town above.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )
@@ -2435,23 +2408,25 @@ private fun ProfileMediaRow(
                 }
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onCapture, enabled = enabled, modifier = Modifier.weight(1f)) {
+                ActionRow {
+                    OutlinedButton(onClick = onCapture, enabled = enabled) {
                         Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Camera")
                     }
-                    OutlinedButton(onClick = onPick, enabled = enabled, modifier = Modifier.weight(1f)) {
+                    OutlinedButton(onClick = onPick, enabled = enabled) {
                         Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Gallery")
                     }
                 }
                 if (mediaId.isNotBlank()) {
-                    TextButton(onClick = onClear, enabled = enabled) {
-                        Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Remove")
+                    ActionRow {
+                        TextButton(onClick = onClear, enabled = enabled) {
+                            Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Remove")
+                        }
                     }
                 }
             }
@@ -2536,7 +2511,7 @@ private suspend fun copyIntoProfileMedia(context: Context, uri: Uri): File = wit
         ?: "jpg"
     val target = File(profileMediaDir(context), "designer-picked-${UUID.randomUUID()}.$extension")
     val input = context.contentResolver.openInputStream(uri)
-        ?: throw IllegalStateException("Unable to read the selected file — the grant may have lapsed.")
+        ?: throw IllegalStateException("Couldn't read the selected file.")
     try {
         input.use { source ->
             FileOutputStream(target).use { out ->

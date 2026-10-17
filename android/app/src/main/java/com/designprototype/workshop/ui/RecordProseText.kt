@@ -166,8 +166,7 @@ fun recordDictationNothingLeftSentence(conditions: DwDictationConditions): Strin
          * It names no retry, because the engine has already been asked in this run.
          */
         !conditions.online && conditions.appModelRefusedLanguage ->
-            "Dictation in $label could not start on this phone, and there is no connection to " +
-                "fall back on. Type the answer in, or dictate it when you have signal."
+            "Can't dictate $label offline. Type for now."
 
         /*
          * No signal, the phone has an offline engine, and a pack for this language can ACTUALLY be
@@ -181,24 +180,18 @@ fun recordDictationNothingLeftSentence(conditions: DwDictationConditions): Strin
          */
         !conditions.online && conditions.onDeviceEngine &&
             dwPackOffer(conditions.packState, DwConnection.NONE) == DwPackOffer.NO_CONNECTION ->
-            "The $label pack is not on this phone, and without it dictation needs a connection — " +
-                "there is none here. Type the answer in, and add the pack from Settings › Offline " +
-                "dictation languages when you next have signal."
+            "$label pack missing and you're offline. Type for now; add the pack in Settings › Offline dictation languages."
 
         // No signal, an offline engine, and NO pack for this language to add — either the platform's
         // catalogue has none or the engine has already refused it. Nothing to tap, so the sentence
         // names the connection and stops rather than sending anybody to an empty list.
         !conditions.online && conditions.onDeviceEngine ->
-            "This phone's own recogniser has no offline $label to work from, so dictation in $label " +
-                "needs a connection and there is none here. Type the answer in, and dictate the " +
-                "rest where there is signal."
+            "$label needs a connection. Type for now."
 
         // No signal, and this phone cannot be asked what it has (API < 33) or has no engine of its
         // own. Claiming the pack is missing would be inventing the one fact we do not have.
         !conditions.online ->
-            "Dictation in $label on this phone needs a connection and there is none. Your " +
-                "keyboard's own microphone may have an offline language pack; otherwise type the " +
-                "answer in and dictate the rest later."
+            "$label dictation needs a connection. Type for now."
 
         /*
          * ── ONLINE, AND STILL NOTHING. THE ARMS THAT REPLACE FIVE WORKSHOP-FLAVOURED ONES. ──────
@@ -211,21 +204,18 @@ fun recordDictationNothingLeftSentence(conditions: DwDictationConditions): Strin
         // it is the one case where there is genuinely nothing to do on the phone — so the sentence
         // says so plainly instead of implying a retry would help.
         !conditions.networkRecogniser && !conditions.onDeviceEngine ->
-            "This phone has no speech recogniser installed, so there is no dictation here. Type " +
-                "the answer in."
+            "There is no speech recogniser on this phone. Type the answer in."
 
         // Online, an engine exists, and it has told us in this run that it cannot take this
         // language. Naming the language is the point: the fix is picking a different one, and that
         // IS reachable from the control the reader is looking at.
         conditions.deviceRefusedLanguage ->
-            "This phone's speech recogniser would not take $label. Pick a different dictation " +
-                "language from the control beside the microphone, or type the answer in."
+            "$label isn't supported here. Pick another language or type."
 
         // Everything else. Deliberately vague about the cause, because by here we do not know one —
         // and inventing a cause is how the sentences above lose their credibility.
         else ->
-            "Dictation in $label is not available on this phone just now. Type the answer in, or " +
-                "try a different dictation language."
+            "$label dictation unavailable. Type or try another language."
     }
 }
 
@@ -419,5 +409,4 @@ fun recordStoredFromDoc(doc: RichDoc): String? = toPlain(doc).takeIf { it.isNotB
  * and stops.
  */
 const val RECORD_RICH_TEXT_NOTE: String =
-    "Lists, numbering and paragraphs are saved. Bold and italic help you write and are not stored " +
-        "on this field."
+    "Lists and paragraphs are saved; bold and italic aren't."

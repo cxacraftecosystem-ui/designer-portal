@@ -99,13 +99,12 @@ internal enum class DwSketchChooserTab(
 ) {
     UPLOAD(
         label = "Upload",
-        hint = "Add the drawings, photographs and 3D models of a piece to the record it belongs to.",
+        hint = "Add drawings, photos and 3D models to each piece.",
         icon = Icons.Filled.Upload,
     ),
     REVIEW(
         label = "Review",
-        hint = "Rate the other designers' work, say what you would change, and settle the order the " +
-            "pieces stand in.",
+        hint = "Rate others' work, suggest changes and set the order.",
         icon = Icons.Filled.Star,
     ),
 }

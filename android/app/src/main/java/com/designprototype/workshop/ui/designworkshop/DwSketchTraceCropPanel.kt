@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -276,8 +277,7 @@ private fun DwTraceFrameChooser(
             warning = true,
             // The trace itself may still work — it uses a different decoder with a different ceiling
             // — so this refuses the FRAMING and says nothing about the drawing.
-            text = "This phone could not open that photograph to show it here, so the frame cannot " +
-                "be chosen on this device. The whole photograph is what gets traced.",
+            text = "Can't preview this photo; the whole photo will be traced.",
             polite = true,
         )
     }
@@ -392,10 +392,7 @@ private fun DwTraceFrameEditor(
 
         /* ── Committing ─────────────────────────────────────────────────────────────────────── */
 
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
+        ActionRow {
             OutlinedButton(
                 onClick = {
                     onApply(
@@ -438,7 +435,7 @@ private fun DwTraceFrameEditor(
             DwPanelNote(
                 warning = false,
                 text = if (applied == null) {
-                    "Nothing has been applied yet: the trace is still using the whole photograph."
+                    "Using the whole photo."
                 } else {
                     dwTraceCropStaleNote(applied.rect)
                 },
@@ -597,8 +594,7 @@ private fun DwTraceCropOverlay(
                     }
                 }
                 .semantics {
-                    contentDescription = "The frame that will be traced. Drag it to move it; the " +
-                        "four boxes below set it exactly."
+                    contentDescription = "Trace frame. Drag to move; use the boxes below for exact values."
                 },
         )
 
@@ -680,10 +676,10 @@ private fun DwTraceCropOverlay(
 
 /** What TalkBack calls a handle. Positional, because the position is the only thing it means. */
 private fun dwTraceCornerName(corner: DwTraceCropCorner): String = when (corner) {
-    DwTraceCropCorner.TOP_LEFT -> "Top-left corner of the frame. Drag it, or use the boxes below."
-    DwTraceCropCorner.TOP_RIGHT -> "Top-right corner of the frame. Drag it, or use the boxes below."
-    DwTraceCropCorner.BOTTOM_LEFT -> "Bottom-left corner of the frame. Drag it, or use the boxes below."
-    DwTraceCropCorner.BOTTOM_RIGHT -> "Bottom-right corner of the frame. Drag it, or use the boxes below."
+    DwTraceCropCorner.TOP_LEFT -> "Top-left corner. Drag, or use the boxes below."
+    DwTraceCropCorner.TOP_RIGHT -> "Top-right corner. Drag, or use the boxes below."
+    DwTraceCropCorner.BOTTOM_LEFT -> "Bottom-left corner. Drag, or use the boxes below."
+    DwTraceCropCorner.BOTTOM_RIGHT -> "Bottom-right corner. Drag, or use the boxes below."
 }
 
 /**

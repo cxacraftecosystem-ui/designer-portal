@@ -196,18 +196,14 @@ fun InspectionListScreen(
         // ── The refusal, and it is the one refusal in this app an ADMIN also meets ───────────────
         if (!mayInspect) {
             InspectionNotice(
-                "Workshops to inspect is for Inspector / Reviewer accounts, and shows the workshops " +
-                    "an admin has assigned to you. Designers and admins open design & prototype " +
-                    "workshops from Design workshops; an admin chooses who inspects a workshop from " +
-                    "that workshop's own stage index.",
+                "For Inspector / Reviewer accounts. Shows workshops assigned to you.",
                 warning = true
             )
             return@Column
         }
 
         Text(
-            "The design & prototype workshops an admin has assigned you to inspect. You can read " +
-                "every stage of one and change none of it.",
+            "Workshops assigned to you to inspect (read-only).",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -215,9 +211,7 @@ fun InspectionListScreen(
         // copy on this phone from a list that has just been read.
         savedAt?.let {
             InspectionNotice(
-                "No connection — these are the workshops this phone last saw assigned to you, on " +
-                    "${it.take(10)}. Open one to read the copy kept here and write suggestions; they " +
-                    "are sent when you are back online.",
+                "Offline — list from ${it.take(10)}. Suggestions send when you're back online.",
                 warning = true
             )
         }
@@ -280,13 +274,13 @@ fun InspectionListScreen(
             // the remedy for one is not the remedy for the other.
             served.isEmpty() && answeredFor != null -> {
                 Text(
-                    "No workshop under your inspection matches that search",
+                    "No matching workshops",
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 16.sp
                 )
                 Text(
-                    "This searches only the workshops assigned to you. Clear the search to see them all.",
+                    "Clear the search to see all.",
                     color = MaterialTheme.field.muted,
                     fontSize = 13.sp
                 )
@@ -300,8 +294,7 @@ fun InspectionListScreen(
                     fontSize = 16.sp
                 )
                 Text(
-                    "An admin assigns inspections one workshop at a time, from that workshop's own " +
-                        "stage index. Workshops assigned to you will appear here.",
+                    "Workshops an admin assigns to you appear here.",
                     color = MaterialTheme.field.muted,
                     fontSize = 13.sp
                 )

@@ -339,24 +339,18 @@ suspend fun dwScanJoinCard(context: Context, workshopId: String, code: String): 
  */
 private fun dwJoinCardFallbackDetail(outcome: String): String = when (outcome) {
     "FULL" ->
-        "You are on this workshop. The card has been used up, so it will not let anybody else in."
+        "You've joined. This card is now used up."
     "ALREADY_A_MEMBER" ->
-        "You are already on this workshop, so the card was not used up. Somebody else can still use it."
+        "You're already on this workshop; the card wasn't used."
     "PROVISIONAL" ->
-        "You are not on the workshop yet, but nothing you record is lost — an administrator can see " +
-            "that you scanned the card, and once they confirm you everything you have recorded is " +
-            "already in place. Until then you will not see anybody else's stages."
+        "Pending admin confirmation. Your work is kept and will appear once confirmed."
     else ->
-        "The card was sent. Check the workshop list, and ask an administrator if you cannot see " +
-            "the workshop there."
+        "Card sent. Check your workshop list or ask an admin."
 }
 
 /** Shown only if a 403 or 422 arrives with no readable body. It claims nothing about any workshop. */
 private fun dwJoinCardFallbackRefusal(): String =
-    "That join card cannot be used. It may have been cancelled, or it may have run out of date. Ask " +
-        "whoever runs the workshop for a fresh card, or ask an administrator to add you from the " +
-        "workshop's viewers screen. Everything you have already recorded on this device stays where " +
-        "it is."
+    "This card can't be used (cancelled or expired). Ask for a new one or ask an admin to add you."
 
 /**
  * The `detail` out of a FastAPI error body, or null.
@@ -411,8 +405,7 @@ sealed interface DwJoinCardAction {
 
 /** The one sentence for "the server was not reachable", said the same way by all three actions. */
 private fun dwJoinCardOfflineMessage(): String =
-    "There is no connection, so a join card cannot be printed or cancelled right now. Join cards " +
-        "need a connection — try again when there is signal."
+    "Join cards need a connection."
 
 /**
  * Print one single-use join card for this workshop.
@@ -467,8 +460,7 @@ private suspend fun dwJoinCardCall(
     } catch (error: HttpException) {
         DwJoinCardAction.Refused(
             dwJoinCardBodyDetail(error)
-                ?: "That could not be done. Ask an administrator to print the card, or to add the " +
-                "person from the workshop's viewers screen."
+                ?: "Couldn't do that. Ask an admin to print the card or add the person."
         )
     } catch (error: Exception) {
         if (error is kotlinx.coroutines.CancellationException) throw error

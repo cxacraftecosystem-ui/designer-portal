@@ -172,10 +172,9 @@ fun outboxDeviceBanner(counts: OutboxCounts, online: Boolean): OutboxBanner? {
         lines.add(
             OutboxBannerLine(
                 text = if (online) {
-                    "${outboxEntryCount(counts.waiting)} saved on this device — sending now."
+                    "${outboxEntryCount(counts.waiting)} saved on this phone — sending now."
                 } else {
-                    "${outboxEntryCount(counts.waiting)} saved on this device — will be sent when " +
-                        "you have a signal."
+                    "${outboxEntryCount(counts.waiting)} saved on this phone — will be sent when you have a signal."
                 },
                 warn = false,
             )
@@ -184,9 +183,7 @@ fun outboxDeviceBanner(counts: OutboxCounts, online: Boolean): OutboxBanner? {
     if (counts.refused > 0) {
         lines.add(
             OutboxBannerLine(
-                text = "${outboxEntryCount(counts.refused)} could not be saved. Syncing will not " +
-                    "send ${if (counts.refused == 1) "it" else "them"} — tap to read why and try " +
-                    "again. Nothing has been deleted.",
+                text = "${outboxEntryCount(counts.refused)} couldn't be saved. Syncing will not send ${if (counts.refused == 1) "it" else "them"} — tap to see why. Nothing has been deleted.",
                 warn = true,
             )
         )
@@ -199,9 +196,7 @@ fun outboxDeviceBanner(counts: OutboxCounts, online: Boolean): OutboxBanner? {
     if (counts.otherAccount > 0) {
         lines.add(
             OutboxBannerLine(
-                text = "${outboxEntryCount(counts.otherAccount)} captured on this phone by another " +
-                    "account. Sign in as them to send ${if (counts.otherAccount == 1) "it" else "them"} " +
-                    "— nothing has been deleted.",
+                text = "${outboxEntryCount(counts.otherAccount)} captured on this phone by another account. Sign in as them to send ${if (counts.otherAccount == 1) "it" else "them"} — nothing has been deleted.",
                 warn = true,
             )
         )
@@ -438,8 +433,7 @@ private fun otherEntries(n: Int): String = if (n == 1) "1 other entry" else "$n 
  */
 fun outboxRetryMessage(label: String, result: OutboxRetryResult): String {
     if (!result.attempted) {
-        return "This phone has no connection, so nothing was tried. “$label” is still here and " +
-            "nothing has been deleted — try again when you have a signal."
+        return "There's no connection, so nothing was tried. “$label” is still here; nothing has been deleted."
     }
     val tail = if (result.othersSent > 0) {
         " ${otherEntries(result.othersSent)} in the queue went at the same time."
@@ -449,26 +443,23 @@ fun outboxRetryMessage(label: String, result: OutboxRetryResult): String {
     return if (result.requestedSent) {
         "“$label” was sent.$tail"
     } else {
-        "“$label” still did not go. The reason under it is what came back this time.$tail"
+        "“$label” still did not go. See the reason below.$tail"
     }
 }
 
 /** What the tray says after every refused entry was tried again. See [outboxRetryMessage]. */
 fun outboxRetryAllMessage(result: OutboxRetryResult): String {
     if (!result.attempted) {
-        return "This phone has no connection, so nothing was tried. They are all still here and " +
-            "nothing has been deleted — try again when you have a signal."
+        return "There's no connection, so nothing was tried. Everything is still here."
     }
     val head = when {
         result.refusedTried == 0 -> "There was nothing to try again."
         result.refusedSent == 0 ->
-            "Tried ${outboxEntryCount(result.refusedTried)} again; none went. The reason under each " +
-                "one is what came back this time."
+            "Tried ${outboxEntryCount(result.refusedTried)} again; none went. See each reason."
         result.refusedSent == result.refusedTried ->
             "Tried ${outboxEntryCount(result.refusedTried)} again; all of them went."
         else ->
-            "Tried ${outboxEntryCount(result.refusedTried)} again; ${result.refusedSent} went and " +
-                "${result.refusedTried - result.refusedSent} still did not."
+            "Tried ${outboxEntryCount(result.refusedTried)} again; ${result.refusedSent} went and ${result.refusedTried - result.refusedSent} still did not."
     }
     return if (result.othersSent > 0) {
         val were = if (result.othersSent == 1) "was" else "were"

@@ -487,8 +487,7 @@ fun SetPasswordLinkScreen(
                     // is signed out from this instant. Somebody who discovers that later, with no
                     // explanation, reasonably concludes something is broken.
                     Text(
-                        "Your password is set. Any other device signed in to this account has been " +
-                            "signed out.",
+                        "Password set. Other devices were signed out.",
                         color = MaterialTheme.field.muted,
                         fontSize = 13.sp,
                         lineHeight = 19.sp
@@ -606,8 +605,7 @@ fun SetPasswordLinkScreen(
                                         // above and this POST — somebody else redeemed it, an admin
                                         // withdrew it — so composing our own here would contradict it.
                                         error = failure.apiErrorMessage(
-                                            "Your password could not be set. Check your connection " +
-                                                "and try again."
+                                            "Couldn't set your password. Check your connection and retry."
                                         )
                                     }
                                 saving = false
@@ -710,12 +708,12 @@ fun IssuedPasswordLinkPanel(
             )
             Text(
                 // TERSE, but this sentence earns its place: nothing can show this link again.
-                "Copy it now and send it yourself — it is shown once and works once.",
+                "Shown once, works once — copy and send it now.",
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 12.sp,
                 lineHeight = 17.sp
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            ActionRow {
                 Button(
                     onClick = {
                         // SAY NOTHING RATHER THAN CLAIM SUCCESS. Clipboard access can fail outright
@@ -726,7 +724,6 @@ fun IssuedPasswordLinkPanel(
                             clipboard.setPrimaryClip(ClipData.newPlainText("Password link", link.link))
                         }.isSuccess
                     },
-                    modifier = Modifier.weight(1f)
                 ) {
                     Text(if (copied) "Copied" else "Copy", maxLines = 1, softWrap = false, fontSize = 13.sp)
                 }
@@ -736,7 +733,6 @@ fun IssuedPasswordLinkPanel(
                     // theatre — flipped back in the same frame, telling nobody anything. The caller
                     // disables the row's issue button while its own request is in flight.
                     onClick = onWithdraw,
-                    modifier = Modifier.weight(1f)
                 ) {
                     Text("Withdraw", maxLines = 1, softWrap = false, fontSize = 13.sp)
                 }

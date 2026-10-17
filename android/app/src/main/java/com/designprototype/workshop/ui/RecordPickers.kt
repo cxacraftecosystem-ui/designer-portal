@@ -313,8 +313,8 @@ fun offPageLinkRow(id: String, name: String?, noun: String): SelectOption = Sele
     value = id,
     label = name?.takeIf { it.isNotBlank() } ?: "The $noun already on this record",
     hint = if (name.isNullOrBlank()) {
-        "Linked earlier · this device could not list it just now, so its name is not shown"
+        "Linked earlier · could not list it just now, so its name is not shown"
     } else {
-        "Linked earlier · not in the list this device could load"
+        "Linked earlier · not in the current list"
     },
 )

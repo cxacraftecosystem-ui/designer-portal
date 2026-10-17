@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -522,7 +523,7 @@ private fun DwDiffPanel(
                     if (diff.timelineComplete) {
                         "Identical in both files"
                     } else {
-                        "Nothing written (the timeline was capped — see below)"
+                        "Nothing written (timeline capped)"
                     },
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 13.sp,
@@ -637,8 +638,10 @@ private fun DwExportCard(
             // Behind a disclosure (UX audit 2026-10-16, DA-40): a 64-character hash in the main view is
             // a developer's fact. It is still one tap away for whoever needs to match two copies.
             var showFingerprint by remember(record.id) { mutableStateOf(false) }
-            TextButton(onClick = { showFingerprint = !showFingerprint }) {
-                Text(if (showFingerprint) "Hide file fingerprint" else "File fingerprint")
+            ActionRow {
+                TextButton(onClick = { showFingerprint = !showFingerprint }) {
+                    Text(if (showFingerprint) "Hide file fingerprint" else "File fingerprint")
+                }
             }
             if (showFingerprint) {
                 Text("SHA-256 of the file", color = MaterialTheme.field.muted, fontSize = 11.sp)
@@ -687,9 +690,9 @@ private fun DwExportCard(
 private fun DwChecksum(value: String?, onDevice: Boolean) {
     if (value.isNullOrBlank()) {
         Text(
-            "No checksum recorded — this file cannot be matched to a copy by its contents." +
+            "No checksum recorded." +
                 if (onDevice) {
-                    " It was made with an earlier version of the app."
+                    " Made with an earlier app version."
                 } else {
                     ""
                 },

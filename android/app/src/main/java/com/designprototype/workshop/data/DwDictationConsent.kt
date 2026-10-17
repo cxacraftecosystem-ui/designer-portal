@@ -319,11 +319,7 @@ fun dwConsentMerge(
  * narrowed the answer to rung 2.
  */
 const val DW_CONSENT_QUESTION: String =
-    "May recordings and dictation from this workshop leave the phone to be written down by a " +
-        "transcription service? The recording is sent online to a service that turns it into words. " +
-        "A passage dictated into a field is not kept afterwards — only the words come back; a " +
-        "recording attached to this workshop as audio is kept with the workshop, so it can be " +
-        "listened to again. Ask the artisan whose voice it is, and record their answer here."
+    "May recordings and dictation from this workshop be sent to a transcription service? A clip dictated into a field is not kept; attached audio is kept with the workshop. Ask the artisan whose voice it is, and record their answer."
 
 /** The heading on the row, so it can be found by somebody who was told "it is on the workshop screen". */
 const val DW_CONSENT_ROW_TITLE: String = "Sending recordings out to be written down"
@@ -338,16 +334,12 @@ const val DW_CONSENT_ROW_TITLE: String = "Sending recordings out to be written d
 fun dwConsentStateSentence(consent: DwTier3Consent, recorded: DraftConsent?): String = when (consent) {
     DwTier3Consent.GRANTED -> {
         val who = dwConsentAttribution(recorded)
-        "Recordings from this workshop may be sent out to be written down$who. Dictation here uses the " +
-            "same craft-aware transcription as the workshop's own recordings — the one that writes " +
-            "“dabu” rather than “double”." + dwConsentSyncNote(recorded)
+        "Recordings may be sent for transcription$who." + dwConsentSyncNote(recorded)
     }
 
     DwTier3Consent.REFUSED -> {
         val who = dwConsentAttribution(recorded)
-        "Recordings from this workshop may NOT be sent out to be written down$who. No dictation from " +
-            "it is sent to the transcription service. Dictation still works — it goes to the " +
-            "phone's own speech recogniser instead, which has none of the craft vocabulary." +
+        "Recordings may not be sent for transcription$who. Dictation uses the phone's own recogniser." +
             DW_CONSENT_PHONE_RECOGNISER_CAVEAT + DW_CONSENT_MEDIA_GATED_TOO +
             dwConsentSyncNote(recorded)
     }
@@ -356,10 +348,7 @@ fun dwConsentStateSentence(consent: DwTier3Consent, recorded: DraftConsent?): St
     // one is an answer and the other is the absence of one. Both gate; only this one is answered by
     // somebody asking.
     DwTier3Consent.NOT_RECORDED ->
-        "Nobody has answered this for this workshop yet, so no dictation from it is sent to the " +
-            "transcription service. Dictation still works — it goes to the phone's own speech " +
-            "recogniser instead, which has none of the craft vocabulary and writes “double” where " +
-            "the artisan said “dabu”." + DW_CONSENT_PHONE_RECOGNISER_CAVEAT +
+        "Not answered yet. Dictation uses the phone's own recogniser until it is." + DW_CONSENT_PHONE_RECOGNISER_CAVEAT +
             DW_CONSENT_MEDIA_GATED_TOO
 }
 
@@ -382,9 +371,7 @@ fun dwConsentStateSentence(consent: DwTier3Consent, recorded: DraftConsent?): St
  * on the device, and that is what the sentence points at.
  */
 private const val DW_CONSENT_PHONE_RECOGNISER_CAVEAT: String =
-    " This answer does not cover the phone's own dictation, which on most phones uses Google's " +
-        "speech service over the network. Only a downloaded offline language pack keeps a voice " +
-        "entirely on the phone."
+    " Doesn't cover the phone's own dictation, which may use Google's online service unless an offline pack is installed."
 
 /**
  * THE WORKSHOP'S OWN RECORDINGS, WHICH THIS ANSWER NOW GOVERNS AND ONCE DID NOT.
@@ -424,10 +411,7 @@ private const val DW_CONSENT_PHONE_RECOGNISER_CAVEAT: String =
  * carry that distinction or it is the first false sentence again with the polarity flipped.
  */
 private const val DW_CONSENT_MEDIA_GATED_TOO: String =
-    " This answer covers the workshop's own recordings as well: a recording attached to this " +
-        "workshop as audio is still uploaded and kept with it, so it can be listened to again, but it " +
-        "is not sent out to be written down while this answer stands. A no recorded here also stops " +
-        "transcriptions that are already waiting."
+    " Also covers audio attached to this workshop as audio: it's still uploaded and kept with it, but not sent out to be written down while this stands. A “no” stops pending transcriptions."
 
 /** " — recorded by Meera Joshi on 12 Aug 2026", or as much of it as is actually known. */
 private fun dwConsentAttribution(recorded: DraftConsent?): String {
@@ -456,8 +440,7 @@ private fun dwConsentSyncNote(recorded: DraftConsent?): String =
     if (recorded == null || recorded.synced) {
         ""
     } else {
-        " This answer uploads the next time this workshop syncs with a connection. Until then, " +
-            "dictation from this workshop may not be sent for transcription."
+        " Uploads the next time this workshop syncs; until then, dictation isn't sent out."
     }
 
 /**
@@ -497,9 +480,7 @@ private fun dwConsentDay(value: String?): String? {
  * greyed control refuses a tap without saying why, which is how somebody concludes the app is broken."
  */
 const val DW_CONSENT_NOT_YOURS_TO_RECORD: String =
-    "Only the designer running this workshop, or an administrator, can record this answer. Ask whoever " +
-        "is running it to put the question to the artisan and record what they say — dictation here " +
-        "uses the phone's own recogniser until they do."
+    "Only the workshop's designer or an admin can record this."
 
 /** The two buttons, worded as the artisan's answer rather than as a setting. */
 const val DW_CONSENT_YES_LABEL: String = "They agreed — may be sent out"
@@ -525,8 +506,8 @@ fun dwConsentRecordedNote(
     serverRefusal: String? = null,
 ): String {
     val what = when (consent) {
-        DwTier3Consent.GRANTED -> "Recorded: recordings from this workshop may be sent out to be written down."
-        DwTier3Consent.REFUSED -> "Recorded: recordings from this workshop may not be sent out."
+        DwTier3Consent.GRANTED -> "Recorded: may be sent for transcription."
+        DwTier3Consent.REFUSED -> "Recorded: may not be sent out."
         DwTier3Consent.NOT_RECORDED -> "Nothing was recorded."
     }
     return when {
@@ -546,20 +527,14 @@ fun dwConsentRecordedNote(
           the recording having been lost.
         */
         storedOnDevice && serverRefusal != null ->
-            "$what It is saved on this phone, and dictation here follows it. It could not be saved " +
-                "online, though, so dictation from this workshop cannot be sent for transcription " +
-                "until this is put right: $serverRefusal"
+            "$what It is saved on this phone, but not online: $serverRefusal"
         serverRefusal != null ->
-            "That answer could not be saved on this phone or online, so nothing was recorded: " +
-                "$serverRefusal"
+            "Couldn't save that answer: $serverRefusal"
         // The server has it and this phone does not, so the answer is safe but this handset may ask
         // again after a restart. Said rather than hidden: it is the one state where a designer might
         // reasonably be surprised to see the question a second time.
-        synced -> "$what It is saved online, but this phone could not keep its own copy — it may ask " +
-            "you again after a restart."
-        storedOnDevice -> "$what It is saved on this phone and uploads the next time this workshop " +
-            "is opened here with a connection."
-        else -> "That answer could not be saved, so nothing was recorded. Try again, and if it keeps " +
-            "failing, tell an administrator before dictating anything from this workshop."
+        synced -> "$what Saved online; this phone may ask again after a restart."
+        storedOnDevice -> "$what Saved on this phone; it uploads the next time this workshop is opened online."
+        else -> "Couldn't save that answer. Try again, or tell an admin before dictating."
     }
 }

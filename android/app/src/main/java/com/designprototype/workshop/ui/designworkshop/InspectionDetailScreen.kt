@@ -186,10 +186,7 @@ fun InspectionDetailScreen(
     ) {
         if (!mayInspect) {
             InspectionNotice(
-                "Workshops to inspect is for Inspector / Reviewer accounts, and shows the workshops " +
-                    "an admin has assigned to you. Designers and admins open design & prototype " +
-                    "workshops from Design workshops; an admin chooses who inspects a workshop from " +
-                    "that workshop's own stage index.",
+                "For Inspector / Reviewer accounts. Shows workshops assigned to you.",
                 warning = true
             )
             return@Column
@@ -197,9 +194,7 @@ fun InspectionDetailScreen(
 
         if (notOpen) {
             InspectionNotice(
-                "This workshop is not open to you. Either it is not assigned to you to inspect, or " +
-                    "it has been deleted since your list was loaded. An admin assigns inspections " +
-                    "from a workshop's own stage index.",
+                "This workshop isn't open to you.",
                 warning = true
             )
             return@Column
@@ -253,9 +248,7 @@ fun InspectionDetailScreen(
 
         if (dwInspectionIsReadOnly(record.readOnly)) {
             InspectionNotice(
-                "Read-only. This is an inspection: every stage below is shown as the designers " +
-                    "recorded it, with who wrote each field, and nothing here can be edited, " +
-                    "submitted or deleted. Your corrections go in Correction suggestions, below.",
+                "Read-only. Add corrections under Correction suggestions below.",
                 warning = true
             )
         }
@@ -276,9 +269,7 @@ fun InspectionDetailScreen(
             // this is close to unreachable — but "close to" is not "never", and drawing an empty
             // page would read as a workshop with no stages rather than as a build with no registry.
             InspectionNotice(
-                "The stages cannot be shown because the form layout could not be loaded. The " +
-                    "workshop itself is fine and nothing has been changed. Update the app, then open " +
-                    "this workshop again.",
+                "Couldn't load the form layout. Update the app and reopen.",
                 warning = false
             )
             return@Column
@@ -357,7 +348,7 @@ private fun InspectionStage(
             Text(
                 "Nothing has been recorded on this stage." +
                     if (stage.optionalStage) {
-                        " This stage is optional, so a workshop may skip it."
+                        " Optional stage."
                     } else {
                         ""
                     },
@@ -411,10 +402,7 @@ private fun InspectionStage(
             // designer-defined keys as if they were labels would put made-up question text on an
             // inspection.
             Text(
-                "$customCount ${if (customCount == 1) "answer" else "answers"} to " +
-                    (if (customCount == 1) "a question" else "questions") +
-                    " this workshop's designer added to this stage " +
-                    (if (customCount == 1) "is" else "are") + " recorded.",
+                "$customCount custom ${if (customCount == 1) "answer" else "answers"} recorded.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -467,7 +455,7 @@ private fun InspectionRecord(
                         // sentence. A field with nothing in it is `Empty` and is counted as
                         // unanswered instead, so "no photograph" and "a photograph this read does
                         // not carry" never collapse into one line.
-                        "${reading.count} ${if (reading.count == 1) "file" else "files"} recorded here.",
+                        "${reading.count} ${if (reading.count == 1) "file" else "files"}.",
                         stamps[fieldSpec.key],
                         media = true,
                     )

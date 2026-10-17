@@ -373,10 +373,9 @@ fun dwPackRows(states: Map<String, DwPackState>): List<String> =
  *   these", the other is "this Android version cannot be asked, use the phone's own settings".
  */
 fun dwPackEmptyListSentence(canAsk: Boolean): String = if (!canAsk) {
-    "This Android version cannot be asked which speech packs are installed. Dictation still works — " +
-        "add packs in the phone's own speech or keyboard settings."
+    "Dictation still works, but this Android version cannot be asked which packs are installed. Add them in the phone's own speech or keyboard settings."
 } else {
-    "No offline packs to add on this phone. Dictation works as normal."
+    "No offline packs to add. Dictation works as normal."
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -404,28 +403,22 @@ fun dwPackStateLabel(state: DwPackState): String = when (state) {
 /** The full sentence for one language's state, naming [label] so it can stand on its own. */
 fun dwPackStateSentence(label: String, state: DwPackState): String = when (state) {
     DwPackState.INSTALLED ->
-        "$label is installed on this phone. Dictation in $label works with no signal."
+        "$label works offline."
     DwPackState.DOWNLOADING ->
-        "$label has been asked for and the phone has not finished fetching it. It will start " +
-            "working offline once the download completes — there is nothing more to tap."
+        "$label downloading."
     DwPackState.DOWNLOADABLE ->
-        "$label is not on this phone yet. Without it, dictation in $label needs a connection."
+        "$label not downloaded — needs a connection to dictate."
     DwPackState.NETWORK_ONLY ->
-        "$label has no offline pack on this phone. Dictation in $label works while there is signal " +
-            "and not in a courtyard without one."
+        "$label has no offline pack — needs signal."
     // Says the two things that were measured and stops. It does NOT promise the network will serve
     // $label — this phone was never asked — and it does not tell the designer to give up on it,
     // which is what the UNSUPPORTED sentence below used to do to seventeen working languages.
     DwPackState.NO_OFFLINE_PACK ->
-        "This phone's speech service offers no offline pack for $label. Dictation in $label uses " +
-            "the online recogniser instead, so it needs a connection. If it fails even with signal, " +
-            "type the answer in."
+        "No offline $label pack — dictation needs a connection."
     DwPackState.UNSUPPORTED ->
-        "This phone's speech recogniser does not offer $label, offline or online. Type the answer " +
-            "in, or pick another language."
+        "$label isn't supported. Type or pick another language."
     DwPackState.UNKNOWN ->
-        "This phone cannot say whether $label is installed. Dictation will tell you if the language " +
-            "is missing."
+        "$label status unknown."
 }
 
 /**
@@ -439,14 +432,11 @@ fun dwPackStateSentence(label: String, state: DwPackState): String = when (state
  */
 fun dwDownloadCostSentence(connection: DwConnection): String = when (connection) {
     DwConnection.NONE ->
-        "There is no connection, so nothing can be fetched now."
+        "Offline."
     DwConnection.METERED ->
-        "This phone is on mobile data, so the download will be paid for by the megabyte. The phone " +
-            "does not report the size of a speech model before it fetches it — if you are on a " +
-            "prepaid bundle, wait for Wi-Fi."
+        "On mobile data. Pack size isn't shown in advance — prefer Wi-Fi."
     DwConnection.UNMETERED ->
-        "This phone is on Wi-Fi. The phone does not report the size of a speech model before it " +
-            "fetches it, but nothing here is charged by the megabyte."
+        "On Wi-Fi."
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -486,13 +476,11 @@ fun dwDownloadCostSentence(connection: DwConnection): String = when (connection)
  * village that it never came is the failure this string prevents.
  */
 const val DW_PACK_REQUEST_IS_A_REQUEST: String =
-    "Asking is a request to the phone's speech service, not a guarantee. Android may queue it for " +
-        "later, or ask you to approve it. Come back to this list to see whether it arrived."
+    "Android may queue or ask to approve it. Check back here."
 
 /** Said only on Android 13, where the request goes out with no progress callback of any kind. */
 const val DW_PACK_NO_PROGRESS_ON_13: String =
-    "This phone runs Android 13, which cannot report download progress. The request has gone to the " +
-        "speech service — tap “Check again” in a few minutes to see whether the pack arrived."
+    "Android 13 shows no progress. Tap “Check again” in a few minutes."
 
 // `DW_PACK_CANNOT_ASK_SENTENCE` STOOD HERE and is deleted, 2026-08-13. 58 words for API < 33: *"This
 // phone's Android version cannot be asked which speech packs are installed — that was added in Android

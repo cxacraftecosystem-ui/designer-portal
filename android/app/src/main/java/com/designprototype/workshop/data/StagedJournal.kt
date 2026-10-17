@@ -298,8 +298,7 @@ object StagedJournal {
         val target = file(dir)
         if (unrescued == target.path) {
             throw IOException(
-                "The staged-object journal ${target.name} is damaged and could not be set aside, so it " +
-                    "will not be overwritten; the keys it holds are still reclaimable from it."
+                "The staged-object journal ${target.name} is damaged and couldn't be set aside; it won't be overwritten."
             )
         }
         if (entries.isEmpty()) {

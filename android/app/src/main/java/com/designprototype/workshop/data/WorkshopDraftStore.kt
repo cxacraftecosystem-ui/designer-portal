@@ -875,12 +875,9 @@ object WorkshopDraftStore {
         val moved = runCatching { file.renameTo(kept) }.getOrDefault(false)
         alert.set(
             if (moved) {
-                "A workshop's saved draft $reason. Nothing has been deleted — a copy is kept on this " +
-                    "phone, with every photo and recording. Ask your administrator for help before " +
-                    "uninstalling the app."
+                "A workshop draft $reason. Nothing has been deleted — a copy is kept with all media. Ask your admin before uninstalling."
             } else {
-                "A workshop's saved draft $reason, and could not be set aside. Do not uninstall the " +
-                    "app; ask your administrator for help first."
+                "A workshop draft $reason and couldn't be set aside. Don't uninstall; ask your admin."
             }
         )
     }
@@ -946,13 +943,9 @@ object WorkshopDraftStore {
         val moved = runCatching { file.renameTo(kept) }.getOrDefault(false)
         alert.set(
             if (moved) {
-                "A workshop's saved draft was made by a newer version of this app. Nothing has been " +
-                    "deleted — it is kept on this phone with every photo and recording. Install the newer " +
-                    "version again to get everything it recorded back."
+                "A workshop draft is from a newer app version. Nothing has been deleted — it's kept; Install the newer version again to recover it."
             } else {
-                "A workshop's saved draft was made by a newer version of this app and could not be set " +
-                    "aside, so this save was stopped — nothing has been overwritten. Install the newer " +
-                    "version again to keep working on this workshop."
+                "A workshop draft is from a newer app version, and could not be set aside, so this save was stopped. Nothing was overwritten; Install the newer version again."
             }
         )
         return moved
@@ -1033,9 +1026,7 @@ object WorkshopDraftStore {
             )
             if (!moved) {
                 throw IOException(
-                    "This workshop's draft was made by a newer version of this app and could not be " +
-                        "set aside, so this save was stopped. Nothing has been lost. Install the newer " +
-                        "version again to keep working on this workshop."
+                    "This draft is from a newer app version and could not be set aside, so this save was stopped. Nothing has been lost; Install the newer version again."
                 )
             }
         }
@@ -1293,7 +1284,7 @@ object WorkshopDraftStore {
                 // Never fall back to a recursive delete. A failed move must leave the data exactly
                 // where it was; the alternative is that the one path guaranteeing recovery is also
                 // the path that destroys the data when it goes wrong.
-                throw IOException("This workshop could not be removed from this phone. Nothing has been deleted.")
+                throw IOException("Couldn't remove this workshop from the phone. Nothing was deleted.")
             }
             target
         }
@@ -1368,7 +1359,7 @@ object WorkshopDraftStore {
 
         val target = File(mediaDir(context, workshopId), UUID.randomUUID().toString() + (extension?.let { ".$it" } ?: ""))
         val input: InputStream = resolver.openInputStream(uri)
-            ?: throw IllegalStateException("Unable to read the captured file — it may have already been cleared")
+            ?: throw IllegalStateException("Couldn't read the captured file.")
 
         val digest = MessageDigest.getInstance("SHA-256")
         var total = 0L

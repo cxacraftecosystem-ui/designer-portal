@@ -174,7 +174,7 @@ private val ROLE_LABELS = mapOf(
  * warning line already prints.
  */
 private const val EMPTY_SCOPE_MESSAGE =
-    "Pick at least one record type or questionnaire section — a task with no work in it cannot be created."
+    "Pick at least one record type or questionnaire section."
 
 /** The label the server gives this role, falling back to the local table for an unknown one. */
 private fun roleLabelOf(role: String?): String = ROLE_LABELS[role] ?: role.orEmpty()
@@ -541,8 +541,7 @@ fun TaskAdminScreen(
             )
         }
         Text(
-            "Hand documentation work to the people below you, then compare what they report with " +
-                "what is actually recorded.",
+            "Assign documentation work and compare reported with recorded progress.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -568,10 +567,9 @@ fun TaskAdminScreen(
             )
             Text(
                 if (workshopTitle != null) {
-                    "Artisans, progress and the assignment list below are all limited to $workshopTitle."
+                    "Scoped to $workshopTitle."
                 } else {
-                    "Nothing is narrowed yet. Pick a workshop to scope the artisan picker, progress " +
-                        "and the assignment list."
+                    "Pick a workshop to narrow artisans, progress and assignments."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -629,7 +627,7 @@ fun TaskAdminScreen(
                 modifier = Modifier.fillMaxWidth()
             )
             Text(
-                "Searches everyone, including names that are not on the lists below.",
+                "Searches everyone, not just those listed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -872,8 +870,7 @@ private fun AssignWorkTab(
             StepHeader(
                 number = 2,
                 title = "Who does the work",
-                hint = "Only people below you can be given a task. Narrow by role first if the " +
-                    "list is long — each person gets their own task."
+                hint = "Only people below you. Each gets their own task."
             )
             FieldLabel("Filter by role")
             SingleSelectField(
@@ -922,7 +919,9 @@ private fun AssignWorkTab(
                         PersonChip(user = user, onRemove = { form.assigneeIds = form.assigneeIds - user.id })
                     }
                 }
-                TextButton(onClick = { form.assigneeIds = emptySet() }) { Text("Clear all") }
+                ActionRow {
+                    TextButton(onClick = { form.assigneeIds = emptySet() }) { Text("Clear all") }
+                }
             } else {
                 Text(
                     "Nobody selected yet.",
@@ -930,8 +929,10 @@ private fun AssignWorkTab(
                     color = MaterialTheme.field.placeholder
                 )
                 if (visibleAssignees.isNotEmpty()) {
-                    TextButton(onClick = { form.assigneeIds = visibleAssignees.map { it.id }.toSet() }) {
-                        Text("Select all ${visibleAssignees.size} shown")
+                    ActionRow {
+                        TextButton(onClick = { form.assigneeIds = visibleAssignees.map { it.id }.toSet() }) {
+                            Text("Select all ${visibleAssignees.size} shown")
+                        }
                     }
                 }
             }
@@ -942,8 +943,7 @@ private fun AssignWorkTab(
             StepHeader(
                 number = 3,
                 title = "What they must produce",
-                hint = "Record types and questionnaire sections can be combined. Leave the artisan " +
-                    "list empty to mean every artisan in scope."
+                hint = "Combine record types and sections. Leave artisans empty for all in scope."
             )
             MultiSelectField(
                 label = "Record types",
@@ -1018,9 +1018,9 @@ private fun AssignWorkTab(
             )
             Text(
                 if (validTarget != null) {
-                    "Each person is asked for $validTarget record${if (validTarget == 1) "" else "s"}."
+                    "$validTarget record${if (validTarget == 1) "" else "s"} each."
                 } else {
-                    "Optional. Without it, record work reads as “as many as apply” and has no percentage."
+                    "Optional. Without it there's no percentage."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1032,7 +1032,7 @@ private fun AssignWorkTab(
             StepHeader(
                 number = 4,
                 title = "Title, brief and deadline",
-                hint = "Leave the title empty to use the one generated from the scope."
+                hint = "Leave blank to use the generated title."
             )
             FieldLabel("Title")
             OutlinedTextField(
@@ -1073,7 +1073,7 @@ private fun AssignWorkTab(
                 label = null,
                 value = form.description,
                 onValueChange = { form.description = it },
-                placeholder = "What good work looks like here. Markdown is supported.",
+                placeholder = "What good work looks like. Markdown supported.",
                 minLines = 3,
                 dictate = true,
             )
@@ -1107,7 +1107,7 @@ private fun AssignWorkTab(
                         workshopTitle = workshopTitle
                     )
                 } else {
-                    "Pick the people and the work — the preview appears here."
+                    "Pick people and work to preview."
                 },
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface
@@ -1127,8 +1127,7 @@ private fun AssignWorkTab(
 
             if (!hasWork && hasPeople) {
                 WarningLine(
-                    "Pick at least one record type or questionnaire section — a task with no work in " +
-                        "it cannot be created."
+                    "Pick at least one record type or questionnaire section."
                 )
             }
             if (hasWork && !hasPeople) {
@@ -1205,8 +1204,7 @@ private fun AccountabilityTab(
         report == null -> Unit
         report.assignees.isEmpty() -> EmptyStateBlock(
             title = "Nobody has been given work here yet",
-            body = "Assign work on the first tab and this becomes the accountability view: who has " +
-                "what, what they say they have done, and what is actually recorded."
+            body = "Assign work on the first tab to track who has what."
         )
         else -> Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             StatTileGrid(
@@ -1221,15 +1219,12 @@ private fun AccountabilityTab(
 
             if (report.truncated) {
                 WarningBanner(
-                    "This view covers only part of the work. Pick a single workshop above to " +
-                        "see all of it."
+                    "Partial view. Pick a single workshop to see everything."
                 )
             }
 
             Text(
-                "Reported is what the person says they have done. Recorded is what they have " +
-                    "actually created within the task. Neither overwrites the other — a wide gap " +
-                    "is the thing to ask about.",
+                "Reported is what they say; recorded is what exists. Ask about big gaps.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1276,14 +1271,16 @@ private fun AssigneeCard(row: TaskProgressAssigneeDto) {
             ProgressGapMeter(reported = row.reportedTotal, derived = row.derivedTotal, target = row.targetTotal)
         }
 
-        TextButton(onClick = { open = !open }) {
-            Icon(
-                if (open) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(6.dp))
-            Text("${if (open) "Hide" else "Show"} the ${plural(row.taskCount, "task", "tasks")}")
+        ActionRow {
+            TextButton(onClick = { open = !open }) {
+                Icon(
+                    if (open) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("${if (open) "Hide" else "Show"} the ${plural(row.taskCount, "task", "tasks")}")
+            }
         }
 
         if (open) {
@@ -1392,8 +1389,7 @@ private fun AssignmentsTab(
         loading && items.isEmpty() -> LoadingLine("Loading assignments...")
         items.isEmpty() -> EmptyStateBlock(
             title = "No assignments here yet",
-            body = "Everything handed out from the assignment builder shows up here as one manageable " +
-                "unit, with the whole group's progress and a single withdraw action."
+            body = "Assignments you create appear here, with group progress and a withdraw option."
         )
         else -> Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             deleteError?.let { ErrorBanner(it) }
@@ -2160,7 +2156,7 @@ private fun ProgressGapMeter(reported: Int, derived: Int?, target: Int?) {
         GapChip(reported = reported, derived = derived)
         if (!hasTarget) {
             Text(
-                "No target count on this task — the bars compare the two figures to each other.",
+                "No target — bars compare the two figures.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.field.placeholder
             )
@@ -2239,16 +2235,14 @@ private fun PaginationRow(page: Int, pages: Int, total: Int, onPage: (Int) -> Un
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.field.body
         )
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ActionRow {
             OutlinedButton(
                 onClick = { onPage(page - 1) },
                 enabled = page > 1,
-                modifier = Modifier.weight(1f)
             ) { Text("Previous") }
             OutlinedButton(
                 onClick = { onPage(page + 1) },
                 enabled = page < pages,
-                modifier = Modifier.weight(1f)
             ) { Text("Next") }
         }
     }

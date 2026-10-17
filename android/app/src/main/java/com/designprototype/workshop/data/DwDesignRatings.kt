@@ -141,19 +141,14 @@ enum class DwRatingRound(
     PEER(
         wire = "PEER",
         title = "Peer review — this workshop",
-        blurb = "The designers on this workshop rate each other's work and settle the order it " +
-            "stands in.",
-        emptyNote = "There is nothing to review in this workshop yet. Pieces appear here as they " +
-            "are added to the stage they belong to.",
+        blurb = "Designers on this workshop rate and order each other's work.",
+        emptyNote = "Nothing to review yet.",
     ),
     POOL(
         wire = "POOL",
         title = "The wider pool of designers",
-        blurb = "Pieces this workshop has declared finished, open to every designer on the " +
-            "platform. They are listed in score order; rearranging them belongs to the workshop " +
-            "that made them.",
-        emptyNote = "Nothing in this workshop has been declared finished, so nothing is open to " +
-            "the wider pool yet.",
+        blurb = "Finished pieces, open to all designers, in score order.",
+        emptyNote = "Nothing finished yet.",
     );
 
     companion object {
@@ -201,13 +196,11 @@ enum class DwRateableEntity(
     fun hint(round: DwRatingRound): String = when (round) {
         DwRatingRound.POOL -> when (this) {
             PROTOTYPE -> "The prototypes in this workshop's pool round."
-            SKETCH -> "The sketches in this workshop's pool round — including the ones it never " +
-                "prototyped."
+            SKETCH -> "The sketches in this workshop's pool round — including ones never prototyped."
         }
         DwRatingRound.PEER -> when (this) {
             PROTOTYPE -> "The prototypes in this workshop's peer round."
-            SKETCH -> "The sketches in this workshop's peer round — including the ones it never " +
-                "prototyped."
+            SKETCH -> "The sketches in this workshop's peer round — including ones never prototyped."
         }
     }
 
@@ -622,21 +615,18 @@ fun dwPlanArrangement(
 ): DwArrangementPlan {
     if (stamp != null && (stamp.by.isBlank() || stamp.at.isBlank())) {
         return DwArrangementPlan.Refused(
-            "This arrangement has not been saved because your name could not be recorded with it. " +
-                "Sign in again, then try again."
+            "Not saved — your name could not be recorded. Sign in again and retry."
         )
     }
     if (held.isEmpty() && order.isNotEmpty()) {
         return DwArrangementPlan.Refused(
-            "This arrangement has not been saved because these pieces are not on this phone. Open " +
-                "their stage once with a connection, then try again."
+            "Not saved — these pieces are not on this phone. Open this stage once with a connection, then retry."
         )
     }
     val knownToServer = held.any { it.dwEntryId() != null }
     if (stamp == null && !stageSeen && knownToServer) {
         return DwArrangementPlan.Refused(
-            "The list is still in the designers' order. To return to score order, open this stage " +
-                "once with a connection, then try again."
+            "Still in the designers' order — open this stage once with a connection to reset."
         )
     }
     return DwArrangementPlan.Write(dwArrangeRows(held, order, stamp), stamp)
@@ -702,8 +692,7 @@ fun dwLedgerEmptyNote(ledger: SubjectLedgerDto): String? {
     return when {
         ledger.summary.ratingCount == 0 -> "Nobody has rated this piece yet."
         ledger.canReadLedger -> "No ratings could be shown for this piece."
-        else -> "${ledger.summary.ratingCount} designer(s) have rated this piece. You can see the " +
-            "score, not who gave it."
+        else -> "${ledger.summary.ratingCount} designer(s) have rated this piece. You can see the score, not who gave it."
     }
 }
 
@@ -859,8 +848,7 @@ data class DwRatingFailure(val message: String, val offline: Boolean)
 /** The whole-round read failed. */
 fun dwRoundFailure(offline: Boolean, refusal: String): DwRatingFailure = DwRatingFailure(
     message = if (offline) {
-        "Could not connect, so the scores and reviews could not be loaded. Try again when you " +
-            "have signal."
+        "Offline — scores could not be loaded."
     } else {
         refusal
     },
@@ -869,24 +857,22 @@ fun dwRoundFailure(offline: Boolean, refusal: String): DwRatingFailure = DwRatin
 
 /** The fallback sentence for a round the repository answered and refused. */
 const val DW_ROUND_REFUSED: String =
-    "This round could not be read. If this workshop's pieces have not been declared finished, " +
-        "there is nothing in the wider round yet."
+    "Couldn't load this round."
 
 /** The fallback sentence for a ledger the repository answered and refused. */
 const val DW_LEDGER_REFUSED: String = "This review history could not be read."
 
 /** What to say when the ledger could not be reached at all. */
 const val DW_LEDGER_UNREACHABLE: String =
-    "Could not connect, so who rated this piece cannot be shown. Try again when you have signal."
+    "Offline — raters couldn't load."
 
 /** The refusal for a submission that never left the phone. */
 const val DW_RATING_NOT_SENT: String =
-    "This rating was not accepted, and nothing has been recorded. What you have written is still " +
-        "in the boxes."
+    "Rating not accepted. Your text is kept."
 
 /** The refusal for a submission with no score chosen. */
 const val DW_RATING_NEEDS_A_SCORE: String =
-    "Choose a score from 1 to 5 — the ranking is computed from it."
+    "Choose a score from 1 to 5."
 
 /**
  * What became of the stage push an arrangement asked for, in words.
@@ -912,16 +898,13 @@ fun dwPushNote(push: StagePush): String = when (push) {
     StagePush.AlreadySent ->
         "Saved. This arrangement was already uploaded."
     is StagePush.HeldBack ->
-        "Saved on this phone. It will upload together with ${push.files} attachment" +
-            "${if (push.files == 1) "" else "s"} from this stage that " +
-            "${if (push.files == 1) "is" else "are"} still waiting to upload."
+        "Saved. Uploads with ${push.files} attachment${if (push.files == 1) "" else "s"} still pending."
     StagePush.NoRemoteYet ->
-        "Saved on this phone. It will upload after the workshop itself has been uploaded."
+        "Saved. Uploads after the workshop itself has been uploaded."
     StagePush.NothingToSend ->
-        "Saved on this phone. It will upload once this stage has been opened on this phone with " +
-            "a connection."
+        "Saved. Uploads once this stage has been opened online."
     StagePush.NotSent ->
-        "Saved on this phone, but the upload did not finish. It will be sent again with the next sync."
+        "Saved. Upload didn't finish; it retries next sync."
 }
 
 /**
@@ -959,6 +942,4 @@ sealed interface DwRatingOutcome {
  * having to un-ship.
  */
 const val DW_RATING_QUEUED: String =
-    "This rating is saved on this phone and is waiting to upload. It will be sent with the next " +
-        "sync, or you can send it now from the bar at the top of the app. The scores on these cards " +
-        "update once it has been uploaded."
+    "Saved. Uploads with the next sync."

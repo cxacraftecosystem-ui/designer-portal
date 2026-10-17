@@ -888,12 +888,9 @@ fun UsageConsentGateScreen(
                                     // body ONCE — never ask the same failure twice.
                                     sendError = failure.apiErrorMessage(
                                         if (online) {
-                                            "Your answer could not be sent, so it has not " +
-                                                "been recorded. Try again."
+                                            "Couldn't send your answer. Try again."
                                         } else {
-                                            "This phone has no connection, so your answer was not " +
-                                                "sent and nothing has been recorded. Try again " +
-                                                "where there is a signal."
+                                            "Offline — nothing recorded. Try again when connected."
                                         }
                                     )
                                 }

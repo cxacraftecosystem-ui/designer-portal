@@ -561,25 +561,22 @@ internal fun DwDictationButton(
                     // Heard sound, matched nothing. Almost always background noise or a language
                     // mismatch — the designer set Hindi and spoke Marathi — so the language is named.
                     SpeechRecognizer.ERROR_NO_MATCH ->
-                        "Nothing was recognised. Check that the language above matches what you are " +
-                            "speaking, and try again closer to the phone."
+                        "Nothing recognised. Check the language and speak closer."
                     // Heard nothing at all for the platform's silence window.
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
-                        "No speech was heard. Tap the microphone and begin speaking straight away — " +
-                            "it stops listening after a few seconds of silence."
+                        "No speech heard. Start speaking right after tapping the mic."
                     // The permission was revoked between the check and the call, or a device policy
                     // blocks the microphone. Never retried: retrying produces the same error forever.
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
-                        "This app does not have permission to use the microphone. Grant it under " +
-                            "Settings › Apps › permissions, then tap the microphone again."
+                        "Microphone permission needed. Allow it in Settings › Apps."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
                         onNetworkFailure()
                         return
                     }
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY ->
-                        "The phone's speech service is busy. Wait a moment and tap the microphone again."
+                        "Speech service busy. Try again shortly."
                     SpeechRecognizer.ERROR_AUDIO ->
-                        "The microphone could not be read. Something else on the phone may be using it."
+                        "Couldn't read the microphone — another app may be using it."
                     /*
                       THE LANGUAGE THE DESIGNER CHOSE IS NOT ON THIS PHONE, and until this branch
                       existed that fell to the `else` below and told them to "try again" — advice that
@@ -616,7 +613,7 @@ internal fun DwDictationButton(
                         return
                     }
                     else ->
-                        "Dictation stopped unexpectedly. Type the answer in, or try again."
+                        "Dictation stopped. Try again or type."
                 }
                 release()
                 currentError(message)
@@ -803,14 +800,14 @@ internal fun DwDictationButton(
         )
         if (built == null) {
             release()
-            currentError("This phone would not start its speech recogniser.")
+            currentError("Couldn't start speech recognition.")
             return
         }
         recognizer = built
         state = DwDictationState.WORKING
         runCatching { built.startListening(intentFor()) }.onFailure {
             release()
-            currentError("This phone would not start its speech recogniser.")
+            currentError("Couldn't start speech recognition.")
         }
     }
 
@@ -1153,9 +1150,7 @@ internal fun DwDictationButton(
                          */
                         release()
                         currentError(
-                            "This phone's own speech model ran and found no words in what it heard. " +
-                                "Nothing was sent anywhere. Try again a little closer to the " +
-                                "microphone, or type the answer in."
+                            "No words found. Speak closer or type."
                         )
                     }
                 }
@@ -1173,9 +1168,7 @@ internal fun DwDictationButton(
                     DwAsrModelRun.recordRefusal(tag)
                     release()
                     currentError(
-                        "The speech model on this phone could not run just now. Nothing was sent " +
-                            "anywhere and nothing was recorded. Tap the microphone again and " +
-                            "dictation will use whatever else this phone has."
+                        "The on-phone model couldn't run. Tap the mic to try another way."
                     )
                 }
             }
@@ -1245,7 +1238,7 @@ internal fun DwDictationButton(
             // Asked AT THE POINT OF USE and refused here means refused for dictation specifically,
             // which is a different thing from the launch-time batch being declined months ago on a
             // shared handset. Say what was refused and what it was for.
-            currentError("Dictation needs the microphone. Nothing was recorded.")
+            currentError("Dictation needs the microphone.")
         }
     }
 
@@ -1326,7 +1319,7 @@ internal fun DwDictationButton(
                     // Named apart from "Stop dictating" because a screen reader is the one surface
                     // that cannot see the panel explaining that this rung does not stream.
                     DwDictationState.RECORDING ->
-                        "Stop recording and send this dictation to be written down"
+                        "Stop and transcribe"
                     DwDictationState.UPLOADING -> "Writing down what you dictated"
                     else -> "Stop dictating"
                 },
@@ -1571,7 +1564,7 @@ private fun DwOnDeviceModelPanel(
                             if (elapsed < 60) {
                                 "Writing it down — $elapsed sec so far."
                             } else {
-                                "Writing it down — ${elapsed / 60} min ${elapsed % 60} sec so far."
+                                "Transcribing — ${elapsed / 60} min ${elapsed % 60} sec."
                             },
                             color = MaterialTheme.field.body,
                             fontSize = 13.sp
@@ -1701,7 +1694,7 @@ private fun DwServerDictationPanel(
                  */
                 if (!uploading) {
                     Text(
-                        "The words arrive when you press Stop, not as you speak.",
+                        "Text appears after you tap Stop.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )
@@ -1769,5 +1762,5 @@ internal fun dictatable(type: com.designprototype.workshop.data.DwFieldType): Bo
 internal fun dictationUnavailableNote(context: Context): String? = when {
     runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false) -> null
     DwDictationRun.repository() != null -> null
-    else -> "Dictation is not available on this phone right now. Type the answer in."
+    else -> "Dictation isn't available right now. Type instead."
 }

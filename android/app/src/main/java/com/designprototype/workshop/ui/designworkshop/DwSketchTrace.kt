@@ -250,8 +250,7 @@ internal suspend fun dwTraceDecodeForTrace(path: String): Bitmap = withContext(D
     if (dwTraceRotationTagged(path)) {
         throw DwTraceHostFailure(
             DwTraceFailureKind.IMAGE_UNREADABLE,
-            "this photograph carries a rotation the tracer will not guess at — " +
-                "straighten the sheet first, and trace the plate that produces",
+            "this photo is rotated — straighten the sheet first, then trace the plate",
         )
     }
 

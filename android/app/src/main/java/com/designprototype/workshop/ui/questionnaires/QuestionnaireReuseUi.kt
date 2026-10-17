@@ -74,8 +74,7 @@ import com.designprototype.workshop.ui.field
 
 /** The sentence shown BEFORE the copy is made. The one misreading this feature invites, closed. */
 internal const val REUSE_BLURB: String =
-    "This makes a NEW questionnaire you own. Its questions come across; no sitting, no respondent " +
-        "and no answer does — the original keeps all of them."
+    "Makes a new questionnaire you own, with the questions only — no answers."
 
 /**
  * The control, in a card of its own beside the two interchange cards.
@@ -188,8 +187,7 @@ internal fun ReuseQuestionnaireDialog(
                 if (options.isEmpty()) {
                     workshops.notice()?.let { line ->
                         Text(
-                            "$line The copy will be unattached, and it can be attached later from " +
-                                "its own screen.",
+                            "$line The copy can be attached later.",
                             color = MaterialTheme.field.muted,
                             fontSize = 11.sp,
                             lineHeight = 16.sp,
@@ -197,7 +195,7 @@ internal fun ReuseQuestionnaireDialog(
                     }
                 } else {
                     Text(
-                        "Only workshops this account can already open are listed.",
+                        "Only workshops you can open.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
@@ -225,8 +223,7 @@ internal fun ReuseQuestionnaireDialog(
                     // The server's rule, said rather than left to be discovered: it counts up against
                     // the titles already at the target, so two copies at one workshop are tellable
                     // apart in a list.
-                    "Left blank, the copy is called “${source.title.ifBlank { "Untitled" }} (reused)”, " +
-                        "counted up if that name is already taken at the same workshop.",
+                    "Defaults to “${source.title.ifBlank { "Untitled" }} (reused)”.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
@@ -256,11 +253,11 @@ internal fun ReuseQuestionnaireDialog(
                     if (changeDescription) {
                         // Blank MEANS empty here, and only here. That is the whole reason the
                         // checkbox exists rather than a text box that starts out filled in.
-                        "Left blank, the copy starts with no description at all."
+                        "Left blank, there's no description."
                     } else {
                         source.description?.takeIf { it.isNotBlank() }
                             ?.let { "The copy carries the same description: “$it”" }
-                            ?: "The source has no description, so neither will the copy."
+                            ?: "The source has no description."
                     },
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,

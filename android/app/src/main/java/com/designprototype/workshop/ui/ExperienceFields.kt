@@ -214,5 +214,4 @@ const val MAX_EXPERIENCE_MONTHS: Int = 11
 // Concatenated rather than interpolated: a `const val` initializer has to be a compile-time
 // constant, and `+` over two constants provably is.
 const val DEFAULT_EXPERIENCE_HELP: String =
-    "Whole years, and the odd months on top of them. Leave either at \"" + NOT_STATED + "\" if " +
-        "you would rather not say — that is a different answer from 0, and both are kept."
+    "Years and months. Use \" " + NOT_STATED + "\" to skip — that differs from 0."

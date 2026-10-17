@@ -786,7 +786,7 @@ fun dwAsrModelOfferSentence(
         // It still names where the bytes came from: a designer told their phone holds a 365 MB model
         // they did not download is entitled to know who put it there.
         DwAsrModelOffer.INSTALL_FROM_STAGED_FILES ->
-            "Already on this phone, put here with a cable. Installing costs no data."
+            "Already on this phone — installing uses no data."
 
         /*
          * THE COST, BEFORE THE TAP — AND THE TWO ROUTES COST DIFFERENT AMOUNTS, IN OPPOSITE
@@ -805,24 +805,22 @@ fun dwAsrModelOfferSentence(
          */
         DwAsrModelOffer.DOWNLOAD ->
             if (fromEndpoint) {
-                "${dwBytesLabel(model?.onDiskBytes)} to download, and it takes the same space on " +
-                    "the phone. Nothing is fetched until you tap."
+                "${dwBytesLabel(model?.onDiskBytes)} download, same on disk."
             } else {
-                "${dwBytesLabel(artifact?.downloadBytes)} to fetch, " +
-                    "${dwBytesLabel(model?.onDiskBytes)} to keep. Nothing is fetched until you tap."
+                "${dwBytesLabel(artifact?.downloadBytes)} download, ${dwBytesLabel(model?.onDiskBytes)} on disk."
             }
 
         DwAsrModelOffer.RESUME ->
-            "Paused. Resuming downloads only the part that is missing."
+            "Paused. Resume to finish."
 
         DwAsrModelOffer.RETRY ->
-            "The last attempt did not finish and nothing was kept."
+            "Last attempt didn't finish."
 
         DwAsrModelOffer.NO_CONNECTION ->
             "No connection, so it cannot be fetched now."
 
         DwAsrModelOffer.ALREADY_INSTALLED ->
-            "On this phone, every file checked against its fingerprint when this screen opened."
+            "Installed and verified."
 
         DwAsrModelOffer.IN_PROGRESS ->
             "Installing now."
@@ -844,7 +842,7 @@ fun dwAsrModelOfferSentence(
          * where the maintainer reads it: docs/ASR-MODEL-SIDELOAD.md is the cable route.
          */
         DwAsrModelOffer.CONTAINER_NOT_READABLE_IN_THIS_BUILD ->
-            "The speech model cannot be downloaded to this phone right now."
+            "Can't download the speech model right now."
 
         /*
          * THE SERVER'S OWN 403 SENTENCE, QUOTED, and not a second phrasing of the rule. The gate is
@@ -854,11 +852,10 @@ fun dwAsrModelOfferSentence(
          * that trap and deliberately does not say "or above".
          */
         DwAsrModelOffer.NOT_ENTITLED ->
-            "The offline speech model is for designers, admins and the master admin. Ask an " +
-                "administrator if you need it."
+            "For designers and admins. Ask an admin if you need it."
 
         DwAsrModelOffer.SESSION_LAPSED ->
-            "You have been signed out. Sign in again and tap “Check again”."
+            "Signed out. Sign in and tap “Check again”."
 
         // NOT "the deployment has no model": it has one, and it is not the one this app knows how to
         // ask for. Sending this designer to an administrator wastes both their time — the bytes will
@@ -867,7 +864,7 @@ fun dwAsrModelOfferSentence(
             "Update the app to download the speech model."
 
         DwAsrModelOffer.STORAGE_UNMEASURED ->
-            "This phone would not say how much storage is free. Tap “Check again”."
+            "Couldn't read free storage. Tap “Check again”."
 
         /*
          * THE FIGURE IS THE ONE THE GATE ACTUALLY USED, and until the endpoint route existed there
@@ -896,9 +893,7 @@ fun dwAsrModelOfferSentence(
 
 /** Said when a file does not match its pinned digest. It is deleted, and this is why. */
 const val DW_ASR_MODEL_MISMATCH_SENTENCE: String =
-    "One of the speech model's files was not the expected file, so it has been deleted and " +
-        "nothing was installed. If it was downloaded, the transfer probably broke; try again. If it " +
-        "happens twice, or if it was put on the phone with a cable, tell whoever supplied the file."
+    "A model file didn't match, so nothing was installed. Try again; if it happens twice, tell your admin."
 
 /**
  * **WHAT THIS MODEL WOULD ADD TO *THIS* PHONE — WHICH IS NOT THE SAME AS WHAT IT SERVES.**
@@ -934,12 +929,11 @@ fun dwAsrModelWhatItBuysSentence(
     val plan = plans.firstOrNull() ?: return "There is no speech model to install."
     val served = labels.keys.filter { plan.servesLanguage(it) }
     if (served.isEmpty()) {
-        return "Serves none of this app's dictation languages, so it would add nothing here."
+        return "Adds no languages this app uses."
     }
     val servedLabels = served.map { labels[it] ?: it }
     if (support == null) {
-        return "Serves ${servedLabels.joinToString(", ")}. This Android version cannot be asked " +
-            "which packs it already has, so how much of that is new here is unknown."
+        return "Serves ${servedLabels.joinToString(", ")}. This Android version cannot be asked what it already has."
     }
     val adds = served.filter { dwPackState(it, support) != DwPackState.INSTALLED }
     if (adds.isEmpty()) {
@@ -960,9 +954,7 @@ fun dwAsrModelWhatItBuysSentence(
         // "ALREADY" IS KEPT AND IS NOT PADDING: it is the word that turns "adds nothing" from a fault
         // into a phone that is equipped, which is this arm's entire job. Dropping it was the first
         // attempt at this rewrite, and the tests above refused it.
-        return "Adds nothing on this phone: ${servedLabels.joinToString(", ")} already " +
-            "${dwPluralVerb(servedLabels.size, "works", "work")} offline through Android's own " +
-            "${dwPluralNoun(servedLabels.size, "pack", "packs")}."
+        return "Adds nothing: ${servedLabels.joinToString(", ")} already ${dwPluralVerb(servedLabels.size, "works", "work")} offline."
     }
     return "Adds offline dictation in ${adds.map { labels[it] ?: it }.joinToString(", ")}."
 }

@@ -342,7 +342,7 @@ class DataBrowserState(
             try {
                 val path = repository.locateRecord(recordType, recordId)
                 if (path == null) {
-                    unfiled = "$title is not filed under any workshop yet, so it has no folder to open."
+                    unfiled = "$title isn't filed under a workshop yet."
                 } else {
                     open(path)
                 }
@@ -541,8 +541,7 @@ fun DataBrowserScreen(
                         )
                     }
                     Text(
-                        "Browse all records as folders, preview media and transcripts, and " +
-                            "download any folder as a zip, filtered by file type.",
+                        "Browse records as folders, preview media, and download as zip.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -594,8 +593,7 @@ fun DataBrowserScreen(
                     }
                     if (state.truncated) {
                         NoticeBox(
-                            "Only part of this folder is shown. Open its subfolders to see " +
-                                "everything in it.",
+                            "Partly shown. Open subfolders to see more.",
                             container = MaterialTheme.field.warningContainer,
                             content = MaterialTheme.field.onWarningContainer
                         )
@@ -668,7 +666,7 @@ fun DataBrowserScreen(
                         onClick = {
                             val include = INCLUDE_OPTIONS.filter { it.key in includes }.joinToString(",") { it.key }
                             if (include.isEmpty()) {
-                                state.reportError("Pick at least one content type to include in the download.")
+                                state.reportError("Pick at least one content type.")
                                 return@Button
                             }
                             scope.launch {
@@ -695,23 +693,19 @@ fun DataBrowserScreen(
                                     // the counts — which cannot show it: a capped manifest is
                                     // internally consistent, every file it names IS fetched.
                                     val short = if (result.truncated) {
-                                        " This folder holds more than one archive can carry, so some " +
-                                            "of it is NOT included."
+                                        " Too large for one archive — some files are NOT included."
                                     } else {
                                         ""
                                     }
                                     note(
                                         when {
                                             result.total == 0 ->
-                                                "Nothing in this folder matches the selected filters."
+                                                "Nothing matches the filters."
                                             result.failed > 0 ->
-                                                "Archive saved with ${result.saved} of ${result.total} files — " +
-                                                    "${result.failed} failed. Saved to ${result.displayLocation}" +
+                                                "Saved ${result.saved} of ${result.total} (${result.failed} failed) to ${result.displayLocation}" +
                                                     short
                                             else ->
-                                                "Archive saved — ${result.total} " +
-                                                    "file${if (result.total == 1) "" else "s"}. " +
-                                                    "Saved to ${result.displayLocation}" + short
+                                                "Saved ${result.total} file${if (result.total == 1) "" else "s"} to ${result.displayLocation}" + short
                                         }
                                     )
                                 }.onFailure {
@@ -981,9 +975,7 @@ private fun RestrictedPanel() {
             color = MaterialTheme.colorScheme.onBackground
         )
         Text(
-            "Browsing and downloading the dataset is available to professors and above, or to " +
-                "accounts that have been granted the dataset-download permission. Ask an admin to " +
-                "grant you access if you need it for your research.",
+            "For professors and above, or accounts with dataset access. Ask an admin.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -1040,7 +1032,7 @@ private fun JumpToRecordPanel(
         // Directly under the field, so the chips read as part of the search and not a separate tool.
         SearchFilterBar(value = filters, onChange = onFiltersChange)
         Text(
-            "Find an artisan, workshop, product, tool or media file and open the folder that holds it.",
+            "Find a record and open its folder.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1067,7 +1059,7 @@ private fun JumpToRecordPanel(
         // letting the shortlist read as the whole answer.
         if (search.total > search.hits.size) {
             Text(
-                "Showing ${search.hits.size} of ${search.total}. Narrow the filters to see the rest.",
+                "Showing ${search.hits.size} of ${search.total}. Narrow filters to see more.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1495,7 +1487,7 @@ private fun FileActions(
     // start buffering every recording a folder holds as the list scrolls past on field data.
     val previewable = entry.mediaType in setOf("IMAGE", "VIDEO", "AUDIO") && !entry.url.isNullOrBlank()
     if (entry.content == null && !entry.transcriptAvailable && !previewable && entry.mediaId == null) return
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+    ActionRow {
         if (entry.content != null) {
             TextButton(onClick = onToggleInline) { Text(if (inlineOpen) "Hide" else "View") }
         }

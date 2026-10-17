@@ -532,8 +532,7 @@ object RosterLabels {
  * control from a list that does not govern it.
  */
 const val DESIGNER_ROLE_HINT: String =
-    "Matched by email. An admin's row is not gated by this roster, so filtering for Admin lists " +
-        "empanelled addresses that belong to admins."
+    "Matched by email. Admins aren't gated by this roster."
 
 /**
  * THE ONE LINE THE ACCESS FILTER SHEET CARRIES ABOUT A CONTROL THAT IS NOT THERE.
@@ -546,8 +545,7 @@ const val DESIGNER_ROLE_HINT: String =
  * "fix".
  */
 const val ACCESS_INSTITUTION_NOTE: String =
-    "Institution is not recorded on the allow-list — it is a designer-roster field. Filter by it on " +
-        "the designer roster."
+    "Institution is on the designer roster, not here."
 
 // ---------------------------------------------------------------------------------------------
 // The option vocabularies
@@ -608,13 +606,13 @@ fun roleOptions(kind: RosterKind): List<SelectOption> {
         SelectOption(
             ADMIT_ROLE_DEFAULT,
             "At the default joining tier",
-            "No tier was named when this address was admitted",
+            "Admitted without a tier",
         )
     } else {
         SelectOption(
             ROLE_NEVER_SIGNED_IN,
             "Has never signed in",
-            "Empanelled, but no account has used this address yet",
+            "Empanelled, never signed in",
         )
     }
     return ladder + reserved
@@ -945,9 +943,7 @@ fun roleMatchCutNotice(truncated: Boolean?, limit: Int? = ROLE_MATCH_READ_LIMIT)
     } else {
         "too many accounts"
     }
-    return "Some designers holding the selected tiers are missing and will not appear on any " +
-        "page of this filter, because $bound hold those tiers. Choose fewer tiers for a " +
-        "complete list."
+    return "Some designers are missing from any page because $bound hold these tiers. Choose fewer tiers."
 }
 
 /**
@@ -967,9 +963,7 @@ fun roleMatchCutNotice(truncated: Boolean?, limit: Int? = ROLE_MATCH_READ_LIMIT)
  */
 fun accessRoleCutNotice(truncated: Boolean?): String? {
     if (truncated != true) return null
-    return "Not every entry for the chosen tiers could be listed, so some are missing from every " +
-        "page of this filter — not only from this one. Choose fewer tiers for a complete list, or " +
-        "clear the tier filter to list everyone."
+    return "Some entries for these tiers are missing from any page. Choose fewer tiers or clear the filter."
 }
 
 /**
@@ -992,12 +986,9 @@ fun accessRoleCutNotice(truncated: Boolean?): String? {
 fun institutionCutNotice(truncated: Boolean?, offered: Int): String? {
     if (truncated != true) return null
     if (offered <= 0) {
-        return "There are more institutions than this list can hold, so some cannot be ticked here. " +
-            "Type the institution into the search box above instead — the search covers the whole roster."
+        return "Too many institutions to list. Use the search box above."
     }
-    return "Only the first $offered institutions are offered here and there are more, so an " +
-        "institution past that point cannot be ticked. Type its name into the search box above " +
-        "instead — the search covers the whole roster."
+    return "Only the first $offered institutions are listed. Use the search box above for others."
 }
 
 /**
@@ -1040,8 +1031,7 @@ fun institutionCutNotice(truncated: Boolean?, offered: Int): String? {
  */
 fun rosterFilterGrammarNotice(understood: Boolean?, sent: List<String>): String? {
     if (understood != false || sent.isEmpty()) return null
-    return "The ${namedControls(sent)} you set could not be applied, so the list below is the " +
-        "whole roster in its usual order. Nothing is missing from it; read it as unfiltered."
+    return "Couldn't apply the ${namedControls(sent)} — showing the full roster. Nothing is missing."
 }
 
 /**
@@ -1063,8 +1053,7 @@ fun rosterFilterGrammarNotice(understood: Boolean?, sent: List<String>): String?
  */
 fun rosterFilterRefusalHint(understood: Boolean?, sent: List<String>): String? {
     if (understood == true || sent.isEmpty()) return null
-    return "The ${namedControls(sent)} you set may be why the list did not load. Clearing them " +
-        "lists everybody again."
+    return "The ${namedControls(sent)} may have stopped the list loading. Clearing them lists everybody again."
 }
 
 /** "standing", "standing and roles", "standing, roles and order" — one comma rule, said once. */

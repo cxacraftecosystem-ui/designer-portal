@@ -496,7 +496,7 @@ const val DW_REPORT_HISTORY_TITLE = "Report history"
 
 /** `page.tsx`'s `PageHeader description`. */
 const val DW_REPORT_HISTORY_SUBTITLE =
-    "Every file generated from this workshop, and what changed in the record between any two of them."
+    "Every generated file, and what changed between them."
 
 /**
  * NO CONNECTION — the honest sentence, in the voice `dwDesignerPickerStandDown` uses.
@@ -511,9 +511,7 @@ const val DW_REPORT_HISTORY_SUBTITLE =
  * `page.tsx`'s offline banner, with "in this browser" swapped for the surface this is.
  */
 const val DW_REPORT_HISTORY_OFFLINE =
-    "There is no connection, so the report history cannot be read. It lists files generated on " +
-        "other devices by other people, so unlike your stages it is not kept on this phone. " +
-        "Everything you have captured is still here."
+    "Offline — report history needs a connection, because it lists files from other devices by other people. Everything you have captured is still here."
 
 /**
  * A WORKSHOP THAT HAS NEVER LEFT THIS PHONE, and the one sentence on this screen that the browser
@@ -529,19 +527,16 @@ const val DW_REPORT_HISTORY_OFFLINE =
  * believing an export log is complete when it is not.
  */
 const val DW_REPORT_HISTORY_LOCAL_ONLY =
-    "This workshop has not been uploaded yet, so it has no report history. A report you generate " +
-        "now is still made on this phone and is still yours; reports are listed here once the " +
-        "workshop has been uploaded. Upload the workshop from the workshop list first."
+    "Reports are listed here once the workshop has been uploaded. A report is still made on this phone."
 
 /** `page.tsx`'s `EmptyState`, for a synced workshop nobody has generated a file from yet. */
 const val DW_REPORT_HISTORY_EMPTY_TITLE = "No report has been generated yet"
 const val DW_REPORT_HISTORY_EMPTY_BODY =
-    "Generate a .docx or a .pdf from the report page and it will be recorded here — with its " +
-        "checksum, its size and who made it — including files this phone produces with no network."
+    "Generate a .docx or .pdf from the report page to see it here."
 
 /** Fewer than two files: there is nothing to compare, and an empty comparison would look broken. */
 const val DW_REPORT_HISTORY_ONE_FILE =
-    "Only one file has been generated, so there is nothing to compare it with yet."
+    "Only one file — nothing to compare yet."
 
 /**
  * FILES EXIST, BUT NONE OF THEM CAN BE PLACED IN TIME.
@@ -554,8 +549,7 @@ const val DW_REPORT_HISTORY_ONE_FILE =
  * ever reached.
  */
 const val DW_REPORT_HISTORY_NONE_DATED =
-    "None of the files listed below recorded when it was generated, so no two of them can be " +
-        "compared — a comparison is a window between two moments, and these have none."
+    "These files have no dates, so they can't be compared."
 
 /** The heading over the comparison, and over the list. */
 const val DW_REPORT_DIFF_TITLE = "What changed between two files"
@@ -566,8 +560,7 @@ const val DW_REPORT_HISTORY_LIST_TITLE = "Every file generated"
  * the verdict itself, because it is what stops "3 rewritten" being read as "3 answers changed".
  */
 const val DW_REPORT_DIFF_WRITTEN_NOT_CHANGED =
-    "A stage is saved whole, so every row it holds is stamped as written even when only one answer " +
-        "was corrected. “Rewritten” counts rows saved, not answers that differ."
+    "Stages save whole, so “rewritten” counts rows saved, not answers changed."
 
 /** The heading over the block of things this comparison cannot say. */
 const val DW_REPORT_DIFF_LIMITS_TITLE = "What this comparison cannot tell you"
@@ -609,9 +602,9 @@ fun dwDiffHeadline(
     // arithmetic must never disagree about how honest it is.
     val caveat = if (!absolute && windowTruncated) " (of the 100 most recent)" else ""
     val verdict = if (touched == 0) {
-        "no stage of the workshop was written to between these two files."
+        "no stage of the workshop was written to between these files."
     } else {
-        "$touched stage${if (touched == 1) " was" else "s were"} written to between these two files."
+        "$touched stage${if (touched == 1) " was" else "s were"} written to between these files."
     }
     val identical = if (diff.timelineComplete && untouched > 0) {
         " $untouched other stage${if (untouched == 1) "" else "s"} carried identical data in both."
@@ -631,10 +624,8 @@ fun dwDiffHeadline(
  * wrong on almost all of them. "Not written" is a genuine proof and is worth saying plainly.
  */
 fun dwHeaderVerdict(diff: DwReportDiff): String? = when (diff.headerRowWritten) {
-    false -> "The cover details — title, craft, cluster and dates — were not written at all between " +
-        "these two files, so both carry the same ones."
-    true -> "The workshop’s own row was written in this window. Saving any stage stamps that row " +
-        "too, so on its own this does not mean the cover details changed."
+    false -> "Cover details were not written at all between these files."
+    true -> "Workshop row re-saved — any stage save does this, so it does not mean the cover details changed."
     null -> null
 }
 
@@ -651,28 +642,21 @@ fun dwFileFacts(diff: DwReportDiff, templateName: (String) -> String): List<Stri
     val facts = mutableListOf<String>()
 
     if (diff.identicalFile) {
-        facts += "These two files are byte-for-byte identical. Their SHA-256 checksums match, so " +
-            "whatever else differs about the record, the documents themselves are the same file."
+        facts += "These two files are byte-for-byte identical (same checksum)."
     } else if (diff.checksumComparable) {
-        facts += "The two files differ — their checksums are not the same."
+        facts += "Files differ (checksums differ)."
     } else {
-        facts += "One of these files recorded no checksum, so the documents cannot be compared by " +
-            "their contents."
+        facts += "One file has no checksum, so the documents cannot be compared by their contents."
     }
 
     if (diff.formatDiffers) {
-        facts += "One is a ${diff.earlier.format} and the other a ${diff.later.format}. Two formats " +
-            "of the same record are different files by construction, not by revision."
+        facts += "Different formats: ${diff.earlier.format} and ${diff.later.format} — different files by construction, not by revision."
     }
     if (diff.templateChanged) {
-        facts += "The template changed: ${templateName(diff.earlier.templateId)} → " +
-            "${templateName(diff.later.templateId)}. A template decides which stages a report " +
-            "contains, so the documents can differ even where the data did not."
+        facts += "Template changed: ${templateName(diff.earlier.templateId)} → ${templateName(diff.later.templateId)}."
     }
     if (diff.schemaVersionChanged) {
-        facts += "The form layout changed between these two files, so a field may have been " +
-            "added, removed or changed. Entry counts remain comparable; what an entry holds may " +
-            "not be."
+        facts += "Form layout changed between these files."
     }
     val pages = diff.pageDelta
     if (pages != null && pages != 0) {
@@ -697,37 +681,25 @@ fun dwFileFacts(diff: DwReportDiff, templateName: (String) -> String): List<Stri
  */
 fun dwDiffLimits(diff: DwReportDiff, history: DwReportHistoryDto): List<String> {
     val limits = mutableListOf(
-        "Which field changed, or what it changed from. No copy of the stage data is kept when a " +
-            "report is generated — only the file’s checksum, size, pages and template — so a " +
-            "rewritten row can be reported as rewritten and no further.",
-        "Whether a rewritten row’s answers actually differ. A stage is saved in one write, and " +
-            "every row in that save is stamped without being compared to what was stored. A stage " +
-            "that nobody saved, on the other hand, is identical in both files with no such caveat.",
-        "A row written twice between these two files counts once: each row remembers only when it " +
-            "was LAST written.",
-        "Records this workshop points at — an artisan’s name, a linked product, a photograph’s " +
-            "caption — are not covered. They live outside the workshop and carry their own timestamps.",
+        "Which field changed — only the file's checksum, size, pages and template are stored.",
+        "Whether a rewritten row's answers actually differ.",
+        "Rows written twice count once.",
+        "Changes to linked records (artisans, products, photo captions).",
     )
     if (diff.deviceClockInvolved) {
-        limits += "One of these files was made on a phone with no network, so its time comes from " +
-            "that phone’s clock while the stage edits are timed online. If the phone’s clock was " +
-            "wrong, this window is wrong by the same amount."
+        limits += "One file was made offline, so its time uses that phone’s clock."
     }
     if (!diff.timelineComplete) {
-        limits += "The stage timeline was capped, so rows are missing from the evidence and no stage " +
-            "above can be called identical — only “nothing written that we can see”."
+        limits += "The stage timeline was capped, so some rows are missing."
     }
     if (history.exportsTruncated) {
         limits += if (dwGenerationsAreAbsolute(history)) {
             // The numbers are the record's own, so only the LISTING is short. Saying the numbering is
             // relative here — as the browser does — would be a disclosure of a defect this payload no
             // longer has, and a reader who believed it would stop trusting a number that is correct.
-            "Only the most recent 100 files are listed. The generation numbers are the workshop’s " +
-                "own, so an older file is simply not shown rather than renumbered."
+            "Only the most recent 100 files are listed."
         } else {
-            "Only the most recent 100 files are listed, and the generation numbers above count only " +
-                "those hundred — an older file made before them is not generation 0, it is simply " +
-                "not here."
+            "Only the most recent 100 files are listed; the numbers count only those hundred."
         }
     }
     return limits
@@ -742,16 +714,13 @@ fun dwDiffLimits(diff: DwReportDiff, history: DwReportHistoryDto): List<String> 
 fun dwDuplicateFileNote(generations: List<Int>): String? {
     val named = generations.filter { it > 0 }
     if (named.isEmpty()) return null
-    return "Byte-for-byte the same file as generation ${named.joinToString(", ")}. The same " +
-        "document was recorded more than once — worth checking, if one of them was meant to be a " +
-        "revision."
+    return "Byte-for-byte the same file as generation ${named.joinToString(", ")}."
 }
 
 /** "The copy on somebody's desk is already out of date", or null when nothing has moved since. */
 fun dwStaleSinceNote(stagesTouched: Int): String? {
     if (stagesTouched <= 0) return null
-    return "$stagesTouched stage${if (stagesTouched == 1) " has" else "s have"} been written to " +
-        "since this file was generated, so any copy already sent may no longer match the record."
+    return "$stagesTouched stage${if (stagesTouched == 1) " has" else "s have"} been written to since this file — copies sent may be out of date."
 }
 
 /**
@@ -766,7 +735,7 @@ fun dwStaleSinceNote(stagesTouched: Int): String? {
  */
 fun dwStageCompletenessNote(change: DwStageChange, score: StageCompletenessDto?): String? {
     if (score == null || !change.currentReflectsBoth) return null
-    return "${score.percent}% of its required fields, in both files and still today"
+    return "${score.percent}% of required fields, unchanged"
 }
 
 /**
@@ -795,11 +764,9 @@ fun dwReportHistoryFailure(unreachable: Boolean, status: Int?, served: String?):
     // `load_workshop_or_404` answers 404 rather than 403 so an id is not confirmed to somebody
     // entitled to know nothing about it — so this arm covers both "gone" and "not yours", and says
     // the half that is actionable without asserting the half that is not.
-    status == 404 -> "This workshop is not available online, so it has no report history. Nothing " +
-        "has been deleted from this phone."
-    status == 403 -> served ?: "This account may not read this workshop’s report history."
-    else -> served ?: "The report history could not be read just now. Nothing you have captured is " +
-        "affected — this screen only reads."
+    status == 404 -> "Not available online, so no history. Nothing has been deleted from this phone."
+    status == 403 -> served ?: "You can't view this report history."
+    else -> served ?: "Couldn't load report history. Nothing you have captured is affected."
 }
 
 // --------------------------------------------------------------------------------------

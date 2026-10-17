@@ -661,10 +661,7 @@ fun dwDeviceSyncBanner(
     val dOne = unsentDeletions == 1
     val deletionSentence = "$unsentDeletions stage${plural(unsentDeletions)} " +
         (if (dOne) "has a deletion" else "have deletions") +
-        " that ${if (dOne) "has" else "have"} not been sent, and syncing alone will not send " +
-        "${if (dOne) "it" else "them"}. Open the workshop, then " +
-        "${if (dOne) "the stage" else "those stages"}, with a connection — the deletion is sent " +
-        "when the stage saves."
+        " that ${if (dOne) "has" else "have"} not been sent; syncing alone will not send ${if (dOne) "it" else "them"}. Open the workshop, then ${if (dOne) "the stage" else "those stages"}, with a connection."
     /*
       THE DROPPED ANSWER'S OWN SENTENCE, AND WHY IT IS NOT THE REFUSAL'S.
 
@@ -690,10 +687,7 @@ fun dwDeviceSyncBanner(
       instruction and a description.
     */
     val pOne = droppedAnswers == 1
-    val droppedSentence = "$droppedAnswers answer${plural(droppedAnswers)} " +
-        "${if (pOne) "was" else "were"} not stored: this workshop's own sections no longer ask " +
-        "${if (pOne) "that question" else "those questions"}. Open the workshop once with a " +
-        "connection to clear this."
+    val droppedSentence = "$droppedAnswers answer${plural(droppedAnswers)} ${if (pOne) "was" else "were"} not stored — the sections no longer ask ${if (pOne) "that question" else "those questions"}. Open the workshop once with a connection to clear this."
     val detail = buildString {
         append(
             when {
@@ -701,24 +695,18 @@ fun dwDeviceSyncBanner(
                 // sent a designer looking for signal over an answer no amount of signal will move.
                 refusedAnswers > 0 && !waiting -> "$across Everything else is saved online. " +
                     (if (one) "That answer was" else "Those answers were") +
-                    " not accepted, so ${if (one) "it" else "they"} will not upload by " +
-                    "${if (one) "itself" else "themselves"}. Open the workshop, then the stage, to " +
-                    "see which and correct $them."
+                    " not accepted, so ${if (one) "it" else "they"} will not upload by ${if (one) "itself" else "themselves"}. Open the stage to see which and correct $them."
                 // Both at once: the first half is true of the pending work and false of the refusals,
                 // so the refusals get their own clause rather than being covered by "it uploads when
                 // there is a connection".
-                refusedAnswers > 0 -> "$across Everything is saved here and editable offline; the " +
-                    "stages and files above upload whenever there is a connection. The " +
-                    "$refusedAnswers answer${plural(refusedAnswers)} that ${if (one) "was" else "were"} " +
-                    "not accepted will not upload until $them ${if (one) "is" else "are"} corrected."
+                refusedAnswers > 0 -> "$across Saved here; the stages and files above upload whenever there is a connection. The $refusedAnswers answer${plural(refusedAnswers)} that ${if (one) "was" else "were"} not accepted will not upload until corrected."
                 // The same two arms again for a device whose only stuck item is a deletion. They are
                 // arms and not an appended clause because the FIRST half differs: with nothing pending
                 // "everything else is on the server" is true and is the reassurance that stops a
                 // designer re-checking twenty stages.
                 unsentDeletions > 0 && !waiting ->
                     "$across Everything else is saved online. $deletionSentence"
-                unsentDeletions > 0 -> "$across Everything is saved here and editable offline; the " +
-                    "stages and files above upload whenever there is a connection. $deletionSentence"
+                unsentDeletions > 0 -> "$across Saved here; the stages and files above upload whenever there is a connection. $deletionSentence"
                 // And the same two arms a third time, for a device whose only stuck item is an answer
                 // the repository had nowhere to put. Reached only when neither of the two above is —
                 // when they are, the appends below carry it — so a workshop whose ONLY outstanding
@@ -726,10 +714,8 @@ fun dwDeviceSyncBanner(
                 // upload" fall-through this function exists to end.
                 droppedAnswers > 0 && !waiting ->
                     "$across Everything else is saved online. $droppedSentence"
-                droppedAnswers > 0 -> "$across Everything is saved here and editable offline; the " +
-                    "stages and files above upload whenever there is a connection. $droppedSentence"
-                else -> "$across Everything is saved here and editable offline; it uploads whenever " +
-                    "there is a connection."
+                droppedAnswers > 0 -> "$across Saved here; the stages and files above upload whenever there is a connection. $droppedSentence"
+                else -> "$across Saved here and editable offline; it uploads whenever there is a connection."
             }
         )
         // BOTH KINDS OF STUCK WORK AT ONCE. The refusal arms above have already run and said nothing
@@ -1208,12 +1194,7 @@ internal fun dwClaimedRemoteIds(drafts: List<DwDraftClaim>): Set<String> {
  * before any other.
  */
 internal const val DW_WORKSHOP_CREATE_AMBIGUOUS =
-    "This workshop was sent once but the reply did not arrive, and there is now more than one " +
-        "workshop online with this title created by you — so this phone cannot tell which one is " +
-        "yours, and sending it again could file it twice. Nothing on this phone has been deleted: " +
-        "every stage, photograph and recording you captured is still here. Open the workshop list, " +
-        "check which of them is the one you started, and either rename this one or delete the copy " +
-        "you do not want, then use Try again."
+    "Sent once without a reply, and now several online workshops share this title, so this phone can't tell which is yours. Nothing on this phone has been deleted. Rename this one or delete the duplicate, then tap Try again."
 
 /**
  * What "Try again" leaves on ONE stage record — see the long note at the call site in `retryWorkshop`
@@ -1267,8 +1248,7 @@ private fun Throwable.refusal(fallback: String): ApiRefusal {
     // skims and abandons before the half that tells them waiting for signal cannot help.
     val lead = if (text.endsWith('.') || text.endsWith('!') || text.endsWith('?')) text else "$text."
     return refusal.copy(
-        message = "$lead A better connection will not help — this will not be saved until the " +
-            "problem is corrected. Use Try again once it has been."
+        message = "$lead Fix this before retrying — a better connection won't help."
     )
 }
 
@@ -1284,9 +1264,7 @@ private fun Throwable.refusal(fallback: String): ApiRefusal {
  * to be corrected and the other left telling a researcher to go and fix an answer that is not wrong.
  */
 internal fun skewSentence(what: String, said: String): String =
-    "$what could not be saved because the app needs an update. Nothing you typed is wrong and " +
-        "nothing has been lost. Your work is safe on this device, and it will be sent by itself the " +
-        "next time you open the app after an update; you do not have to do anything."
+    "$what could not be saved because the app needs an update. Nothing you typed is wrong; it will be sent by itself the next time you open the app after an update."
 
 /**
  * What one stage still owes the server as a DELETION — nothing about values, rows or files.
@@ -1362,7 +1340,7 @@ internal fun dwDraftIsForAnotherAccount(ownerUserId: String?, signedInUserId: St
  * would be indistinguishable from work that had been deleted.
  */
 internal const val DW_DRAFT_OTHER_ACCOUNT_ROW =
-    "Captured by another account on this phone — sign in as them to continue."
+    "Captured by another account — sign in as them to continue."
 
 /**
  * The stages a draft holds that the resolved registry does not declare AND that hold work.
@@ -1636,9 +1614,7 @@ object WorkshopSyncEngine {
                             )
                         }
                     }
-                    problems += "Stage ${spec.number} (${spec.title}): $what on this phone, and that " +
-                        "deletion has not been sent. Nothing else about this stage is held up. Open " +
-                        "the stage once with a connection and the deletion is sent when it saves."
+                    problems += "Stage ${spec.number} (${spec.title}): $what; that deletion hasn't been sent. Open the stage online to send it."
                 }
             }
             // ONE FUNCTION, NOT TWO COPIES OF A TEST. This gate and the one in `pushStages` were
@@ -1703,10 +1679,7 @@ object WorkshopSyncEngine {
         */
         dwStrandedStages(schema, draft).forEach { stored ->
             pendingStages++
-            problems += "“${stored.title.ifBlank { stored.stageId }}”: this stage is no longer part " +
-                "of the form, so its answers cannot be sent — nothing has been lost. Open the app " +
-                "with a connection to get the latest form layout; if the stage stays here after " +
-                "that, ask an administrator to move its answers."
+            problems += "“${stored.title.ifBlank { stored.stageId }}” is no longer in the form, so it can't be sent. Open the app online; if it remains, ask an admin."
         }
 
         // A non-permanent note (the server dropped a field it did not recognise, an answer it
@@ -2050,9 +2023,7 @@ object WorkshopSyncEngine {
           stays fully visible and fully openable.
         */
         if (dwDraftIsForAnotherAccount(draft.ownerUserId, repository.cachedUser()?.id)) {
-            val note = "This workshop was captured on this phone by a different account, so it is " +
-                "not sent while you are signed in. Sign in as the designer who recorded it and it " +
-                "goes up on the next pass. Nothing has been deleted."
+            val note = "Captured by another account, so it won't send while you're signed in. Sign in as its designer to send it."
             // Written only when it CHANGES. This runs for every workshop on the device every
             // forty-five seconds; stamping the same sentence each time would rewrite the JSON
             // document of a draft that is deliberately going nowhere, on the flash storage the
@@ -2337,10 +2308,7 @@ object WorkshopSyncEngine {
                 tally.refused++
                 noteSync(context, workshopId) {
                     it.copy(
-                        createFailure = "the reply could not be confirmed. Nothing on this " +
-                            "device has been changed. If you are on a wi-fi network that asks you to sign in, " +
-                            "connect properly, check whether the workshop already exists, and use " +
-                            "Try again.",
+                        createFailure = "the reply couldn't be confirmed. Nothing changed here. If on a Wi-Fi sign-in page, connect properly, check whether the workshop exists, then Try again.",
                         createFailedAt = Instant.now().toString(),
                         // Explicitly cleared, not merely left alone: this refusal is one only a
                         // PERSON can settle, and inheriting a `createSkewRun` from an earlier pass
@@ -2537,9 +2505,7 @@ object WorkshopSyncEngine {
                 // ever, and recorded rather than SWEPT: the descriptor is the only surviving record
                 // that the photograph existed, what it was captioned and which stage it answered,
                 // and a designer who finds the file on a backup can still put it back.
-                val missing = "the file is no longer in this workshop's media folder on this device, " +
-                    "so there is nothing to upload. Nothing has been deleted by the app — if you " +
-                    "have a backup of this phone, restore it before removing the attachment."
+                val missing = "the file is missing from this phone. Restore a backup before removing the attachment."
                 noteMediaFailure(context, draft.workshopId, descriptor.id, missing)
                 // On the row as well as in the draft. This is the one refusal whose cause a designer
                 // can act on immediately — and the attachment row's own "The bytes for this
@@ -2611,8 +2577,7 @@ object WorkshopSyncEngine {
                         // file from the retry it is waiting for.
                         DwMediaUploadProgress.refused(
                             descriptor.id,
-                            "the upload did not finish. Nothing is wrong with this file — it " +
-                                "will be sent again on the next attempt.",
+                            "the upload didn't finish; it'll retry next time.",
                             permanent = false,
                         )
                         return@forEachIndexed
@@ -2622,8 +2587,7 @@ object WorkshopSyncEngine {
                     // a 413 is a sentence that cannot be acted on, and the number is the one thing a
                     // person reporting this can carry to somebody who can fix it. The bytes stay —
                     // see [DraftMedia.uploadFailure].
-                    val reason = "the upload was not accepted, and trying again will not change " +
-                        "that. The file is still on this device and nothing has been deleted."
+                    val reason = "the upload was refused. The file is still on this phone."
                     noteMediaFailure(context, draft.workshopId, descriptor.id, reason)
                     DwMediaUploadProgress.refused(descriptor.id, reason, permanent = true)
                     tally.refused++
@@ -2658,8 +2622,7 @@ object WorkshopSyncEngine {
                 // request with its own page is the field case, and this app already knows they exist.
                 // Treating it as success would record a reference to nothing AND — if the bytes were
                 // ever released on the strength of it — throw the photograph away.
-                val unnamed = "the upload could not be confirmed. The file is still on this device. If you are on a wi-fi " +
-                    "network that asks you to sign in, connect properly and try again."
+                val unnamed = "the upload couldn't be confirmed. If on a Wi-Fi sign-in page, connect properly and retry."
                 noteMediaFailure(context, draft.workshopId, descriptor.id, unnamed)
                 DwMediaUploadProgress.refused(descriptor.id, unnamed, permanent = true)
                 tally.refused++
@@ -2750,9 +2713,7 @@ object WorkshopSyncEngine {
                 // hole in the report that nobody finds until it has been submitted.
                 val count = built.unresolved.size
                 val note = "$count attached file${plural(count)} " +
-                    (if (count == 1) "is" else "are") + " still only on this device, so this stage " +
-                    "has not been sent yet. It sends itself as soon as they upload — nothing has " +
-                    "been thrown away."
+                    (if (count == 1) "is" else "are") + " still only on this phone; this stage sends once they upload."
                 // Written only when it CHANGES. A photograph the server has permanently refused
                 // holds its stage back for good, and re-stamping the identical sentence on every
                 // pass would rewrite the draft twice a minute for as long as that stayed true.
@@ -3635,15 +3596,12 @@ private suspend fun recordStageSent(
     val droppedCustom = result.droppedCustomKeys.takeIf { it.isNotEmpty() }
     val notes = listOfNotNull(
         dropped?.let { keys ->
-            "${keys.size} field${plural(keys.size)} in this stage could not be saved, because the " +
-                "form has changed. Nothing you typed is lost."
+            "${keys.size} field${plural(keys.size)} weren't saved because the form changed. Nothing you typed is lost."
         },
         droppedCustom?.let { keys ->
-            "this workshop's own sections no longer ask ${keys.size} " +
-                "question${plural(keys.size)} this phone still holds an answer for, so " +
+            "${keys.size} custom question${plural(keys.size)} no longer asked, so " +
                 (if (keys.size == 1) "it was" else "they were") +
-                " not stored. The sections have been edited since this phone last read them — open " +
-                "this workshop once with a connection."
+                " not stored. Open this workshop online to refresh."
         },
     ).takeIf { it.isNotEmpty() }?.joinToString(" ")
 
@@ -3662,10 +3620,7 @@ private suspend fun recordStageSent(
     */
     val refused = dwRefusedAnswerCount(result.errors)
     val refusalNote = refused.takeIf { it > 0 }?.let { count ->
-        "$count of the answers in this stage ${if (count == 1) "was" else "were"} not accepted, " +
-            "and the earlier ${if (count == 1) "answer was" else "answers were"} kept. Everything " +
-            "else on the stage was saved, and nothing you typed has been lost — open the stage to " +
-            "see which answers."
+        "$count answer${if (count == 1) "" else "s"} not accepted; earlier ${if (count == 1) "answer" else "answers"} kept. Open the stage to see which."
     }
     /*
       THE SWEEP TRIPWIRE. `StageSaveResultDto.removed` was decoded off every stage save this app has
@@ -3692,9 +3647,7 @@ private suspend fun recordStageSent(
     val sweptNote = result.removed
         .takeIf { it > 0 && !built.body.replaceCollections }
         ?.let { count ->
-            "$count entr${if (count == 1) "y was" else "ies were"} removed from this stage during " +
-                "this save. Nothing you typed was lost — open this workshop with a connection and " +
-                "check this stage."
+            "$count entr${if (count == 1) "y was" else "ies were"} removed during this save. Open the workshop online to check."
         }
 
     val allNotes = listOfNotNull(notes, refusalNote, sweptNote)

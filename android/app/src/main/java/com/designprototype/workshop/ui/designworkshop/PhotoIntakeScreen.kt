@@ -277,8 +277,7 @@ fun PhotoIntakeScreen(
                 result.problem?.let(onError)
             }.onFailure {
                 onError(
-                    "Nothing could be written to this device's storage, so no photograph has been " +
-                        "attached. Free some space and try again — nothing has been lost."
+                    "Couldn't save to storage; nothing attached. Free space and retry."
                 )
             }
         }
@@ -290,8 +289,7 @@ fun PhotoIntakeScreen(
     ) {
         Text("Import photographs", display = true, color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp)
         Text(
-            "Match a camera dump against the dates this workshop already records, then confirm where " +
-                "each photograph belongs.",
+            "Match camera photos to this workshop's dates, then confirm.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp,
             lineHeight = 17.sp
@@ -310,9 +308,7 @@ fun PhotoIntakeScreen(
 
         if (missingDraft) {
             DwWorkshopNotice(
-                "This workshop has not been downloaded to this device yet. Open its stages once with a " +
-                    "connection, then come back — the dates it records are what these photographs are " +
-                    "matched against."
+                "Open this workshop's stages once online first."
             )
             return@Column
         }
@@ -327,23 +323,16 @@ fun PhotoIntakeScreen(
         ) {
             Text("How the dates are read", display = true, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
             Text(
-                "Each photograph's capture time is read from the file itself and taken to be " +
-                    "${DwPhotoIntake.DEFAULT_TIMEZONE} — the clock the camera was set to. Nothing in the " +
-                    "file is changed, and no photograph is attached until you press Confirm.",
+                "Times are read as ${DwPhotoIntake.DEFAULT_TIMEZONE}. Nothing is attached until you confirm.",
                 color = MaterialTheme.field.body,
                 fontSize = 12.sp,
                 lineHeight = 18.sp
             )
             Text(
                 if (anchors.isNotEmpty()) {
-                    "This workshop records ${anchors.size} dated " +
-                        "${if (anchors.size == 1) "entry" else "entries"} to match against — its start and " +
-                        "end dates, its schedule days, its daily prototype logs and its closing. The more " +
-                        "of those that are filled in, the more precise each proposal is."
+                    "Matching against ${anchors.size} dated ${if (anchors.size == 1) "entry" else "entries"}."
                 } else {
-                    "This workshop has no dates recorded yet, so nothing can be proposed. Fill in the " +
-                        "start and end dates on stage 1 — and the daily logs — and these photographs will " +
-                        "place themselves."
+                    "No dates yet. Add start and end dates on stage 1."
                 },
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp,
@@ -361,8 +350,7 @@ fun PhotoIntakeScreen(
             Text("Choose photographs")
         }
         Text(
-            "Nothing is copied by choosing files. They are read where they are, and stay there until " +
-                "you confirm.",
+            "Files aren't copied until you confirm.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
@@ -1166,27 +1154,23 @@ private suspend fun dwConfirmIntake(
     // photographs called IMG_0001.JPG and a stage that landed nothing must not be counted.
     val stageCount = grouped.count { (_, stageWrites) -> stageWrites.any { it.uri !in unresolved } }
     val message = buildString {
-        append("$attached photograph${if (attached == 1) "" else "s"} attached on this device")
+        append("$attached photo${if (attached == 1) "" else "s"} attached")
         append(" across $stageCount stage${if (stageCount == 1) "" else "s"}. ")
         append(
-            "They upload when this phone next has a connection, and the copy here is kept until " +
-                "each one has uploaded."
+            "Uploads when you're online."
         )
         // STATED, ALWAYS. A confirmation that quietly held fewer photographs than it copied is the
         // silent-emptiness failure this repository keeps hitting.
         if (reused > 0) {
             append(
-                " $reused ${if (reused == 1) "was" else "were"} already on this device — the copy " +
-                    "already here was attached rather than a second one made."
+                " $reused already here, reused."
             )
         }
     }
     val problem = buildList {
         if (missed.isNotEmpty()) {
             add(
-                "${missed.size} could not be placed because the row they were headed for is no longer " +
-                    "in this workshop: ${missed.joinToString(", ").take(200)}. They are still on this " +
-                    "device — choose another destination for them."
+                "${missed.size} couldn't be placed (row removed): ${missed.joinToString(", ").take(200)}. Choose another destination."
             )
         }
         // ONE SENTENCE PER FULL GALLERY, and grouped rather than pooled because the remedy is
@@ -1202,16 +1186,12 @@ private suspend fun dwConfirmIntake(
         if (unplaceable.isNotEmpty()) {
             val one = unplaceable.size == 1
             add(
-                "${unplaceable.size} ${if (one) "was" else "were"} headed for a place this workshop no " +
-                    "longer offers, so ${if (one) "it was" else "they were"} not attached: " +
-                    "${unplaceable.joinToString(", ").take(200)}. ${if (one) "It is" else "They are"} " +
-                    "still in the list below — choose again."
+                "${unplaceable.size} not attached (destination removed): ${unplaceable.joinToString(", ").take(200)}. Choose again below."
             )
         }
         if (unreadable.isNotEmpty()) {
             add(
-                "${unreadable.size} could not be read and ${if (unreadable.size == 1) "was" else "were"} " +
-                    "not attached: ${unreadable.joinToString(", ").take(200)}."
+                "${unreadable.size} unreadable, not attached: ${unreadable.joinToString(", ").take(200)}."
             )
         }
         /*

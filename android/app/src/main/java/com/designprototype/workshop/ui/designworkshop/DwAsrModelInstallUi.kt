@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.destructiveAction
+import com.designprototype.workshop.ui.ActionRow
 import android.content.Context
 import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
@@ -968,8 +970,7 @@ internal class DwAsrModelController(
                 val staged = stagedModelFiles(context, model)
                     ?: return@withContext failed(
                         model,
-                        "The model files are no longer where they were staged, so nothing has been " +
-                            "installed. Push them again and tap “Check again”.",
+                        "Model files are missing. Push them again and tap “Check again”.",
                     )
                 target.mkdirs()
                 /*
@@ -1045,8 +1046,7 @@ internal class DwAsrModelController(
                 if (dwIsDiskFull(error.message)) {
                     dwTransferDiskFullSentence(DwTransferPhase.COPYING)
                 } else {
-                    "The model could not be copied onto this phone. Nothing has been installed " +
-                        "and nothing has been kept."
+                    "Couldn't copy the model. Nothing was installed."
                 },
             )
         }
@@ -1101,8 +1101,7 @@ internal class DwAsrModelController(
         if (!artifact.container.readableInThisBuild) {
             return failed(
                 model,
-                "The speech model cannot be downloaded to this phone right now. Nothing was " +
-                    "fetched.",
+                "Can't download the speech model right now.",
             )
         }
         val incoming = File(File(context.filesDir, DW_ASR_MODEL_DIR), DW_ASR_MODEL_INCOMING)
@@ -1143,10 +1142,7 @@ internal class DwAsrModelController(
                 val containerDigest = dwAsrSha256OfFile(container, onBytesHashed = { countedBytes = it })
                     ?: return@withContext failedAfterCleanUp(
                         model, container, target,
-                        "The download could not be read back from this phone's storage after it " +
-                            "finished, so nothing has been installed and what arrived has been " +
-                            "deleted. That usually means the storage filled up while it was " +
-                            "arriving. Free some space and try again.",
+                        "Download couldn't be read back (storage full?). Free space and retry.",
                     )
                 if (dwAsrVerify(artifact.sha256, containerDigest) != DwAsrVerification.VERIFIED) {
                     cleanUp(container, target)
@@ -1170,8 +1166,7 @@ internal class DwAsrModelController(
                         val entry = zip.getEntry(pinned.fileName)
                             ?: return@withContext failedAfterCleanUp(
                                 model, container, target,
-                                "What arrived was not the expected file, so nothing has been " +
-                                    "installed. Try again later.",
+                                "Wrong file received; nothing installed. Try later.",
                             )
                         val out = File(target, pinned.fileName)
                         zip.getInputStream(entry).use { input ->
@@ -1255,10 +1250,9 @@ internal class DwAsrModelController(
                     dwIsDiskFull(error.message) ->
                         dwTransferDiskFullSentence(DwTransferPhase.FETCHING)
                     kept > 0L ->
-                        "The download stopped: ${dwModelStopReason(error)}. " +
-                            "${dwBytesLabel(kept)} is kept on this phone — Resume carries on from there."
+                        "Stopped: ${dwModelStopReason(error)}. ${dwBytesLabel(kept)} kept — tap Resume."
                     else ->
-                        "The download stopped: ${dwModelStopReason(error)}. Nothing was kept."
+                        "Stopped: ${dwModelStopReason(error)}."
                 },
             )
         }
@@ -1379,9 +1373,7 @@ internal class DwAsrModelController(
                         runCatching { target.listFiles()?.forEach { it.delete() } }
                         return@withContext failed(
                             model,
-                            "The fetched files could not be moved into place inside this app's own " +
-                                "storage, so nothing has been installed. What is still on the phone " +
-                                "is kept. Tap “Check again” and try once more.",
+                            "Couldn't finish installing. Tap “Check again” and retry.",
                         )
                     }
                 }
@@ -1433,22 +1425,18 @@ internal class DwAsrModelController(
                      * tapping Resume carries on from the prefix rather than re-spending it.
                      */
                     error is DwAsrEndpointSignedOut && kept > 0L ->
-                        "You were signed out while the model was downloading. " +
-                            "${dwBytesLabel(kept)} is kept on this phone — sign in again and " +
-                            "Resume carries on from there."
+                        "Signed out during download. ${dwBytesLabel(kept)} kept — sign in and Resume."
                     error is DwAsrEndpointSignedOut ->
-                        "You were signed out, so nothing could be downloaded. " +
-                            "Sign in again and try once more."
+                        "Signed out. Sign in and try again."
                     dwIsDiskFull(error.message) && kept > 0L ->
                         "${dwTransferDiskFullSentence(DwTransferPhase.FETCHING)} " +
                             "${dwBytesLabel(kept)} is on this phone already."
                     dwIsDiskFull(error.message) ->
                         dwTransferDiskFullSentence(DwTransferPhase.FETCHING)
                     kept > 0L ->
-                        "The download stopped: ${dwModelStopReason(error)}. " +
-                            "${dwBytesLabel(kept)} is kept on this phone — Resume carries on from there."
+                        "Stopped: ${dwModelStopReason(error)}. ${dwBytesLabel(kept)} kept — tap Resume."
                     else ->
-                        "The download stopped: ${dwModelStopReason(error)}. Nothing was kept."
+                        "Stopped: ${dwModelStopReason(error)}."
                 },
             )
         }
@@ -1749,8 +1737,7 @@ internal class DwAsrModelController(
         runCatching { target.listFiles()?.forEach { it.delete() } }
         return failed(
             model,
-            installed.failure ?: "The model was written to this phone but the files did not match " +
-                "what this app expects, so they have been deleted and nothing was installed.",
+            installed.failure ?: "Files didn't verify, so nothing was installed.",
         )
     }
 
@@ -2007,8 +1994,7 @@ internal fun DwAsrModelBody(
             controller.manifestVerdict == DwAsrManifestVerdict.DISAGREES_ON_SIZE
         ) {
             Text(
-                "The speech model available online is not the expected file, so nothing was " +
-                    "downloaded. Ask an administrator.",
+                "The online model isn't the expected file. Ask an admin.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp,
             )
@@ -2076,13 +2062,12 @@ internal fun DwAsrModelBody(
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        ActionRow {
             dwAsrModelActionLabel(offer)?.let { label ->
                 if (dwAsrModelMayInstall(offer)) {
                     Button(
                         onClick = { controller.install() },
                         enabled = !controller.busy,
-                        modifier = Modifier.weight(1f)
                     ) { Text(label) }
                 }
             }
@@ -2117,7 +2102,7 @@ internal fun DwAsrModelBody(
                 }
             }
             if (offer == DwAsrModelOffer.ALREADY_INSTALLED) {
-                OutlinedButton(onClick = { controller.remove() }, enabled = !controller.busy) {
+                OutlinedButton(onClick = { controller.remove() }, enabled = !controller.busy, modifier = Modifier.destructiveAction()) {
                     Text("Remove it")
                 }
             }

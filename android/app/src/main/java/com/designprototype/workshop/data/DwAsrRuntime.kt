@@ -981,15 +981,7 @@ fun dwAsrStateLabel(state: DwAsrRuntimeState): String = when (state) {
  * makes that measurement the bar before offering it.
  */
 const val DW_ASR_OFFER_BLURB: String =
-    "Dictation normally uses Android's own speech packs when the language is on the phone, and a " +
-        "server when it is not. On the handset this was measured on, Android carries offline packs " +
-        "for two of this app's nineteen languages — Odia, the language of the state these " +
-        "workshops are run in, is not one of them. This app can carry a speech engine of its own to " +
-        "close that gap. It is not part of the app: it is a download you choose, because most " +
-        "designers never work anywhere without signal and should not pay for it. An engine also " +
-        "needs a speech model to go with it, and whether either can be installed on this phone " +
-        "today is the first thing this card says when you open it — read that before planning a " +
-        "field trip around it."
+    "A download you choose, for dictation without signal — including Odia. It needs a speech model too; see below whether it can be installed on this phone today."
 
 /**
  * **WHAT THE ENGINE DOES NOT YET BUY, SAID EVERY TIME THE ENGINE IS MENTIONED.**
@@ -1004,12 +996,7 @@ const val DW_ASR_OFFER_BLURB: String =
  * what they are waiting for rather than only that they are waiting.
  */
 const val DW_ASR_ENGINE_WITHOUT_A_VOICE: String =
-    "The engine arrives without a voice, and that is why nothing can be installed yet. It is the " +
-        "machinery for listening; the language model that does the actual recognising is a separate " +
-        "download, and no such model has been run on a real handset and measured — not its size, " +
-        "not how much memory it needs, and not how well it transcribes an Odia courtyard. Until " +
-        "that measurement is taken, installing the engine would spend your data and change nothing " +
-        "you could hear, so this app does not offer it."
+    "The engine arrives without a voice, so nothing can be installed yet: it needs a speech model, and none has been measured."
 
 /**
  * What the designer's own bytes buy them, once there IS something to install. Said above the button.
@@ -1020,9 +1007,7 @@ const val DW_ASR_ENGINE_WITHOUT_A_VOICE: String =
  * unmeasured.
  */
 const val DW_ASR_WHAT_IT_BUYS: String =
-    "With the engine and a language model on the phone, dictation into the workshop's fields works " +
-        "with no signal at all — the phone does the listening, so a courtyard with no bars is the " +
-        "same as the office. Everything already saved on the phone stays exactly as it is."
+    "With the engine and a language model, you can dictate with no signal."
 
 /**
  * **THE SIZE, NAMED BEFORE THE TAP. The one place in this app that can do this.**
@@ -1057,11 +1042,9 @@ fun dwAsrCostSentence(
         // The word, not a number. An emulator on x86, or a handset whose ABI list would not be read,
         // gets told the size is unmeasured rather than given the ARM figure with a straight face.
         bytes == null && processor == null ->
-            "This phone would not say what processor it has, so how much the engine weighs on it is " +
-                "unmeasured."
+            "Size unmeasured on this phone."
         bytes == null ->
-            "How much the engine weighs on this phone's processor ($processor) is unmeasured — the " +
-                "measurement covers arm64-v8a and armeabi-v7a, which is what the field fleet runs."
+            "Engine size for this processor ($processor) is unmeasured."
         /*
          * TWO NUMBERS WHERE THE PUBLISHED FILE IS COMPRESSED, because they are two different costs to
          * a designer: the download is what the prepaid bundle pays for and the install is what stays
@@ -1070,21 +1053,17 @@ fun dwAsrCostSentence(
          * two to one (57,662,788 stored bytes to 24,581,961 compressed).
          */
         artifact != null && artifact.installedBytes != bytes ->
-            "On this phone's processor ($processor) the engine is ${dwBytesLabel(bytes)} to fetch and " +
-                "${dwBytesLabel(artifact.installedBytes)} to keep on the phone once it is unpacked. " +
-                "Both have to fit while it is installing."
+            "${dwBytesLabel(bytes)} download, ${dwBytesLabel(artifact.installedBytes)} installed ($processor)."
         else ->
-            "On this phone's processor ($processor) the engine is ${dwBytesLabel(bytes)} to fetch, " +
-                "and those same ${dwBytesLabel(bytes)} stay on the phone until you remove it."
+            "${dwBytesLabel(bytes)} download and on disk ($processor)."
     }
     val meter = when (connection) {
         DwConnection.NONE ->
-            "There is no connection now, so nothing can be fetched."
+            "Offline."
         DwConnection.METERED ->
-            "This phone is on mobile data, so it would be paid for by the megabyte. On a prepaid " +
-                "bundle, wait for Wi-Fi — nothing here expires."
+            "On mobile data — consider waiting for Wi-Fi."
         DwConnection.UNMETERED ->
-            "This phone is on Wi-Fi, so nothing here is charged by the megabyte."
+            "On Wi-Fi."
     }
     return "$size $meter"
 }
@@ -1108,30 +1087,19 @@ fun dwAsrOfferSentence(
      * Without that last clause this reads as "offline dictation is ready", which it is not.
      */
     DwAsrOffer.BUNDLED_IN_THIS_BUILD ->
-        "This app's speech engine is part of the app itself, so there is nothing to install, " +
-            "nothing to download and nothing that can go missing. It came with the app and it goes " +
-            "when the app does. On its own it does nothing you can hear: the engine is the machinery " +
-            "for listening, and what it listens WITH is the speech model on the card below — that is " +
-            "the one that decides which languages this phone can hear with no signal."
+        "Built in — part of the app itself, nothing to install. Add the speech model on the card below to dictate offline."
 
     DwAsrOffer.INSTALL ->
-        "The engine can be installed on this phone now. Nothing is fetched until you tap the button " +
-            "below, and it can be removed again afterwards."
+        "Ready to install. Removable any time."
 
     DwAsrOffer.RETRY ->
-        "The last attempt did not finish, so nothing was installed and nothing was kept. Whatever " +
-            "arrived has been deleted. You can try again — a part-finished download costs nothing " +
-            "to abandon."
+        "Last attempt didn't finish. Try again."
 
     DwAsrOffer.NO_CONNECTION ->
-        "The engine cannot be fetched now, because there is no connection. Dictation goes on working " +
-            "exactly as it does today: the phone's own packs where it has them, the server where it " +
-            "does not, and typing where there is neither."
+        "Offline. Dictation still works as usual."
 
     DwAsrOffer.ALREADY_INSTALLED ->
-        "This app's speech engine is installed on this phone and was checked against the fingerprint " +
-            "built into this app when it started. It stays until you remove it, and it is a setting " +
-            "of THIS PHONE — it does not follow your account to another handset."
+        "Installed and verified on this phone."
 
     /*
      * IT SAYS "STAY ON THIS SCREEN", BECAUSE THAT IS WHAT THE CODE DOES. The fetch belongs to the
@@ -1141,26 +1109,19 @@ fun dwAsrOfferSentence(
      * next lane's move, if this becomes a real irritation, is written down in `DwAsrRuntimeUi.kt`.
      */
     DwAsrOffer.IN_PROGRESS ->
-        "The engine is being fetched now. Stay on this screen while it finishes — leaving stops it, " +
-            "and a part-finished download is thrown away rather than kept, so nothing is left " +
-            "half-installed. There is nothing more to tap: a second tap would pay for one file twice."
+        "Downloading — stay on this screen."
 
     // The two that are true of every handset today. Both name whose job the missing thing is.
     DwAsrOffer.NO_MODEL_TO_FEED_IT -> DW_ASR_ENGINE_WITHOUT_A_VOICE
 
     DwAsrOffer.NOTHING_PUBLISHED_TO_INSTALL ->
-        "There is nothing published for this app to install yet. The engine is not part of the app " +
-            "and is not fetched from a stranger's website either: it has to be published to this " +
-            "deployment's own storage first, with a fingerprint of the exact file recorded inside " +
-            "this app, so that what arrives can be checked before it is ever run. That has not been " +
-            "done, so this app has nothing to offer and will not pretend otherwise."
+        "Nothing has been published to install yet."
 
     DwAsrOffer.NO_BUILD_FOR_THIS_PROCESSOR -> buildString {
-        append("There is no build of this app's speech engine for this phone's processor")
+        append("Not available for this phone's processor")
         measurement.abis.firstOrNull()?.let { append(" ($it)") }
         append(
-            ". Nothing on this screen can change that. Dictation carries on as it does today — the " +
-                "phone's own packs where it has them, and the server where it does not."
+            "."
         )
         // Named, so a designer reading it down a phone line can say which builds DO exist rather
         // than only that theirs is not among them.
@@ -1175,26 +1136,19 @@ fun dwAsrOfferSentence(
      * neither. An earlier draft did exactly that.
      */
     DwAsrOffer.PROCESSOR_UNMEASURED ->
-        "This phone would not say what kind of processor it has, so which build of the engine it " +
-            "would need is unknown — and this app will not fetch tens of megabytes of program code " +
-            "on a guess about which one runs here. Tap “Check again”; if it keeps saying this, " +
-            "dictation stays exactly as it is."
+        "Couldn't identify the processor. Tap “Check again”."
 
     DwAsrOffer.STORAGE_UNMEASURED ->
-        "This phone would not say how much storage is free, so whether the engine would fit is " +
-            "unknown, and nothing will be fetched on a guess. Tap “Check again”."
+        "Couldn't read free storage. Tap “Check again”."
 
     DwAsrOffer.NOT_ENOUGH_STORAGE -> buildString {
-        append("There is not enough free storage on this phone for the engine, with room left over ")
-        append("for a day of photographs and recordings. This phone reports ")
+        append("Not enough storage. This phone has ")
         append(dwBytesLabel(measurement.freeStorageBytes))
-        append(" free. Delete what you can spare and tap “Check again” — the size is stated above ")
-        append("the button before anything is fetched.")
+        append(" free.")
     }
 
     DwAsrOffer.UNKNOWN ->
-        "This app has not yet been able to look at its own files to see whether the engine is " +
-            "installed, so it will not claim either way. Tap “Check again”."
+        "Not checked yet. Tap “Check again”."
 }
 
 /**
@@ -1207,17 +1161,11 @@ fun dwAsrOfferSentence(
  * anybody has audited what the engine itself does.
  */
 const val DW_ASR_VERIFY_SENTENCE: String =
-    "Whatever is fetched is checked against a fingerprint built into this app before any of it is " +
-        "used, and thrown away if it does not match. The engine is program code that runs inside " +
-        "this app, alongside the records on this phone, which is why it is fetched only from this " +
-        "deployment's own storage and never from anywhere else."
+    "Downloads are checked against a fingerprint built into this app and thrown away if it does not match."
 
 /** Said when a fetched file does not match the pinned digest. It is deleted, and this is why. */
 const val DW_ASR_MISMATCH_SENTENCE: String =
-    "What arrived did not match the fingerprint built into this app, so it has been deleted and " +
-        "nothing was installed. That is usually a download that broke in transit and trying again " +
-        "on a better connection is the next move. If it happens twice, stop and tell whoever " +
-        "administers this deployment: it means the file being served is not the file this app expects."
+    "Download didn't verify, so it was deleted. Try again; if it happens twice, tell your admin."
 
 /**
  * The one-line pitch for the settings card's heading area.
@@ -1232,7 +1180,4 @@ const val DW_ASR_MISMATCH_SENTENCE: String =
  * wording. If the engine card does not come back, delete this and those assertions together.
  */
 const val DW_ASR_CARD_BLURB: String =
-    "This app can carry a speech engine of its own, so that dictation works where there is no " +
-        "signal and in languages the phone's own packs do not cover. It is optional, it is a " +
-        "setting of this phone rather than of your account, and nothing here downloads anything by " +
-        "itself."
+    "Dictate without signal. It is optional, and set per phone, not per account."

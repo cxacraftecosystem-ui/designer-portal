@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.data.userMessage
 
 import androidx.compose.foundation.Canvas
@@ -264,11 +265,7 @@ private data class WorkshopRow(
  * again button after a person has done something about a refusal.
  */
 private fun blockedLine(blocked: Int): String = if (blocked <= 0) "" else {
-    " $blocked workshop${if (blocked == 1) "" else "s"} " +
-        "${if (blocked == 1) "was" else "were"} not sent and a sync cannot move " +
-        "${if (blocked == 1) "it" else "them"} — ${if (blocked == 1) "it is" else "they are"} " +
-        "waiting on a person, not on the connection. Nothing has been deleted: open the workshop " +
-        "below to see what is needed."
+    " ${if (blocked == 1) "1 workshop needs" else "$blocked workshops need"} your attention before uploading — open below."
 }
 
 @Composable
@@ -614,8 +611,7 @@ fun WorkshopListScreen(
             fontSize = 22.sp
         )
         Text(
-            "Each workshop is captured across 22 stages. Everything is saved on this device first, " +
-                "and synced whenever there is a connection.",
+            "Saved on this phone first; syncs when you're online.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -695,7 +691,7 @@ fun WorkshopListScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    "Starting a workshop is an admin's job",
+                    "Only an admin can start a workshop",
                     color = MaterialTheme.field.onWarningContainer,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
@@ -762,81 +758,82 @@ fun WorkshopListScreen(
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedButton(
-                        // Disabled on an empty title only. Everything else this control could
-                        // refuse is refused by [dwClassifyDraftStart] below, which is the one place
-                        // that knows the rule.
-                        enabled = !busy && localTitle.isNotBlank(),
-                        onClick = {
-                            /*
-                              READ AT THE TAP AND FROM THE CACHED USER, exactly as the create dialog
-                              does and for the same reason: the answer must not depend on a round
-                              trip, and the phone already holds the signed-in account.
-
-                              `reachable` IS `ConnectivityObserver`, NOT THE `offline` FLAG ABOVE.
-                              That flag records a list read that failed some seconds ago, which is
-                              the right evidence for DRAWING this control and the wrong evidence for
-                              writing to disk: the whole point of the clause is that a workshop is
-                              minted here only while the repository genuinely cannot be reached, and
-                              a phone that has since found signal has the better answer available to
-                              it again.
-                            */
-                            val cached = repository.cachedUser()
-                            val start = dwClassifyDraftStart(
-                                mayCreate = mayMintLocalWorkshop(
-                                    known = cached != null,
-                                    role = cached?.role,
-                                ),
-                                mayRunWorkshops = cached != null &&
-                                    FieldPermissions.canRunDesignWorkshops(cached),
-                                reachable = ConnectivityObserver.isOnline(appContext),
-                            )
-                            if (start != DwDraftStart.LINK_LATER) {
-                                onError(DW_WORKSHOP_CREATE_REFUSAL)
-                            } else {
-                                busy = true
-                                val typed = localTitle.trim()
-                                localTitle = ""
-                                scope.launch {
-                                    val id = DW_LOCAL_ID_PREFIX + UUID.randomUUID()
-                                    val written = runCatching {
-                                        // Seeded immediately, before the screen opens, for the
-                                        // reason the create dialog gives: a workshop whose draft is
-                                        // only written on the first stage save vanishes from this
-                                        // list if the designer backs out of stage 1.
-                                        WorkshopDraftStore.update(appContext, id) { draft ->
-                                            draft.copy(
-                                                title = typed,
-                                                // NO `remoteId`, and no `createSentAt` either:
-                                                // nothing was sent, so nothing is outstanding, and a
-                                                // stamp here would arm `resolveInterruptedCreate`
-                                                // against a request that never left the handset.
-                                                ownerUserId = cached?.id,
+                    ActionRow {
+                        OutlinedButton(
+                            // Disabled on an empty title only. Everything else this control could
+                            // refuse is refused by [dwClassifyDraftStart] below, which is the one place
+                            // that knows the rule.
+                            enabled = !busy && localTitle.isNotBlank(),
+                            onClick = {
+                                /*
+                                  READ AT THE TAP AND FROM THE CACHED USER, exactly as the create dialog
+                                  does and for the same reason: the answer must not depend on a round
+                                  trip, and the phone already holds the signed-in account.
+    
+                                  `reachable` IS `ConnectivityObserver`, NOT THE `offline` FLAG ABOVE.
+                                  That flag records a list read that failed some seconds ago, which is
+                                  the right evidence for DRAWING this control and the wrong evidence for
+                                  writing to disk: the whole point of the clause is that a workshop is
+                                  minted here only while the repository genuinely cannot be reached, and
+                                  a phone that has since found signal has the better answer available to
+                                  it again.
+                                */
+                                val cached = repository.cachedUser()
+                                val start = dwClassifyDraftStart(
+                                    mayCreate = mayMintLocalWorkshop(
+                                        known = cached != null,
+                                        role = cached?.role,
+                                    ),
+                                    mayRunWorkshops = cached != null &&
+                                        FieldPermissions.canRunDesignWorkshops(cached),
+                                    reachable = ConnectivityObserver.isOnline(appContext),
+                                )
+                                if (start != DwDraftStart.LINK_LATER) {
+                                    onError(DW_WORKSHOP_CREATE_REFUSAL)
+                                } else {
+                                    busy = true
+                                    val typed = localTitle.trim()
+                                    localTitle = ""
+                                    scope.launch {
+                                        val id = DW_LOCAL_ID_PREFIX + UUID.randomUUID()
+                                        val written = runCatching {
+                                            // Seeded immediately, before the screen opens, for the
+                                            // reason the create dialog gives: a workshop whose draft is
+                                            // only written on the first stage save vanishes from this
+                                            // list if the designer backs out of stage 1.
+                                            WorkshopDraftStore.update(appContext, id) { draft ->
+                                                draft.copy(
+                                                    title = typed,
+                                                    // NO `remoteId`, and no `createSentAt` either:
+                                                    // nothing was sent, so nothing is outstanding, and a
+                                                    // stamp here would arm `resolveInterruptedCreate`
+                                                    // against a request that never left the handset.
+                                                    ownerUserId = cached?.id,
+                                                )
+                                            }
+                                        }.isSuccess
+                                        busy = false
+                                        if (!written) {
+                                            onError(
+                                                "Couldn't save on this phone. Nothing was lost."
                                             )
+                                        } else {
+                                            reload++
+                                            onOpen(id)
                                         }
-                                    }.isSuccess
-                                    busy = false
-                                    if (!written) {
-                                        onError(
-                                            "That could not be written to this phone, so nothing " +
-                                                "has been started and nothing has been lost."
-                                        )
-                                    } else {
-                                        reload++
-                                        onOpen(id)
                                     }
                                 }
-                            }
-                        },
-                        modifier = Modifier.heightIn(min = 48.dp)
-                    ) { Text(DW_LOCAL_START_ACTION, fontSize = 13.sp) }
+                            },
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) { Text(DW_LOCAL_START_ACTION, fontSize = 13.sp) }
+                    }
                 }
             }
         }
 
         if (offline) {
             Text(
-                "Could not connect. Showing what is stored on this device.",
+                "Offline — showing what's on this phone.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp
             )
@@ -870,10 +867,9 @@ fun WorkshopListScreen(
         if (!offline && unlinkedCount > 0) {
             Text(
                 (if (unlinkedCount == 1) {
-                    "One workshop here was started on this device and is not linked to a workshop yet. "
+                    "1 workshop isn't linked to a workshop online yet. "
                 } else {
-                    "$unlinkedCount workshops here were started on this device and are not linked " +
-                        "to a workshop yet. "
+                    "$unlinkedCount workshops aren't linked to a workshop online yet. "
                 }) + DW_LOCAL_DRAFT_LINK_PROMPT + " Use “Move into a workshop” on the row.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp,
@@ -887,7 +883,7 @@ fun WorkshopListScreen(
         // rows this list stopped short of.
         partial?.let { (shown, total) ->
             Text(
-                "Showing $shown of $total workshops. Search by title, craft or cluster to reach the rest.",
+                "Showing $shown of $total. Search to find the rest.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp
             )
@@ -901,9 +897,7 @@ fun WorkshopListScreen(
                 // recorded its type since [WorkshopDraft.workshopKind] landed, so a synced-or-not
                 // row is filtered on what the designer picked; what is left here is the row nobody
                 // picked a type FOR, which is a different fact and a different next move.
-                "$unfilterableLocal workshop${if (unfilterableLocal == 1) "" else "s"} on this device " +
-                    "${if (unfilterableLocal == 1) "is" else "are"} shown whatever the filter says — " +
-                    "no type was chosen for ${if (unfilterableLocal == 1) "it" else "them"}.",
+                "$unfilterableLocal workshop${if (unfilterableLocal == 1) " has" else "s have"} no type, so ${if (unfilterableLocal == 1) "it shows" else "they show"} under every filter.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -945,10 +939,7 @@ fun WorkshopListScreen(
         */
         val refusedAnswersNow = outstanding.sumOf { it.refusedAnswers }
         val refusedAnswersLine = if (refusedAnswersNow == 0) "" else {
-            " $refusedAnswersNow answer${if (refusedAnswersNow == 1) "" else "s"} " +
-                "${if (refusedAnswersNow == 1) "is" else "are"} still refused — a sync cannot move " +
-                "${if (refusedAnswersNow == 1) "it" else "them"}; open the workshop and correct " +
-                "${if (refusedAnswersNow == 1) "it" else "them"}."
+            " $refusedAnswersNow answer${if (refusedAnswersNow == 1) " was" else "s were"} refused — open the workshop to fix ${if (refusedAnswersNow == 1) "it" else "them"}."
         }
         /*
           AND THE OTHER THING A SYNC PASS CANNOT MOVE, WHICH IS NOT AN ANSWER BUT A DELETION.
@@ -963,10 +954,7 @@ fun WorkshopListScreen(
         */
         val deletionsNow = outstanding.sumOf { it.unsentDeletions }
         val deletionsLine = if (deletionsNow == 0) "" else {
-            " $deletionsNow stage${if (deletionsNow == 1) "" else "s"} " +
-                "${if (deletionsNow == 1) "holds a deleted entry" else "hold deleted entries"} that " +
-                "cannot upload yet — open the stage once with a connection, and the deletion is sent " +
-                "on the next save."
+            " $deletionsNow deletion${if (deletionsNow == 1) "" else "s"} will upload after you open ${if (deletionsNow == 1) "its stage" else "those stages"} online."
         }
         /*
           AND THE THIRD THING A SYNC PASS CANNOT MOVE (2026-09-03), found the same way as the two above
@@ -987,10 +975,7 @@ fun WorkshopListScreen(
         */
         val droppedNow = outstanding.sumOf { it.droppedAnswers }
         val droppedLine = if (droppedNow == 0) "" else {
-            " $droppedNow answer${if (droppedNow == 1) "" else "s"} " +
-                "${if (droppedNow == 1) "was" else "were"} not stored — this workshop's sections no " +
-                "longer ask for ${if (droppedNow == 1) "it" else "them"}. Open the workshop once " +
-                "with a connection — it re-reads the sections, and the next sync clears this."
+            " $droppedNow answer${if (droppedNow == 1) " is" else "s are"} no longer asked for. Open the workshop online to clear ${if (droppedNow == 1) "it" else "them"}."
         }
         DeviceSyncBanner(
             workshops = outstanding.size,
@@ -1007,9 +992,9 @@ fun WorkshopListScreen(
                 scope.launch {
                     val result = runCatching { repository.syncDesignWorkshops(appContext) }.getOrNull()
                     when {
-                        result == null -> onError("The sync could not be started.")
+                        result == null -> onError("Couldn't start the sync.")
                         result.skipped -> onMessage(
-                            "No connection. Everything is saved on this device and will upload by itself."
+                            "Offline. Everything is saved and will upload later."
                         )
                         result.didAnything -> onMessage(
                             buildString {
@@ -1024,7 +1009,7 @@ fun WorkshopListScreen(
                                 // the first one's else-branch, so the two clauses would have been
                                 // mutually exclusive.
                                 if (result.refused > 0) {
-                                    append(" ${result.refused} item(s) were refused — open the workshop below to see why.")
+                                    append(" ${result.refused} item(s) refused — open the workshop to see why.")
                                 }
                                 // A stage that WAS sent and came back with some of its answers
                                 // declined is counted by neither `stagesSent` (it went) nor
@@ -1048,8 +1033,7 @@ fun WorkshopListScreen(
                                 // "0 stage(s)" for a pass whose whole achievement was that.
                                 if (result.workshopsResumed > 0) {
                                     append(
-                                        " ${result.workshopsResumed} workshop(s) were already " +
-                                            "uploaded and have been linked to this phone."
+                                        " ${result.workshopsResumed} workshop(s) were already online and are now linked."
                                     )
                                 }
                             }
@@ -1067,12 +1051,9 @@ fun WorkshopListScreen(
                         // of the news and it is the half that says nothing was lost.
                         result.refused > 0 -> onMessage(
                             buildString {
-                                append("${result.refused} item(s) could not be saved online and are ")
-                                append("still on this device. Open the workshop below to see which, ")
-                                append("and why.")
+                                append("${result.refused} item(s) couldn't upload. Open the workshop to see why.")
                                 if (result.stoppedOffline) {
-                                    append(" The connection then dropped, so nothing after that was ")
-                                    append("tried — none of it has been lost.")
+                                    append(" Connection lost; the rest is still here.")
                                 }
                                 append(blockedLine(result.blockedByRefusal))
                             }
@@ -1088,8 +1069,7 @@ fun WorkshopListScreen(
                             buildString {
                                 append(blockedLine(result.blockedByRefusal).trimStart())
                                 if (result.stoppedOffline) {
-                                    append(" The connection then dropped, so nothing after that was ")
-                                    append("tried — none of it has been lost.")
+                                    append(" Connection lost; the rest is still here.")
                                 }
                                 append(refusedAnswersLine)
                                 append(deletionsLine)
@@ -1097,17 +1077,16 @@ fun WorkshopListScreen(
                             }
                         )
                         result.stoppedOffline -> onMessage(
-                            "The connection dropped before anything could be sent. Nothing has been lost."
+                            "Connection lost before anything was sent. Nothing was lost."
                         )
                         // NOT "everything is already on the server" WHEN IT IS NOT. This arm is
                         // reached by exactly the phone the banner above was describing wrongly: a
                         // clean pass with nothing to send, because the only outstanding thing is an
                         // answer the repository has already read and declined. See `refusedAnswersNow`.
                         refusedAnswersNow > 0 || deletionsNow > 0 || droppedNow > 0 -> onMessage(
-                            "There was nothing to send." +
-                                "$refusedAnswersLine$deletionsLine$droppedLine"
+                            "Nothing to send.$refusedAnswersLine$deletionsLine$droppedLine"
                         )
-                        else -> onMessage("Everything on this device is already uploaded.")
+                        else -> onMessage("Everything is uploaded.")
                     }
                     busy = false
                     reload++
@@ -1126,14 +1105,12 @@ fun WorkshopListScreen(
 
             rows.isEmpty() -> Text(
                 if (mayCreate) {
-                    "No design workshops yet. Tap New to start one — you can do it with no connection."
+                    "No workshops yet. Tap New to start one."
                 } else {
                     // A DIFFERENT SENTENCE, because the other one names a button this account does
                     // not have. "Tap New" over a header with no New in it is the app telling somebody
                     // their screen is broken.
-                    "No design workshops yet. An admin creates the workshop and gives you access; it " +
-                        "then appears here and everything inside it is yours to fill in, with or " +
-                        "without a connection."
+                    "No workshops yet. They appear here once an admin gives you access."
                 },
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp
@@ -1185,15 +1162,12 @@ fun WorkshopListScreen(
                                 repository.retryDesignWorkshopSync(appContext, row.localId)
                             }.getOrNull()
                             when {
-                                result == null -> onError("“${row.title}” could not be sent.")
+                                result == null -> onError("Couldn't send “${row.title}”.")
                                 result.skipped -> onMessage(
-                                    "No connection. “${row.title}” is safe on this device and will " +
-                                        "upload as soon as there is signal."
+                                    "Offline. “${row.title}” is saved and will upload later."
                                 )
                                 result.refused > 0 -> onError(
-                                    "${result.refused} item(s) of “${row.title}” could not be saved " +
-                                        "online. Nothing has been deleted — open the details on the row " +
-                                        "to see why."
+                                    "${result.refused} item(s) of “${row.title}” couldn't upload. Open the row for details."
                                 )
                                 // "Try again" CLEARS a create failure before the pass runs (see
                                 // `retryWorkshop`), so what reaches this arm is the refusal the pass
@@ -1201,10 +1175,7 @@ fun WorkshopListScreen(
                                 // workshop. Without it the button answered "“…” is already fully on
                                 // the server" over a draft that has never been anywhere near it.
                                 result.blockedByRefusal > 0 -> onError(
-                                    "“${row.title}” was not sent, and a sync cannot move it — it is " +
-                                        "waiting on a person, not on the connection. Nothing has " +
-                                        "been deleted: open the details on the row to see what is " +
-                                        "needed."
+                                    "“${row.title}” needs your attention before it can upload. Open the row for details."
                                 )
                                 result.didAnything -> onMessage(
                                     "“${row.title}”: sent ${result.stagesSent} stage(s) and " +
@@ -1212,16 +1183,15 @@ fun WorkshopListScreen(
                                         // The id was recovered rather than a workshop filed; the two
                                         // counts above are both 0 on the pass that does only that.
                                         if (result.workshopsResumed > 0) {
-                                            " It was already uploaded and has been linked to this phone."
+                                            " It was already online and is now linked."
                                         } else {
                                             ""
                                         }
                                 )
                                 result.stoppedOffline -> onMessage(
-                                    "The connection dropped. Nothing has been lost — it will pick up " +
-                                        "where it stopped."
+                                    "Connection lost. It will resume where it stopped."
                                 )
-                                else -> onMessage("“${row.title}” is already fully uploaded.")
+                                else -> onMessage("“${row.title}” is fully uploaded.")
                             }
                             busy = false
                             reload++
@@ -1236,12 +1206,10 @@ fun WorkshopListScreen(
                                 WorkshopDraftStore.releaseUploadedMedia(appContext, row.localId)
                             }.getOrDefault(0 to 0L)
                             if (count == 0) {
-                                onMessage("There was nothing safe to remove.")
+                                onMessage("Nothing to remove.")
                             } else {
                                 onMessage(
-                                    "Freed ${syncBytes(bytes)} by removing $count uploaded file(s) from " +
-                                        "this phone. They are still saved online, but reports " +
-                                        "generated on this device will no longer include them."
+                                    "Freed ${syncBytes(bytes)} ($count file(s)). They stay online but leave reports made on this phone."
                                 )
                             }
                             busy = false
@@ -1330,13 +1298,11 @@ fun WorkshopListScreen(
                     }.getOrNull()
                     if (moved == null) {
                         onError(
-                            "That draft could not be moved. If it has since been uploaded " +
-                                "on its own, nothing needed moving and nothing has been lost."
+                            "Couldn't move that draft. Nothing was lost."
                         )
                     } else {
                         onMessage(
-                            "“${row.title}” now belongs to the workshop you chose. Everything on this " +
-                                "phone goes up into it on the next sync — nothing has been deleted."
+                            "“${row.title}” moved. It uploads on the next sync."
                         )
                     }
                     busy = false
@@ -1361,7 +1327,7 @@ fun WorkshopListScreen(
                 showCreate = false
                 reload++
                 if (wasLocal) {
-                    onMessage("Started on this device. Upload it from this list once you have a connection.")
+                    onMessage("Started on this phone. Upload it when you're online.")
                 }
                 onOpen(id)
             },
@@ -1498,11 +1464,13 @@ private fun WorkshopCard(
                     fontSize = 11.sp,
                     lineHeight = 16.sp
                 )
-                OutlinedButton(
-                    onClick = adopt,
-                    enabled = !busy && !sending,
-                    modifier = Modifier.heightIn(min = 48.dp)
-                ) { Text("Move into a workshop", fontSize = 13.sp) }
+                ActionRow {
+                    OutlinedButton(
+                        onClick = adopt,
+                        enabled = !busy && !sending,
+                        modifier = Modifier.heightIn(min = 48.dp)
+                    ) { Text("Move into a workshop", fontSize = 13.sp) }
+                }
             }
         }
     }
@@ -1967,7 +1935,7 @@ private fun CreateWorkshopDialog(
                         searchable = false,
                         enabled = !busy,
                         createAction = com.designprototype.workshop.ui.SelectCreateAction(
-                            label = "Type a name that is not on this list"
+                            label = "Type a new name"
                         ) { pickingName = false },
                         onSelect = { picked -> if (picked.isNotBlank()) title = picked }
                     )
@@ -1980,9 +1948,9 @@ private fun CreateWorkshopDialog(
                         buildString {
                             append(
                                 if (workshopKind.isBlank()) {
-                                    "Names from workshops you can open."
+                                    "From workshops you can open."
                                 } else {
-                                    "Names from workshops of this type."
+                                    "From workshops of this type."
                                 }
                             )
                             if (namesTotal > namesOnRecord.size) {
@@ -2003,8 +1971,10 @@ private fun CreateWorkshopDialog(
                     // DRAWN ONLY WHEN THERE IS SOMETHING TO REUSE. An offer that opens on an empty
                     // list is the wordless picker this app's own primitive spends a page refusing.
                     if (namesOnRecord.isNotEmpty()) {
-                        TextButton(enabled = !busy, onClick = { pickingName = true }) {
-                            Text("Reuse a name already on record")
+                        ActionRow {
+                            TextButton(enabled = !busy, onClick = { pickingName = true }) {
+                                Text("Reuse a name")
+                            }
                         }
                     }
                 }
@@ -2085,7 +2055,7 @@ private fun CreateWorkshopDialog(
                     OutlinedTextField(
                         value = designerQuery,
                         onValueChange = { designerQuery = it },
-                        label = { Text("Search designers by name or email") },
+                        label = { Text("Search designers") },
                         singleLine = true,
                         enabled = !busy,
                         leadingIcon = {
@@ -2190,11 +2160,9 @@ private fun CreateWorkshopDialog(
                         // statement about the empanelment roster; "nothing matched" is a statement about
                         // the term just typed. Same split, same words, as `WorkshopViewersScreen`.
                         emptyMessage = if (designerOffer?.search != null) {
-                            "No eligible account matches that search."
+                            "No matches."
                         } else {
-                            "No account can be named as this workshop's designer yet. " +
-                                "An account has to be able to run a design workshop, and be on the " +
-                                "active designer roster, before it can be named on one."
+                            "No eligible designers yet."
                         },
                         enabled = !busy && designerStandDown == null,
                         onSelectedChange = { picked ->
@@ -2216,12 +2184,7 @@ private fun CreateWorkshopDialog(
                         }
                     )
                     Text(
-                        "Everybody named here can open this workshop and fill in its stages — a design " +
-                            "workshop is visible only to the designers on it, and to admins. One of them " +
-                            "is the one whose designer profile is copied into stage 1 and stage 3, and " +
-                            "whose name the report carries. Leave it as “Not decided yet” if you do not " +
-                            "know — stage 1 then carries whoever creates the workshop, and designers can " +
-                            "be added later from “Designers on a workshop”.",
+                        "Everyone ticked can open and fill in this workshop. The lead's profile fills stages 1 and 3 and the report.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -2236,8 +2199,7 @@ private fun CreateWorkshopDialog(
                 // N shown" is what can cross it in one tap.
                 if (designerUserIds.size > DW_MAX_NAMED_DESIGNERS) {
                     Text(
-                        "A workshop can be opened for at most $DW_MAX_NAMED_DESIGNERS designers, and " +
-                            "this list has ${designerUserIds.size}. Take some off before starting.",
+                        "Up to $DW_MAX_NAMED_DESIGNERS designers. Remove ${designerUserIds.size - DW_MAX_NAMED_DESIGNERS} to continue.",
                         color = MaterialTheme.field.warning,
                         fontSize = 12.sp
                     )
@@ -2258,10 +2220,9 @@ private fun CreateWorkshopDialog(
                 val namedTeam = dwNamedDesignerTeam(designerUserIds, leadDesignerId)
                 namedTeam.lead?.let { lead ->
                     Text(
-                        "Stage 1, stage 3 and the report will carry " +
+                        "Lead designer: " +
                             (seenDesigners[lead]?.let { dwPersonLabel(it.name, it.email) } ?: lead) +
-                            " — their designer profile is the one copied in. Everybody ticked can " +
-                            "open the workshop.",
+                            ".",
                         color = MaterialTheme.field.body,
                         fontSize = 12.sp
                     )
@@ -2466,7 +2427,7 @@ private fun CreateWorkshopDialog(
                                 )
                             }
                         }.onFailure { error ->
-                            onError(error.userMessage("Could not start the workshop on this device."))
+                            onError(error.userMessage("Couldn't start the workshop."))
                             busy = false
                             return@launch
                         }
@@ -2563,10 +2524,7 @@ private fun AdoptIntoWorkshopDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Everything captured on this phone under “${row.title}” — every stage, every " +
-                        "photograph, every recording — starts belonging to the workshop you pick, and " +
-                        "goes up into it on the next sync. Nothing is deleted and nothing is sent " +
-                        "anywhere else.",
+                    "Everything captured under “${row.title}” moves into the workshop you pick and uploads on the next sync.",
                     color = MaterialTheme.field.body,
                     fontSize = 12.sp
                 )
@@ -2619,8 +2577,7 @@ private fun AdoptIntoWorkshopDialog(
                         Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp)
                     }
                     Text(
-                        "Check the name. Moving it into the wrong workshop files this fortnight's " +
-                            "fieldwork under another cluster, and this screen cannot move it back.",
+                        "Check the name — this can't be undone here.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -2674,7 +2631,7 @@ internal fun classifyCreate(error: Throwable?, isTransient: (Throwable) -> Boole
         error == null -> CreateOutcome.Local
         isTransient(error) -> CreateOutcome.Local
         else -> CreateOutcome.Refused(
-            error.apiErrorMessage("This workshop could not be started.")
+            error.apiErrorMessage("Couldn't start this workshop.")
         )
     }
 
@@ -2716,19 +2673,14 @@ internal fun dwDesignerPickerStandDown(
     isConnectionFailure: (Throwable) -> Boolean,
 ): String? {
     val cannotReach =
-        "There is no connection, so the list of designers cannot be read. Start the workshop now " +
-            "and name its designers once this phone is back online — nothing is lost by leaving " +
-            "it, and stage 1 carries whoever started it until then."
+        "Offline. Start the workshop now and add designers later; stage 1 uses your profile until then."
     if (offline) return cannotReach
     if (error == null) return null
     if (dwViewerAdministrationMissing((error as? HttpException)?.code())) {
-        return "The list of designers could not be read just now. The workshop can still be " +
-            "started; stage 1 will carry whoever started it."
+        return "Couldn't load designers. You can still start; stage 1 uses your profile."
     }
     if (isConnectionFailure(error)) return cannotReach
-    return "The list of designers could not be read just now. The workshop can still be started; " +
-        "stage 1 will carry whoever started it, and its designers can be added afterwards from " +
-        "“Designers on a workshop”."
+    return "Couldn't load designers. You can still start and add them later."
 }
 
 // --------------------------------------------------------------------------------------
@@ -2848,8 +2800,8 @@ private fun DwMostRecentlyAllocated(
             // happened. Anything this client does not recognise falls back to the neutral phrasing
             // rather than being dressed as one of the two known answers.
             when (row.reason) {
-                "GRANTED" -> "Most recently allocated to you: $title"
-                "CREATED" -> "Most recently opened by you: $title"
+                "GRANTED" -> "Recently allocated: $title"
+                "CREATED" -> "Recently opened: $title"
                 else -> "Ready to open: $title"
             },
             color = MaterialTheme.field.onWarningContainer,
@@ -2857,8 +2809,10 @@ private fun DwMostRecentlyAllocated(
             fontWeight = FontWeight.SemiBold,
             lineHeight = 17.sp
         )
-        OutlinedButton(onClick = { onOpen(id) }) {
-            Text("Open this workshop", fontSize = 12.sp)
+        ActionRow {
+            OutlinedButton(onClick = { onOpen(id) }) {
+                Text("Open this workshop", fontSize = 12.sp)
+            }
         }
     }
 }

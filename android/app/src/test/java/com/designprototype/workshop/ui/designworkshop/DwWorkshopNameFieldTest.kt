@@ -255,8 +255,8 @@ class DwWorkshopNameFieldTest {
         val offer = dwWorkshopNamesOnRecord(listOf("Ajrakh 2026", "A".repeat(40)), maxLength = 20)
         assertEquals(listOf("Ajrakh 2026"), offer.names)
         assertEquals(1, offer.withheld)
-        assertEquals("1 name not offered: over 20 characters.", dwWorkshopNamesWithheldLine(1, 20))
-        assertEquals("2 names not offered: over 20 characters.", dwWorkshopNamesWithheldLine(2, 20))
+        assertEquals("1 name over 20 characters hidden.", dwWorkshopNamesWithheldLine(1, 20))
+        assertEquals("2 names over 20 characters hidden.", dwWorkshopNamesWithheldLine(2, 20))
         assertNull(dwWorkshopNamesWithheldLine(0, 20))
     }
 
@@ -283,15 +283,15 @@ class DwWorkshopNameFieldTest {
     @Test
     fun `the offer line names the scope, the escape and both numbers`() {
         assertEquals(
-            "Names from workshops you can open. Type to search all of them, or type a new one.",
+            "Names from workshops you can open. Type to search, or add a new one.",
             dwWorkshopNameOfferLine(workshopKind = "", shown = 12, total = 12)
         )
         assertEquals(
-            "Names from workshops of this type. Type to search all of them, or type a new one.",
+            "Names from workshops of this type. Type to search, or add a new one.",
             dwWorkshopNameOfferLine(workshopKind = "DESIGN_INTERVENTION", shown = 12, total = 12)
         )
         assertEquals(
-            "Names from workshops you can open. Type to search all of them, or type a new one. " +
+            "Names from workshops you can open. Type to search, or add a new one. " +
                 "Showing 80 of 196.",
             dwWorkshopNameOfferLine(workshopKind = "", shown = 80, total = 196)
         )
@@ -311,7 +311,7 @@ class DwWorkshopNameFieldTest {
     fun `the unsearched line says the box reaches past what is drawn`() {
         assertTrue(
             dwWorkshopNameOfferLine(workshopKind = "", shown = 80, total = 196)
-                .contains("Type to search all of them")
+                .contains("Type to search")
         )
     }
 
@@ -329,13 +329,11 @@ class DwWorkshopNameFieldTest {
     @Test
     fun `a searched line says the whole list was searched, and keeps the escape`() {
         assertEquals(
-            "Names from workshops you can open. All of them searched. " +
-                "Type a new one if it is not here.",
+            "Names from workshops you can open. Type a new one if it isn't here.",
             dwWorkshopNameOfferLine(workshopKind = "", shown = 12, total = 12, searching = true)
         )
         assertEquals(
-            "Names from workshops of this type. All of them searched. " +
-                "Type a new one if it is not here. Showing 12 of 40.",
+            "Names from workshops of this type. Type a new one if it isn't here. Showing 12 of 40.",
             dwWorkshopNameOfferLine(
                 workshopKind = "DESIGN_INTERVENTION",
                 shown = 12,

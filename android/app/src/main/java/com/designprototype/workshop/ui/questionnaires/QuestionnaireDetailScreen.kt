@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -335,10 +336,9 @@ fun QuestionnaireDetailScreen(
                                 changeKind = true,
                             )
                             if (kind.isBlank()) {
-                                "Kind cleared. The report leaves its answers unfiled until a kind is chosen."
+                                "Kind cleared. Answers stay unfiled in the report."
                             } else {
-                                "Filed as ${labelForQuestionnaireKind(kind)}. The report puts its " +
-                                    "answers under that stage."
+                                "Filed as ${labelForQuestionnaireKind(kind)}."
                             }
                         }
                     },
@@ -348,7 +348,7 @@ fun QuestionnaireDetailScreen(
                             if (active) {
                                 "Back in the lists."
                             } else {
-                                "Deactivated. It is out of every list and dropdown; its answers are untouched."
+                                "Deactivated. Answers are kept."
                             }
                         }
                     },
@@ -512,8 +512,7 @@ fun QuestionnaireDetailScreen(
     if (addingSection) {
         SingleFieldDialog(
             heading = "New section",
-            blurb = "Sections are how a long questionnaire is walked through in a room, one at a time. " +
-                "Leave the code blank and one is derived from the title.",
+            blurb = "Sections split a long questionnaire. Leave code blank to derive it.",
             label = "Section title",
             initial = "",
             busy = busy,
@@ -536,8 +535,7 @@ fun QuestionnaireDetailScreen(
         SingleFieldDialog(
             heading = "Rename section",
             // Worth saying out loud, because it is the exception to everything else on this screen.
-            blurb = "A section heading can be changed even after its questions have been answered — " +
-                "a heading is not what an answer answers.",
+            blurb = "Headings can change even after answers exist.",
             label = "Section title",
             initial = section.title,
             busy = busy,
@@ -649,21 +647,16 @@ fun QuestionnaireDetailScreen(
                     Text(question.prompt, color = MaterialTheme.field.body, fontSize = 13.sp)
                     Text(
                         if (retires) {
-                            "This question has answers recorded against it, so it cannot be deleted. " +
-                                "It will be retired instead: it stops being asked, and its answers stay " +
-                                "in the record and in the download."
+                            "Has answers, so it will be retired (no longer asked; answers kept)."
                         } else {
-                            "Nobody has answered this question, so it will be deleted outright."
+                            "No answers yet, so it will be deleted."
                         },
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )
                     if (blankAnswerRow) {
                         Text(
-                            "One of the sittings still holds a blank answer against this question — " +
-                                "somebody opened it and cleared it, so the question may not be deleted. " +
-                                "If it is not, nothing has been lost: leave the question " +
-                                "in place, or remove the sitting's blank answer first.",
+                            "A sitting holds a blank answer here, so it can't be deleted. Remove that blank first.",
                             color = MaterialTheme.field.warning,
                             fontSize = 12.sp
                         )
@@ -763,8 +756,7 @@ private fun HeaderCard(
             }
             if (!form.isActive) {
                 Text(
-                    "Deactivated. It is out of every list and dropdown and no new sittings can be " +
-                        "started against it. Nothing has been deleted.",
+                    "Deactivated — no new sittings. Nothing deleted.",
                     color = MaterialTheme.field.warning,
                     fontSize = 12.sp
                 )
@@ -845,15 +837,14 @@ private fun HeaderCard(
                     enabled = !busy,
                     onSelect = onSetKind
                 )
-                EmptyNote("Decides which stage of the report this questionnaire's answers are filed under.")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(onClick = onRename, enabled = !busy, modifier = Modifier.weight(1f)) {
+                EmptyNote("Sets which report stage these answers go under.")
+                ActionRow {
+                    OutlinedButton(onClick = onRename, enabled = !busy) {
                         Text("Rename")
                     }
                     OutlinedButton(
                         onClick = { onSetActive(!form.isActive) },
                         enabled = !busy,
-                        modifier = Modifier.weight(1f)
                     ) { Text(if (form.isActive) "Deactivate" else "Reactivate") }
                 }
             } else {
@@ -877,8 +868,7 @@ private fun HeaderCard(
                 // can still answer it, and a screen that merely looked read-only would send them off
                 // to make a second copy of somebody else's questionnaire.
                 Text(
-                    "Only the designer who created this questionnaire, or an admin, can change its " +
-                        "questions. You can still record answers against it.",
+                    "Only its creator or an admin can edit questions. You can still answer.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
                 )
@@ -943,9 +933,7 @@ private fun InterchangeCard(
             // see ArtefactNotice — but a designer scanning two adjacent buttons with a colleague
             // waiting needs the difference before they read either label.
             Text(
-                "Two different files. One carries your questions; the other carries every person you " +
-                    "interviewed. Both are named after this questionnaire and both land in Downloads, " +
-                    "so read what each one holds before you send it to anybody.",
+                "Two files: one has your questions, the other has every respondent. Check before sharing.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp
@@ -972,9 +960,7 @@ private fun InterchangeCard(
             )
             if (!mayEdit) {
                 Text(
-                    "This one belongs to the designer who created the questionnaire, a designer on " +
-                        "its design workshop, or an admin. If it is not yours to change, you will be " +
-                        "told, and you can still take a copy of the question set.",
+                    "For its creator, its workshop's designers, or admins. You can always copy the questions.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp
@@ -985,12 +971,7 @@ private fun InterchangeCard(
                 HorizontalDivider(color = MaterialTheme.field.hairline)
                 WorkbookUploadRow(
                     label = "Upload an edited workbook",
-                    blurb = "Replaces THIS questionnaire's questions with the ones in the file — " +
-                        "download it above, edit it on a computer, and bring it back. A question " +
-                        "that already has answers is never overwritten: its old wording is kept with " +
-                        "its answers and your new wording is added beside it, and you are told which " +
-                        "ones. A file downloaded from a DIFFERENT questionnaire is refused rather " +
-                        "than applied.",
+                    blurb = "Replaces this questionnaire's questions with the file's. Answered questions keep their old wording alongside. Files from other questionnaires are refused.",
                     busy = busy,
                     working = reuploading,
                     onPick = onPickWorkbook,
@@ -1026,8 +1007,7 @@ private fun SittingsCard(
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                "One sitting is one filled-in copy of this questionnaire. Answers typed here and " +
-                    "answers that arrived already filled in on the spreadsheet are the same thing.",
+                "One sitting is one filled-in copy of this questionnaire.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -1052,8 +1032,8 @@ private fun SittingsCard(
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Start a sitting") }
             when {
-                !form.isActive -> EmptyNote("This questionnaire is deactivated, so no new answers can be recorded against it.")
-                total == 0 -> EmptyNote("There is nothing to answer yet — add some questions first.")
+                !form.isActive -> EmptyNote("Deactivated — can't record new answers.")
+                total == 0 -> EmptyNote("Add questions first.")
             }
         }
     }
@@ -1172,8 +1152,7 @@ private fun FormCard(
             )
             if (form.sections.isEmpty()) {
                 EmptyNote(
-                    "No sections yet. Add sections and questions here, or fill in the .xlsx " +
-                        "pro-forma and upload it from the questionnaire list."
+                    "No sections yet. Add them here, or upload a filled-in pro-forma."
                 )
             }
             form.sections.forEach { section ->
@@ -1192,7 +1171,7 @@ private fun FormCard(
                             )
                             if (!section.isActive) {
                                 Text(
-                                    "Retired section — kept because its questions carry answers.",
+                                    "Retired — kept because it has answers.",
                                     color = MaterialTheme.field.warning,
                                     fontSize = 11.sp
                                 )
@@ -1219,8 +1198,10 @@ private fun FormCard(
                     }
 
                     if (mayEdit) {
-                        TextButton(onClick = { onAddQuestion(section) }, enabled = !busy) {
-                            Text("Add a question to this section")
+                        ActionRow {
+                            TextButton(onClick = { onAddQuestion(section) }, enabled = !busy) {
+                                Text("Add a question to this section")
+                            }
                         }
                     }
                     HorizontalDivider(color = MaterialTheme.field.hairline)
@@ -1275,10 +1256,9 @@ private fun QuestionRow(
         if (!question.isActive) {
             Text(
                 if (question.supersededById != null) {
-                    "This wording was replaced after it had been answered. It is no longer asked, and " +
-                        "the answers given under it are still in the record."
+                    "Replaced wording. No longer asked; answers kept."
                 } else {
-                    "Retired. It is no longer asked, and its answers are still in the record."
+                    "Retired. No longer asked; answers kept."
                 },
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
@@ -1288,7 +1268,7 @@ private fun QuestionRow(
         // the re-upload path says so in as many words), and "deleting" something already gone would
         // only be a way to hit the ON DELETE RESTRICT on its answers.
         if (mayEdit && question.isActive) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            ActionRow {
                 TextButton(onClick = onEdit, enabled = !busy) { Text(RecordOpen.UPDATE_LABEL, fontSize = 12.sp) }
                 TextButton(onClick = onRemove, enabled = !busy) {
                     Text(if (question.hasAnswers) "Retire" else "Delete", fontSize = 12.sp)
@@ -1429,10 +1409,7 @@ private fun QuestionDialog(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (hasAnswers) {
                     Text(
-                        "This question already has answers recorded against it. Changing the WORDING " +
-                            "will not overwrite them: the original wording keeps its answers and your " +
-                            "new wording is added as a new question in the same place. The hint and " +
-                            "the required tick can be changed freely.",
+                        "Has answers. Changing the wording adds a new question; the old one keeps its answers. Hint and required can change freely.",
                         color = MaterialTheme.field.warning,
                         fontSize = 12.sp
                     )
@@ -1448,7 +1425,7 @@ private fun QuestionDialog(
                 )
                 if (hasAnswers && reworded) {
                     Text(
-                        "Saving this will add a new question and retire the current wording.",
+                        "Saving adds a new question and retires this wording.",
                         color = MaterialTheme.field.warning,
                         fontSize = 11.sp
                     )
@@ -1491,8 +1468,7 @@ private fun StartSittingDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Naming the person answering is what tells two sittings apart — in this list and " +
-                        "in the .xlsx download, where each sitting becomes its own answer column.",
+                    "Name who's answering to tell sittings apart.",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp
                 )

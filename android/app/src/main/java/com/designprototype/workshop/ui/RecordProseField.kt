@@ -226,7 +226,7 @@ private object RecordSpeechServices {
  * be advice incapable of a different outcome.
  */
 private const val RECORD_DICTATION_UNAVAILABLE: String =
-    "This phone has no speech recogniser installed, so there is no dictation here. Type the answer in."
+    "There is no speech recogniser on this phone. Type the answer in."
 
 /**
  * The microphone for one record-form field. **On-device rungs only.**
@@ -418,22 +418,19 @@ private fun RecordDictationButton(
                 currentPartial("")
                 val message = when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH ->
-                        "Nothing was recognised. Check that the language beside the microphone " +
-                            "matches what you are speaking, and try again closer to the phone."
+                        "Nothing recognised. Check the language and speak closer."
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
-                        "No speech was heard. Tap the microphone and begin speaking straight away " +
-                            "— it stops listening after a few seconds of silence."
+                        "No speech heard. Start speaking right after tapping the mic."
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
-                        "This app does not have permission to use the microphone. Grant it under " +
-                            "Settings › Apps › permissions, then tap the microphone again."
+                        "Microphone permission needed. Allow it in Settings › Apps."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
                         onNetworkFailure()
                         return
                     }
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY ->
-                        "The phone's speech service is busy. Wait a moment and tap the microphone again."
+                        "Speech service busy. Try again shortly."
                     SpeechRecognizer.ERROR_AUDIO ->
-                        "The microphone could not be read. Something else on the phone may be using it."
+                        "Couldn't read the microphone — another app may be using it."
                     /*
                       12 is ERROR_LANGUAGE_NOT_SUPPORTED and 13 is ERROR_LANGUAGE_UNAVAILABLE, both
                       added in API 33 and both written as literals because this module builds against
@@ -448,7 +445,7 @@ private fun RecordDictationButton(
                         return
                     }
                     else ->
-                        "Dictation stopped unexpectedly (code $error). Type the answer in, or try again."
+                        "Dictation stopped (code $error). Try again or type."
                 }
                 release()
                 currentError(message)
@@ -490,14 +487,14 @@ private fun RecordDictationButton(
         )
         if (built == null) {
             release()
-            currentError("This phone would not start its speech recogniser.")
+            currentError("Couldn't start speech recognition.")
             return
         }
         recognizer = built
         state = RecordDictationState.WORKING
         runCatching { built.startListening(intentFor()) }.onFailure {
             release()
-            currentError("This phone would not start its speech recogniser.")
+            currentError("Couldn't start speech recognition.")
         }
     }
 
@@ -560,9 +557,7 @@ private fun RecordDictationButton(
                         // seconds later with no account of where their words went.
                         release()
                         currentError(
-                            "This phone's own speech model ran and found no words in what it " +
-                                "heard. Nothing was sent anywhere. Try again a little closer to " +
-                                "the microphone, or type the answer in."
+                            "No words found. Speak closer or type."
                         )
                     }
                 }
@@ -574,9 +569,7 @@ private fun RecordDictationButton(
                     DwAsrModelRun.recordRefusal(tag)
                     release()
                     currentError(
-                        "This phone's own speech model would not run just now: ${outcome.detail}. " +
-                            "Nothing was sent anywhere and nothing was recorded. Tap the " +
-                            "microphone again and dictation will use whatever else this phone has."
+                        "On-phone model couldn't run: ${outcome.detail}. Tap the mic to try another way."
                     )
                 }
             }
@@ -629,7 +622,7 @@ private fun RecordDictationButton(
             // Asked at the point of use and refused HERE means refused for dictation specifically,
             // which is a different thing from a launch-time batch declined months ago on a shared
             // handset. Say what was refused and what it was for.
-            currentError("Dictation needs the microphone. Nothing was recorded.")
+            currentError("Dictation needs the microphone.")
         }
     }
 
@@ -682,7 +675,7 @@ private fun RecordDictationButton(
                     // Named apart from "Stop dictating" because a screen reader is the one surface
                     // that cannot see the panel explaining that this rung does not stream.
                     RecordDictationState.RECORDING_FOR_THIS_PHONE ->
-                        "Stop recording and let this phone write it down"
+                        "Stop and transcribe on this phone"
                     RecordDictationState.TRANSCRIBING_ON_THIS_PHONE -> "Writing down what you said"
                     else -> "Stop dictating"
                 },
@@ -821,7 +814,7 @@ private fun RecordOnDeviceModelPanel(
                             if (elapsed < 60) {
                                 "Writing it down — $elapsed sec so far."
                             } else {
-                                "Writing it down — ${elapsed / 60} min ${elapsed % 60} sec so far."
+                                "Transcribing — ${elapsed / 60} min ${elapsed % 60} sec."
                             },
                             color = MaterialTheme.field.body,
                             fontSize = 13.sp
@@ -840,7 +833,7 @@ private fun RecordOnDeviceModelPanel(
                 note?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp) }
                 if (!transcribing) {
                     Text(
-                        "Nothing leaves this phone. Stops itself after 90 seconds.",
+                        "Stays on this phone. Stops after 90 seconds.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )

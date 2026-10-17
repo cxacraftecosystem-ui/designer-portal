@@ -167,15 +167,13 @@ data class DwStageFold(
                     "in ${addedRows.keys.joinToString(", ")}"
             }
             if (addedCustom.isNotEmpty()) {
-                parts += "${addedCustom.size} of this workshop's own question" +
-                    "${if (addedCustom.size == 1) "" else "s"} " +
-                    "(${addedCustom.take(4).joinToString(", ")}${if (addedCustom.size > 4) ", …" else ""})"
+                parts += "${addedCustom.size} custom question${if (addedCustom.size == 1) "" else "s"} (${addedCustom.take(4).joinToString(", ")}${if (addedCustom.size > 4) ", …" else ""})"
             }
             return buildString {
-                append("This stage has been updated with the latest online version. ")
+                append("Updated to the latest online version: ")
                 if (parts.isNotEmpty()) {
                     append(parts.joinToString("; "))
-                    append(" were already there and not on this phone, and have been added below. ")
+                    append(" added below. ")
                     append("Nothing you had typed here was changed. ")
                 }
                 if (sweptRows.isNotEmpty()) {

@@ -175,7 +175,7 @@ private fun DwCustomRetiredAnswer(field: DwCustomFieldDto, value: JsonElement?) 
         Text(field.label.ifBlank { field.key }, color = MaterialTheme.field.muted, fontSize = 12.sp)
         Text(DwValues.text(value), fontSize = 13.sp)
         Text(
-            "No longer asked. The answer above was recorded under this wording and is kept.",
+            "No longer asked. Earlier answer kept.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
         )
@@ -193,16 +193,13 @@ private fun DwCustomUnreadNote() {
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                "This stage has answers to questions this phone has not read",
+                "Some answers here can't be shown yet",
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "Answers are recorded here against questions that belong to this workshop's own " +
-                    "sections, and this device has not read those sections — so they cannot be " +
-                    "shown, counted or printed. Nothing has been lost: they are on this phone and " +
-                    "they still sync. Open this workshop once with a connection and they appear.",
+                "They're safe and will sync. Open this workshop once online to see them.",
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 11.sp,
             )

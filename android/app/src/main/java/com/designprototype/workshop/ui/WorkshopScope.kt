@@ -214,7 +214,7 @@ fun workshopScopeLabel(workshop: WorkshopDetailDto): String {
 
 /** One line naming what is in scope. The web's `useWorkshopScope().summary`, sentence for sentence. */
 fun workshopScopeSummary(selected: Set<String>, workshops: List<WorkshopDetailDto>): String {
-    if (selected.isEmpty()) return "Every workshop, and records not linked to one."
+    if (selected.isEmpty()) return "All workshops, plus unlinked records."
     val named = selected
         .filter { it != UNASSIGNED_WORKSHOP }
         .map { id ->

@@ -979,11 +979,9 @@ internal fun designWorkshopPrefillNote(reason: String?, accessAt: String?): Stri
     val tail = if (day == null) "" else " on $day"
     return when (reason) {
         "GRANTED" ->
-            "Filled in because it is the design workshop you were most recently added to$tail. " +
-                "Change it if this record belongs somewhere else."
+            "Your latest assigned workshop$tail. Change if needed."
         "CREATED" ->
-            "Filled in because it is the design workshop you most recently opened$tail. " +
-                "Change it if this record belongs somewhere else."
+            "Your latest opened workshop$tail. Change if needed."
         else -> null
     }
 }
@@ -1135,8 +1133,7 @@ fun DesignWorkshopField(
           costs one line and stops a filing label being trusted as an access rule.
         */
         Text(
-            "Files this record under a design and prototype workshop so it appears in that " +
-                "workshop's lists. It does not change who can read the record.",
+            "Files this record under a design workshop. Doesn't change who can read it.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 15.sp,

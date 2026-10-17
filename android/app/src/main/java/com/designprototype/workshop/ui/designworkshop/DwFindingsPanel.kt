@@ -163,9 +163,7 @@ private fun MarketFindingsCard(
 
     FindingsCard(
         title = "What the survey says",
-        subtitle = "Computed on this device from the ${rowsFound.responses.size} survey " +
-            "response(s) and ${rowsFound.competitors.size} competitor product(s) in stage 8. " +
-            "Nothing here is written into this stage.",
+        subtitle = "From ${rowsFound.responses.size} survey response(s) and ${rowsFound.competitors.size} competitor product(s) in stage 8. Not saved to this stage.",
     ) {
         // CAUTIONS BEFORE FIGURES, ALWAYS. The server orders its payload the same way for the same
         // reason: a caution that has to be scrolled to is a caution that will not be read, and
@@ -174,9 +172,7 @@ private fun MarketFindingsCard(
 
         if (rowsFound.isEmpty()) {
             Advisory(
-                "Stage 8 has not been captured on this device and could not be downloaded, so there " +
-                    "is nothing to check the bands and SWOT below against. Opening stage 8 once " +
-                    "with a connection is enough.",
+                "Stage 8 isn't on this phone. Open it once online to run these checks.",
                 MaterialTheme.field.surface100, MaterialTheme.field.body,
             )
         }
@@ -211,15 +207,12 @@ private fun MarketFindingsCard(
             findings.swot.forEach { point ->
                 val body = when {
                     point.hasOwnEvidence ->
-                        "Evidence is cited on the point itself, so it is not second-guessed here."
+                        "Evidence cited on the point."
                     point.supportedBy.isNotEmpty() ->
-                        "Shares ${point.overlap} content word(s) with what " +
-                            point.supportedBy.joinToString(", ") + " said. Worth reading beside it — " +
-                            "a shared vocabulary is a place to look, not a proof."
+                        "Shares ${point.overlap} word(s) with what " +
+                            point.supportedBy.joinToString(", ") + " said — worth comparing."
                     else ->
-                        "No response in the survey shares two content words with this point, and no " +
-                            "evidence is cited on it. It may still be true; it is currently an " +
-                            "assertion rather than a finding."
+                        "No survey evidence matches this point yet."
                 }
                 Verdict(
                     token = point.kind.ifBlank { "POINT" },
@@ -359,16 +352,11 @@ private fun CostFindingsCard(workshopId: String, rows: Map<String, List<DwDataRo
 
     FindingsCard(
         title = "Cost sheets against their own lines",
-        subtitle = "Computed on this device. ${findings.sheetCount} sheet(s), " +
-            "${materialLines.size} material line(s), ${labourLines.size} labour line(s). " +
-            "Nothing here is written into this stage — a subtotal you typed stays as you typed it.",
+        subtitle = "${findings.sheetCount} sheet(s), ${materialLines.size} material line(s), ${labourLines.size} labour line(s). Not saved to this stage.",
     ) {
         if (anyUnsynced) {
             Advisory(
-                "$unsyncedSheets of ${sheets.size} cost sheet(s) are still waiting to upload, " +
-                    "so lines entered against them cannot name their sheet and are in no subtotal " +
-                    "below. Nothing is lost and nothing needs re-entering — the sheets are on this " +
-                    "screen and the check completes itself once the workshop has synced.",
+                "$unsyncedSheets of ${sheets.size} sheet(s) still uploading; their lines aren't totalled yet.",
                 MaterialTheme.field.surface100, MaterialTheme.field.body,
             )
         }

@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -159,7 +160,7 @@ private fun DwTier2Row(
             if (live != null && stage != null) {
                 dwStalledSentence(live, stage)?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionRow {
                 OutlinedButton(onClick = { models.pause() }) { Text("Pause") }
                 OutlinedButton(onClick = { models.cancel() }) { Text("Cancel") }
             }
@@ -169,20 +170,19 @@ private fun DwTier2Row(
         val label = dwTier2ActionLabel(offer) ?: return@Column
         if (confirming && offer != DwTier2InstallOffer.INSTALLED) {
             dwModelOverrideSentence(choice)?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            ActionRow {
                 Button(
                     onClick = {
                         confirming = false
                         models.install(modelId)
                     },
                     enabled = !busyElsewhere,
-                    modifier = Modifier.weight(1f)
                 ) { Text(dwModelOverrideConfirmLabel(choice)) }
                 TextButton(onClick = { confirming = false }) { Text("Not this one") }
             }
             return@Column
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ActionRow {
             OutlinedButton(
                 onClick = {
                     when {

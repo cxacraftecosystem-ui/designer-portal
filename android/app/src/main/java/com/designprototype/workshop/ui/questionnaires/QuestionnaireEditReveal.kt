@@ -168,4 +168,4 @@ fun questionnaireAnswerDisplay(hideAnswers: Boolean, current: String?): Question
  * at the top of the form, so it can be found by reading rather than by hunting.
  */
 const val QUESTIONNAIRE_RECORDED_ANSWER_HINT =
-    "Answer boxes are hidden. Switch “Do not display answer text boxes” off above to edit this answer."
+    "Answer boxes are hidden. Turn off “Do not display answer text boxes” to edit."

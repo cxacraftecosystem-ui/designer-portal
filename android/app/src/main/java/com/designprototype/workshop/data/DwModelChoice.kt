@@ -575,9 +575,7 @@ fun dwModelFitSentence(choice: DwModelChoice, measurement: DwDeviceMeasurement):
         // MODEL being closed, which sounds like a tidy shutdown rather than the app the designer is
         // working in disappearing mid-sentence. What Android ends is the process.
         append(
-            " Android may close this app while the model is running — most likely while you are " +
-                "using the camera — and the job would have to be started again. Your work is " +
-                "saved either way. You can install it anyway."
+            " Android may close this app while it runs (e.g. with the camera). Your work is saved."
         )
     }
 
@@ -590,8 +588,7 @@ fun dwModelFitSentence(choice: DwModelChoice, measurement: DwDeviceMeasurement):
     DwModelFit.UNMEASURED -> buildString {
         append(choice.notes.joinToString(" ") { dwFitNoteClause(it, choice, measurement) })
         append(
-            " So whether it would fit is unknown, and nothing this size will be fetched on a " +
-                "guess. Tap “Check again”."
+            " Tap “Check again”."
         )
     }
 }
@@ -603,15 +600,13 @@ private fun dwFitNoteClause(
     measurement: DwDeviceMeasurement,
 ): String = when (note) {
     DwFitNote.LARGER_THAN_THIS_PHONE_S_MEMORY ->
-        "It needs ${dwBytesLabel(choice.plan.peakRssBytes)} of memory, more than this phone has in " +
-            "total — closing other apps would not make room."
+        "Needs ${dwBytesLabel(choice.plan.peakRssBytes)} of memory — more than this phone has; closing apps would not make room."
 
     DwFitNote.LARGER_THAN_THE_FREE_STORAGE ->
-        "It is ${dwBytesLabel(choice.plan.onDiskBytes)} to download and there is less free storage " +
-            "than that, so the download could not finish."
+        "${dwBytesLabel(choice.plan.onDiskBytes)} download — not enough free storage."
 
     DwFitNote.NO_BUILD_FOR_THIS_PROCESSOR ->
-        "It does not run on this phone's processor (it needs ${choice.plan.abi})."
+        "Not built for this processor (needs ${choice.plan.abi})."
 
     /*
      * THE CITATION CAME OFF HERE ON 2026-08-16, AND IT WAS THE LAST ONE LIVE ON A SCREEN.
@@ -624,36 +619,31 @@ private fun dwFitNoteClause(
      * now walks the fit notes too, so the next one cannot hide in the same blind spot.
      */
     DwFitNote.LOAD_FAILED_HERE_BEFORE ->
-        "It was tried on this phone and would not load, so it will not be tried here again."
+        "Failed to load here before."
 
     DwFitNote.PROCESSOR_UNMEASURED ->
-        "This phone would not say what kind of processor it has."
+        "This phone would not say its processor."
 
     DwFitNote.TOTAL_MEMORY_UNMEASURED ->
         "This phone would not say how much memory it has."
 
     DwFitNote.FREE_STORAGE_UNMEASURED ->
-        "This phone would not say how much storage is free."
+        "This phone would not say its free storage."
 
     DwFitNote.FREE_MEMORY_UNMEASURED ->
         "This phone would not say how much memory is free."
 
     DwFitNote.ANDROID_CALLS_THIS_A_LOW_MEMORY_DEVICE ->
-        "Android flags this handset as a low-memory device."
+        "Android flags this handset as low-memory."
 
     DwFitNote.LITTLE_MEMORY_LEFT_OVER ->
-        "It needs ${dwBytesLabel(choice.plan.peakRssBytes)} of memory and this phone has " +
-            "${dwBytesLabel(measurement.totalRamBytes)} in total, so even with everything else " +
-            "closed there would be too little left for your draft and photographs."
+        "Needs ${dwBytesLabel(choice.plan.peakRssBytes)} of ${dwBytesLabel(measurement.totalRamBytes)} memory — too little left over."
 
     DwFitNote.LITTLE_FREE_MEMORY_RIGHT_NOW ->
-        "It needs ${dwBytesLabel(choice.plan.peakRssBytes)} of memory and this phone has " +
-            "${dwBytesLabel(measurement.availableRamBytes)} free right now — close other apps and " +
-            "tap “Check again”."
+        "Needs ${dwBytesLabel(choice.plan.peakRssBytes)}; ${dwBytesLabel(measurement.availableRamBytes)} free now. Close apps and tap “Check again”."
 
     DwFitNote.LITTLE_STORAGE_LEFT_OVER ->
-        "It would leave only ${dwBytesLabel(choice.freeStorageHeadroomBytes)} of storage free, " +
-            "less than this app keeps back for a workshop day of photographs and recordings."
+        "Would leave only ${dwBytesLabel(choice.freeStorageHeadroomBytes)} free."
 }
 
 /**
@@ -673,12 +663,7 @@ private fun dwFitNoteClause(
  */
 fun dwModelOverrideSentence(choice: DwModelChoice): String? {
     if (choice.fit != DwModelFit.TIGHT) return null
-    return "You are choosing ${choice.plan.modelId}, which this phone's own reading says is larger " +
-        "than it has room to spare. What that is expected to cost: Android may close this app while " +
-        "the model is running — most likely while you are using the camera, which is the other " +
-        "thing on this phone that wants a lot of memory at once. If that happens, the job stops and " +
-        "you start it again; the recording, the photographs and the draft are saved on the phone " +
-        "and are not affected. Install it if that trade is one you want to make."
+    return "${choice.plan.modelId} is tight on this phone. Android may close this app while it runs (e.g. with the camera); your recording, photos and draft stay saved on the phone. Install anyway?"
 }
 
 /** The words on the button that accepts a tight fit. Names the model, so it cannot be a blind yes. */
@@ -731,12 +716,12 @@ fun dwModelChoiceIntroSentence(choices: List<DwModelChoice>): String? {
                  */
                 refused > 0 && unmeasured == 0 -> "None of them can be run on this phone"
                 refused > 0 -> "$refused of them cannot be run on this phone"
-                else -> "This phone did not say enough about itself to judge any of them"
+                else -> "This phone did not say enough about itself to judge"
             }
         )
         if (refused > 0 && offerable > 0) append(", and $refused will not fit at all")
         if (unmeasured > 0 && (offerable > 0 || refused > 0)) {
-            append(". For $unmeasured, this phone did not say enough to judge")
+            append("; $unmeasured unknown")
         }
         append(".")
         /*
@@ -755,13 +740,11 @@ fun dwModelChoiceIntroSentence(choices: List<DwModelChoice>): String? {
          */
         if (choices.any { it.suggested }) {
             append(
-                " The one marked “suggested” is what this phone's own reading points to — it is " +
-                    "advice, not a rule, and you may install any of the others that fits."
+                " “Suggested” is advice, not a rule; any that fits will work."
             )
         } else if (offerable > 0) {
             append(
-                " Nothing is marked “suggested”, because this phone's own reading is not comfortable " +
-                    "with any of them. Each row says what it would cost here; the choice is yours."
+                " Nothing is marked “suggested” — each row shows the cost."
             )
         }
     }
@@ -803,8 +786,7 @@ fun dwModelChoiceIntroSentence(choices: List<DwModelChoice>): String? {
  */
 fun dwModelLanguagesSentence(plan: DwModelPlan, labels: Map<String, String>): String {
     val languages = plan.languages
-        ?: return "${plan.modelId} is not used for any of this app's dictation languages: the " +
-            "languages it hears are not listed."
+        ?: return "${plan.modelId} is not used for any of this app's languages: its languages are not listed."
     val served = labels.keys.filter { tag -> dwModelServesLanguage(plan, tag) }
     if (served.isEmpty()) {
         // The two ways of serving none are kept apart, because they are not the same news to
@@ -819,10 +801,9 @@ fun dwModelLanguagesSentence(plan: DwModelPlan, labels: Map<String, String>): St
             // catalogue row is wrong — a region that does not match (en-US against en-IN), or a tag
             // this app has never offered — and the person who can fix it needs to see which string
             // it was. There is no label to print them under, by definition.
-            "${plan.modelId} serves none of this app's dictation languages: what it was measured to " +
-                "hear (${languages.joinToString(", ")}) is not on the list this app offers."
+            "${plan.modelId} serves none of this app's dictation languages (${languages.joinToString(", ")})."
         }
-        return "$why Installing it would not change what this phone can hear offline."
+        return "$why"
     }
     val named = served.map { tag -> labels[tag] ?: tag }
     return "${plan.modelId} hears ${named.size} of this app's languages: ${named.joinToString(", ")}."

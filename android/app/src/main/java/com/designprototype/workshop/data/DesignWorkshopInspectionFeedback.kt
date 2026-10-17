@@ -129,8 +129,7 @@ fun dwReviewStatusLabel(status: String?): String = when (status?.trim()?.upperca
  * sentence before the press, and so does this app.
  */
 const val DW_NOT_UNDER_REVIEW_SENTENCE =
-    "This report has not been handed in for inspection yet, so there is nothing to comment on. " +
-        "Its designers hand it in from the workshop's own screen; the box opens then."
+    "Not handed in for inspection yet."
 
 /** One round of the register, newest round first; rows keep the server's newest-first order. */
 data class DwFeedbackRound(val round: Int, val rows: List<DwInspectionFeedbackDto>)
@@ -185,10 +184,9 @@ data class DwQueuedInspectionNote(
 fun dwInspectionNoteProblem(note: String): String? {
     val text = note.trim()
     return when {
-        text.isEmpty() -> "Write what should be corrected first — a note with nothing in it tells a designer only that something is wrong."
+        text.isEmpty() -> "Write the correction first."
         text.length > DW_INSPECTION_NOTE_MAX ->
-            "A correction suggestion is at most $DW_INSPECTION_NOTE_MAX characters, and this one is " +
-                "${text.length}. File the rest as a second suggestion."
+            "Max $DW_INSPECTION_NOTE_MAX characters (now ${text.length}). File the rest separately."
         else -> null
     }
 }
@@ -211,18 +209,12 @@ fun dwInspectionNoteCheck(
     val what = if (note.kind == DwInspectionNoteKind.SEND_BACK) "send-back" else "suggestion"
     if (!dwIsUnderReview(currentStatus)) {
         return DwInspectionNoteCheck.Hold(
-            "The report moved on before your $what could be sent: it is now " +
-                "${dwReviewStatusLabel(currentStatus)}, and a report that is not under review takes no " +
-                "correction suggestions. Nothing was sent, and your note is kept here — put it back in " +
-                "the box to file it once the report is handed in again, or discard it."
+            "Nothing was sent — the report moved on and is now ${dwReviewStatusLabel(currentStatus)}. Your note is kept here."
         )
     }
     if (note.draftedRound > 0 && currentRound != note.draftedRound) {
         return DwInspectionNoteCheck.Hold(
-            "The report was handed in again after you wrote this: you wrote it about round " +
-                "${note.draftedRound}, and it is now round $currentRound. Nothing was sent, so that " +
-                "your note does not land on a version you have not read. Read the workshop again, then " +
-                "file it against round $currentRound or discard it."
+            "Nothing was sent — the report moved to round $currentRound since you wrote this (round ${note.draftedRound}). Re-read it, then file or discard."
         )
     }
     return DwInspectionNoteCheck.Send
@@ -259,16 +251,14 @@ fun dwInspectionSendOutcome(
         status == null || status == 401 || status == 408 || status == 429 || status >= 500 ->
             DwInspectionSendOutcome.Wait
         status == 404 -> DwInspectionSendOutcome.Refused(
-            "This workshop is no longer open to you to inspect — the assignment may have ended, or the " +
-                "workshop was deleted. $kept Copy it if you still need it, then discard it."
+            "This workshop is no longer open to you. $kept Copy it if needed, then discard."
         )
         status == 422 && text != null && text.startsWith("This report has not been handed in") ->
             DwInspectionSendOutcome.Refused(
-                "The report moved on before your $what arrived: it is no longer under review. $kept " +
-                    "Put it back in the box to file it once the report is handed in again."
+                "Not sent — the report moved on before your $what arrived. $kept"
             )
         status == 403 -> DwInspectionSendOutcome.Refused(
-            "This account may not file on this workshop. ${text?.let { "$it " } ?: ""}$kept"
+            "You can't file on this workshop. ${text?.let { "$it " } ?: ""}$kept"
         )
         else -> DwInspectionSendOutcome.Refused(
             (text?.let { if (it.last() in ".!?") "$it " else "$it. " } ?: "Your $what was not accepted. ") + kept
@@ -309,11 +299,9 @@ fun dwInspectionNow(): String = Instant.now().truncatedTo(ChronoUnit.MILLIS).toS
 /** The sentence under a note that is waiting to go. */
 fun dwQueuedNoteSentence(note: DwQueuedInspectionNote): String =
     if (note.kind == DwInspectionNoteKind.SEND_BACK) {
-        "Waiting to be sent. When this phone has a connection the report is checked again and, if it " +
-            "is still the round you read, sent back to its designers with this note."
+        "Queued. Sends back to the designers once online, if the round hasn't changed."
     } else {
-        "Waiting to be sent. When this phone has a connection the report is checked again and, if it " +
-            "is still the round you read, this suggestion is filed."
+        "Queued. Files once online, if the round hasn't changed."
     }
 
 // --------------------------------------------------------------------------------------
@@ -517,7 +505,5 @@ fun dwSavedInspectionSentence(savedAt: String): String {
     val day = savedAt.take(10)
     val time = savedAt.drop(11).take(5)
     val whenSaved = if (day.length == 10 && time.length == 5) "$day at $time UTC" else "earlier"
-    return "No connection — this is the copy kept on this phone from $whenSaved. You can read it and " +
-        "write suggestions; they are sent, checked against the report as it then stands, when this " +
-        "phone is back online."
+    return "Offline — saved copy from $whenSaved. You can still write suggestions; they send when you're back online."
 }

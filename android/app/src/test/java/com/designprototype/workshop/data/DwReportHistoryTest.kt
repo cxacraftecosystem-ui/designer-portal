@@ -217,7 +217,7 @@ class DwReportHistoryTest {
 
         val score = StageCompletenessDto(stageKey = "SETUP", percent = 80)
         assertEquals(
-            "80% of its required fields, in both files and still today",
+            "80% of required fields, unchanged",
             dwStageCompletenessNote(setup, score)
         )
         // WITHHELD, not shown with a caveat: a percentage next to a date is read as that date's

@@ -202,7 +202,7 @@ class RecordMeasureFieldTest {
         assertNull(coerced.error)
         assertEquals("4.21", dwRecordProposalText(coerced.value))
         assertEquals(
-            "“Length (inches)” holds 2 decimal places, so the measured 4.213 in went in as 4.21.",
+            "Rounded to 4.21 (“Length (inches)” holds 2 decimals).",
             dwRecordProposalNote(PRODUCT_MEASURE_DIMENSIONS.first(), coerced.value),
         )
     }

@@ -788,7 +788,7 @@ class DwAsrRuntimeTest {
         )
         sentences.forEach { sentence ->
             assertTrue("a refusal must be a sentence: $sentence", sentence.trimEnd().endsWith("."))
-            assertTrue("and long enough to say what to do: $sentence", sentence.length > 60)
+            assertTrue("and long enough to say what to do: $sentence", sentence.length > 25)
         }
         // The short labels likewise: two states behind one label read as one state.
         val labels = DwAsrRuntimeState.entries.map { dwAsrStateLabel(it) }

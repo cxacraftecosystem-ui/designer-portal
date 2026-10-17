@@ -149,7 +149,7 @@ fun ForgotPasswordScreen(
                             runCatching { repository.forgotPassword(email) }
                                 .onSuccess { sent = forgotPasswordShown(it) }
                                 .onFailure {
-                                    error = it.apiErrorMessage("That request did not work. Check the address and try again.")
+                                    error = it.apiErrorMessage("That didn't work. Check the email and try again.")
                                 }
                             busy = false
                         }
@@ -371,32 +371,32 @@ fun HelpThemBackInActions(
 
     HorizontalDivider()
     Text(HELP_THEM_BACK_IN_HEADING, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-    if (emailLinkOffered(target, mailAvailable)) {
+    ActionRow {
+        if (emailLinkOffered(target, mailAvailable)) {
+            OutlinedButton(
+                enabled = !busy,
+                onClick = {
+                    scope.launch {
+                        busy = true
+                        notice = null
+                        runCatching { repository.emailPasswordLink(target.id) }
+                            .onSuccess { notice = emailedLinkLine(target.name, target.email) }
+                            .onFailure { onError(it.apiErrorMessage("Unable to email a password link")) }
+                        busy = false
+                    }
+                },
+            ) { Text("Email them a password link") }
+        }
         OutlinedButton(
             enabled = !busy,
-            onClick = {
-                scope.launch {
-                    busy = true
-                    notice = null
-                    runCatching { repository.emailPasswordLink(target.id) }
-                        .onSuccess { notice = emailedLinkLine(target.name, target.email) }
-                        .onFailure { onError(it.apiErrorMessage("Unable to email a password link")) }
-                    busy = false
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Email them a password link") }
+            onClick = { temporaryOpen = true; notice = null },
+        ) { Text("Set a temporary password") }
+        OutlinedButton(
+            enabled = !busy,
+            onClick = { confirmSignOut = true; notice = null },
+            modifier = Modifier.destructiveAction(),
+        ) { Text("Sign out of every device") }
     }
-    OutlinedButton(
-        enabled = !busy,
-        onClick = { temporaryOpen = true; notice = null },
-        modifier = Modifier.fillMaxWidth()
-    ) { Text("Set a temporary password") }
-    OutlinedButton(
-        enabled = !busy,
-        onClick = { confirmSignOut = true; notice = null },
-        modifier = Modifier.fillMaxWidth()
-    ) { Text("Sign out of every device") }
     notice?.let {
         Text(
             it,

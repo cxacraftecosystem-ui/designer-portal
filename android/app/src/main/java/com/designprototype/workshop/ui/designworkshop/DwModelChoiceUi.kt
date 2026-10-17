@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -209,19 +210,21 @@ private fun DwModelChoiceRow(
                 dwModelOverrideSentence(choice)?.let { warning ->
                     Text(warning, color = MaterialTheme.field.warning, fontSize = 12.sp)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = { onInstall(choice) }, modifier = Modifier.weight(1f)) {
+                ActionRow {
+                    Button(onClick = { onInstall(choice) }) {
                         Text(dwModelOverrideConfirmLabel(choice))
                     }
                     TextButton(onClick = { accepting = false }) { Text("Not this one") }
                 }
             } else {
-                OutlinedButton(
-                    onClick = { if (dwModelNeedsConsent(choice)) accepting = true else onInstall(choice) }
-                ) {
-                    // The words differ because the acts differ. "Install" on a tight model would be
-                    // a button that does something other than what it says — it opens a question.
-                    Text(if (dwModelNeedsConsent(choice)) "Choose this one anyway" else "Install this model")
+                ActionRow {
+                    OutlinedButton(
+                        onClick = { if (dwModelNeedsConsent(choice)) accepting = true else onInstall(choice) }
+                    ) {
+                        // The words differ because the acts differ. "Install" on a tight model would be
+                        // a button that does something other than what it says — it opens a question.
+                        Text(if (dwModelNeedsConsent(choice)) "Choose this one anyway" else "Install this model")
+                    }
                 }
             }
         }

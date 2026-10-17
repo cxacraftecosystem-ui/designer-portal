@@ -114,7 +114,7 @@ const val NO_FIELD_WORKSHOP: String = "Not linked to a workshop"
 const val ATTACH_LATER: String = "Don't attach it yet"
 
 /** A create flow where typing the details is the alternative to linking a workshop. */
-const val TYPE_DETAILS_INSTEAD: String = "Do not link a workshop — type the details below"
+const val TYPE_DETAILS_INSTEAD: String = "Don't link a workshop — type details below"
 
 /**
  * THE ROW THAT TAKES A TYPE FILTER OFF — which is not a "none" row, and is filed apart from the four
@@ -263,8 +263,7 @@ internal val BUNDLED_LIST_HAS_NO_SENTENCE: String? = null
  * §3.3 always ruled this way and where `DwReferenceStore` already stamps `fetchedAt` on every write.
  */
 internal fun cachedListLine(count: Int, noun: String, refreshedOn: String): String =
-    "$count $noun on this device, last refreshed $refreshedOn. If the one you want is missing, " +
-        "refresh with a connection before concluding it is not on record."
+    "$count $noun on this device (refreshed $refreshedOn). refresh with a connection before concluding it is not on record."
 
 /**
  * EMPTY BECAUSE OFFLINE — this device has never been given the list. The field stands down.
@@ -275,8 +274,7 @@ internal fun cachedListLine(count: Int, noun: String, refreshedOn: String): Stri
  * saying what emptiness means here.
  */
 internal fun offlineListLine(noun: String): String =
-    "This device has not received the $noun list yet, so there is nothing to pick here. That is not " +
-        "a claim that there are none. Connect once and the list is kept on the device from then on."
+    "No $noun list yet. Connect once to download it."
 
 /**
  * COULD NOT BE LISTED — the device is online and the read failed. The field stands down.
@@ -287,8 +285,7 @@ internal fun offlineListLine(noun: String): String =
  * field is what stops a list request costing an interview.
  */
 internal fun couldNotListLine(noun: String): String =
-    "The $noun list could not be loaded, so this is not showing what exists. Nothing you have " +
-        "entered is at risk — this record can be saved without it."
+    "Couldn't load $noun. You can still save without it."
 
 /**
  * GENUINELY EMPTY, SCOPED — the read succeeded and this ACCOUNT has none. The next move is an admin.
@@ -298,7 +295,7 @@ internal fun couldNotListLine(noun: String): String =
  * that one is a claim about the repository made from a read that may simply have timed out.
  */
 internal fun scopedEmptyLine(noun: String): String =
-    "No $noun are open to this account. An administrator can give you access to one."
+    "No $noun available. An admin can give you access."
 
 /**
  * GENUINELY EMPTY, BUT ONLY BECAUSE THE READER NARROWED IT — the seventh sentence, and the one that
@@ -330,8 +327,7 @@ internal fun scopedEmptyLine(noun: String): String =
  * [ANY_WORKSHOP_KIND] is quoted rather than described so the sentence names the row as it is drawn.
  */
 internal fun narrowedEmptyLine(noun: String): String =
-    "No $noun of the type chosen above are open to this account. That is not a claim about your " +
-        "other $noun — choose “$ANY_WORKSHOP_KIND” to see them all."
+    "No $noun of this type. Choose “$ANY_WORKSHOP_KIND” to see all."
 
 /**
  * GENUINELY EMPTY, UNSCOPED — the read succeeded and the REPOSITORY has none. The next move is to
@@ -391,8 +387,7 @@ internal fun unscopedEmptyLine(noun: String): String = "No $noun have been recor
  * carry — the browser has a create-artisan route beside the control and the handset does not.
  */
 internal fun atWorkshopEmptyLine(noun: String): String =
-    "No $noun are recorded at this workshop yet. That is not a claim about your other $noun — " +
-        "record one here, or file this under a different workshop."
+    "No $noun at this workshop yet — not a claim about your other $noun."
 
 /**
  * STILL LOADING — asked for, no answer yet.
@@ -707,8 +702,7 @@ internal fun listIsAnswerable(options: List<SelectOption>): Boolean = options.is
  */
 internal fun workshopCapLine(shown: Int, total: Int, kind: WorkshopListKind): String? {
     if (shown <= 0 || total <= shown) return null
-    return "Showing the $shown most recent of $total. Open ${kind.searchDestination} to search the " +
-        "whole list, then come back."
+    return "Latest $shown of $total. Search in ${kind.searchDestination} for others."
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -976,9 +970,9 @@ internal fun offPageWorkshopRow(
     // is not allowed to make (see the note above on §2.9). "Not in the list for the type chosen
     // above" is true of both, and it points at the control that puts it back.
     hint = if (narrowed) {
-        "Filed earlier · not in the list for the type chosen above, so its name is not shown"
+        "Filed earlier · not in the list for the type chosen above"
     } else {
-        "Filed earlier · this device could not list it just now, so its name is not shown"
+        "Filed earlier · could not list it just now, so its name is not shown"
     },
 )
 
