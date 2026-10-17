@@ -958,6 +958,35 @@ fun SearchableSelectSheet(
     )
 }
 
+/**
+ * The multi-select sheet with no trigger of its own, for a control whose trigger is an ACTION —
+ * the stage lists' "Add several" button, which builds rows from the ticks rather than holding them.
+ * Same sheet, same "Select all N shown", same Apply as [SearchableMultiSelectField].
+ */
+@Composable
+fun SearchableMultiSelectSheet(
+    title: String,
+    options: List<SelectOption>,
+    emptyMessage: String = GENERIC_EMPTY_LINE,
+    createAction: SelectCreateAction? = null,
+    onDismiss: () -> Unit,
+    onApply: (Set<String>) -> Unit
+) {
+    SearchablePickerSheet(
+        title = title,
+        options = options,
+        selected = emptySet(),
+        multiple = true,
+        searchable = true,
+        noneLabel = null,
+        emptyMessage = emptyMessage,
+        createAction = createAction,
+        bulk = true,
+        onDismiss = onDismiss,
+        onApply = onApply
+    )
+}
+
 // ---------------------------------------------------------------------------------------------
 // Shared pieces
 // ---------------------------------------------------------------------------------------------

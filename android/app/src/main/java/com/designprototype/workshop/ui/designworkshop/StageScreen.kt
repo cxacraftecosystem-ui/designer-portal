@@ -128,6 +128,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
+import com.designprototype.workshop.data.DwReferenceOption
+import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.SearchableMultiSelectSheet
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.style.TextAlign
 
 /**
  * One of the 22 stages, rendered entirely from the registry.
@@ -1622,6 +1627,12 @@ private fun StageScreenBody(
                 stampsByEntry = state.provenance.collections[entity.key].orEmpty(),
                 media = media,
                 services = services,
+                // The whole stage's entries, counted as the server counts them for its 500 cap: every
+                // list's rows, plus one for an answered singleton and one for custom answers. The
+                // upper bound on purpose, so a bulk add never promises room the save will refuse.
+                stageEntries = state.collections.values.sumOf { it.size } +
+                    (if (state.singleton.isNotEmpty()) 1 else 0) +
+                    (if (state.custom.isNotEmpty()) 1 else 0),
                 focus = focus?.takeIf { it.entityKey == entity.key },
                 errorsByRow = refusals?.refusals.orEmpty()
                     .filter { it.entityKey == entity.key && it.rowIndex != null }
@@ -2137,6 +2148,8 @@ private fun CollectionSection(
     rows: List<CollectionRow>,
     media: DwMediaBridge,
     services: DwFieldServices,
+    /** Every entry the stage would carry now — the budget a bulk add spends. See [dwBulkAdd]. */
+    stageEntries: Int = 0,
     /** A gap the designer tapped that lives in one of these rows — see [DwStageFocus]. */
     focus: DwStageFocus? = null,
     /**
@@ -2248,6 +2261,41 @@ private fun CollectionSection(
     // grip on (`disabled || rows.length < 2`).
     val reorderable = rows.size > 1
 
+    /*
+      ADD SEVERAL, AND "ALL PARTICIPANTS" — the web's bulk picker (see [dwBulkField]). The list is
+      the one the row pickers read, cache first, so it works offline from whatever this phone last
+      saw. Rows are hydrated exactly as a single pick hydrates them and are left collapsed: thirty
+      expanded panels is a wall, and each header already shows its name.
+    */
+    val context = LocalContext.current
+    val bulkField = remember(entity) { dwBulkField(entity) }
+    val bulkFields = remember(entity) { entity.liveFields.associateBy { it.key } }
+    var bulkOptions by remember(entity.key) { mutableStateOf<List<DwReferenceOption>>(emptyList()) }
+    var bulkSheet by remember(entity.key) { mutableStateOf(false) }
+    LaunchedEffect(bulkField?.refModel, bulkField?.refScope, services.workshopId) {
+        val field = bulkField ?: return@LaunchedEffect
+        services.repository.designWorkshopReferences(
+            context = context,
+            workshopId = services.workshopId,
+            model = field.refModel,
+            scope = field.refScope,
+            filterValue = "",
+        ) { list, _ -> bulkOptions = list.items }
+    }
+    val bulkChosen = remember(rows, bulkField) {
+        bulkField?.let { field -> dwBulkChosenIds(rows.map { it.values }, field) }.orEmpty()
+    }
+    val bulkRemaining = remember(bulkOptions, bulkChosen) { bulkOptions.filter { it.id !in bulkChosen } }
+    fun addFromReferences(picked: List<DwReferenceOption>) {
+        val field = bulkField ?: return
+        val outcome = dwBulkAdd(picked, field, bulkFields, bulkChosen, stageEntries)
+        if (outcome.created.isNotEmpty()) {
+            onRowsChange(rows + outcome.created.map { CollectionRow(UUID.randomUUID().toString(), it) })
+            expanded = null
+        }
+        announcement = dwBulkRefusal(outcome) ?: "Added ${plural(outcome.created.size, "row")}."
+    }
+
     Column(
         verticalArrangement = Arrangement.spacedBy(COLLECTION_ROW_GAP),
         modifier = Modifier.fillMaxWidth(),
@@ -2280,6 +2328,43 @@ private fun CollectionSection(
         }
         if (entity.description.isNotBlank()) {
             Text(entity.description, color = MaterialTheme.field.muted, fontSize = 12.sp)
+        }
+        if (bulkField != null) {
+            val allLabel = dwBulkAllLabel(bulkField.refModel)
+            val atCap = stageEntries >= DW_STAGE_ENTRY_CAP
+            ActionRow {
+                OutlinedButton(
+                    onClick = { bulkSheet = true },
+                    enabled = !atCap && bulkRemaining.isNotEmpty(),
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("Add several", textAlign = TextAlign.Center)
+                }
+                if (allLabel != null) {
+                    OutlinedButton(
+                        onClick = { addFromReferences(bulkRemaining) },
+                        enabled = !atCap && bulkRemaining.isNotEmpty(),
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Text(
+                            if (bulkRemaining.isEmpty()) allLabel else "$allLabel (${bulkRemaining.size})",
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            }
+        }
+        if (bulkSheet && bulkField != null) {
+            SearchableMultiSelectSheet(
+                title = bulkField.label,
+                options = buildReferenceOptions(bulkRemaining, "", tentativeWord = ""),
+                emptyMessage = "Everything is already on this list.",
+                onDismiss = { bulkSheet = false },
+                onApply = { ids ->
+                    // In the LIST's order, not the tick order, as the single multi-select stores it.
+                    addFromReferences(bulkRemaining.filter { it.id in ids })
+                },
+            )
         }
 
         /*
