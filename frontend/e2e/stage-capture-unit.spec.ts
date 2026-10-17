@@ -8,7 +8,7 @@ import { formFields, type DwEntity, type DwField, type DwRow } from "@/lib/desig
 import { formatExifTime, positionFromExif } from "@/lib/photoPosition";
 import { lastStageName, logTodayRow } from "@/lib/prototypeLog";
 import { fillValues, stillApplies, suggestedRows, usableCheck, type DwAssistSuggestion } from "@/lib/stageAssist";
-import { attendedDays, isWoman, rosterValues, withAttendance, workshopDays } from "@/lib/stageComputed";
+import { attendedDays, isLegacyAttendance, isWoman, rosterValues, withAttendance, workshopDays } from "@/lib/stageComputed";
 
 /**
  * The stage capture work of 2026-10-17 (A14, A15, A16, A21, B10, B11, C6, C7, C8, C10, C12), held
@@ -83,6 +83,15 @@ test.describe("C7 attendance and C8 counts", () => {
     expect(attendedDays(people[1], [1, 2, 3])).toBe(2);
     expect(rosterValues([], [1])).toEqual({ ROSTER_COUNT: null, ROSTER_WOMEN: null, ROSTER_COMPLETED: null });
     expect(isWoman("महिला")).toBe(true);
+  });
+
+  test("a typed legacy days-attended stands until the row is ticked", () => {
+    const legacy: DwRow = { name: "Asha", attendedDays: 3 };
+    expect(isLegacyAttendance(legacy)).toBe(true);
+    expect(attendedDays(legacy, [1, 2, 3, 4, 5])).toBeNull();
+    expect(rosterValues([legacy, { name: "Ravi" }], [1, 2, 3]).ROSTER_COMPLETED).toBeNull();
+    expect(attendedDays({ ...legacy, absentDays: [] }, [1, 2, 3, 4, 5])).toBe(5);
+    expect(isLegacyAttendance({ name: "Ravi", attendedDays: "" })).toBe(false);
   });
 
   test("ticking writes the absent day list, sorted", () => {

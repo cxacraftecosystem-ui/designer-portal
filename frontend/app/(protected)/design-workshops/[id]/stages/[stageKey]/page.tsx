@@ -172,6 +172,7 @@ import {
   useComputedCounts,
   useStageAssist
 } from "@/components/designworkshop/StageCaptureExtras";
+import { VenuePrompt } from "@/components/designworkshop/VenuePrompt";
 import { applyAutoNumbers } from "@/lib/autoNumber";
 
 /**
@@ -2363,22 +2364,15 @@ function DesignWorkshopStagePageBody({
           ) : null}
 
           {venuePrompt && stageKey === SETUP_STAGE && !singleton.venueLocation ? (
-            <div className="panel flex flex-col gap-2 p-4 sm:flex-row sm:items-center" role="status">
-              <p className="min-w-0 flex-1 text-sm text-ink-900">Add the venue location. The artisan list can&rsquo;t be imported without it.</p>
-              <ActionGroup inline align="end" className="max-sm:w-full">
-                <button
-                  type="button"
-                  className="field-button"
-                  onClick={() =>
-                    document
-                      .querySelector(`[${FIELD_ANCHOR_ATTRIBUTE}="workshopSetup.venueLocation"]`)
-                      ?.scrollIntoView({ behavior: "smooth", block: "center" })
-                  }
-                >
-                  Add the location
-                </button>
-              </ActionGroup>
-            </div>
+            <VenuePrompt
+              disabled={locked}
+              onUse={(value) => patchSingletonMany({ venueLocation: value })}
+              onShowField={() =>
+                document
+                  .querySelector(`[${FIELD_ANCHOR_ATTRIBUTE}="workshopSetup.venueLocation"]`)
+                  ?.scrollIntoView({ behavior: "smooth", block: "center" })
+              }
+            />
           ) : null}
 
           <StageCaptureExtras

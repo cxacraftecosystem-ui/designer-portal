@@ -46,7 +46,7 @@ export function StageAssistPanel({
               <p className="text-sm font-medium text-ink-900">
                 {suggestion.title}
                 {suggestion.due ? (
-                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Due</span>
+                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-100">Due</span>
                 ) : null}
               </p>
               {suggestion.detail ? <p className="text-xs leading-5 text-ink-500">{suggestion.detail}</p> : null}

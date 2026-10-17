@@ -4,6 +4,10 @@
  * Owner, 2026-10-17 (C7, C8). The server stores these on save; this port exists so the figure moves
  * while the designer ticks attendance or adds a participant. `null` means "nothing to count", and
  * then the stored value — typed on an older workshop — is what is shown.
+ *
+ * A LEGACY ROW (no `absentDays` list, a stored `attendedDays`) was typed before the tick-list and is
+ * never read back as "All present": its days are not counted and the completion count is not formed
+ * while one remains. A row the tick-list writes always carries `absentDays`, `[]` for all present.
  */
 
 import type { DwRow, DwValue } from "@/lib/designWorkshops";
@@ -26,8 +30,17 @@ export function absentDays(row: DwRow): Set<string> {
   return new Set(raw.map((v) => toInt(v)).filter((n): n is number => n !== null).map(String));
 }
 
+function isBlankValue(value: DwValue | undefined): boolean {
+  return value === null || value === undefined || (typeof value === "string" && !value.trim());
+}
+
+/** Days attended typed before the tick-list existed, and never ticked since. */
+export function isLegacyAttendance(row: DwRow): boolean {
+  return !Array.isArray(row.absentDays) && !isBlankValue(row.attendedDays);
+}
+
 export function attendedDays(row: DwRow, days: readonly number[]): number | null {
-  if (!days.length) return null;
+  if (!days.length || isLegacyAttendance(row)) return null;
   const absent = absentDays(row);
   return days.filter((day) => !absent.has(String(day))).length;
 }
@@ -49,7 +62,10 @@ export function rosterValues(rows: readonly DwRow[], days: readonly number[]): R
   return {
     ROSTER_COUNT: people.length,
     ROSTER_WOMEN: people.filter((p) => isWoman(p.gender)).length,
-    ROSTER_COMPLETED: days.length ? people.filter((p) => attendedDays(p, days) === days.length).length : null
+    ROSTER_COMPLETED:
+      days.length && !people.some(isLegacyAttendance)
+        ? people.filter((p) => attendedDays(p, days) === days.length).length
+        : null
   };
 }
 

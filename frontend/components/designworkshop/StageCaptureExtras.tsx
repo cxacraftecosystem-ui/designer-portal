@@ -130,9 +130,11 @@ export function useComputedCounts({
       let dirty = false;
       const next = current.map((row) => {
         const value = compute(row);
-        if (value === null || row[field] === value) return row;
+        // A counted participant carries its tick-list, so it is never read back as a typed one.
+        const stamp = entityKey === "participant" && !Array.isArray(row.absentDays);
+        if (value === null || (row[field] === value && !stamp)) return row;
         dirty = true;
-        return { ...row, [field]: value };
+        return stamp ? { ...row, [field]: value, absentDays: [] } : { ...row, [field]: value };
       });
       if (dirty) patchRowsRef.current(entityKey, next);
     }
