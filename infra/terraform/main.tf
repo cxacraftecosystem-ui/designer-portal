@@ -265,13 +265,28 @@ resource "aws_s3_bucket_policy" "media_public_read" {
   depends_on = [aws_s3_bucket_public_access_block.media]
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Sid       = "PublicReadMedia"
-      Effect    = "Allow"
-      Principal = "*"
-      Action    = "s3:GetObject"
-      Resource  = "${aws_s3_bucket.media.arn}/media/*"
-    }]
+    Statement = [
+      {
+        Sid       = "PublicReadMedia"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.media.arn}/media/*"
+      },
+      # Added 2026-10-17. The API's key holds no grant on backups/ or tfstate/ (see
+      # aws_iam_user_policy.media); this deny keeps it that way even if somebody
+      # widens that policy later. The backup job runs as aws_iam_user.backup_writer.
+      {
+        Sid       = "ApiKeyNeverTouchesBackupsOrState"
+        Effect    = "Deny"
+        Principal = { AWS = aws_iam_user.media.arn }
+        Action    = "s3:*"
+        Resource = [
+          "${aws_s3_bucket.media.arn}/backups/*",
+          "${aws_s3_bucket.media.arn}/tfstate/*"
+        ]
+      }
+    ]
   })
 }
 
@@ -347,8 +362,13 @@ resource "aws_s3_bucket_cors_configuration" "media" {
 # THE FILTER IS THE WHOLE SAFETY PROPERTY. `prefix = "backups/"` scopes the rule to the dumps.
 # Without a filter — or with an empty one — this rule expires EVERY OBJECT IN THE BUCKET after
 # thirty days, which would silently delete every photograph, signature and attachment the product
-# has ever stored. There is no undo for that and no versioning on this bucket to fall back on. Any
-# edit to this resource must be read with that sentence in mind.
+# has ever stored. Versioning (backups.tf, 2026-10-17) would turn that into delete markers that can
+# be undone, but only for 90 days and only if somebody notices. Any edit to this resource must be
+# read with that sentence in mind.
+#
+# THE SECOND RULE IS THE ONE PLACE AN EMPTY FILTER IS SAFE, because it names no current-version
+# expiry. It removes versions 90 days after they stop being current (an overwritten or deleted
+# photo, an expired dump, an old state file) and delete markers with nothing left behind them.
 #
 # `abort_incomplete_multipart_upload` is here because `aws s3 cp` uses multipart for larger objects
 # and a run killed mid-upload leaves parts that are invisible to `ls` and billable forever.
@@ -371,6 +391,21 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
       days_after_initiation = 7
     }
   }
+
+  rule {
+    id     = "noncurrent-versions"
+    status = "Enabled"
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.noncurrent_version_days
+    }
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.media]
 }
 
 ####################### IAM user for the API (S3 access) ######################
@@ -392,11 +427,15 @@ resource "aws_iam_user" "media" {
 #
 # THAT CREDENTIAL IS NOT A HARD ONE TO GET AT, WHICH IS WHAT MAKES THIS WORTH THE WORDS. It sits in
 # `BACKEND_ENV` on an internet-facing t3.micro, in `.env` on that box's disk, and in the environment
-# of a process whose day job is parsing uploaded media; the SAME key pair is also handed to
-# `.github/workflows/backup-db.yml` as `AWS_MEDIA_ACCESS_KEY_ID`/`AWS_MEDIA_SECRET_ACCESS_KEY`. An
-# SSRF or an RCE in the API was therefore not "somebody can scribble on photographs" but "somebody
-# can delete every backup this project has" — with no versioning on this bucket to undo it, and no
-# alarm that fires until a restore is attempted.
+# of a process whose day job is parsing uploaded media; until 2026-10-17 the SAME key pair was
+# also handed to `.github/workflows/backup-db.yml`. An SSRF or an RCE in the API was therefore not
+# "somebody can scribble on photographs" but "somebody can delete every backup this project has".
+#
+# SINCE 2026-10-17 THIS KEY HAS NO GRANT ON `backups/` AT ALL. The drill that day found that the
+# old write-only grant still let it OVERWRITE a dump. The backup job now runs as
+# `aws_iam_user.backup_writer` (backups.tf), the bucket policy denies this user `backups/*` and
+# `tfstate/*` outright, and statements 2 and 3 described below were removed. Statement 1 is the
+# whole policy.
 #
 # STATEMENT 1 IS THE APP'S ACTUAL SURFACE, MEASURED RATHER THAN ASSUMED.
 # `backend/app/services/s3.py:make_object_key` is the ONLY thing in the product that mints an object
@@ -421,38 +460,11 @@ resource "aws_iam_user" "media" {
 # anything. If an operator would rather keep the delta to a pure narrowing, dropping this one line
 # restores the previous behaviour exactly, bug included.
 #
-# STATEMENT 2 IS A DROP-BOX: `s3:PutObject` AND NOTHING ELSE, ON `backups/*`. The backup workflow
-# uploads a dump and then proves it landed; it does not need to read one back, and an identity that
-# could read one is an identity that can read every row in the database. So this cannot fetch
-# yesterday's dump, cannot delete it, and cannot overwrite it with anything but today's dump under
-# today's date. Restoring is an operator action with operator credentials, which is the right shape
-# for the one operation that is only ever performed deliberately.
-#
-# WHAT THE DROP-BOX COSTS, SAID PLAINLY: an interrupted `aws s3 cp` of a large dump cannot abort its
-# own multipart upload here, because `s3:AbortMultipartUpload` on `backups/*` would let a compromised
-# CI job discard a backup mid-flight — which is most of what delete rights buy an attacker anyway.
-# The orphaned parts are collected by `abort_incomplete_multipart_upload` in the lifecycle rule
-# above, which is part of why that block exists. Seven days of billable parts is a cost problem; a
-# readable backup is a disclosure one.
-#
-# STATEMENT 3 IS THE VERIFICATION GRANT, AND IT IS THE TRADE WORTH READING BEFORE CHANGING.
-# `backup-db.yml`'s last step exists to make its green tick mean something: it re-reads the object
-# after the upload, because `aws s3 cp` reports what it SENT and not what is readable afterwards.
-# It used to do that with `s3api head-object`, which requires `s3:GetObject` ON THE KEY — i.e. the
-# proof step is what would have forced a backup-reading grant onto a credential that lives on a
-# public-facing box. The workflow's assert now uses `s3api list-objects-v2`, which requires
-# `s3:ListBucket` on the BUCKET and answers with Key and Size. Size is the entire thing the assert
-# ever wanted; the bytes never were.
-#
-# The `s3:prefix` condition is what stops that being a licence to browse. The request's prefix must
-# start with `backups/`, so this identity cannot enumerate `media/`, cannot enumerate `tfstate/`,
-# and cannot list the bucket root — a listing without a matching prefix is refused outright rather
-# than silently filtered. What it learns is the names and sizes of dumps it wrote itself. S3 LIST
-# has been strongly read-after-write consistent since 2020, so an object PUT a second earlier is in
-# the listing: this is not a weaker check than the HEAD it replaces, only a cheaper-to-grant one.
-# The alternative — keep head-object, add `s3:GetObject` scoped to `backups/*` — is one line shorter
-# and hands read access to every database dump to the API box's key. Rejected on that basis. A
-# future step that genuinely must READ a dump from CI should get its own identity, not this one.
+# STATEMENTS 2 AND 3 (A PUT-ONLY DROP-BOX ON `backups/*` AND A PREFIX-CONDITIONED `ListBucket`)
+# WERE REMOVED ON 2026-10-17. They moved, unchanged in spirit and narrowed to
+# `backups/designer-portal/*`, to `aws_iam_user_policy.backup_writer` in backups.tf. The workflow's
+# proof step still verifies with `list-objects-v2`, so neither identity needs `s3:GetObject` on a
+# dump.
 #
 # NOTHING HERE NAMES `tfstate/`, AND NOTHING MAY. Terraform runs under a human operator's own
 # credentials, never under this user. The state holds `aws_iam_access_key.media`'s secret in
@@ -461,18 +473,6 @@ resource "aws_iam_user" "media" {
 # `apply` destroys or re-owns resources. Do not add a `tfstate/` statement to this policy for any
 # reason, including "the apply failed and this was quicker".
 #
-# APPLYING THIS IS AN IN-PLACE POLICY UPDATE AND NEEDS NO KEY ROTATION. `aws_iam_user_policy` is a
-# `PutUserPolicy` against the same inline policy name on the same user, so there is no new
-# credential, nothing to re-paste into `BACKEND_ENV`, and nothing to update in this repository's
-# Actions secrets. The moment it lands the running API keeps working (every key it touches is under
-# `media/`) and the backup job keeps working (statements 2 and 3). It is an in-place UPDATE in the
-# plan, and it is one of the changes the file header lists as expected.
-#
-# UNTIL IT IS APPLIED, THE NIGHTLY BACKUP'S PROOF STEP IS RED, and that is the intended shape of the
-# gap rather than a surprise. `backup-db.yml` now verifies with `list-objects-v2`, which needs the
-# `s3:ListBucket` in statement 3; the live policy grants none, so the dump uploads (PutObject is
-# covered by the old wildcard too) and the verification fails AccessDenied. A backup whose proof is
-# red is the honest state of a backup nobody has proved. Applying this closes it in one command.
 resource "aws_iam_user_policy" "media" {
   name = "${var.project}-media-s3"
   user = aws_iam_user.media.name
@@ -489,23 +489,6 @@ resource "aws_iam_user_policy" "media" {
           "s3:AbortMultipartUpload"
         ]
         Resource = "${aws_s3_bucket.media.arn}/media/*"
-      },
-      {
-        Sid      = "BackupWriteOnlyDropBox"
-        Effect   = "Allow"
-        Action   = "s3:PutObject"
-        Resource = "${aws_s3_bucket.media.arn}/backups/*"
-      },
-      {
-        Sid       = "BackupVerifyByListingOnly"
-        Effect    = "Allow"
-        Action    = "s3:ListBucket"
-        Resource  = aws_s3_bucket.media.arn
-        Condition = {
-          StringLike = {
-            "s3:prefix" = ["backups/*"]
-          }
-        }
       }
     ]
   })

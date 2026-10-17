@@ -511,7 +511,7 @@ units — on every push to `main` that touches `backend/`. Set these repo secret
 | `EC2_SSH_KEY` | the **private** `.pem` contents for the EC2 key pair |
 | `BACKEND_ENV` | the entire `backend/.env` file (template in §5, with the Terraform S3 values) |
 | `DATABASE_URL` | the **session-pooler** DSN, read only by `.github/workflows/backup-db.yml` (2026-09-03). Not the transaction pooler: `pg_dump` holds one connection across the whole dump and sets session state. |
-| `AWS_MEDIA_ACCESS_KEY_ID` / `AWS_MEDIA_SECRET_ACCESS_KEY` | the `designrepo-media` IAM user's key pair, so the backup job can write the dump into the media bucket. **Deliberately not `AWS_ACCESS_KEY_ID`** — that pair belongs to `designrepo-ci-sg`, whose policy allows exactly two security-group calls and is handed to the step that opens port 22. It must never be widened. |
+| `AWS_BACKUP_ACCESS_KEY_ID` / `AWS_BACKUP_SECRET_ACCESS_KEY` | the `designrepo-backup-writer` IAM user's key pair (2026-10-17, `infra/terraform/backups.tf`), so the backup job can add a dump under `backups/designer-portal/` and list it, and nothing else. SSM keeps a copy at `/iit/designer-portal/backup-writer-*`. Until 2026-10-17 the job used the API's own key as `AWS_MEDIA_*`; delete those two secrets once this change is on main. **Deliberately not `AWS_ACCESS_KEY_ID`** — that pair belongs to `designrepo-ci-sg`, whose policy allows exactly two security-group calls and is handed to the step that opens port 22. It must never be widened. |
 
 The `.env` is piped to the server over the SSH tunnel — it is never written to
 the workflow logs or a command line. Two of its keys are then overwritten in the workflow itself,
