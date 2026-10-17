@@ -654,8 +654,9 @@ test("the workshop-title box mounts the dropdown, keeps the dictation button on 
   // closed list would refuse an answer the registry accepts and the designer knows.
   expect(control).toContain("Type a title instead");
   // And the dictation button follows the box rather than the field: dictating a workshop title is
-  // the mistyped-title failure this control exists to remove.
-  expect(control).toContain("{dictation}");
+  // the mistyped-title failure this control exists to remove. Since 2026-10-17 (DW-14) the slot is a
+  // render prop that wraps the free-text box, so the microphone sits inside it.
+  expect(control).toContain("(dictation ?? ((control: React.ReactNode) => control))(");
 });
 
 test("(e) EVERY WORKSHOP PICKER ASKS THE SERVER FOR THE SCOPED LIST, AND NOTHING FALLS BACK TO A CACHE", () => {

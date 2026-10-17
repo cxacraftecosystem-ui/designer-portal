@@ -346,7 +346,13 @@ class FieldSpec:
     type: FieldType
     tier: Tier = Tier.STANDARD
     required: bool = False
+    #: ONE short line under the box: only what the person needs to fill it (owner, 2026-10-17).
+    #: ``test_every_help_line_is_one_short_sentence`` holds it to 120 characters and one sentence.
     help: str = ""
+    #: Optional extra guidance, drawn behind a collapsed "i" disclosure beside the label on both
+    #: clients. Whatever is useful but not needed to fill the box goes here, never on ``help``.
+    #: Like ``help`` it is outside ``registry_version()``: rewording it invalidates no draft.
+    details: str = ""
     unit: str = ""
     enum: str = ""  # name of the shared list in ENUMS, for ENUM/MULTI_ENUM
     ref_model: str = ""  # for REF: "Artisan", "Craft", or a Dw entity name
@@ -2859,6 +2865,8 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
     # start, and the empty strings are most of its bulk.
     if f.help:
         out["help"] = f.help
+    if f.details:
+        out["details"] = f.details
     if f.unit:
         out["unit"] = f.unit
     if f.enum:

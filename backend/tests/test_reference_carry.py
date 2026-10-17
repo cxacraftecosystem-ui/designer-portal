@@ -1130,7 +1130,8 @@ def test_a_field_that_promises_to_fill_itself_in_actually_does():
     promises: set[str] = set()
     for _stage, entity in all_entities():
         for spec in entity.fields:
-            if FROM_REF in spec.help:
+            # In ``details`` since 2026-10-17 — the line behind the field's "i", not its help.
+            if FROM_REF in spec.details:
                 promises.add(f"{entity.key}.{spec.key}")
 
     delivers: set[str] = set()
@@ -2881,7 +2882,7 @@ async def test_where_a_tool_was_obtained_is_not_guessed_from_who_made_it(monkeyp
     """
     from app.services.stage_definitions import FROM_REF
 
-    assert FROM_REF not in _field("tool", "source").help
+    assert FROM_REF not in _field("tool", "source").details
     assert "source" not in _targets("tool.toolRef")
 
     data = await _hydrate(

@@ -54,6 +54,7 @@ import { WorkshopSearchPanel } from "@/components/designworkshop/WorkshopSearchP
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 import {
   dwFeedbackRounds,
   dwFrozenReason,
@@ -99,7 +100,7 @@ import { buildWorkshopSearchIndex, emptyWorkshopSearchIndex } from "@/lib/worksh
   Read the docstring above `STAGE_CHECK_IS` before changing either string — it carries the evidence
   that the per-stage refusal is REAL, which is what stops the wording drifting back to "a submit".
 */
-import { STAGE_CHECK_IS, WORKSHOP_STATUS_IS } from "./readiness/page";
+import { WORKSHOP_STATUS_IS } from "./readiness/page";
 
 /**
  * The progress bar for one stage.
@@ -424,8 +425,7 @@ const SEND_FOR_REVIEW: SubmissionAction = {
   status: "PRE_SUBMISSION",
   label: "Hand in for inspection",
   icon: Send,
-  meaning:
-    "Officers read it and suggest corrections. Empty fields are fine.",
+  meaning: "Officers read it and suggest corrections.",
   primary: true
 };
 
@@ -442,8 +442,7 @@ const HAND_BACK_IN: SubmissionAction = {
   status: "PRE_SUBMISSION",
   label: "Hand it back in",
   icon: Send,
-  meaning:
-    "Corrections are done. Saving a changed stage does this for you.",
+  meaning: "Corrections are done; saving a changed stage also does this.",
   primary: true
 };
 
@@ -990,16 +989,14 @@ function SubmissionCard({
           THE LINK IS STILL THE POINT. The count on its own sends a designer back through the stage
           index to find what it is counting; `/readiness` names every field and links to the box.
         */
-        <div className="grid gap-1.5 text-sm leading-6 text-ink-700">
-          <p>{WORKSHOP_STATUS_IS}</p>
-          <p>
-            {STAGE_CHECK_IS}{" "}
-            <Link href={`/design-workshops/${workshopId}/readiness`} className="font-medium text-purple-700 dark:text-purple-300 underline">
-              See the {outstanding} outstanding field{outstanding === 1 ? "" : "s"}
-            </Link>{" "}
-            if you would rather fill them in first.
-          </p>
-        </div>
+        // ONE LINE since 2026-10-17 (DW-14): the card said what its buttons mean four times. The
+        // stage-check sentence (`STAGE_CHECK_IS`) stays on `/readiness`, one tap away.
+        <p className="text-sm leading-6 text-ink-700">
+          {WORKSHOP_STATUS_IS}{" "}
+          <Link href={`/design-workshops/${workshopId}/readiness`} className="font-medium text-purple-700 dark:text-purple-300 underline">
+            See {outstanding} outstanding field{outstanding === 1 ? "" : "s"}
+          </Link>
+        </p>
       ) : null}
 
       {!known ? (
@@ -1030,7 +1027,7 @@ function SubmissionCard({
         </p>
       ) : (
         <>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup align="start">
             {actions.map((action) => {
               const Icon = action.icon;
               const running = busy === action.status;
@@ -1053,7 +1050,7 @@ function SubmissionCard({
                 </button>
               );
             })}
-          </div>
+          </ActionGroup>
           {/* THE DELIBERATE EMPTY CASE, SAID OUT LOUD. `actionsFor` returns nothing for an approved
               report because both of its remaining moves are the sanctioning authority's, and a row
               of no buttons with no sentence is what a broken page looks like. */}
@@ -1158,7 +1155,6 @@ function SubmissionCard({
         {outcome}
       </p>
 
-      <p className="text-xs leading-5 text-ink-500">{scope}</p>
     </section>
   );
 }

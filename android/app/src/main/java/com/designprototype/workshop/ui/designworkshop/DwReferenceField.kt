@@ -752,9 +752,8 @@ internal fun DwReferenceSelectField(
     val scannable = remember(field.refModel) { dwScannableRecordType(field.refModel) }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (field.help.isNotBlank()) {
-            Text(field.help, color = MaterialTheme.field.muted, fontSize = 12.sp)
-        }
+        // The help line and the field's "i" — the same caption every other field draws (DW-14).
+        FieldCaption(field)
 
         if (needsParent) {
             // Named, not hinted. "Choose an artisan first" with no artisan named is a sentence a
@@ -1003,9 +1002,8 @@ internal fun DwReferenceMultiSelectField(
     val inlineHost = bridge?.inlineRecords?.takeIf { noun != null && enabled && !needsParent }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (field.help.isNotBlank()) {
-            Text(field.help, color = MaterialTheme.field.muted, fontSize = 12.sp)
-        }
+        // The help line and the field's "i" — the same caption every other field draws (DW-14).
+        FieldCaption(field)
         if (needsParent) {
             Text(
                 "Choose ${parentField?.label ?: "the field above"} first.",
