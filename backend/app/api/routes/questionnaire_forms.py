@@ -62,6 +62,7 @@ from fastapi import (
 from fastapi.responses import Response
 
 from app.core.db import db
+from app.services import cross_portal_codes
 from app.core.deps import (
     can_run_design_workshops,
     get_current_user,
@@ -696,6 +697,7 @@ async def upload_questionnaire(
         kind=_kind_or_422(kind),
         source_filename=file.filename,
     )
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
     form = await load_form(questionnaire_id)
     return public_encode({"questionnaire": form, "report": report})
 
@@ -759,6 +761,7 @@ async def reupload_questionnaire(
     # whose report can say "superseded 1, retired 1" — and a form that then omitted both of them
     # would leave a client unable to show the designer the questions it just told them about, or to
     # find the answers still hanging off them.
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
     form = await load_form(questionnaire_id, include_retired=True)
     return public_encode({"questionnaire": form, "report": report})
 
@@ -1077,6 +1080,7 @@ async def reuse_questionnaire_route(
     # ``include_retired`` is left at its default because a copy HAS no retired question — nothing was
     # copied that could be retired. Passing True would be a claim about the payload that is not
     # false, only meaningless, and the next reader would go looking for the retirement it implies.
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=new_id)
     form = await load_form(new_id)
     return public_encode(
         {"questionnaire": form, "report": report, "sourceQuestionnaireId": record.id}
@@ -1182,6 +1186,7 @@ async def create_questionnaire(
             ]
             if question_data:
                 await tx.questionnaireformquestion.create_many(data=question_data)
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=record.id)
     return public_encode(await load_form(record.id))
 
 
@@ -1250,6 +1255,7 @@ async def update_questionnaire(
         data["title"] = data["title"].strip()
     if data:
         await db.questionnaire.update(where={"id": questionnaire_id}, data=data)
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
     return public_encode(await load_form(questionnaire_id, include_retired=True))
 
 
@@ -1290,6 +1296,7 @@ async def create_section(
                 "sortOrder": question.sortOrder or position,
             }
         )
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
     return public_encode(await load_form(questionnaire_id))
 
 
@@ -1329,6 +1336,7 @@ async def update_section(
         data["title"] = data["title"].strip()
     if data:
         await db.questionnaireformsection.update(where={"id": section_id}, data=data)
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
     return public_encode(await load_form(questionnaire_id, include_retired=True))
 
 
@@ -1357,6 +1365,7 @@ async def create_question(
             "sortOrder": payload.sortOrder or (max((q.sortOrder for q in siblings), default=0) + 1),
         }
     )
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
     return public_encode(await load_form(questionnaire_id))
 
 
@@ -1394,6 +1403,7 @@ async def update_question(
             sortOrder=payload.sortOrder or question.sortOrder,
         )
         await bump_version(questionnaire_id)
+        await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
         return public_encode(
             {
                 "action": "superseded",
@@ -1427,6 +1437,7 @@ async def update_question(
         data["sectionId"] = section_id
     if data:
         await db.questionnaireformquestion.update(where={"id": question_id}, data=data)
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
     return public_encode(
         {
             "action": "updated",

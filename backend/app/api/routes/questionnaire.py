@@ -36,6 +36,7 @@ from app.schemas.questionnaire import (
     QuestionnaireSectionReorder,
     QuestionnaireSectionUpdate,
 )
+from app.services import cross_portal_codes
 from app.services.access import guard_record_edit, owner_download_scope
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
@@ -687,6 +688,7 @@ async def update_section(
             where={"sectionId": section_id},
             data={"sectionCode": updated.code, "sectionTitle": updated.title},
         )
+        await cross_portal_codes.reconcile_question_codes(db)
     return public_encode(updated)
 
 
@@ -764,6 +766,8 @@ async def create_question(
         data={
             **section_question_data(section),
             "prompt": payload.prompt.strip(),
+            # The shared question code (C26), from the section and the wording; None off the file.
+            "questionCode": cross_portal_codes.question_code(section.code, payload.prompt.strip()),
             "sortOrder": sort_order,
             "isActive": payload.isActive,
         }
@@ -861,6 +865,10 @@ async def update_question(
                 "sectionCode": data.get("sectionCode", question.sectionCode),
                 "sectionTitle": data.get("sectionTitle", question.sectionTitle),
                 "prompt": new_prompt,
+                # The replacement's code follows ITS wording, never the original's (C26).
+                "questionCode": cross_portal_codes.question_code(
+                    data.get("sectionCode", question.sectionCode), new_prompt
+                ),
                 # The replacement stands exactly where the original stood. `QuestionnaireQuestion`
                 # carries no uniqueness on sortOrder (only `QuestionnaireSection` does), so the
                 # retired row and its replacement sharing a position is legal — and the retired row
@@ -884,6 +892,10 @@ async def update_question(
             "detail": SUPERSEDED_DETAIL,
         }
 
+    # The shared question code follows the section and wording this row will have AFTER the write.
+    data["questionCode"] = cross_portal_codes.question_code(
+        data.get("sectionCode", question.sectionCode), data.get("prompt", question.prompt)
+    )
     updated = await db.questionnairequestion.update(where={"id": question_id}, data=data)
     return {**public_encode(updated), "action": "updated"}
 

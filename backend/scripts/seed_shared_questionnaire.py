@@ -74,6 +74,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.db import connect_db, db, disconnect_db
+from app.services import cross_portal_codes
 
 QUESTIONNAIRE_PATH = Path(__file__).resolve().parents[1] / "app" / "data" / "questionnaire_questions.json"
 
@@ -244,6 +245,9 @@ async def seed_shared_questionnaire() -> tuple[str, dict[str, int]]:
             )
             counts["questions_updated"] += 1
 
+    # The shared question codes (C26), derived from section and wording. Not counted: a code is
+    # not a write the corpus asked for, and the second-run-changes-nothing totals stay exact.
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=record.id)
     return record.id, counts
 
 
