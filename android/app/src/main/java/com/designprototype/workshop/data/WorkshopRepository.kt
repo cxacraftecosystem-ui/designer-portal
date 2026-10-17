@@ -8254,6 +8254,9 @@ class WorkshopRepository(
         }
     }
 
+    /** Everything in the queue, waiting and refused, for the tray (`outboxWaitingRows` filters it). */
+    suspend fun outboxEntries(context: Context): List<PendingEntry> = OfflineOutbox.all(context)
+
     /** Queued entries the server refused, each carrying the reason it will never be sent. */
     suspend fun outboxFailures(context: Context): List<PendingEntry> = OfflineOutbox.failed(context)
 

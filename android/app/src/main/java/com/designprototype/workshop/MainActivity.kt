@@ -116,6 +116,19 @@ import com.designprototype.workshop.ui.rememberQuickReturnHeader
 import com.designprototype.workshop.ui.rememberIslandImeVisible
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import com.designprototype.workshop.data.AdminViewPreference
+import com.designprototype.workshop.data.ServerReachability
+import com.designprototype.workshop.data.connectionNotice
+import com.designprototype.workshop.ui.BANNER_STACK_GAP
+import com.designprototype.workshop.ui.LocalBannerClearance
+import com.designprototype.workshop.ui.LocalIslandClearance
+import com.designprototype.workshop.ui.OfflineNotice
+import com.designprototype.workshop.ui.OutboxDeviceBannerCard
+import com.designprototype.workshop.ui.onTileBorder
+import com.designprototype.workshop.ui.onTileButtonColors
+import com.designprototype.workshop.ui.bannerClearance
+import com.designprototype.workshop.ui.pageBottomReserve
 import com.designprototype.workshop.ui.AppSearchItem
 import com.designprototype.workshop.ui.AppSearchPanel
 import com.designprototype.workshop.ui.AppSearchSettingTarget
@@ -150,6 +163,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.encodeToString
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -1905,6 +1920,19 @@ private fun RepositoryApp(
     var outboxCounts by remember { mutableStateOf(OutboxCounts(waiting = 0, refused = 0)) }
     var showOutboxTray by remember { mutableStateOf(false) }
     var pendingUploads by remember { mutableStateOf(0) }
+    // Whether the device has validated internet, for the offline line at the foot of the screen.
+    // Kept by the network callback below, which is trusted directly (see its onCapabilitiesChanged).
+    var online by remember { mutableStateOf(repository.isOnline(appContext)) }
+    // The phone is online but the server has stopped answering (data/ServerReachability.kt).
+    val serverUnreachable by ServerReachability.unreachable.collectAsState()
+    // How tall the island bar currently is, reported up by HomeScreen; 0 where there is no bar.
+    val islandClearance = remember { mutableStateOf(0.dp) }
+    // The banner stack's measured height, handed to every page as [bannerReserve] so its last button
+    // scrolls clear of the banners too (ui/BannerClearance.kt).
+    var bannerStackHeight by remember { mutableStateOf(0.dp) }
+    val bannerReserve = remember { mutableStateOf(0.dp) }
+    // The hamburger menu is open: the banners step out of its way rather than lie over its last row.
+    var appMenuShowing by remember { mutableStateOf(false) }
     /**
      * HOW MANY PEOPLE ARE WAITING TO BE LET INTO THE APPLICATION — the badge on the menu's
      * "Who may sign in".
@@ -1952,7 +1980,13 @@ private fun RepositoryApp(
                 runCatching { repository.pendingAccessCount() }
                     .onSuccess { pendingAccessRequests = it.pending }
             }
-            delay(if (pendingUploads > 0) 12_000L else 45_000L)
+            // RE-PROBE A SERVER THAT STOPPED ANSWERING. An empty queue sends nothing, so without
+            // this the "can't reach the server" line would wait for the designer to tap something.
+            // Any answer clears it (ServerReachability.recordAnswer, in ApiClient).
+            if (ServerReachability.unreachable.value && online) {
+                runCatching { repository.currentUser() }
+            }
+            delay(if (pendingUploads > 0 || ServerReachability.unreachable.value) 12_000L else 45_000L)
         }
     }
     DisposableEffect(user) {
@@ -1961,15 +1995,50 @@ private fun RepositoryApp(
         val callback = object : android.net.ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: android.net.Network) {
                 scope.launch {
+                    online = repository.isOnline(appContext)
                     runCatching { repository.syncOutbox(appContext) }
                     outboxCounts = runCatching { repository.outboxCounts(appContext) }.getOrDefault(outboxCounts)
                     pendingUploads = outboxCounts.waiting
                 }
             }
+
+            // Read from the capabilities the callback HANDS us, not by asking ConnectivityManager
+            // again: inside these callbacks `activeNetwork` can still name the network being changed
+            // or lost, so a re-query answers "online" after the connection has gone (the same fix
+            // the documentation app shipped from its release smoke test, 2026-10-16).
+            override fun onCapabilitiesChanged(network: android.net.Network, caps: android.net.NetworkCapabilities) {
+                val usable = caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                scope.launch { online = usable }
+            }
+
+            // The DEFAULT network went away. If another takes over, onAvailable and
+            // onCapabilitiesChanged for it follow and put this back.
+            override fun onLost(network: android.net.Network) {
+                scope.launch { online = false }
+            }
         }
         runCatching { cm?.registerDefaultNetworkCallback(callback) }
         onDispose { runCatching { cm?.unregisterNetworkCallback(callback) } }
     }
+
+    // ── THE STATUS BANNERS: connection first, then the device queue ─────────────────────────────
+    //
+    // The sentences, and the decision about whether the cloud-off icon may be drawn at all, are in
+    // `connectionNotice` and `outboxDeviceBanner` — pure, and pinned by JVM tests, because every one
+    // of them is read by somebody with no signal and there is no other way to check them.
+    // Not over the password gate: nothing moves while it holds, so "sending now" would be false on a
+    // phone that is online, and the tray it opens could only retry into the same refusal. The counts
+    // are where they were, and the banner returns with the sync loop.
+    val banner = if (user != null && !passwordHeld) {
+        outboxDeviceBanner(outboxCounts, online = online, serverReachable = !serverUnreachable)
+    } else {
+        null
+    }
+    val connectionLine = if (user != null && !passwordHeld) connectionNotice(online, serverUnreachable) else null
+    val bannersShown = banner != null || connectionLine != null
+    bannerReserve.value = bannerClearance(bannerStackHeight, bannersShown)
+    val rootDensity = LocalDensity.current
 
     Box(
         modifier = Modifier
@@ -2278,11 +2347,15 @@ private fun RepositoryApp(
                     }
                 }
             )
-            else -> HomeScreen(
+            else -> CompositionLocalProvider(
+                LocalIslandClearance provides islandClearance,
+                LocalBannerClearance provides bannerReserve
+            ) { HomeScreen(
                 repository = repository,
                 user = user!!,
                 preferences = preferences,
                 onPreferencesChanged = onPreferencesChanged,
+                onAppMenuShowing = { appMenuShowing = it },
                 // Read by the poll above; corrected by the allow-list screen the moment it knows
                 // better. Passed down rather than fetched inside HomeScreen so there is exactly one
                 // number in the app and one place that asks for it.
@@ -2302,68 +2375,30 @@ private fun RepositoryApp(
                         user = null
                     }
                 }
-            )
+            ) }
         }
-        // ── THE DEVICE QUEUE BANNER ──────────────────────────────────────────────────────────────
-        //
-        // The sentences, and the decision about whether the cloud-off icon may be drawn at all, are
-        // in `outboxDeviceBanner` — pure, and pinned by `OutboxBannerTest`, because every one of them
-        // is read by somebody with no signal and there is no other way to check them. This composable
-        // decides only where they sit and what colour they are.
-        // Not over the password gate: nothing moves while it holds, so "uploading when you're online"
-        // would be false on a phone that is online, and the tray it opens could only retry into the
-        // same refusal. The counts are where they were, and the banner returns with the sync loop.
-        val banner = if (user != null && !passwordHeld) {
-            outboxDeviceBanner(outboxCounts, online = repository.isOnline(appContext))
-        } else {
-            null
-        }
-        if (banner != null) {
+        // Above the island bar, never over it — offline, the bar is the only way around the app,
+        // and the outbox banner used to sit on top of it and on the drawer's last row (release smoke
+        // test 2026-10-17, dp/61-63). Out of the way while the menu is open; the page keeps its
+        // reserve meanwhile, so nothing jumps when the menu closes.
+        if (bannersShown && !appMenuShowing) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp)
-                    .background(Color(0xFF2A2520), RoundedCornerShape(10.dp))
-                    // Tappable ONLY when there is something a person can do. A banner that opens an
-                    // empty tray teaches designers that tapping it is pointless, and the day it is
-                    // not pointless is the day they have stopped trying.
-                    .then(
-                        if (banner.actionable) {
-                            Modifier.clickable { showOutboxTray = true }
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(bottom = BANNER_STACK_GAP + islandClearance.value)
+                    // After the padding, so this is the banners alone: the page adds it to its own
+                    // bottom padding and lifts the message surface over it.
+                    .onSizeChanged { bannerStackHeight = with(rootDensity) { it.height.toDp() } },
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                banner.lines.forEachIndexed { index, line ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (index == 0) {
-                            Icon(
-                                // CloudOff only for work a connection will move. A refusal under a
-                                // cloud icon sends the designer up the hill to find a signal, which
-                                // is the one thing that cannot help — see OutboxBanner.showCloudOff.
-                                if (banner.showCloudOff) Icons.Filled.CloudOff else Icons.Filled.ErrorOutline,
-                                contentDescription = null,
-                                tint = if (banner.showCloudOff) Color(0xFFE0C9B0) else Color(0xFFF0B37E),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        } else {
-                            Spacer(Modifier.size(16.dp))
-                        }
-                        Text(
-                            line.text,
-                            color = if (line.warn) Color(0xFFF0B37E) else Color(0xFFE0C9B0),
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                connectionLine?.let { OfflineNotice(text = it, modifier = Modifier.fillMaxWidth()) }
+                banner?.let {
+                    OutboxDeviceBannerCard(
+                        banner = it,
+                        modifier = Modifier.fillMaxWidth(),
+                        onOpen = if (it.actionable) { { showOutboxTray = true } } else null
+                    )
                 }
             }
         }
@@ -2378,6 +2413,8 @@ private fun RepositoryApp(
                         pendingUploads = outboxCounts.waiting
                     }
                 },
+                online = online,
+                serverReachable = !serverUnreachable,
             )
         }
     }
@@ -3136,6 +3173,8 @@ private fun HomeScreen(
      */
     incomingQuestionnaire: Uri? = null,
     onIncomingQuestionnaireConsumed: () -> Unit = {},
+    /** Whether the hamburger menu is open, so the root's status banners can step out of its way. */
+    onAppMenuShowing: (Boolean) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var stats by remember { mutableStateOf<DashboardStats?>(null) }
@@ -3208,6 +3247,11 @@ private fun HomeScreen(
      */
     var craftRegister by remember { mutableStateOf(RegisterLoad()) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val menuShowing = drawerState.appMenuShowing
+    SideEffect { onAppMenuShowing(menuShowing) }
+    DisposableEffect(Unit) { onDispose { onAppMenuShowing(false) } }
+    // The offline / outbox banners' footprint, measured by the root (ui/BannerClearance.kt).
+    val bannerReserve = LocalBannerClearance.current?.value ?: 0.dp
     // The reduced-motion switch, which the menu now honours when it opens and closes.
     val reducedMotion = preferences.reducedMotion
     // The search panel the page header opens. See AppSearch.kt.
@@ -3253,7 +3297,17 @@ private fun HomeScreen(
     // with no chip left to turn it off, and the "Turn admin view back on" card is reachable by a
     // user who never had the switch in the first place. ANDing the gate in at every read means a
     // stale ON simply cannot survive the gate failing, which a one-shot reset would not guarantee.
-    var adminViewRequested by remember { mutableStateOf(isMasterAdmin) }
+    //
+    // REMEMBERED PER ACCOUNT across restarts and sign-ins (data/AdminViewPreference.kt); it used to
+    // reset to the role's default every time (release smoke test 2026-10-17).
+    val adminViewContext = LocalContext.current.applicationContext
+    var adminViewRequested by remember(user.id) {
+        mutableStateOf(AdminViewPreference.initial(AdminViewPreference.read(adminViewContext, user.id), isMasterAdmin))
+    }
+    fun requestAdminView(on: Boolean) {
+        adminViewRequested = on
+        AdminViewPreference.write(adminViewContext, user.id, on)
+    }
     val adminView = canToggleAdminView && adminViewRequested
 
     /**
@@ -4012,7 +4066,7 @@ private fun HomeScreen(
                         onNavigate = ::navigate,
                         pendingAccessCount = pendingAccessRequests,
                         pushingUpdate = pushingUpdate,
-                        onToggleAdminView = { adminViewRequested = !adminView },
+                        onToggleAdminView = { requestAdminView(!adminView) },
                         onPushUpdate = {
                             scope.launch { drawerState.closeAppMenu(reducedMotion) }
                             if (!pushingUpdate) {
@@ -4047,7 +4101,18 @@ private fun HomeScreen(
             ) {
             // The page gets back the 16dp the drawer bleeds through, and leaves the accessibility
             // tree while the menu is over it. See AppMenuDrawer.kt.
-            Box(modifier = Modifier.padding(16.dp).appMenuHidesPage(drawerState.appMenuShowing)) {
+            // The screens hosted outside the scrolling page own their whole viewport, so for them
+            // the banners' footprint comes off the bottom of that viewport instead.
+            val ownsViewport = screen is Screen.DataBrowser || screen is Screen.Appearance ||
+                screen is Screen.SpeechAndAi || screen is Screen.MyAiKeys || screen is Screen.Aadhaar ||
+                screen is Screen.UsageRecording || screen is Screen.TwoStepVerification ||
+                screen is Screen.AccountPassword
+            Box(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .padding(bottom = if (ownsViewport) bannerReserve else 0.dp)
+                    .appMenuHidesPage(drawerState.appMenuShowing)
+            ) {
                 /*
                  * Two hosting shapes. Almost everything renders into the scrolling Column below,
                  * under the app's own header. The two screens branched off here own
@@ -4211,6 +4276,12 @@ private fun HomeScreen(
         // by the header's measured height so nothing sits under it at rest. See AppSearch.kt.
         val quickReturn = rememberQuickReturnHeader(pageScroll, pinned = searchOpen)
         val pageImeOpen by rememberIslandImeVisible()
+        // Reported up so the root lays the status banners ABOVE the bar (ui/BannerClearance.kt).
+        val clearance = LocalIslandClearance.current
+        SideEffect { clearance?.value = islandReserve }
+        DisposableEffect(clearance) { onDispose { clearance?.value = 0.dp } }
+        // The bar AND the offline / outbox banners over it: the page's end clears both.
+        val pageReserve = pageBottomReserve(islandReserve, bannerReserve)
 
         Column(
             modifier = Modifier
@@ -4221,7 +4292,7 @@ private fun HomeScreen(
                 // Inside the scroller, so it is the END of the page that clears the bar — and, while
                 // the message banner is up, clears the banner too, so a button it covers can still be
                 // scrolled into view above it rather than hidden until the message is dismissed.
-                .padding(bottom = islandReserve + if (messageState.text != null) 88.dp else 0.dp),
+                .padding(bottom = pageReserve + if (messageState.text != null) 88.dp else 0.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
@@ -4483,7 +4554,8 @@ private fun HomeScreen(
                         onOpenDesignWorkshop = openDesignWorkshopFromSearch,
                         onBack = { attemptExit { goBack() } },
                         initialRecordType = s.searchFocus,
-                        memory = searchMemory
+                        memory = searchMemory,
+                        onError = { showError(it) }
                     )
                 }
                 // Routed as Screen.DataBrowser by `screenFor`, since the browser owns its whole
@@ -4592,7 +4664,7 @@ private fun HomeScreen(
                         label = "User management",
                         blurb = "Roles, promotions, capability grants and account administration live there.",
                         canToggle = canToggleAdminView,
-                        onEnable = { adminViewRequested = true }
+                        onEnable = { requestAdminView(true) }
                     )
                 }
             }
@@ -4681,7 +4753,7 @@ private fun HomeScreen(
                         "workshop rosters and access requests, and the transcription provider " +
                         "ranking in one place.",
                     canToggle = canToggleAdminView,
-                    onEnable = { adminViewRequested = true }
+                    onEnable = { requestAdminView(true) }
                 )
             }
 
@@ -5089,8 +5161,10 @@ private fun HomeScreen(
                 // The app's one message (ui/AppMessage.kt), pinned to the bottom of the viewport just
                 // above the island rather than at the foot of the scroll, so a save on a long form is
                 // answered where the reader is looking. It used to be one plain line under the page.
+                // Above the offline / outbox banners too, never under them: they are drawn later, by
+                // the root.
                 Box(
-                    modifier = Modifier.fillMaxSize().padding(bottom = islandReserve),
+                    modifier = Modifier.fillMaxSize().padding(bottom = pageReserve),
                     contentAlignment = Alignment.BottomCenter
                 ) {
                     AppMessageBanner(messageState)
@@ -17830,6 +17904,8 @@ private fun AndroidMediaForm(
     onError: (String) -> Unit
 ) {
     val context = LocalContext.current
+    // Success notes ("Saved on this phone…") go out as a notice, not as an error (ui/AppMessage.kt).
+    val savedNotice = LocalAppNotice.current
     val scope = rememberCoroutineScope()
     var selectedUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var mediaTitle by remember { mutableStateOf("") }
@@ -17910,8 +17986,12 @@ private fun AndroidMediaForm(
      * storage now and sent by the outbox — in the background if the app is closed by then — linked
      * exactly as the online upload would have linked them. [items] pairs each file with its position
      * in the batch, which is part of its name.
+     *
+     * [serverDown]: the phone is online but the server or upload storage did not answer. Queued the
+     * same way (it used to say "check your connection" and keep nothing), with a sentence that does
+     * not send a designer with four bars looking for a signal.
      */
-    suspend fun queueForLater(items: List<Pair<Int, Uri>>): Boolean {
+    suspend fun queueForLater(items: List<Pair<Int, Uri>>, serverDown: Boolean = false): Boolean {
         val result = runCatching {
             repository.queueLooseMedia(
                 context = context,
@@ -17925,9 +18005,11 @@ private fun AndroidMediaForm(
             )
         }
         result.onSuccess { queued ->
-            val message = offlineSavedMessage(queued, isCorrection = false)
-            localMessage = message
-            onError(message)
+            // KEPT, NOT FAILED: drawn as a notice rather than as an error. Files that could not be
+            // read are the exception, and they go out as the error they are.
+            val message = offlineSavedMessage(queued, isCorrection = false, serverDown = serverDown)
+            localMessage = null
+            if (queued.allFilesQueued) savedNotice(message) else onError(message)
         }.onFailure { error ->
             onError(error.userMessage("These files could not be kept on this device. They are still selected."))
         }
@@ -18119,7 +18201,15 @@ private fun AndroidMediaForm(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("${selectedUris.size} file(s) ready", color = Canvas, fontWeight = FontWeight.SemiBold)
+                // THE TILE'S OWN INK for every word and control on it. The theme's primary text
+                // buttons were purple on purple and all but vanished in light mode (smoke test
+                // 2026-10-17, dp/58); outlined buttons in this ink hold AA in both themes.
+                val tileInk = MaterialTheme.field.onBrandTile
+                Text(
+                    if (selectedUris.size == 1) "1 file ready" else "${selectedUris.size} files ready",
+                    color = tileInk,
+                    fontWeight = FontWeight.SemiBold
+                )
                 var batchExpanded by remember { mutableStateOf(false) }
                 val batchCap = 8
                 val shownBatch = if (batchExpanded) selectedUris else selectedUris.take(batchCap)
@@ -18128,16 +18218,27 @@ private fun AndroidMediaForm(
                         context = context,
                         uri = uri,
                         downloadable = true,
-                        onRemove = { selectedUris = selectedUris.filterNot { it == uri } }
+                        onRemove = { selectedUris = selectedUris.filterNot { it == uri } },
+                        onTile = tileInk
                     )
                 }
-                if (selectedUris.size > batchCap) {
-                    TextButton(onClick = { batchExpanded = !batchExpanded }) {
-                        Text(if (batchExpanded) "Show fewer" else "+${selectedUris.size - batchCap} more")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectedUris.size > batchCap) {
+                        OutlinedButton(
+                            onClick = { batchExpanded = !batchExpanded },
+                            colors = onTileButtonColors(tileInk),
+                            border = onTileBorder(tileInk)
+                        ) {
+                            Text(if (batchExpanded) "Show fewer" else "+${selectedUris.size - batchCap} more")
+                        }
                     }
-                }
-                TextButton(onClick = { selectedUris = emptyList() }) {
-                    Text("Clear batch")
+                    OutlinedButton(
+                        onClick = { selectedUris = emptyList() },
+                        colors = onTileButtonColors(tileInk),
+                        border = onTileBorder(tileInk)
+                    ) {
+                        Text("Clear batch")
+                    }
                 }
             }
         }
@@ -18153,8 +18254,13 @@ private fun AndroidMediaForm(
                     uploadFraction = 0f
                     uploadProgressText = null
                     val uris = selectedUris
-                    if (!repository.isOnline(context)) {
-                        val kept = queueForLater(uris.mapIndexed { index, uri -> (index + 1) to uri })
+                    // No network, or a server already known not to answer (data/ServerReachability.kt).
+                    val phoneOnline = repository.isOnline(context)
+                    if (!phoneOnline || ServerReachability.unreachable.value) {
+                        val kept = queueForLater(
+                            uris.mapIndexed { index, uri -> (index + 1) to uri },
+                            serverDown = phoneOnline
+                        )
                         uploading = false
                         if (kept) {
                             draft.discard()
@@ -18172,6 +18278,7 @@ private fun AndroidMediaForm(
                     var completedBytes = 0L
                     var success = 0
                     val failedUris = mutableListOf<Uri>()
+                    val failures = mutableListOf<Throwable>()
                     var cancelled = false
                     uris.forEachIndexed { index, uri ->
                         if (cancelled) return@forEachIndexed
@@ -18205,7 +18312,10 @@ private fun AndroidMediaForm(
                         when {
                             result.isSuccess -> success++
                             result.exceptionOrNull() is kotlinx.coroutines.CancellationException -> cancelled = true
-                            else -> failedUris.add(uri)
+                            else -> {
+                                failedUris.add(uri)
+                                result.exceptionOrNull()?.let { failures.add(it) }
+                            }
                         }
                         completedBytes += sizes[index]
                         uploadFraction = (completedBytes.toFloat() / totalBytes).coerceIn(0f, 1f)
@@ -18226,10 +18336,13 @@ private fun AndroidMediaForm(
                             jobsReload += 1
                             onUploaded(success)
                         }
-                        // THE CONNECTION WENT PART-WAY THROUGH: the files that did not go are queued
-                        // for the outbox rather than left in a picker that dies with this screen.
-                        !repository.isOnline(context) && queueForLater(
-                            failedUris.map { uri -> (uris.indexOf(uri) + 1) to uri }
+                        // THE CONNECTION WENT PART-WAY THROUGH, or the phone is online and the server or
+                        // upload storage did not answer: the files that did not go are queued for the
+                        // outbox rather than left in a picker that dies with this screen. A refusal
+                        // (a 4xx the server meant) is not queued — no retry can change it.
+                        (!repository.isOnline(context) || failures.all { repository.isTransient(it) }) && queueForLater(
+                            failedUris.map { uri -> (uris.indexOf(uri) + 1) to uri },
+                            serverDown = repository.isOnline(context)
                         ) -> {
                             draft.discard()
                             selectedUris = emptyList()
@@ -18580,7 +18693,9 @@ private fun AndroidUriPreview(
     // local handle — available regardless of upload state, so the user never loses the media even
     // when the network is failing. See `data/MediaDownloads.kt`.
     onRetry: (() -> Unit)? = null,
-    downloadable: Boolean = false
+    downloadable: Boolean = false,
+    // The ink of a coloured tile this row sits on, so its controls take that ink (see the batch card).
+    onTile: Color? = null
 ) {
     val mimeType = remember(uri) { context.contentResolver.getType(uri) }
     val downloader = rememberMediaDownloader()
@@ -18605,7 +18720,9 @@ private fun AndroidUriPreview(
         if (onRemove != null) {
             DiscardBadge(
                 contentDescription = "Discard $displayName",
-                onClick = onRemove
+                onClick = onRemove,
+                // Red on the purple tile all but vanished; the tile's ink holds AA there.
+                tint = onTile ?: MaterialTheme.colorScheme.error
             )
         }
     }
@@ -18644,7 +18761,8 @@ private fun AndroidUriPreview(
                     fileName = uri.lastPathSegment.orEmpty(),
                     onDownload = {
                         downloader.save(uri, mediaDisplayNameOf(context, uri), mimeType)
-                    }
+                    },
+                    onTile = onTile
                 )
             }
         }
@@ -18657,10 +18775,15 @@ private fun AndroidUriPreview(
 
 /** A small circular "✕" badge pinned to a media tile's top-right corner to discard/remove that file. */
 @Composable
-private fun DiscardBadge(contentDescription: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun DiscardBadge(
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.error
+) {
     // IconButton's own 48dp target, beside the tile rather than over its corner.
     IconButton(onClick = onClick, modifier = modifier) {
-        Icon(Icons.Filled.Close, contentDescription = contentDescription, tint = MaterialTheme.colorScheme.error)
+        Icon(Icons.Filled.Close, contentDescription = contentDescription, tint = tint)
     }
 }
 

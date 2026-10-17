@@ -649,8 +649,12 @@ data class OfflineQueueResult(
  * surface competes with those three for the two seconds it is read in, which is the standing rule
  * for both clients: one line, state the fact, name the act, and put the argument up here.
  */
-fun offlineSavedMessage(result: OfflineQueueResult, isCorrection: Boolean): String {
-    val head = if (isCorrection) {
+fun offlineSavedMessage(result: OfflineQueueResult, isCorrection: Boolean, serverDown: Boolean = false): String {
+    val head = if (serverDown && !isCorrection) {
+        // ONLINE, BUT THE SERVER OR UPLOAD STORAGE DID NOT ANSWER — "when you have a signal" would
+        // send a designer with four bars looking for a fifth.
+        "Saved on this phone; it will upload when the server is reachable."
+    } else if (isCorrection) {
         "Correction saved on this device. It will be sent when you have a signal; until then " +
             "the office still sees the earlier version."
     } else {

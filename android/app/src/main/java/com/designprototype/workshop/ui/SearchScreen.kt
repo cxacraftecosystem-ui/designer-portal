@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.userMessage
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -412,6 +414,8 @@ fun SearchScreen(
     initialRecordType: String? = null,
     /** Where the screen keeps its place across a trip to a record and back — see [SearchMemory]. */
     memory: SearchMemory? = null,
+    /** A failed search, for the app's message banner: the in-card line can sit below the fold. */
+    onError: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     /*
@@ -620,7 +624,9 @@ fun SearchScreen(
             // the pass that replaced this one already owns the flag.
             throw cancelled
         } catch (failure: Throwable) {
-            error = failure.apiErrorMessage("Search failed")
+            val said = failure.userMessage("Search failed. Try again.")
+            error = said
+            onError(said)
         }
         loading = false
     }

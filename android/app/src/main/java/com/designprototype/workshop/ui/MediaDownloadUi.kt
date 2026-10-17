@@ -10,6 +10,7 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +19,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -175,6 +179,10 @@ private class PendingSave {
  *
  * [unavailableReason] disables it and says why, both on screen and to TalkBack. It is for one case
  * only — the local bytes are genuinely gone — and never for a file that is still uploading.
+ *
+ * [onTile] draws it as an outlined button in that ink, for a row sitting on a coloured tile (the
+ * purple "N files ready" card), where the theme's primary text button all but vanished (release
+ * smoke test 2026-10-17, dp/58).
  */
 @Composable
 fun MediaDownloadButton(
@@ -182,7 +190,23 @@ fun MediaDownloadButton(
     onDownload: () -> Unit,
     unavailableReason: String? = null,
     modifier: Modifier = Modifier,
+    onTile: Color? = null,
 ) {
+    if (onTile != null) {
+        OutlinedButton(
+            onClick = onDownload,
+            enabled = unavailableReason == null,
+            colors = onTileButtonColors(onTile),
+            border = onTileBorder(onTile),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+            modifier = modifier.semantics { contentDescription = "Download $fileName" },
+        ) {
+            Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Download", fontSize = 13.sp)
+        }
+        return
+    }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
         TextButton(
             onClick = onDownload,
@@ -228,3 +252,13 @@ fun MediaDownloadNotice(downloader: MediaDownloader, modifier: Modifier = Modifi
         Text("Saved to Downloads as ${saved.name}", fontSize = 12.sp, maxLines = 2)
     }
 }
+
+/** An outlined button's colours for a coloured tile: the tile's own ink, never the theme primary. */
+@Composable
+fun onTileButtonColors(ink: Color) = ButtonDefaults.outlinedButtonColors(
+    contentColor = ink,
+    disabledContentColor = ink.copy(alpha = 0.5f),
+)
+
+/** The matching outline: the ink at 70%, which keeps 3:1 against the tile in both themes. */
+fun onTileBorder(ink: Color) = BorderStroke(1.dp, ink.copy(alpha = 0.7f))
