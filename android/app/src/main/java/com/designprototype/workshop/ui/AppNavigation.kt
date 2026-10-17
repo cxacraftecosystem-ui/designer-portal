@@ -958,7 +958,10 @@ fun AppNavigationDrawerContent(
      * Zero draws NOTHING, which also covers "we could not ask": a confident "0" over a queue that
      * failed to load is a lie an admin would act on by not opening it.
      */
-    pendingAccessCount: Int = 0
+    pendingAccessCount: Int = 0,
+    /** How many of this inspector's workshops wait for their review — the badge on "Workshops to
+     *  inspect" (2026-10-18). Same loop, same rule: zero draws nothing. */
+    awaitingInspectionCount: Int = 0
 ) {
     val items = visibleNavItems(user, adminMode)
     val rootItems = items.filter { it.group == null }
@@ -1019,12 +1022,12 @@ fun AppNavigationDrawerContent(
                 .verticalScroll(rememberScrollState())
         ) {
             rootItems.forEach { entry ->
-                NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount))
+                NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount))
             }
             groups.forEach { (group, entries) ->
                 NavGroupHeading(group.label)
                 entries.forEach { entry ->
-                    NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount))
+                    NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount))
                 }
             }
             Spacer(Modifier.padding(bottom = 8.dp))
@@ -1085,11 +1088,12 @@ private fun NavGroupHeading(label: String) {
  * you are writing it and silently wrong six months later, when a second badge arrives and the
  * condition is copied one entry down.
  */
-internal fun navBadge(entry: NavEntry, pendingAccessCount: Int): String? =
-    if (entry.destination == NavDestination.ACCESS_ROSTER && pendingAccessCount > 0) {
-        pendingAccessCount.toString()
-    } else {
-        null
+internal fun navBadge(entry: NavEntry, pendingAccessCount: Int, awaitingInspectionCount: Int = 0): String? =
+    when {
+        entry.destination == NavDestination.ACCESS_ROSTER && pendingAccessCount > 0 -> pendingAccessCount.toString()
+        entry.destination == NavDestination.DESIGN_WORKSHOP_INSPECTIONS && awaitingInspectionCount > 0 ->
+            awaitingInspectionCount.toString()
+        else -> null
     }
 
 @Composable

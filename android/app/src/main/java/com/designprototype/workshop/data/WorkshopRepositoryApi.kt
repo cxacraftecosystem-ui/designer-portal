@@ -2170,6 +2170,10 @@ interface WorkshopRepositoryApi {
     @GET("access/roster/pending-count")
     suspend fun pendingAccessCount(): PendingAccessCountDto
 
+    // The inspector's badge (2026-10-18): one integer on the same app-wide poll.
+    @GET("design-workshop-inspections/awaiting-count")
+    suspend fun awaitingInspectionCount(): AwaitingInspectionCountDto
+
     @POST("access/roster")
     suspend fun addToAccessRoster(@Body body: AccessRosterCreateBody): AccessRosterDto
 

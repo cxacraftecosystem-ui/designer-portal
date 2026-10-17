@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.ActionRow
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,6 +37,8 @@ import com.designprototype.workshop.data.DwQueuedInspectionNote
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.canInspectDesignWorkshops
 import com.designprototype.workshop.data.dwInspectionReviewQueue
+import com.designprototype.workshop.data.dwInspectionWaitingLabel
+import com.designprototype.workshop.data.dwInspectionWaitingSentence
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
@@ -96,12 +101,30 @@ fun InspectionAwaitingSection(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                DW_INSPECTION_QUEUE_TITLE,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    DW_INSPECTION_QUEUE_TITLE,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                // The count beside the title (2026-10-18): the same number the drawer badge wears,
+                // read off the list this card already holds, so it is right offline too.
+                val waiting = queue?.awaitingYou?.size ?: 0
+                dwInspectionWaitingLabel(waiting)?.let { label ->
+                    Text(
+                        label,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                            .semantics { contentDescription = dwInspectionWaitingSentence(waiting) }
+                    )
+                }
+            }
             Text(
                 "Handed-in reports waiting for you. Open one to file suggestions or send it back.",
                 color = MaterialTheme.field.muted,

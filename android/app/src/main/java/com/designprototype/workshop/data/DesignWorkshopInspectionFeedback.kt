@@ -335,6 +335,13 @@ fun dwInspectionReviewQueue(rows: List<DesignWorkshopDto>): DwInspectionReviewQu
     return DwInspectionReviewQueue(awaiting, withDesigners, other)
 }
 
+/** The pill beside the queue's title: "3 waiting", or null for none (a zero draws nothing). */
+fun dwInspectionWaitingLabel(count: Int): String? = if (count > 0) "$count waiting" else null
+
+/** What a screen reader hears for the pill — the web badge's sentence, word for word. */
+fun dwInspectionWaitingSentence(count: Int): String =
+    if (count == 1) "1 report is waiting for your review" else "$count reports are waiting for your review"
+
 /** The server's page ceiling; the queue walks pages of this size. */
 const val DW_INSPECTION_QUEUE_PAGE_SIZE = 100
 
