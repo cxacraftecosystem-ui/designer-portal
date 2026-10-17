@@ -121,6 +121,64 @@ class DwStageCaptureTest {
     }
 
     @Test
+    fun `a typed legacy days-attended stands until the row is ticked`() {
+        val legacy = mapOf("name" to p("Asha"), "attendedDays" to p(3))
+        val days = listOf(1, 2, 3, 4, 5)
+        assertTrue(DwStageComputed.isLegacyAttendance(legacy))
+        assertNull(DwStageComputed.attendedDays(legacy, days))
+        assertNull(DwStageComputed.rosterValues(listOf(legacy, mapOf("name" to p("Ravi"))), days).completed)
+        val ticked = legacy + ("absentDays" to JsonArray(emptyList()))
+        assertEquals(5, DwStageComputed.attendedDays(ticked, days))
+
+        // The patch leaves the typed 3 alone and stamps a counted new row with its tick-list.
+        val patch = dwComputedPatch(
+            DW_ROSTER,
+            DwStageAssistDto(attendanceDays = days),
+            emptyMap(),
+            mapOf("participant" to listOf("r1" to legacy, "r2" to mapOf("name" to p("Ravi")))),
+        )
+        val rows = patch.rows["participant"]!!.toMap()
+        assertEquals(legacy, rows["r1"])
+        assertEquals(5, rows["r2"]!!["attendedDays"]!!.jsonPrimitive.content.toInt())
+        assertEquals(JsonArray(emptyList()), rows["r2"]!!["absentDays"])
+    }
+
+    @Test
+    fun `with no server answer stage 3 works its days and schedule out from stage 1`() {
+        val setup = mapOf("startDate" to p("2026-10-05"), "endDate" to p("2026-10-09"))
+        val schedule = listOf(mapOf("dayNumber" to p(2)))
+        val local = dwLocalStageAssist(DW_ROSTER, null, setup, schedule)!!
+        assertEquals(listOf(1, 2, 3, 4, 5), local.attendanceDays)
+        assertEquals("2026-10-05", local.startDate)
+        val fill = local.suggestions.single()
+        assertEquals("Fill the schedule", fill.title)
+        assertEquals("Adds 4 days from 5 Oct 2026, numbered and dated.", fill.detail)
+        assertEquals(listOf(1, 3, 4, 5), fill.rows.map { it["dayNumber"]!!.jsonPrimitive.content.toInt() })
+        assertEquals("2026-10-07", fill.rows[1]["date"]!!.jsonPrimitive.content)
+
+        // The stored duration wins over the dates, exactly as `setup_duration` reads it.
+        assertEquals(listOf(1, 2, 3), DwStageComputed.setupDays(setup + ("durationDays" to p(3))))
+        // Offline days feed the computed patch, so attendance is counted with no signal.
+        val patch = dwComputedPatch(
+            DW_ROSTER,
+            local,
+            emptyMap(),
+            mapOf("participant" to listOf("r1" to mapOf("name" to p("Asha"), "absentDays" to JsonArray(listOf(p("1")))))),
+        )
+        assertEquals(4, patch.rows["participant"]!!.single().second["attendedDays"]!!.jsonPrimitive.content.toInt())
+
+        // The server's answer stays the authority; only what it left empty is filled.
+        val server = DwStageAssistDto(stageKey = DW_ROSTER, attendanceDays = listOf(1, 2))
+        val enriched = dwLocalStageAssist(DW_ROSTER, server, setup, schedule)!!
+        assertEquals(listOf(1, 2), enriched.attendanceDays)
+        assertEquals("2026-10-05", enriched.startDate)
+        assertTrue(enriched.suggestions.isEmpty())
+        // Nothing to work from, and other stages, are left as they were.
+        assertTrue(dwLocalStageAssist(DW_ROSTER, null, null, emptyList())!!.attendanceDays.isEmpty())
+        assertNull(dwLocalStageAssist("MARKET_SURVEY_CAPTURE", null, setup, emptyList()))
+    }
+
+    @Test
     fun `a FILL lands on blank boxes only and an ADD_ROWS stays offered until tapped`() {
         val fill = DwAssistSuggestionDto(
             id = "reportSettings:template", kind = "FILL", entityKey = "reportSettings",

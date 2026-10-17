@@ -119,6 +119,7 @@ import com.designprototype.workshop.data.DwStageAssist
 import com.designprototype.workshop.data.DwStageAssistDto
 import com.designprototype.workshop.data.DwStageComputed
 import com.designprototype.workshop.data.dwComputedPatch
+import com.designprototype.workshop.data.dwLocalStageAssist
 import com.designprototype.workshop.data.dwDisplayText
 import com.designprototype.workshop.data.entity
 import com.designprototype.workshop.data.field
@@ -1586,6 +1587,22 @@ private fun StageScreenBody(
                 appliedSuggestions = emptySet()
             }
         }
+        // Offline at the venue the server cannot answer, and a workshop never sent has nobody to ask:
+        // stage 3's days, start date and "Fill the schedule" come from the cached stage 1 draft then.
+        var setupDraft by remember(workshopId) { mutableStateOf<Map<String, JsonElement>?>(null) }
+        LaunchedEffect(workshopId, stageKey, saveState) {
+            if (stageKey == DW_ROSTER_STAGE) {
+                setupDraft = WorkshopDraftStore.load(appContext, workshopId)?.stages?.get(DW_SETUP_STAGE)?.values
+            }
+        }
+        val stageAssist = remember(assist, setupDraft, state.collections["workshopScheduleDay"]) {
+            dwLocalStageAssist(
+                stageKey,
+                assist,
+                setupDraft,
+                state.collections["workshopScheduleDay"].orEmpty().map { it.values },
+            )
+        }
         LaunchedEffect(saveState) {
             if (saveState == SaveState.SYNCED) assistToken++
             if ((saveState == SaveState.SYNCED || saveState == SaveState.ON_DEVICE) && stageKey == DW_SETUP_STAGE) {
@@ -1594,10 +1611,10 @@ private fun StageScreenBody(
             }
         }
         // C7/C8: keep each computed box equal to what the rows come to (the derived-field pattern).
-        LaunchedEffect(state.collections, assist) {
+        LaunchedEffect(state.collections, stageAssist) {
             val patch = dwComputedPatch(
                 stageKey = stageKey,
-                assist = assist,
+                assist = stageAssist,
                 singleton = state.singleton,
                 collections = state.collections.mapValues { (_, rows) -> rows.map { it.rowId to it.values } },
             )
@@ -1622,7 +1639,7 @@ private fun StageScreenBody(
         }
         val asPairs = state.collections.mapValues { (_, rows) -> rows.map { it.rowId to it.values } }
         DwStageAssistCard(
-            suggestions = assist?.suggestions.orEmpty().filter { suggestion ->
+            suggestions = stageAssist?.suggestions.orEmpty().filter { suggestion ->
                 !(suggestion.kind == "ADD_ROWS" && suggestion.id in appliedSuggestions) &&
                     DwStageAssist.stillApplies(suggestion, state.singleton, asPairs)
             },
@@ -1646,10 +1663,10 @@ private fun StageScreenBody(
             DwAttendanceCard(
                 days = DwStageComputed.workshopDays(
                     state.collections["workshopScheduleDay"].orEmpty().map { it.values },
-                    assist?.attendanceDays.orEmpty(),
+                    stageAssist?.attendanceDays.orEmpty(),
                 ),
                 participants = asPairs["participant"].orEmpty(),
-                startDate = assist?.startDate,
+                startDate = stageAssist?.startDate,
                 enabled = saveState != SaveState.SAVING,
             ) { next ->
                 edit { current ->
@@ -1689,7 +1706,7 @@ private fun StageScreenBody(
                                 target,
                                 before.map { it.rowId to it.values },
                                 (before + added).map { it.rowId to it.values },
-                                assist?.startDate,
+                                stageAssist?.startDate,
                             ).map { (rowId, values) -> CollectionRow(rowId = rowId, values = values) }
                             current.copy(collections = current.collections + (entityKey to numbered))
                         }
@@ -1805,7 +1822,7 @@ private fun StageScreenBody(
                         entity,
                         before.map { it.rowId to it.values },
                         rows.map { it.rowId to it.values },
-                        assist?.startDate,
+                        stageAssist?.startDate,
                     ).map { (rowId, values) -> CollectionRow(rowId = rowId, values = values) }
                     edit { current -> current.copy(collections = current.collections + (entity.key to numbered)) }
                 }

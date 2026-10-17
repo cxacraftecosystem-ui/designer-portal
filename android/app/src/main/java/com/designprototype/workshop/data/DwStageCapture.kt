@@ -122,8 +122,16 @@ object DwStageComputed {
     fun absentDays(row: Map<String, JsonElement>): Set<String> =
         (row["absentDays"] as? JsonArray).orEmpty().mapNotNull { it.toIntOrNull()?.toString() }.toSet()
 
+    /**
+     * Days attended typed before the tick-list existed and never ticked since: no `absentDays` list
+     * and a stored `attendedDays`. Never read back as "All present" (`is_legacy_attendance`).
+     */
+    fun isLegacyAttendance(row: Map<String, JsonElement>): Boolean =
+        row["absentDays"] !is JsonArray && row["attendedDays"].text().isNotBlank()
+
     fun attendedDays(row: Map<String, JsonElement>, days: List<Int>): Int? =
-        if (days.isEmpty()) null else days.count { it.toString() !in absentDays(row) }
+        if (days.isEmpty() || isLegacyAttendance(row)) null
+        else days.count { it.toString() !in absentDays(row) }
 
     fun named(rows: List<Map<String, JsonElement>>): List<Map<String, JsonElement>> =
         rows.filter { it["name"].text().isNotBlank() || !it["artisanRef"].isBlankValue() }
@@ -136,7 +144,8 @@ object DwStageComputed {
         return RosterValues(
             count = people.size,
             women = people.count { isWoman(it["gender"]) },
-            completed = if (days.isEmpty()) null else people.count { attendedDays(it, days) == days.size },
+            completed = if (days.isEmpty() || people.any { isLegacyAttendance(it) }) null
+            else people.count { attendedDays(it, days) == days.size },
         )
     }
 
@@ -144,6 +153,30 @@ object DwStageComputed {
     fun workshopDays(schedule: List<Map<String, JsonElement>>, fallback: List<Int>): List<Int> {
         val numbers = schedule.mapNotNull { it["dayNumber"].toIntOrNull() }.filter { it in 1..366 }.distinct().sorted()
         return numbers.ifEmpty { fallback }
+    }
+
+    /** Stage 1's duration: the stored box, else start to end inclusive (`setup_duration`). */
+    fun setupDuration(setup: Map<String, JsonElement>?): Int? {
+        if (setup == null) return null
+        setup["durationDays"].toIntOrNull()?.takeIf { it > 0 }?.let { return minOf(it, 366) }
+        return try {
+            val start = LocalDate.parse(setup["startDate"].text().take(10))
+            val end = LocalDate.parse(setup["endDate"].text().take(10))
+            val days = (end.toEpochDay() - start.toEpochDay() + 1).toInt()
+            if (days > 0) minOf(days, 366) else null
+        } catch (_: DateTimeParseException) {
+            null
+        }
+    }
+
+    /** 1..duration from stage 1, the server's fallback when the schedule has no rows. */
+    fun setupDays(setup: Map<String, JsonElement>?): List<Int> = setupDuration(setup)?.let { (1..it).toList() }.orEmpty()
+
+    /** Stage 1's start date as yyyy-mm-dd, or null. */
+    fun setupStart(setup: Map<String, JsonElement>?): String? = try {
+        LocalDate.parse(setup?.get("startDate").text().take(10)).toString()
+    } catch (_: DateTimeParseException) {
+        null
     }
 
     /** Mark the row present or absent on [day], keeping the stored list sorted. */
@@ -245,6 +278,57 @@ fun dwLastStageName(prototypeKeys: Set<String>, logs: List<Map<String, JsonEleme
     return best
 }
 
+/**
+ * Stage 3's assist as the handset can work it out with no signal (C6/C7): the workshop days and the
+ * start date from the cached stage 1 draft, and "Fill the schedule" — the server's
+ * `schedule_suggestions`, row for row. The server's answer stays the authority when there is one;
+ * this only fills what it left empty, and stands in whole when it is null (offline, or a workshop
+ * never sent to the server). Every other stage gets [assist] back untouched.
+ */
+fun dwLocalStageAssist(
+    stageKey: String,
+    assist: DwStageAssistDto?,
+    setup: Map<String, JsonElement>?,
+    schedule: List<Map<String, JsonElement>>,
+): DwStageAssistDto? {
+    if (stageKey != "WORKSHOP_PLAN_PARTICIPANTS_OPENING") return assist
+    val start = DwStageComputed.setupStart(setup)
+    val days = DwStageComputed.setupDays(setup)
+    val base = assist ?: DwStageAssistDto(stageKey = stageKey)
+    val suggestions = if (assist != null) base.suggestions
+    else listOfNotNull(dwFillTheSchedule(start, days.size, schedule))
+    return base.copy(
+        suggestions = suggestions,
+        attendanceDays = base.attendanceDays.ifEmpty { days },
+        startDate = base.startDate ?: start,
+    )
+}
+
+/** "Fill the schedule": one row per workshop day not yet scheduled, dated from the start. */
+fun dwFillTheSchedule(start: String?, duration: Int, schedule: List<Map<String, JsonElement>>): DwAssistSuggestionDto? {
+    if (start == null || duration <= 0) return null
+    val have = schedule.mapNotNull { it["dayNumber"].toIntOrNull() }.toSet()
+    val first = LocalDate.parse(start)
+    val rows = (1..duration).filter { it !in have }.map { n ->
+        mapOf<String, JsonElement>(
+            "dayNumber" to JsonPrimitive(n),
+            "date" to JsonPrimitive(first.plusDays((n - 1).toLong()).toString()),
+        )
+    }
+    if (rows.isEmpty()) return null
+    val plural = if (rows.size == 1) "day" else "days"
+    // `_short_date`'s "5 Oct 2026", in English whatever the handset's language.
+    val shortDate = first.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH))
+    return DwAssistSuggestionDto(
+        id = "schedule:fill",
+        kind = "ADD_ROWS",
+        entityKey = "workshopScheduleDay",
+        title = "Fill the schedule",
+        detail = "Adds ${rows.size} $plural from $shortDate, numbered and dated.",
+        rows = rows,
+    )
+}
+
 /** The `jsonPrimitive` content of [value] or "", for display. */
 fun dwDisplayText(value: JsonElement?): String = when (value) {
     null, JsonNull -> ""
@@ -306,10 +390,13 @@ fun dwComputedPatch(
         var dirty = false
         val next = collections[entityKey].orEmpty().map { (rowId, row) ->
             val value = compute(rowId, row)
-            if (value == null || row[fieldKey].asCount() == value) rowId to row
+            // A counted participant carries its tick-list, so it is never read back as a typed one.
+            val stamp = entityKey == "participant" && row["absentDays"] !is JsonArray
+            if (value == null || (row[fieldKey].asCount() == value && !stamp)) rowId to row
             else {
                 dirty = true
-                rowId to (row + (fieldKey to JsonPrimitive(value)))
+                val counted = row + (fieldKey to JsonPrimitive(value))
+                rowId to (if (stamp) counted + ("absentDays" to JsonArray(emptyList())) else counted)
             }
         }
         if (dirty) entityKey to next else null
