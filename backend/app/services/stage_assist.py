@@ -528,6 +528,9 @@ def build_assist(w: Workshop, stage_key: str) -> dict[str, Any]:
     }
     if stage_key in (sc.ROSTER_STAGE, sc.CLOSING_STAGE):
         payload["attendanceDays"] = w.days()
+    if stage_key == sc.ROSTER_STAGE:
+        # A new schedule row's date is the start date plus its day number less one (C6).
+        payload["startDate"] = str(w.one("workshopSetup").get("startDate") or "")[:10] or None
     if stage_key == sc.SURVEY_STAGE:
         payload["sittings"] = list(w.sittings)
     if stage_key == "POST_WORKSHOP_FOLLOWUP":

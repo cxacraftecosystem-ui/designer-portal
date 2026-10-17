@@ -389,6 +389,7 @@ def test_the_assist_payload_carries_counts_and_days_for_display():
     w = _workshop({"workshopSetup": SETUP}, {sc.PARTICIPANT: people})
     payload = sa.build_assist(w, sc.ROSTER_STAGE)
     assert payload["attendanceDays"] == [1, 2, 3, 4, 5]
+    assert payload["startDate"] == "2026-10-05"
     assert payload["computed"]["singleton"] == {"totalArtisans": 1, "womenParticipants": 1}
     assert payload["computed"]["rows"]["participant"]["a"] == {"attendedDays": 4}
     survey = sa.build_assist(
@@ -540,3 +541,14 @@ async def test_the_assist_route_answers_every_stage_and_refuses_an_unknown_one(c
     assert ok.status_code == 200
     assert ok.json()["suggestions"][0]["values"] == {"templateId": "DCH_STANDARD"}
     assert client.get(f"/api/design-workshops/{workshop}/stages/NOPE/assist").status_code == 404
+
+
+def test_planned_follow_ups_never_reach_the_report():
+    """B10's due dates are the designer's own; the stage's one printable collection stays alone."""
+    from app.services.report_builder import printable_collections
+
+    keys = [e.key for e in printable_collections(stage("POST_WORKSHOP_FOLLOWUP"))]
+    assert keys == ["followUp"]
+    # Every other stage keeps every collection it had.
+    for s in (stage(k) for k in ("PROTOTYPE_DEVELOPMENT", "COSTING_MARKET_LINKAGE")):
+        assert printable_collections(s) == list(s.collections)
