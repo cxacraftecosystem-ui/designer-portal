@@ -1,7 +1,15 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { expect, test } from "@playwright/test";
 
 import { aadhaarValidationError } from "@/components/forms/AadhaarField";
-import { identityChoices, normalizePehchan, type DwIdentityOcrResult } from "@/lib/designWorkshops";
+import {
+  DW_OCR_IDENTITY_PATH,
+  identityChoices,
+  normalizePehchan,
+  type DwIdentityOcrResult
+} from "@/lib/designWorkshops";
 import { canCreateRecords, canRunDesignWorkshops } from "@/lib/permissions";
 import type { User } from "@/lib/types";
 
@@ -102,8 +110,8 @@ test("the form's guard and the reader's guard are different rules, and they do n
     first and not the second while OUTRANKING a designer.
 
     So the control cannot inherit the page's guard, and `serverOffersRoute` cannot stand in for one:
-    it probes with a GET against a POST-only route, which answers 405 from the router before any
-    dependency runs — measured, with no token at all. Without its own check the button appears for a
+    its probe, `GET /ocr/identity`, answers 200 to every signed-in account whatever their role (the
+    test at the foot of this file pins that GET). Without its own check the button appears for a
     professor, who photographs somebody's Aadhaar card and has it uploaded to a third-party vision
     model before the 403 comes back.
 
@@ -164,4 +172,21 @@ test("an empty answer is an ordinary result, not a crash", () => {
   expect(identityChoices({}, "ANY", aadhaarValidationError)).toEqual([]);
   expect(identityChoices({ aadhaarCandidates: null, pehchanCandidates: null }, "ANY", aadhaarValidationError)).toEqual([]);
   expect(identityChoices({ aadhaarCandidates: [{ value: null }] }, "AADHAAR", aadhaarValidationError)).toEqual([]);
+});
+
+test("the reader's capability probe is a GET the server answers, so the form opens with no console error", () => {
+  /*
+    #6. `serverOffersRoute` asks `GET /design-workshops/ocr/identity` on every open of /artisans/new,
+    /artisans/[id]/edit and /designers/profile. While only the POST was declared, the router answered
+    405 — read correctly as "the route is there", and printed by the browser as a red console error
+    every time. The server now declares a literal GET that answers 200; this pins both halves so
+    neither can move alone.
+  */
+  const routes = readFileSync(
+    join(__dirname, "..", "..", "backend", "app", "api", "routes", "design_workshops.py"),
+    "utf8"
+  );
+  expect(DW_OCR_IDENTITY_PATH).toBe("/design-workshops/ocr/identity");
+  expect(routes).toMatch(/@router\.get\("\/ocr\/identity"\)\r?\nasync def identity_ocr_probe\(/);
+  expect(routes).toMatch(/"ocrIdentity": True/);
 });
