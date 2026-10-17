@@ -62,6 +62,7 @@ from app.services.records import (
     apply_status_policy_update,
     assert_expected_updated_at,
     attach_location,
+    claim_expected_updated_at,
     clean_data,
     contains,
     count_and_page,
@@ -617,6 +618,14 @@ async def upsert_responses(
         await writer.questionnaireresponse.create_many(data=to_create)
     for row_id, data in to_update:
         await writer.questionnaireresponse.update(where={"id": row_id}, data=data)
+    # AN ANSWER IS PART OF THE INTERVIEW'S VERSION. Answers live in their own table, so without this
+    # a second interviewer's answers left the interview's ``updatedAt`` where it was, and a
+    # correction queued on a phone against that ``updatedAt`` would pass its precondition and
+    # replace answers its author never saw. Only when something was actually written.
+    if to_create or to_update:
+        await writer.questionnaireinterview.update(
+            where={"id": interview_id}, data={"updatedAt": datetime.now(UTC)}
+        )
 
 
 @router.get("/questions")
@@ -1748,6 +1757,8 @@ async def update_interview(
     async with db.tx() as tx:
         # Before any write in the block, so a refusal rolls nothing back. A None passes.
         assert_expected_updated_at(interview, expected_updated_at)
+        # And then claimed, so two corrections composed against one version cannot both pass.
+        await claim_expected_updated_at(tx.questionnaireinterview, interview, expected_updated_at)
         privileged = await guard_record_edit(
             interview, current_user, data, "questionnaire", client=tx
         )

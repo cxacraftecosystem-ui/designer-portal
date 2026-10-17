@@ -629,9 +629,9 @@ data class OfflineQueueResult(
  * Because a queued correction WILL win, and nothing else in the app said so. `writeFromEntry` replays
  * it as a whole create-shaped body through `updateArtisan`/`updateProduct`/… with no version and no
  * `If-Match`, so a correction composed on the bus and drained hours later overwrites anything anybody
- * else changed in between, field for field, with nobody told. The questionnaire interview form refuses
- * to queue an edit for exactly this hazard and spends a paragraph explaining why (see MainActivity's
- * questionnaire save handler); the six record types accept it, which is a defensible trade for a
+ * else changed in between, field for field, with nobody told. The questionnaire interview form used to
+ * refuse to queue an edit for exactly this hazard, and since 2026-10-17 queues it with the interview's
+ * version as its precondition (see MainActivity's questionnaire save handler); the six record types accept it, which is a defensible trade for a
  * register a small team keeps — losing a courtyard's fieldwork to a refusal is worse than a rare
  * overwrite — but it is not defensible to make it silently. "The office still sees the earlier
  * version" told the designer the half that costs them nothing and left out the half that costs
@@ -1509,6 +1509,50 @@ object OfflineOutbox {
                 )
                 true
             }
+        }
+
+    /**
+     * "KEEP THEIRS" on a correction that carries photographs or recordings: the field changes are
+     * dropped, and the files stay queued against the record as a media-only entry, so choosing the
+     * other person's text never deletes a clip that was only ever on this phone. A correction with no
+     * files is simply removed. Returns false when the entry is gone or is not a held correction.
+     */
+    suspend fun keepServerVersionKeepFiles(context: Context, entryId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            var found = false
+            val dropped = mutex.withLock {
+                val current = read(context)
+                val entry = current.firstOrNull { it.id == entryId && it.staleCorrection }
+                    ?: return@withLock null
+                found = true
+                if (entry.media.isEmpty()) {
+                    write(context, current.filterNot { it.id == entryId })
+                    return@withLock entry
+                }
+                write(
+                    context,
+                    current.map {
+                        if (it.id != entryId) it else it.copy(
+                            type = OFFLINE_MEDIA_ONLY,
+                            payloadJson = "",
+                            // A step clip has no step id without the correction's answer, so it is
+                            // filed on the record itself rather than refused.
+                            media = it.media.map { m -> m.copy(linkedType = m.linkedType ?: it.type, stepIndex = null) },
+                            failure = null,
+                            failedAt = null,
+                            conflict = false,
+                            staleCorrection = false,
+                            currentUpdatedAt = null,
+                            changedKeys = null,
+                            baseUpdatedAt = null,
+                            idempotencyKey = null,
+                        )
+                    }
+                )
+                null
+            }
+            dropped?.media?.forEach { runCatching { File(it.localPath).delete() } }
+            found
         }
 
     /** Give a just-queued entry its temporary id (see [PendingEntry.tempId]). */

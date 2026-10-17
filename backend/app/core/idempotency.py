@@ -75,6 +75,8 @@ CREATE_ROUTES = tuple(
         r"^/api/questionnaires/[^/]+/sections/?$",
         r"^/api/questionnaires/[^/]+/sections/[^/]+/questions/?$",
         r"^/api/questionnaires/[^/]+/entries/?$",
+        # A copy of a questionnaire as a template: a create of a NEW questionnaire (2026-10-17).
+        r"^/api/questionnaires/[^/]+/reuse/?$",
         r"^/api/feedback/reports/?$",
     )
 )
@@ -323,7 +325,7 @@ class IdempotencyMiddleware:
         if 200 <= status_code < 300 and not too_large:
             try:
                 await self.store.complete(user_id, key, status_code, b"".join(captured), content_type)
-            except Exception:  # noqa: BLE001 - the answer is already sent; losing the record only loses dedup
+            except Exception:
                 logger.exception("Could not store the answer for an Idempotency-Key")
         else:
             await self._release_quietly(user_id, key)
@@ -331,7 +333,7 @@ class IdempotencyMiddleware:
     async def _release_quietly(self, user_id: str, key: str) -> None:
         try:
             await self.store.release(user_id, key)
-        except Exception:  # noqa: BLE001 - a stale marker is taken over after STALE_PENDING
+        except Exception:
             logger.exception("Could not release an Idempotency-Key")
 
     @staticmethod

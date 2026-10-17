@@ -808,7 +808,21 @@ def roster_payload(row: Any) -> dict[str, Any]:
         "createdAt": _iso(row.createdAt),
         "updatedAt": _iso(row.updatedAt),
         "addedById": row.addedById,
+        # The empanelling admin in words, when the route loaded the account (the roster list does).
+        "addedByName": person_name(getattr(row, "addedBy", None)),
     }
+
+
+def person_name(user: Any) -> str | None:
+    """An account as a roster screen names it: its name, else its address, else nothing.
+
+    The one spelling both rosters use (the access roster imports it), so "Added by" cannot read one
+    way on one list and another way on the other.
+    """
+    if user is None:
+        return None
+    name = str(getattr(user, "name", "") or "").strip()
+    return name or (getattr(user, "email", None) or None)
 
 
 # --------------------------------------------------------------------------------------

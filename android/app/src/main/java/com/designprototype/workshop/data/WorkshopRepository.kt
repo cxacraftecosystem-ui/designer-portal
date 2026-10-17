@@ -3698,6 +3698,19 @@ class WorkshopRepository(
                 )
                 null
             }
+            QFormOp.REUSE -> {
+                reuseQuestionnaire(
+                    id = qid,
+                    // Through the same map as the source, so a workshop saved since the copy was
+                    // asked for is named by its server id.
+                    designWorkshopId = op.designWorkshopId?.let { need(it, "design & prototype workshop") },
+                    title = op.title,
+                    description = op.description,
+                    changeDescription = op.changeDescription,
+                    idempotencyKey = idempotencyKey,
+                )
+                null
+            }
             else -> throw SerializationException("Unknown questionnaire step: ${op.op}")
         }
     }
@@ -4068,6 +4081,7 @@ class WorkshopRepository(
         title: String? = null,
         description: String? = null,
         changeDescription: Boolean = false,
+        idempotencyKey: String? = null,
     ): QFormReuseResultDto = api.reuseQuestionnaire(
         id,
         questionnaireReuseJson(
@@ -4075,8 +4089,65 @@ class WorkshopRepository(
             title = title,
             description = description,
             changeDescription = changeDescription,
-        )
+        ),
+        idempotencyKey,
     )
+
+    /**
+     * "Use this questionnaire again", sent now when it can be and otherwise kept in the outbox
+     * (2026-10-17) as a [QFormOp.REUSE] step. Answers the copy's result when it was made now, and
+     * null when it was kept on this phone — the screen then says so instead of showing a report.
+     */
+    suspend fun reuseQuestionnaireOrQueue(
+        context: Context,
+        id: String,
+        designWorkshopId: String? = null,
+        title: String? = null,
+        description: String? = null,
+        changeDescription: Boolean = false,
+        label: String,
+    ): QFormReuseResultDto? {
+        val op = QFormOp(
+            op = QFormOp.REUSE,
+            questionnaireId = id,
+            designWorkshopId = designWorkshopId,
+            title = title,
+            description = description,
+            changeDescription = changeDescription,
+        )
+        val key = java.util.UUID.randomUUID().toString()
+        val map = TempIdMap.all(context)
+        val pending = pendingQuestionnaireOps(context, setOf(id)).size
+        if (reuseCanSendNow(id, designWorkshopId, map, pending, isOnline(context))) {
+            try {
+                return reuseQuestionnaire(
+                    resolveTempId(id, map) ?: id,
+                    resolveTempId(designWorkshopId, map),
+                    title,
+                    description,
+                    changeDescription,
+                    key,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (!isTransient(e)) throw e
+            }
+        }
+        OfflineOutbox.enqueue(
+            context,
+            PendingEntry(
+                id = java.util.UUID.randomUUID().toString(),
+                type = OFFLINE_QFORM_OP,
+                payloadJson = offlineJson.encodeToString(QFormOp.serializer(), op),
+                label = label,
+                createdAt = Instant.now().toString(),
+                ownerUserId = cachedUser()?.id,
+                idempotencyKey = key,
+            )
+        )
+        return null
+    }
 
     /**
      * One picked document, as the multipart file part both upload routes take.
@@ -6499,8 +6570,8 @@ class WorkshopRepository(
      *
      * ── NOT QUEUED, AND NOT RETRIED ────────────────────────────────────────────────────────────
      *
-     * NOT QUEUED for the reason `QuestionnaireForm` already gives for refusing to queue an interview
-     * EDIT: this is a correction against server state that a second researcher may also be editing,
+     * NOT QUEUED: unlike an interview edit, which is now queued with the interview's version as its
+     * precondition (2026-10-17), this is a correction against TWO rows a second researcher may be editing,
      * and replaying it hours later would fold rows whose contents have changed since the refusal was
      * read — against a target that may by then hold a differing answer the researcher never saw. The
      * offer is made in the room, on a signal, or it is not made.
@@ -7899,7 +7970,11 @@ class WorkshopRepository(
      * media moves, and each finished file is ticked off as soon as it is up — so whatever kills this
      * pass, the next one starts from what has actually happened rather than from the top.
      */
-    private suspend fun replayEntry(context: Context, queued: PendingEntry): ReplayOutcome {
+    private suspend fun replayEntry(
+        context: Context,
+        queued: PendingEntry,
+        rebasedOnMatch: Boolean = false,
+    ): ReplayOutcome {
         appContextForReplay = context.applicationContext
         var entry = queued
         // AN ENTRY QUEUED BEFORE IDEMPOTENCY KEYS EXISTED gets one now, written down BEFORE the first
@@ -7936,6 +8011,19 @@ class WorkshopRepository(
                     null
                 }
                 if (staleAt != null) {
+                    // THE CORRECTION ALREADY LANDED AND ONLY ITS ANSWER WAS LOST. A PATCH that
+                    // committed while the connection dropped is queued again with the old version,
+                    // so its replay is refused although nobody else touched the record. When the
+                    // server already holds every value this correction sends, nothing needs
+                    // choosing: it is re-based on the server's version and sent once more (an
+                    // identical write), and its files go up as usual.
+                    if (!rebasedOnMatch && runCatching { reviewCorrection(entry)?.fields?.isEmpty() == true }
+                            .getOrDefault(false)
+                    ) {
+                        entry = entry.copy(baseUpdatedAt = staleAt.ifBlank { null } ?: entry.baseUpdatedAt)
+                        OfflineOutbox.update(context, entry)
+                        return replayEntry(context, entry, rebasedOnMatch = true)
+                    }
                     return ReplayOutcome.Rejected(
                         STALE_CORRECTION_SENTENCE,
                         schemaSkew = false,
@@ -8270,6 +8358,11 @@ class WorkshopRepository(
      */
     suspend fun reviewStaleCorrection(context: Context, entryId: String): StaleCorrectionReview? {
         val entry = OfflineOutbox.all(context).firstOrNull { it.id == entryId } ?: return null
+        return reviewCorrection(entry)
+    }
+
+    /** [reviewStaleCorrection] for an entry already in hand. Needs a connection. */
+    private suspend fun reviewCorrection(entry: PendingEntry): StaleCorrectionReview? {
         val target = entry.targetId ?: return null
         val record: JsonObject = when (entry.type) {
             "artisan" -> offlineJson.encodeToJsonElement(ArtisanDetailDto.serializer(), artisan(target))
@@ -8278,6 +8371,16 @@ class WorkshopRepository(
             "tool" -> offlineJson.encodeToJsonElement(ToolDetailDto.serializer(), tool(target))
             "workshop" -> offlineJson.encodeToJsonElement(WorkshopDetailDto.serializer(), workshop(target))
             "process" -> offlineJson.encodeToJsonElement(ProcessDetailDto.serializer(), process(target))
+            // Named in words — by question, not by key — so it is built from the DTOs. See
+            // `interviewCorrectionReview`; the question list only supplies the names.
+            "questionnaire" -> {
+                val mine = runCatching {
+                    offlineJson.decodeFromString<QuestionnaireInterviewUpdateRequest>(entry.payloadJson)
+                }.getOrNull() ?: return null
+                val labels = runCatching { questionnaireQuestions() }.getOrDefault(emptyList())
+                    .associate { it.id to interviewQuestionLabel(it) }
+                return interviewCorrectionReview(mine, interview(target), labels, entry.changedKeys)
+            }
             else -> return null
         } as JsonObject
         val mine = runCatching { offlineJson.parseToJsonElement(entry.payloadJson) as JsonObject }.getOrNull()
@@ -8288,6 +8391,14 @@ class WorkshopRepository(
     /** "Send mine": rebase the correction on the version the server holds now and send it. */
     suspend fun keepMyCorrection(context: Context, entryId: String, currentUpdatedAt: String?): Boolean =
         OfflineOutbox.rebaseCorrection(context, entryId, currentUpdatedAt).also { BackgroundSync.requestSoon(context) }
+
+    /**
+     * "Keep theirs": drop this correction's field changes. Its photographs and recordings are never
+     * deleted with them — they stay queued and are added to the record. See
+     * [OfflineOutbox.keepServerVersionKeepFiles].
+     */
+    suspend fun keepTheirVersion(context: Context, entryId: String): Boolean =
+        OfflineOutbox.keepServerVersionKeepFiles(context, entryId).also { BackgroundSync.requestSoon(context) }
 
     /**
      * An artisan queued by a build that predates the identity fields carries no Pehchan answer at all,
@@ -8324,9 +8435,9 @@ class WorkshopRepository(
      * every change anyone made to that record in between — and neither person is told.
      *
      * THIS IS A TRADE AND NOT AN OVERSIGHT, and the trade is different for these six types than it is
-     * for an interview. `QuestionnaireForm` refuses to queue an edit at all, and its reasoning holds
-     * for it: `responses` is a DIFF against what the server held when the form opened, so replaying it
-     * late does not overwrite a second interviewer's answers, it DROPS them while appearing to succeed.
+     * for an interview. An interview's `responses` is a DIFF against what the server held when the form
+     * opened, so it is queued only with the interview's version as its precondition (2026-10-17: the
+     * server moves that version on every answer write), never as a bare replay.
      * An artisan or a product is not a diff. It is the whole record as the designer in front of it
      * last saw it, the register is kept by a small team, and refusing the queue would mean losing a
      * day's fieldwork to a bad signal — which is the failure this queue exists to prevent.
@@ -8418,13 +8529,22 @@ class WorkshopRepository(
             // list. Reading only the id would attach a step photograph to nothing.
             "process" -> updateProcess(target, offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson), cleared, narrow)
                 .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }) }
-            // DELIBERATELY ABSENT: "questionnaire". A questionnaire interview's edit route takes
-            // `QuestionnaireInterviewUpdateRequest`, whose `responses` and `artisanIds` fields mean
-            // "leave alone" when null and "replace" when present — a diff computed against what the
-            // server held at the moment the form was opened. Replaying that diff hours later against
-            // a record another interviewer may have added answers to would silently drop theirs. The
-            // form therefore still refuses to queue an interview edit, and says so; see the note in
-            // MainActivity's questionnaire save handler.
+            // AN INTERVIEW CORRECTION (2026-10-17). Its answers are a diff against what the form was
+            // opened on, so it is safe to replay only against that same version — which the server
+            // can now say, because an answer written by anybody moves the interview's `updatedAt`.
+            // Sent as JSON so it carries only its changed keys and that version; a moved interview is
+            // a 409 `record_changed`, held below for "Review changes". See `InterviewCorrection.kt`.
+            "questionnaire" -> CreatedRecord(
+                api.updateInterviewJson(
+                    target,
+                    interviewCorrectionBody(
+                        offlineJson.parseToJsonElement(entry.payloadJson) as JsonObject,
+                        entry.changedKeys,
+                        entry.baseUpdatedAt,
+                        cleared,
+                    ),
+                ).id
+            )
             else -> throw IllegalStateException("Unknown offline correction type: ${entry.type}")
         }
     }

@@ -97,6 +97,9 @@ import com.designprototype.workshop.ui.deriveExperienceYears
 // that had not caught up, because that file could not be edited from the workflow that added it.
 import com.designprototype.workshop.ui.ExperienceFields
 import com.designprototype.workshop.ui.FieldIslandNav
+import com.designprototype.workshop.ui.accountLastSignIn
+import com.designprototype.workshop.ui.accountSignInMethod
+import com.designprototype.workshop.ui.accountSignInStatus
 import com.designprototype.workshop.ui.FieldAccent
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.LocalAppPreferences
@@ -18053,7 +18056,7 @@ private fun AndroidMediaForm(
             localMessage = null
             if (queued.allFilesQueued) savedNotice(message) else onError(message)
         }.onFailure { error ->
-            onError(error.userMessage("These files could not be kept on this device. They are still selected."))
+            onError(error.userMessage("These files could not be kept on this device.") + " They are still selected.")
         }
         return result.isSuccess
     }
@@ -20453,31 +20456,106 @@ private fun QuestionnaireForm(
                     // Offline: queue the interview + every recorded clip (with its section/question
                     // nomenclature) and attachments, to upload on reconnect.
                     //
-                    // ── NEW INTERVIEWS ONLY, AND THIS ONE STAYS THAT WAY ────────────────────────
+                    // ── AN EDIT IS QUEUED AS A CORRECTION TOO (2026-10-17) ─────────────────────
                     //
-                    // Every other record form on this screen queues an EDIT as a correction against
-                    // its server id (see `trySaveOffline`), and this one deliberately does not. The
-                    // reason is `responsesToSend` twenty lines above: it is a DIFF, computed against
-                    // `editing?.responses` — what the server held at the moment this form was opened
-                    // — and `QuestionnaireInterviewUpdateRequest` reads a present `responses` as
-                    // "replace" and an absent one as "leave alone". Replaying that diff hours later,
-                    // against a sitting a second interviewer may have added answers to in the
-                    // meantime, would drop theirs without either person being told. `artisanIds` has
-                    // the same shape and the same hazard.
-                    //
-                    // So an interview edit with no signal is refused, in the room, with the answers
-                    // still on the screen to be re-sent — which is the honest failure. Closing it
-                    // properly needs the interview's own version as a precondition, exactly as the
-                    // custom questionnaire's write does (`WorkshopRepository`, the custom
-                    // questionnaires block), and not a queue.
-                    if (isEdit && !repository.isOnline(context)) {
-                        saveState = SaveState.IDLE
-                        onError(
-                            "A correction to an interview cannot be saved on this device. It changes " +
-                                "answers other interviewers may also be editing, and this phone cannot " +
-                                "tell what they have changed since you opened it. Your answers are still " +
-                                "on screen — save again when you have a signal."
-                        )
+                    // This used to be refused with no signal: `responsesToSend` is a DIFF against
+                    // `editing?.responses`, and another interviewer's answers did not move the
+                    // interview's version, so a late replay could not tell it was stale. The server
+                    // now moves `updatedAt` on every answer write and claims it inside the PATCH, so
+                    // the correction goes to the outbox with only its changed keys and the version it
+                    // was composed against, and a moved interview is held for "Review changes".
+                    fun offlineMediaItems(): List<com.designprototype.workshop.data.OfflineMediaSpec> {
+                        val questionsById = questions.associateBy { it.id }
+                        val sectionsById = sections.associateBy { it.id }
+                        val items = mutableListOf<com.designprototype.workshop.data.OfflineMediaSpec>()
+                        questionAudio.forEach { (key, uris) ->
+                            val caption: String
+                            val hint: String
+                            val sectionCodePart: String?
+                            val questionNumberPart: String?
+                            if (key.startsWith("section:")) {
+                                val section = sectionsById[key.removePrefix("section:")]
+                                caption = "Section audio: ${section?.code ?: ""} ${section?.title ?: ""}".trim()
+                                hint = title.ifBlank { section?.title ?: "Section recording" }
+                                sectionCodePart = section?.code
+                                questionNumberPart = "SEC"
+                            } else {
+                                val question = questionsById[key]
+                                caption = "Question audio: ${question?.sectionCode ?: ""}${question?.sortOrder ?: ""} ${question?.prompt ?: ""}".trim()
+                                hint = title.ifBlank { question?.prompt ?: "Question recording" }
+                                sectionCodePart = question?.sectionCode
+                                questionNumberPart = question?.sortOrder?.toString()
+                            }
+                            uris.forEachIndexed { index, uri ->
+                                val baseName = questionnaireClipBaseName(context, sectionCodePart, questionNumberPart, title, uri)
+                                    .let { if (uris.size > 1) "${it}_${index + 1}" else it }
+                                items.add(com.designprototype.workshop.data.OfflineMediaSpec(
+                                    uri = uri, caption = caption, recordName = hint,
+                                    overrideBaseName = baseName, batchIndex = index + 1))
+                            }
+                        }
+                        media.uris.forEachIndexed { i, uri ->
+                            items.add(com.designprototype.workshop.data.OfflineMediaSpec(
+                                uri = uri,
+                                caption = "Field media for ${title.trim().ifBlank { "interview" }}",
+                                recordName = title.ifBlank { "Interview" },
+                                batchIndex = i + 1,
+                                // Empty on this form — no grid section — and read anyway, so the
+                                // rule holds everywhere a spec is built from a capture state.
+                                purpose = media.purposes[uri]))
+                        }
+                        return items
+                    }
+                    if (isEdit && (forceOffline || !repository.isOnline(context))) {
+                        val original = editing!!
+                        // No version, no queue: see `interviewCorrectionCanQueue`.
+                        if (!com.designprototype.workshop.data.interviewCorrectionCanQueue(original.updatedAt)) {
+                            saveState = SaveState.IDLE
+                            onError(com.designprototype.workshop.data.INTERVIEW_CORRECTION_NEEDS_SIGNAL)
+                            return@launch
+                        }
+                        val originalArtisans = original.artisans.map { it.artisanId }.toSet()
+                        val queued = runCatching {
+                            val request = QuestionnaireInterviewUpdateRequest(
+                                title = title.trim(),
+                                place = place.blankToNull(),
+                                language = language.blankToNull(),
+                                notes = notes.blankToNull(),
+                                status = status,
+                                artisanIds = if (selectedArtisans != originalArtisans) selectedArtisans.toList() else null,
+                                responses = responsesToSend.ifEmpty { null },
+                                workshopId = link.workshopId(),
+                                designWorkshopId = link.designWorkshopId(),
+                                location = locationForBody(true, capturedLocation, original.location)
+                            )
+                            val payload = offlineFormJson.encodeToString(request)
+                            repository.queueOfflineEntry(
+                                context, "questionnaire", payload, title.trim().ifBlank { "Interview" },
+                                offlineMediaItems(),
+                                targetId = original.id,
+                                unfiled = link.unfiledReasons(),
+                                correctionBase = correctionBaseFor(
+                                    payload,
+                                    recordBaseJson(QuestionnaireInterviewDetailDto.serializer(), original)
+                                ),
+                            )
+                        }.getOrNull()
+                        if (queued == null) {
+                            saveState = SaveState.IDLE
+                            onError(
+                                "This device could not save the correction — there may be no storage " +
+                                    "left. Nothing has been sent and nothing has been kept; your " +
+                                    "answers are still on screen."
+                            )
+                            return@launch
+                        }
+                        draft.discard(); media.reset(); qMedia.reset(); questionAudio = emptyMap()
+                        clearQuickTranscripts()
+                        link.markSaved()
+                        saveState = SaveState.SAVED
+                        onError(offlineSavedMessage(queued, isCorrection = true))
+                        delay(SAVED_CONFIRM_MS)
+                        onSaved()
                         return@launch
                     }
                     if (!isEdit && (forceOffline || !repository.isOnline(context))) {
@@ -20495,45 +20573,7 @@ private fun QuestionnaireForm(
                                 responses = responsesToSend,
                                 recordedAt = now
                             )
-                            val questionsById = questions.associateBy { it.id }
-                            val sectionsById = sections.associateBy { it.id }
-                            val items = mutableListOf<com.designprototype.workshop.data.OfflineMediaSpec>()
-                            questionAudio.forEach { (key, uris) ->
-                                val caption: String
-                                val hint: String
-                                val sectionCodePart: String?
-                                val questionNumberPart: String?
-                                if (key.startsWith("section:")) {
-                                    val section = sectionsById[key.removePrefix("section:")]
-                                    caption = "Section audio: ${section?.code ?: ""} ${section?.title ?: ""}".trim()
-                                    hint = title.ifBlank { section?.title ?: "Section recording" }
-                                    sectionCodePart = section?.code
-                                    questionNumberPart = "SEC"
-                                } else {
-                                    val question = questionsById[key]
-                                    caption = "Question audio: ${question?.sectionCode ?: ""}${question?.sortOrder ?: ""} ${question?.prompt ?: ""}".trim()
-                                    hint = title.ifBlank { question?.prompt ?: "Question recording" }
-                                    sectionCodePart = question?.sectionCode
-                                    questionNumberPart = question?.sortOrder?.toString()
-                                }
-                                uris.forEachIndexed { index, uri ->
-                                    val baseName = questionnaireClipBaseName(context, sectionCodePart, questionNumberPart, title, uri)
-                                        .let { if (uris.size > 1) "${it}_${index + 1}" else it }
-                                    items.add(com.designprototype.workshop.data.OfflineMediaSpec(
-                                        uri = uri, caption = caption, recordName = hint,
-                                        overrideBaseName = baseName, batchIndex = index + 1))
-                                }
-                            }
-                            media.uris.forEachIndexed { i, uri ->
-                                items.add(com.designprototype.workshop.data.OfflineMediaSpec(
-                                    uri = uri,
-                                    caption = "Field media for ${title.trim().ifBlank { "interview" }}",
-                                    recordName = title.ifBlank { "Interview" },
-                                    batchIndex = i + 1,
-                                    // Empty on this form — no grid section — and read anyway, so the
-                                    // rule holds everywhere a spec is built from a capture state.
-                                    purpose = media.purposes[uri]))
-                            }
+                            val items = offlineMediaItems()
                             repository.queueOfflineEntry(context, "questionnaire", offlineFormJson.encodeToString(request),
                                 title.trim().ifBlank { "Interview" }, items,
                                 // See the identical note on the tool form's `queueOfflineEntry` call:
@@ -20578,6 +20618,7 @@ private fun QuestionnaireForm(
                         return@launch
                     }
                     var createLanded = false
+                    var editLanded = false
                     runCatching {
                         val interviewId = if (isEdit) {
                             val original = editing!!
@@ -20598,6 +20639,7 @@ private fun QuestionnaireForm(
                                     location = locationForBody(true, capturedLocation, original.location)
                                 )
                             )
+                            editLanded = true
                             original.id
                         } else {
                             onSubmit(
@@ -20622,7 +20664,8 @@ private fun QuestionnaireForm(
                         saveState = SaveState.IDLE
                         // THE CONNECTION WENT MID-CREATE (2026-10-16): into the outbox under the same
                         // key, so the server writes this sitting once however many times it is sent.
-                        if (!isEdit && !createLanded && repository.isTransient(failure)) {
+                        // A correction whose PATCH never landed goes the same way (2026-10-17).
+                        if ((if (isEdit) !editLanded else !createLanded) && repository.isTransient(failure)) {
                             submit(forceOffline = true)
                             return@launch
                         }
@@ -21318,6 +21361,8 @@ private fun UserManagementForm(
                             if (appUser.twoFactorEnabled) {
                                 Text("Two-step on", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             }
+                            // How this account gets in, in a line (2026-10-17): see AccountSignInCopy.kt.
+                            Text(accountSignInStatus(appUser), color = Muted, fontSize = 11.sp)
                         }
                         Text(if (expanded) "Hide ▲" else "Show ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
@@ -21329,7 +21374,8 @@ private fun UserManagementForm(
                         DetailRow("Record review & approval", if (roleRank(appUser.role) >= RANK_FIELD_CONTRIBUTOR || appUser.canReview) "Granted" else "Not granted")
                         DetailRow("View provenance", if (roleRank(appUser.role) >= RANK_ADMIN || appUser.canViewProvenance) "Granted" else "Not granted")
                         DetailRow("Download entire dataset", if (targetIsProfessorPlus || appUser.canDownloadDataset) "Granted" else "Not granted")
-                        DetailRow("Password", if (appUser.passwordSetAt.isNullOrBlank()) "Not set" else "Set")
+                        DetailRow("Signs in with", accountSignInMethod(appUser))
+                        DetailRow("Last sign-in", accountLastSignIn(appUser))
                         DetailRow("Two-step verification", if (appUser.twoFactorEnabled) "On" else "Off")
                         if (mayUpdateUser) {
                             OutlinedButton(

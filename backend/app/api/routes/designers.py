@@ -93,14 +93,27 @@ from app.services.designers import (
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_filters import enum_filter_list_or_422
 from app.services.records import (
+    Relation,
     add_date_range,
     attach_location,
     contains,
     count_and_page,
     enum_filter_or_422,
+    hydrate_relations,
 )
 
 router = APIRouter(prefix="/designers", tags=["designers"])
+
+
+#: The empanelling admin, loaded beside a roster row so "Added by" reads as a name.
+ROSTER_ADDED_BY = (Relation("addedBy", "user", "addedById"),)
+
+
+async def with_added_by(row: Any) -> Any:
+    """``row`` with its adding account loaded, so a write's answer names it as the list does."""
+    if row is not None:
+        await hydrate_relations([row], ROSTER_ADDED_BY)
+    return row
 
 logger = logging.getLogger(__name__)
 
@@ -487,6 +500,7 @@ async def list_roster(
         skip=skip,
         take=clean_size,
         order={DESIGNER_SORT_COLUMNS[sort_token]: dir_token},
+        relations=ROSTER_ADDED_BY,
     )
     return page_payload([roster_payload(r) for r in rows], total, clean_page, clean_size) | {
         # See the docstring: ``True`` only when the roles query above actually hit its cap. Sent
@@ -640,7 +654,7 @@ async def add_to_roster(
             "addedById": current_user.id,
         }
     )
-    return roster_payload(row)
+    return roster_payload(await with_added_by(row))
 
 
 async def _end_what_the_empanelment_carried(email: Any, *, actor_id: str | None) -> None:
@@ -773,7 +787,7 @@ async def update_roster_entry(
         data["isActive"] = bool(values["isActive"])
         data["revokedAt"] = None if data["isActive"] else datetime.now(UTC)
     if not data:
-        return roster_payload(row)
+        return roster_payload(await with_added_by(row))
     updated = await db.designerroster.update(where={"id": roster_id}, data=data)
     # THE TRANSITION AND NOT THE STATE. ``row.isActive`` is what the row was BEFORE this write, so an
     # edit that merely restates ``isActive: false`` on an already-suspended row mirrors nothing —
@@ -789,7 +803,7 @@ async def update_roster_entry(
     # designer roster says anything about that address any more.
     if data.get("isActive") is False and row.isActive:
         await _end_what_the_empanelment_carried(updated.email, actor_id=current_user.id)
-    return roster_payload(updated)
+    return roster_payload(await with_added_by(updated))
 
 
 @router.delete("/roster/{roster_id}")
@@ -821,13 +835,13 @@ async def suspend_roster_entry(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     if not row.isActive and row.revokedAt is not None:
-        return roster_payload(row)
+        return roster_payload(await with_added_by(row))
     updated = await db.designerroster.update(
         where={"id": roster_id},
         data={"isActive": False, "revokedAt": row.revokedAt or datetime.now(UTC)},
     )
     await _end_what_the_empanelment_carried(updated.email, actor_id=current_user.id)
-    return roster_payload(updated)
+    return roster_payload(await with_added_by(updated))
 
 
 # --------------------------------------------------------------------------------------

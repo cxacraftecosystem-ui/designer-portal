@@ -65,6 +65,8 @@ data class QFormOp(
     val helpText: String? = null,
     val changeHelpText: Boolean = false,
     val isRequired: Boolean? = null,
+    /** [REUSE] only: the design workshop the copy is for. Null makes an unattached copy. */
+    val designWorkshopId: String? = null,
 ) {
     companion object {
         const val ADD_SECTION = "addSection"
@@ -73,6 +75,13 @@ data class QFormOp(
         const val EDIT_QUESTION = "editQuestion"
         const val REMOVE_QUESTION = "removeQuestion"
         const val RENAME_QUESTIONNAIRE = "renameQuestionnaire"
+        /**
+         * Copy this questionnaire as a template (2026-10-17). A create of a NEW questionnaire that
+         * changes nothing on the source, so it is safe to send late; it waits behind any step still
+         * queued for the source, so the copy includes them, and carries an `Idempotency-Key` so a
+         * lost answer is not a second copy.
+         */
+        const val REUSE = "reuse"
     }
 }
 
@@ -118,6 +127,22 @@ object TempIdMap {
 
 /** [id] with a temporary id swapped for its server id where one is known. */
 fun resolveTempId(id: String?, map: Map<String, String>): String? = if (isTempId(id)) map[id] ?: id else id
+
+/**
+ * Can "Use this questionnaire again" be sent now, or must it wait in the outbox as a [QFormOp.REUSE]?
+ * It waits with no signal, while the source (or the workshop it is for) exists only on this phone,
+ * and while any earlier step for the source is still queued — so the copy includes those steps.
+ * Pure; pinned by `QuestionnaireReuseOutboxTest`.
+ */
+fun reuseCanSendNow(
+    sourceId: String,
+    designWorkshopId: String?,
+    map: Map<String, String>,
+    pendingForSource: Int,
+    online: Boolean,
+): Boolean =
+    online && pendingForSource == 0 &&
+        !isTempId(resolveTempId(sourceId, map)) && !isTempId(resolveTempId(designWorkshopId, map))
 
 /**
  * The form as the designer should see it: the server's copy with every step still waiting on this

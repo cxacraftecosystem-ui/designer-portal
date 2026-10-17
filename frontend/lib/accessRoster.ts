@@ -39,6 +39,8 @@
  */
 
 import { apiFetch, buildQuery } from "@/lib/api";
+import { formatDate, formatDateTime } from "@/lib/format";
+import { roleLabel } from "@/lib/permissions";
 import type { PageResult, UserRole } from "@/lib/types";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -81,6 +83,9 @@ export type AccessRosterEntry = {
   createdAt: string | null;
   updatedAt: string | null;
   addedById: string | null;
+  /** The adder's and the decider's names, joined by the server on the roster list (2026-10-17). */
+  addedByName?: string | null;
+  decidedByName?: string | null;
 };
 
 export type AccessRosterPage = PageResult<AccessRosterEntry>;
@@ -350,4 +355,33 @@ export function accessRefusalChrome(
       // problem, which is this feature's own mistake made backwards.
       return null;
   }
+}
+
+/** What the read-only view of a roster entry says, in the words its row's columns use. */
+export function accessEntryDetails(entry: AccessRosterEntry): [string, string | null][] {
+  const standing =
+    entry.status === "ACTIVE"
+      ? `May sign in ${entry.admitRole ? `as ${roleLabel(entry.admitRole)}` : "with the default role"}`
+      : entry.status === "PENDING"
+        ? "Waiting for a decision"
+        : `${entry.status === "REJECTED" ? "Refused" : "Suspended"} ${entry.decidedAt ? `since ${formatDate(entry.decidedAt)}` : "(date not recorded)"}`;
+  return [
+    ["Email", entry.email],
+    ["Standing", standing],
+    ["Added", entry.createdAt ? formatDate(entry.createdAt) : "Not recorded"],
+    ["Added by", entry.addedByName ?? null],
+    ...(entry.status === "PENDING" ? [] : [["Decided by", entry.decidedByName ?? null] as [string, string | null]]),
+    ["Joined", entry.joinedAt ? formatDate(entry.joinedAt) : "Not yet"],
+    [
+      "First signed in",
+      entry.firstSeenAt ? formatDate(entry.firstSeenAt) : entry.joinedAt ? "Has not signed in yet" : "Has never been admitted"
+    ],
+    [
+      "Requests",
+      entry.attemptCount > 0
+        ? `${entry.attemptCount} refused attempt${entry.attemptCount === 1 ? "" : "s"}${entry.lastAttemptAt ? `, last ${formatDateTime(entry.lastAttemptAt)}` : ""}`
+        : "None"
+    ],
+    ["Note", entry.notes]
+  ];
 }

@@ -345,6 +345,12 @@ class SearchMemory {
     internal var page: Int = 1
     internal var browseAll: Boolean = false
     internal var results: SearchResultsDto? = null
+    /**
+     * The workshops the search was scoped to (2026-10-17). Empty is "every workshop". Without it a
+     * trip to a record and back restored the filters, the page and the results — and then answered
+     * the next search against every workshop, under results that were scoped.
+     */
+    internal var workshopIds: Set<String> = emptySet()
 
     /** Forget everything — a fresh way in to search starts empty. */
     fun clear() {
@@ -354,7 +360,11 @@ class SearchMemory {
         page = 1
         browseAll = false
         results = null
+        workshopIds = emptySet()
     }
+
+    /** The place to come Back to for [focus], or null when this memory holds none for it. */
+    internal fun recallFor(focus: String?): SearchMemory? = takeIf { applied != null && this.focus == focus }
 }
 
 /**
@@ -453,7 +463,7 @@ fun SearchScreen(
         }
     }
     // Back from a record: the place this screen was left in, for the same focus. Read once.
-    val recalled = remember(seed) { memory?.takeIf { it.applied != null && it.focus == initialRecordType } }
+    val recalled = remember(seed) { memory?.recallFor(initialRecordType) }
     // Live inputs.
     var filters by remember(seed) { mutableStateOf(recalled?.filters ?: seed) }
     // The filters the CURRENT results belong to. The pager and the rendered buckets walk THESE,
@@ -539,8 +549,11 @@ fun SearchScreen(
     val workshopScope = rememberWorkshopScope(
         repository = repository,
         defaultToMostRecent = false,
+        // Back from a record: the scope it was left in, with the filters and page beside it.
+        initialSelection = recalled?.workshopIds.orEmpty(),
         onError = { message -> error = message }
     )
+    SideEffect { memory?.workshopIds = workshopScope.selected }
 
     /*
       CACHE-FIRST, AND THE PICKERS NO LONGER VANISH - two changes, and the second depends on the first.

@@ -1,11 +1,20 @@
 # Open findings
 
-**Status: 52 open, 1 decision recorded and 0 deferrals, 120 closed.** Every count re-counted by
+**Status: 52 open, 2 decisions recorded and 0 deferrals, 120 closed.** Every count re-counted by
 heading on 2026-10-10: main's 31 open and 106 closed that day (the 15 open of 2026-10-09, plus 18
 opened by the Android copy sweep, less the 2 of those closed the same day), plus the toolchain
 upgrade's 2 opened and 2 closed, merged the same day, and the design-workshop approvals' 2 opened and
 1 closed (the deferral), plus the web copy rewrite's 19 opened. The entries closed on 2026-10-09 were
 checked against the tree that day, and the older closed sections were last re-checked on 2026-09-03.
+
+**The remaining-limitations change of 2026-10-17 recorded one decision and moved no other count.**
+Interview corrections are now queued on the handset (the interview's version moves on every answer
+write and is claimed inside the PATCH), a questionnaire copy is queued, the rosters name who added
+and decided a row, the handset's users card says how and when an account last signed in, search
+keeps its workshop scope across a trip to a record, and the bottom bar keeps its words on narrow
+phones. None of those had an open entry. Uploading an edited workbook and starting a sitting stay
+online-only, and why is the new `[DECISION, NOT A DEFECT]` entry under *Open*. Counted by heading:
+52 open, 2 decisions, 120 closed.
 
 **The toolchain upgrade of 2026-10-09 opened two and closed two.** Moving the EC2 box, the image and
 CI to Python 3.14, the lock to its newest pins, the local stack to PostgreSQL 17, and the runners to
@@ -390,6 +399,21 @@ session opened with the new password refused until the cached row expires
 is now a cheaper trade than it was.** It was not changed in this wave on purpose: a security
 parameter moved as a silent constant edit is a change nobody reviewed. It belongs in the next
 deployment review. The full argument is in [SECURITY.md §4.1](SECURITY.md).
+
+### [DECISION, NOT A DEFECT] Uploading an edited workbook and starting a sitting need a connection on the handset — recorded 2026-10-17
+
+Every other questionnaire write on the handset is kept on the phone and sent later, copying a
+questionnaire as a template included (`QFormOp.REUSE`, with an `Idempotency-Key`). These two are not,
+on purpose. **A workbook re-upload** replaces the questionnaire's questions with the file's, and its
+answer is the report of which questions were kept, reworded or retired. Sent hours later it would be
+applied to whatever the questionnaire holds by then — a question somebody added on the web in between
+is "not in the file" and would be retired — and the report would reach nobody. **A sitting** exists to
+be answered, and a sitting's answers are sent only from the live form, because whether a question may
+still be answered is a fact only the server holds (`docs/ANDROID_OFFLINE_AUDIT.md` §3, decision 3); a
+sitting started offline could not be answered until there was a signal anyway. Both controls say
+"needs a connection" in plain words, and say why when tapped with no signal
+(`android/app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireOfflineCopy.kt`).
+Revisit if answering a sitting offline is ever allowed: starting one would then be worth queueing.
 
 ### [LOW] An approved or handed-on report's photographs and recordings can still be changed (backend) — opened 2026-10-10
 

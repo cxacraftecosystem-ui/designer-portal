@@ -108,6 +108,8 @@ export type User = {
    * silence proves nothing and gets the reset.
    */
   firstLoginAt?: string | null;
+  /** The most recent sign-in, by either credential (2026-10-17). Null until the account next signs in. */
+  lastLoginAt?: string | null;
 };
 
 export type FieldProvenanceEntry = { by?: string; byName?: string; at?: string };

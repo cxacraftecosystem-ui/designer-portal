@@ -108,9 +108,34 @@ from app.services.designers import (
 )
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_filters import enum_filter_list_or_422
-from app.services.records import add_date_range, contains, count_and_page, enum_filter_or_422
+from app.services.records import (
+    Relation,
+    add_date_range,
+    contains,
+    count_and_page,
+    enum_filter_or_422,
+    hydrate_relations,
+)
 
 router = APIRouter(prefix="/access", tags=["access"])
+
+#: The two accounts a roster row names, loaded beside each page so the screen can say "Added by"
+#: and "Decided by" in words: one batched read each, never one per row.
+ROSTER_PEOPLE = (
+    Relation("addedBy", "user", "addedById"),
+    Relation("decidedBy", "user", "decidedById"),
+)
+
+
+async def with_roster_people(row: Any) -> Any:
+    """``row`` with its two accounts loaded, so a write's answer names them as the list does.
+
+    A client that replaces a list row with the answer to a PATCH would otherwise lose "Added by"
+    and "Decided by" until it reloads. ``None`` passes through.
+    """
+    if row is not None:
+        await hydrate_relations([row], ROSTER_PEOPLE)
+    return row
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +398,7 @@ async def list_access_roster(
         skip=skip,
         take=clean_size,
         order={ACCESS_SORT_COLUMNS[sort_token]: dir_token},
+        relations=ROSTER_PEOPLE,
     )
     return page_payload([access_payload(r) for r in rows], total, clean_page, clean_size) | {
         # ALWAYS FALSE ON THIS ROUTE — see the docstring: ``admitRole`` is a real column here, so
@@ -448,7 +474,7 @@ async def add_to_access_roster(
         note=_clean(payload.notes),
     )
     await _empanel_an_admitted_designer(row, current_user.id)
-    return access_payload(row)
+    return access_payload(await with_roster_people(row))
 
 
 async def _admit_with_a_password(payload: AccessRosterCreate, email: str, actor: Any) -> dict[str, Any]:
@@ -473,7 +499,7 @@ async def _admit_with_a_password(payload: AccessRosterCreate, email: str, actor:
     note = _clean(payload.notes)
     if row is not None and note:
         row = await db.accessroster.update(where={"id": row.id}, data={"notes": note})
-    answer = access_payload(row) if row is not None else {"email": email}
+    answer = access_payload(await with_roster_people(row)) if row is not None else {"email": email}
     answer["accountCreated"] = True
     return answer
 
@@ -593,7 +619,7 @@ async def decide_access_request(
         # look at is the failure mode this whole module keeps writing paragraphs about.
         # Unguarded by ``was_barred`` for the reason given at that call site.
         await end_live_sessions(updated.email)
-        return _decision_payload(updated)
+        return _decision_payload(await with_roster_people(updated))
 
     assert_role(payload.role, current_user)
     granted = payload.role or access_roster.role_of(row)
@@ -605,7 +631,7 @@ async def decide_access_request(
     )
     held = await _lift_existing_account(row.email, granted) if granted else None
     await _empanel_an_admitted_designer(updated, current_user.id)
-    return _decision_payload(updated, promotion_held=held)
+    return _decision_payload(await with_roster_people(updated), promotion_held=held)
 
 
 @router.patch("/roster/{row_id}")
@@ -627,14 +653,14 @@ async def update_access_entry(
         if key in values:
             data[key] = _clean(values[key])
     if not data:
-        return access_payload(row)
+        return access_payload(await with_roster_people(row))
     updated = await db.accessroster.update(where={"id": row_id}, data=data)
     # An edit is one of the two ways a row comes to admit a DESIGNER — the other is the decision
     # endpoint above. An admin correcting a row from RESEARCHER to DESIGNER has empanelled that
     # person exactly as surely as one who approved them at DESIGNER in the first place, and if only
     # the approval path empanelled, the corrected row would be the one that silently does not.
     await _empanel_an_admitted_designer(updated, current_user.id)
-    return access_payload(updated)
+    return access_payload(await with_roster_people(updated))
 
 
 @router.delete("/roster/{row_id}")
@@ -688,7 +714,7 @@ async def suspend_access_entry(
         # mirror belongs to the TRANSITION — the moment somebody's access actually ends — and pairs
         # that were left disagreeing before this feature existed are repaired by
         # ``scripts/backfill_roster_suspension_mirror.py``, where a human reads the plan first.
-        return access_payload(row)
+        return access_payload(await with_roster_people(row))
     updated = await db.accessroster.update(
         where={"id": row_id},
         data={
@@ -729,7 +755,7 @@ async def suspend_access_entry(
     # the earlier bar may predate this fix and have left a seven-day token alive. Copying the
     # mirror's guard here would be copying a rule past the reason for it.
     await end_live_sessions(updated.email)
-    return access_payload(updated)
+    return access_payload(await with_roster_people(updated))
 
 
 # --------------------------------------------------------------------------------------
