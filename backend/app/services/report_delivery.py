@@ -35,6 +35,8 @@ LINK_DAYS = 7
 #: The public page the e-mailed link opens. The token rides the query string, like a password link.
 DOWNLOAD_PATH = "/report-download"
 MAX_OFFICE_ADDRESSES = 10
+#: The most delivery rows ``received_for`` reads per workshop on a page (each re-send adds one).
+RECEIVED_ROWS_PER_WORKSHOP = 20
 _ADDRESS = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
 
 NOT_CONFIGURED = (
@@ -145,11 +147,29 @@ async def latest(workshop_id: str) -> Any | None:
 
 async def reissue(record: Any, *, actor: Any) -> Any | None:
     """Revoke the live link and e-mail a new one over the same file, to the addresses set NOW.
-    ``None`` when this report was never delivered or no addresses are set."""
+
+    With no delivery yet — "Approve and hand on" committed but its e-mail could not be written — the
+    file handed on (a stored export) is sent for the first time. ``None`` when there is no stored
+    file to send or no addresses are set."""
     previous = await latest(record.id)
     office = await office_settings()
-    if previous is None or not office["addresses"]:
+    if not office["addresses"]:
         return None
+    if previous is None:
+        export_id = getattr(record, "handedOnExportId", None)
+        export = await db.dwreportexport.find_unique(where={"id": export_id}) if export_id else None
+        if export is None or not getattr(export, "storageKey", None):
+            return None
+        return await send(
+            record,
+            storage_key=export.storageKey,
+            file_name=export.fileName,
+            export_id=export.id,
+            actor=actor,
+            addresses=office["addresses"],
+            office_name=getattr(record, "handedOnTo", None) or office["officeName"],
+            sanction_order_no=await sanction_number(record.id),
+        )
     await db.dwreportdelivery.update_many(
         where={"designWorkshopId": record.id, "revokedAt": None},
         data={"revokedAt": datetime.now(UTC)},
@@ -209,6 +229,8 @@ async def delivery_view(workshop_id: str) -> dict[str, Any]:
     view: dict[str, Any] = {
         "configured": bool(office["addresses"]) and mailer.mail_configured(),
         "addressCount": len(office["addresses"]),
+        # Apart from the addresses, so a deployment with mail off is not told to set addresses.
+        "mailAvailable": mailer.mail_configured(),
         "officeName": office["officeName"],
         "linkDays": LINK_DAYS,
         "latest": None,
@@ -247,23 +269,21 @@ async def received_for(workshop_ids: list[str]) -> dict[str, dict[str, Any]]:
     if not workshop_ids:
         return {}
     rows = await db.dwreportdelivery.find_many(
-        where={"designWorkshopId": {"in": workshop_ids}}, order={"createdAt": "desc"}
+        where={"designWorkshopId": {"in": workshop_ids}},
+        order={"createdAt": "desc"},
+        take=len(workshop_ids) * RECEIVED_ROWS_PER_WORKSHOP,
     )
+    # One pass: rows come newest first, so the first row per workshop is its newest delivery, and the
+    # earliest opening across all of that workshop's links is kept as the pass goes.
     found: dict[str, dict[str, Any]] = {}
+    first_opened: dict[str, Any] = {}
     for row in rows:
-        if row.designWorkshopId in found:
-            continue
-        first_opened = row.firstOpenedAt
-        for other in rows:
-            if (
-                other.designWorkshopId == row.designWorkshopId
-                and other.firstOpenedAt is not None
-                and (first_opened is None or other.firstOpenedAt < first_opened)
-            ):
-                first_opened = other.firstOpenedAt
-        found[row.designWorkshopId] = {
-            "sentAt": _iso(row.createdAt),
-            "firstOpenedAt": _iso(first_opened),
-            "officeName": row.officeName,
-        }
+        workshop_id = row.designWorkshopId
+        if workshop_id not in found:
+            found[workshop_id] = {"sentAt": _iso(row.createdAt), "officeName": row.officeName}
+        opened = row.firstOpenedAt
+        if opened is not None and (first_opened.get(workshop_id) is None or opened < first_opened[workshop_id]):
+            first_opened[workshop_id] = opened
+    for workshop_id, entry in found.items():
+        entry["firstOpenedAt"] = _iso(first_opened.get(workshop_id))
     return found

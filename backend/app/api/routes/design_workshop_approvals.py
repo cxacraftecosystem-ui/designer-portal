@@ -44,6 +44,7 @@ at the addresses an administrator set (``services/report_delivery``).
 
 import asyncio
 import hashlib
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -76,6 +77,7 @@ from app.services import (
     email_outbox,
     mailer,
     report_delivery,
+    s3,
 )
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
@@ -90,6 +92,7 @@ from app.services.entry_provenance import resolve_display_names
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.stage_schema import registry_version
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/design-workshop-approvals", tags=["design-workshops"])
 
 
@@ -259,8 +262,9 @@ async def _record_export(
     warnings: list[str],
     user: Any,
     storage_key: str | None = None,
+    client: Any = None,
 ) -> Any:
-    return await db.dwreportexport.create(
+    return await (client or db).dwreportexport.create(
         data={
             "designWorkshopId": workshop_id,
             "format": fmt,
@@ -303,17 +307,22 @@ def _plan_or_422(build: Any) -> Any:
         ) from refused
 
 
+async def _apply_in(tx: Any, decision: plans.DecisionPlans) -> None:
+    """One decision's writes inside an open transaction, the guarded update first."""
+    written = await tx.designworkshop.update_many(
+        where=dict(decision.workshop.where or {}), data=dict(decision.workshop.data)
+    )
+    if written != 1:
+        raise _LostTheRace
+    if decision.feedback is not None:
+        await tx.dwinspectionfeedback.create(data=dict(decision.feedback.data))
+    await tx.reviewlog.create(data=dict(decision.log.data))
+
+
 async def _apply(decision: plans.DecisionPlans) -> None:
     """The decision's writes, in one transaction, the guarded update first."""
     async with db.tx() as tx:
-        written = await tx.designworkshop.update_many(
-            where=dict(decision.workshop.where or {}), data=dict(decision.workshop.data)
-        )
-        if written != 1:
-            raise _LostTheRace
-        if decision.feedback is not None:
-            await tx.dwinspectionfeedback.create(data=dict(decision.feedback.data))
-        await tx.reviewlog.create(data=dict(decision.log.data))
+        await _apply_in(tx, decision)
 
 
 def _parse_read_at(value: str) -> datetime:
@@ -529,6 +538,7 @@ async def approve_and_hand_on(
     except Exception:  # noqa: BLE001 - every storage refusal is answered the same way: nothing changed
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STORAGE_FAILED) from None
 
+    approval = None
     if current != APPROVED:
         read_at = _parse_read_at(payload.readAt or "")
         approval = _plan_or_422(
@@ -541,53 +551,90 @@ async def approve_and_hand_on(
                 read_at=read_at,
             )
         )
-        try:
-            await _apply(approval)
-        except _LostTheRace:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=plans.CHANGED_AFTER_OPENED
-            ) from None
+    handed_on_at = datetime.now(UTC)
 
-    export = await _record_export(
-        workshop_id, payload.format, template_id, file_name, blob, page_count, warnings, current_user, storage_key
-    )
-    approved = await approvals.load_approvable_workshop_or_404(workshop_id)
-    decision = _plan_or_422(
-        lambda: plans.hand_on_plans(
+    def hand_on(export_id: str | None) -> plans.DecisionPlans:
+        return plans.hand_on_plans(
             workshop_id=workshop_id,
-            round=int(approved.submissionRound or 0),
+            round=int(record.submissionRound or 0),
             actor_id=current_user.id,
-            at=datetime.now(UTC),
-            note=None if current != APPROVED else payload.note,
+            at=handed_on_at,
+            note=None if approval is not None else payload.note,
             handed_on_to=office["officeName"],
-            export_id=export.id,
+            export_id=export_id,
         )
-    )
+
+    _plan_or_422(lambda: hand_on(None))  # refuse a bad note before anything is written
+
+    # ONE transaction: the approval (when this route makes it), the export row and the hand-on. A
+    # race lost at either step rolls back all three, so a 409 never leaves the report approved but
+    # not handed on; the file already stored is removed again.
     try:
-        await _apply(decision)
+        async with db.tx() as tx:
+            if approval is not None:
+                await _apply_in(tx, approval)
+            export = await _record_export(
+                workshop_id,
+                payload.format,
+                template_id,
+                file_name,
+                blob,
+                page_count,
+                warnings,
+                current_user,
+                storage_key,
+                client=tx,
+            )
+            await _apply_in(tx, hand_on(export.id))
     except _LostTheRace:
+        await _discard_stored(storage_key)
         moved = await approvals.load_approvable_workshop_or_404(workshop_id)
         detail = plans.ALREADY_HANDED_ON if _handed_on(moved) else plans.CHANGED_AFTER_OPENED
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from None
 
     updated = await approvals.load_approvable_workshop_or_404(workshop_id)
-    await report_delivery.send(
-        updated,
-        storage_key=storage_key,
-        file_name=file_name,
-        export_id=export.id,
-        actor=current_user,
-        addresses=office["addresses"],
-        office_name=office["officeName"],
-        sanction_order_no=await report_delivery.sanction_number(workshop_id),
-    )
+    # The hand-on has committed, so nothing after this turns the answer into a failure: a delivery
+    # that could not be written is said in the answer (``deliveryFailed``) and is re-sent from there.
+    delivered = True
+    try:
+        await report_delivery.send(
+            updated,
+            storage_key=storage_key,
+            file_name=file_name,
+            export_id=export.id,
+            actor=current_user,
+            addresses=office["addresses"],
+            office_name=office["officeName"],
+            sanction_order_no=await report_delivery.sanction_number(workshop_id),
+        )
+    except Exception:  # logged; the committed hand-on still answers 200
+        delivered = False
+        logger.exception("report delivery failed after the hand-on of workshop %s", workshop_id)
+    if approval is not None:
+        await email_outbox.notify_workshop_designers(
+            updated,
+            mailer.REPORT_APPROVED,
+            actor=current_user,
+            extra={"note": (payload.note or "").strip()},
+        )
     await email_outbox.notify_workshop_designers(
         updated,
         mailer.REPORT_HANDED_ON,
         actor=current_user,
-        extra={"officeName": office["officeName"], "emailed": True},
+        extra={"officeName": office["officeName"], "emailed": delivered},
     )
-    return await _read_for_decision(updated, current_user)
+    answer = await _read_for_decision(updated, current_user)
+    if not delivered:
+        answer["deliveryFailed"] = True
+    return answer
+
+
+async def _discard_stored(storage_key: str) -> None:
+    """Best-effort removal of a report file whose hand-on rolled back."""
+    try:
+        await asyncio.to_thread(s3.delete_object, storage_key)
+    except Exception:  # noqa: BLE001 - an orphan in the bucket is harmless; the answer is the 409
+        logger.warning("could not remove the unused report file %s", storage_key)
 
 
 @router.post("/{workshop_id}/delivery/resend")
