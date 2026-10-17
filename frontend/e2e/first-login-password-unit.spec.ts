@@ -405,7 +405,8 @@ test("the handset gates on the same boolean, read the same way", () => {
 test("the handset's gate is a when arm between sign-in and the dashboard, not a dialog", () => {
   // A dialog is dismissible and "set a password if you feel like it" is not the requirement. It sits
   // AFTER the consent arm for the same reason the web chains its two in that order.
-  const routing = /usageConsentBlocks\(user\) -> UsageConsentGateScreen\([\s\S]*?else -> HomeScreen\(/.exec(KT_MAIN)?.[0] ?? "";
+  // The dashboard arm may wrap HomeScreen in a CompositionLocalProvider (the banner and island clearances).
+  const routing = /usageConsentBlocks\(user\) -> UsageConsentGateScreen\([\s\S]*?else -> (?:CompositionLocalProvider\([\s\S]*?\) \{ )?HomeScreen\(/.exec(KT_MAIN)?.[0] ?? "";
   expect(routing, "the routing block was located").toContain("mustChangePasswordBlocks(user) -> PasswordGateScreen(");
   expect(
     routing.indexOf("usageConsentBlocks(user)"),
