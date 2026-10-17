@@ -196,7 +196,8 @@ jobs:
         #
         # 1.13.8 since 2026-10-09, the newest sherpa-onnx release that day. The name, the
         # digest and the size move together here, in publish-android.yml, in
-        # android-emulator.yml and beside the `implementation` line: four places, one value.
+        # android-emulator.yml, in codeql.yml and beside the `implementation` line: five places,
+        # one value.
         run: |
           set -euo pipefail
           aar="app/libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"

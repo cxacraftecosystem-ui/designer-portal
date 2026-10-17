@@ -726,7 +726,7 @@ const CREATED_BY_THE_DEVELOPER = [
   // caught it: the doc passed locally only because the author had a dev server running.
   ["frontend/.next", "gitignored — Next's build and dev output, including the dev server log TESTING-E2E-LOCAL.md quotes"],
   ["android/local.properties", "gitignored — written by Android Studio on first open"],
-  ["android/app/libs/", "gitignored — the sherpa-onnx AAR the three Android workflows fetch at build time"],
+  ["android/app/libs/", "gitignored — the sherpa-onnx AAR the Android workflows and codeql.yml fetch at build time"],
   // Both deploy keys are named in CI.md on purpose, and the PAIRING is the point: one opens this
   // portal's API box and one opens the field repository's, and that document's job is to stop a
   // reader reaching for the wrong one. Exempting only whichever is current would make the warning
