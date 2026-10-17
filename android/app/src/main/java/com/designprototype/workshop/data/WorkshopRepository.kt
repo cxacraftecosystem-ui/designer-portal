@@ -4291,8 +4291,12 @@ class WorkshopRepository(
      * `DwQuestionnaireFormCache`'s header, not a side effect of this change.
      */
     suspend fun logout(context: Context) {
+        val signedOut = tokenStore.getUser()?.id
         tokenStore.clear()
         runCatching { DwQuestionnaireFormCache.forgetAll(context) }
+        // The activity list holds this account's notices (workshop titles, inspectors' notes): the
+        // device copy, the alerts in the shade and the in-memory list all go.
+        runCatching { NotificationSync.signOut(context, signedOut) }
         // Cached LISTS go too (they are copies, not anybody's work). Drafts and the outbox do NOT:
         // nothing typed or captured is lost across a sign-out. See [ReadCache] and [FormDraftStore].
         runCatching { ReadCache.evictAll(context) }
