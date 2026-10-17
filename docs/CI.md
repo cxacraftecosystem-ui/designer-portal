@@ -143,6 +143,10 @@ this document learned the hard way (§5); at 2026-09-03 there are **ten files** 
   since**: the two `schedule:` lines are restored and the database secret is set. It asserts nothing
   about the code either way — a red run means the runner could not reach the production database.
   The file's header carries the story; the provider itself is named in `docs/ENVIRONMENT.md` only.
+* `.github/workflows/codeql.yml` — code scanning (CodeQL advanced setup, since 2026-10-17):
+  Kotlin, JavaScript/TypeScript, Python and the workflows, on every pull request and push to `main`
+  and weekly. The Kotlin job compiles `:app` the way `android-build.yml` does, AAR included, which
+  is what GitHub's default setup could not do. Results go to the Security tab; it is not a gate.
 * `.github/workflows/publish-android.yml` — the release-signed APK publisher. §1.4 carries the
   ordering constraint its request body now imposes on the backend deploy.
 * `.github/workflows/backup-db.yml`, `.github/workflows/monitor.yml`,
@@ -1070,8 +1074,8 @@ connected to the Vercel project. Disconnect it from the project rather than dele
 one by one, and leave the integration and the store alone ([DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md)
 §2.3).
 
-**Android build fails on the SDK.** The three Android workflows install `platforms;android-37.2`
-and `build-tools;37.0.0` explicitly because runner images drift. If `compileSdk` or
+**Android build fails on the SDK.** The three Android workflows (and `codeql.yml`'s Kotlin job)
+install `platforms;android-37.2` and `build-tools;37.0.0` explicitly because runner images drift. If `compileSdk` or
 `buildToolsVersion` in `android/app/build.gradle.kts` moves, update those steps and
 `publish-android.yml`'s `BUILD_TOOLS_VERSION` with it. The JDK pin (25) is a separate choice: it is
 the JDK that runs Gradle, while the Java 17 bytecode level is set by `compileOptions` and
