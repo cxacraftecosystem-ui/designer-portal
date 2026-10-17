@@ -16,7 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.routes import cross_portal as routes
-from app.services import cross_portal, cross_portal_client
+from app.services import aadhaar_fingerprint, cross_portal, cross_portal_client
 from app.services.artisan_identity import verhoeff_ok
 
 pytestmark = pytest.mark.anyio
@@ -101,7 +101,7 @@ def _settings(**over):
     base = {
         "cross_portal_identity_enabled": True,
         "cross_portal_token": TOKEN,
-        "cross_portal_aadhaar_hmac_key": KEY,
+        "aadhaar_fingerprint_key": KEY,
         "field_repository_api_url": URL,
     }
     base.update(over)
@@ -152,7 +152,10 @@ def world(monkeypatch):
         "dateOfBirth": None,
         "pehchanCardAvailable": False,
         "pehchanCardNumber": None,
-        "aadhaarNumber": AADHAAR,
+        # As this release stores it: the fingerprint and the last four, never the number.
+        "aadhaarNumber": None,
+        "aadhaarFingerprint": aadhaar_fingerprint.fingerprint(AADHAAR, KEY),
+        "aadhaarLast4": AADHAAR[-4:],
         "createdById": "u1",
         "designWorkshopId": None,
         "status": "APPROVED",
@@ -255,6 +258,28 @@ async def test_link_re_derives_the_match_from_the_stored_numbers(world):
     assert world.calls[1][:2] == ("POST", "/artisans/fr1/links")
     assert world.db.crossportalartisanlink.rows[0]["consentRecordedById"] == "u1"
     assert world.asked_by == ["u1", "u1"], "the other side's log is told who asked"
+
+
+async def test_link_sends_the_stored_fingerprint_as_the_code(world):
+    """The register holds no number, so the link sends the fingerprint it stores, unchanged — which
+    under the one shared key IS the code the documentation portal compares with its own column."""
+    await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
+    stored = world.db.artisan.rows[0]["aadhaarFingerprint"]
+    assert world.calls[0][2] == {"aadhaarCode": stored}
+    assert cross_portal.aadhaar_code(AADHAAR, KEY) == stored
+
+
+async def test_a_row_the_backfill_has_not_reached_still_links(world):
+    row = world.db.artisan.rows[0]
+    row.update(aadhaarNumber=AADHAAR, aadhaarFingerprint=None, aadhaarLast4=None)
+    await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
+    assert world.calls[0][2] == {"aadhaarCode": aadhaar_fingerprint.fingerprint(AADHAAR, KEY)}
+
+
+async def test_the_feature_is_off_without_the_fingerprint_key():
+    assert cross_portal.active(_settings(), needs_url=True)
+    assert not cross_portal.active(_settings(aadhaar_fingerprint_key=None), needs_url=True)
+    assert not cross_portal.active(_settings(aadhaar_fingerprint_key="short"), needs_url=True)
 
 
 async def test_a_link_the_other_side_refuses_is_never_written(world):

@@ -63,14 +63,18 @@ def test_the_fingerprint_is_hmac_sha256_of_the_twelve_digits_in_lower_case_hex()
 
 
 def test_the_formula_is_the_cross_portal_code_byte_for_byte() -> None:
-    """``services/cross_portal.aadhaar_code`` on feature/s-cross-portal: key stripped, UTF-8, the
-    digits as the message. With one shared key a stored fingerprint IS the code the other portal
-    sends, so the link can match on the column."""
+    """The cross-portal link's code is computed BY ``services/cross_portal.aadhaar_code`` itself,
+    not re-implemented here, so the two cannot drift apart: with one shared key a stored
+    fingerprint IS the code the other portal sends, and the link matches on the column."""
+    from app.services import cross_portal
+
     number = _fresh_aadhaar()
-    cross_portal_code = hmac.new(
-        f"  {KEY}\n".strip().encode("utf-8"), number.encode("ascii"), hashlib.sha256
-    ).hexdigest()
-    assert fp.fingerprint(number, f"  {KEY}\n") == cross_portal_code
+    for key in (KEY, f"  {KEY}\n"):
+        assert cross_portal.aadhaar_code(number, key) == fp.fingerprint(number, KEY)
+    settings = SimpleNamespace(
+        cross_portal_identity_enabled=True, cross_portal_token="t" * 40, aadhaar_fingerprint_key=None
+    )
+    assert not cross_portal.active(settings), "no fingerprint key, no link"
 
 
 def test_a_different_key_gives_a_different_fingerprint() -> None:

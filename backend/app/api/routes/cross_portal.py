@@ -4,13 +4,15 @@ The flow a designer sees:
 
 1. On the artisan form they type the Aadhaar number (or the Pehchan card number), tick that the
    artisan agreed to share their details between the portals, and press Find. ``POST
-   /cross-portal/artisans/lookup`` sends the documentation portal the Pehchan number or an HMAC of the
-   Aadhaar number — never the number — and returns what it shares, mapped onto this portal's form.
+   /cross-portal/artisans/lookup`` sends the documentation portal the Pehchan number or the Aadhaar
+   number's fingerprint (``services/aadhaar_fingerprint``, the key both portals share) — never the
+   number — and returns what it shares, mapped onto this portal's form.
 2. They check the filled form and save it as usual (``POST /artisans``, unchanged for every client).
 3. The client then calls ``POST /cross-portal/artisans/{id}/link``. The server does NOT take the
-   client's word for which record matched: it looks the artisan up again from the numbers now STORED
-   on this artisan, asks the documentation portal to record the link, and writes its own link row
-   only once that portal has not refused it (a refusal means the artisan withdrew consent).
+   client's word for which record matched: it looks the artisan up again from what is now STORED on
+   this artisan (the Aadhaar fingerprint and the Pehchan number), asks the documentation portal to
+   record the link, and writes its own link row only once that portal has not refused it (a refusal
+   means the artisan withdrew consent).
 4. Later, ``POST .../link/refresh`` copies the identity fields from the documentation portal, which is
    their source of truth, through the same helpers as the ordinary artisan edit: the edit guard and
    audit ledger, the Pehchan pair rule, the identity-number clash guard and the resubmission rule.
@@ -43,7 +45,7 @@ from app.core.deps import (
     may_edit_lower_ranked_record,
     require_record_creator,
 )
-from app.services import cross_portal
+from app.services import aadhaar_fingerprint, cross_portal
 from app.services.access import effective_tier_for_record, guard_record_edit
 from app.services.artisan_identity import normalize_pehchan, validate_aadhaar
 from app.services.cross_portal_client import PeerUnavailable, peer_call
@@ -132,19 +134,48 @@ class LinkIn(BaseModel):
     expectedRemoteArtisanId: str | None = Field(default=None, max_length=64)
 
 
-def _peer_query(aadhaar: str | None, pehchan: str | None, settings: Any) -> dict[str, Any]:
+def _peer_query(aadhaar_code: str | None, pehchan: str | None) -> dict[str, Any]:
     body: dict[str, Any] = {}
     if pehchan:
         body["pehchanCardNumber"] = pehchan
-    if aadhaar:
-        body["aadhaarCode"] = cross_portal.aadhaar_code(aadhaar, settings.cross_portal_aadhaar_hmac_key)
+    if aadhaar_code:
+        body["aadhaarCode"] = aadhaar_code
     return body
 
 
+def _typed_code(number: str, settings: Any) -> str:
+    """The code for a number typed on the form: its fingerprint, under the shared key."""
+    return cross_portal.aadhaar_code(number, aadhaar_fingerprint.configured_key(settings))
+
+
+def _stored_code(artisan: Any, settings: Any) -> str | None:
+    """The code for a saved artisan: the fingerprint it stores, sent as it is.
+
+    The register keeps no Aadhaar number (``services/aadhaar_fingerprint``), so the stored
+    fingerprint is the only thing to send — and, under the one shared key, it is exactly the code
+    the documentation portal compares with its own column. A row the backfill has not reached yet
+    still holds the legacy number, and its code is made from that.
+    """
+    stored = getattr(artisan, aadhaar_fingerprint.FINGERPRINT_FIELD, None)
+    if aadhaar_fingerprint.is_fingerprint(stored):
+        return stored
+    legacy = (
+        getattr(artisan, aadhaar_fingerprint.NUMBER_FIELD, None)
+        if aadhaar_fingerprint.LEGACY_COLUMN_PRESENT
+        else None
+    )
+    if legacy:
+        try:
+            return _typed_code(validate_aadhaar(legacy), settings)
+        except ValueError:
+            return None
+    return None
+
+
 async def _lookup(
-    settings: Any, aadhaar: str | None, pehchan: str | None, user: Any
+    settings: Any, aadhaar_code: str | None, pehchan: str | None, user: Any
 ) -> dict[str, Any] | None:
-    body = _peer_query(aadhaar, pehchan, settings)
+    body = _peer_query(aadhaar_code, pehchan)
     if not body:
         return None
     try:
@@ -272,7 +303,9 @@ async def lookup_artisan(
         )
     await _assert_under_lookup_limit(current_user)
     try:
-        match = await _lookup(settings, aadhaar, pehchan, current_user)
+        match = await _lookup(
+            settings, _typed_code(aadhaar, settings) if aadhaar else None, pehchan, current_user
+        )
     except HTTPException:
         await _log(current_user, ACTION_LOOKUP, "UNAVAILABLE")
         raise
@@ -303,7 +336,9 @@ async def link_artisan(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CONSENT_NEEDED)
     artisan = await require_record(db.artisan, artisan_id)
     await _assert_may_edit(artisan, current_user)
-    match = await _lookup(settings, artisan.aadhaarNumber, artisan.pehchanCardNumber, current_user)
+    match = await _lookup(
+        settings, _stored_code(artisan, settings), artisan.pehchanCardNumber, current_user
+    )
     if match is None:
         await _log(current_user, ACTION_LINK, "NO_MATCH", artisan_id=artisan_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NO_MATCH)
