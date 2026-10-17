@@ -119,6 +119,7 @@ import { signOffLines } from "@/lib/designWorkshopApprovals";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
 import type { User } from "@/lib/types";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 /**
  * The failures this page can suffer, told apart in words.
@@ -533,24 +534,17 @@ function FeedbackPanel({
             placeholder="Name what is wrong and what it should say. This goes to the designers as written."
             value={note}
           />
-          <label className="field-label" htmlFor="dw-inspection-stage">
-            Which stage is it about?
-          </label>
-          <select
-            className="field-input"
-            id="dw-inspection-stage"
-            onChange={(event) => setStageKey(event.target.value)}
+          <span className="field-label">Which stage is it about?</span>
+          {/* THE EMPTY ANSWER IS A REAL ANSWER AND IS FIRST (`noneLabel`), because most suggestions are
+              about the report as a whole and the server stores null for exactly that. */}
+          <SearchableSelect
+            ariaLabel="Which stage is it about?"
             value={stageKey}
-          >
-            {/* THE EMPTY OPTION IS A REAL ANSWER AND IS FIRST, because most suggestions are about the
-                report as a whole and the server stores null for exactly that. */}
-            <option value="">The report as a whole</option>
-            {stages.map((stage) => (
-              <option key={stage.key} value={stage.key}>
-                {stage.title}
-              </option>
-            ))}
-          </select>
+            onChange={setStageKey}
+            noneLabel="The report as a whole"
+            options={stages.map((stage) => ({ value: stage.key, label: stage.title }))}
+            advanceOnSelect={false}
+          />
           <div className="flex flex-wrap gap-2">
             <button
               className="field-button-secondary"

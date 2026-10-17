@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.AppToggle
 import android.Manifest
 import android.content.Context
 import android.net.Uri
@@ -841,24 +842,16 @@ internal fun DwIdentityCardControl(
         // Only where there is somewhere to put it. Everywhere else no control appears and the line
         // under the buttons says the photograph is not kept — see [onKeepPhotograph].
         if (canKeep) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Switch(
+            Column(modifier = Modifier.fillMaxWidth()) {
+                AppToggle(
+                    label = "Keep the photograph on this record",
                     checked = keepPhotograph,
                     // Frozen while a read is running: the flag has already been acted on by then, and
                     // a switch that moves without changing anything is a control that lies.
                     enabled = enabled && !working,
                     onCheckedChange = { keepPhotograph = it },
                 )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Keep the photograph on this record",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 13.sp
-                    )
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         retentionChoiceBlurb(keepPhotograph),
                         // Amber only when it is ON. The off state is the safe one and colouring it

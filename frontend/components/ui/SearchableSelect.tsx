@@ -31,8 +31,9 @@
  * filter panels, where an absolutely positioned menu is sheared off rather than merely misplaced.
  *
  * **5. There are several index domains and only one of them is legal for the highlight.** `options`
- * is the corpus; `filtered` is the corpus narrowed by the query; `windowed` is `filtered` cut to
- * `RENDER_CAP` with off-window selections pinned in front; `rendered` is `windowed` with the
+ * is the corpus; `filtered` is the corpus narrowed by the query; `windowed` is `filtered` (cut to
+ * `RENDER_CAP` with off-window selections pinned in front only for a server answer — a local list is
+ * never cut, it is virtualised past `VIRTUALIZE_AT`); `rendered` is `windowed` with the
  * `noneLabel` row, if there is one, prepended. `highlight` indexes `rendered`, ALWAYS. Every place
  * that computes an index says which array it is against, because the two places that did not —
  * type-ahead in both components — moved the highlight onto an unrelated row on the one control
@@ -74,7 +75,7 @@
  * control and a branch nobody can execute is a branch nobody has checked.
  */
 
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Search, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { AnchoredPopover } from "@/components/ui/AnchoredPopover";
@@ -86,6 +87,8 @@ import {
   SEARCHING_LABEL,
   SEARCH_THRESHOLD,
   emptyListSentence,
+  scrollTopToShow,
+  virtualSlice,
   filterOptions,
   fold,
   groupRows,
@@ -262,6 +265,13 @@ const PANEL_CLASS = "overflow-hidden! p-0! flex flex-col";
 const PANEL_MAX_WIDTH = 520;
 
 /**
+ * A row's height before one has been measured: `py-2` + a 20px `text-sm` line. The window itself
+ * (`VIRTUALIZE_AT`, `OVERSCAN`, the arithmetic) is `virtualSlice` in `selectFilter.ts`, where a spec
+ * can call it.
+ */
+const ROW_HEIGHT_GUESS = 36;
+
+/**
  * Rolling type-ahead buffer (~700ms window, like the native <select>).
  *
  * Only ever used by a list too short to have earned a filter box. Losing it there would be a real
@@ -329,11 +339,74 @@ function optionClass(option: SelectOption, highlighted: boolean, active: boolean
  * `block: "nearest"` rather than "center" so arrowing down a long list scrolls by one row instead
  * of jumping the viewport around under the reader.
  */
-function useScrollHighlightIntoView(open: boolean, highlight: number, baseId: string) {
+function useScrollHighlightIntoView(
+  open: boolean,
+  highlight: number,
+  baseId: string,
+  virtual: boolean,
+  scrollToIndex: (index: number) => void
+) {
   useEffect(() => {
     if (!open || highlight < 0) return;
-    document.getElementById(`${baseId}-opt-${highlight}`)?.scrollIntoView({ block: "nearest" });
-  }, [open, highlight, baseId]);
+    // A virtualised row may not be in the DOM at all, so it is scrolled to by arithmetic.
+    if (virtual) scrollToIndex(highlight);
+    else document.getElementById(`${baseId}-opt-${highlight}`)?.scrollIntoView({ block: "nearest" });
+  }, [open, highlight, baseId, virtual, scrollToIndex]);
+}
+
+type VirtualWindow = {
+  virtual: boolean;
+  start: number;
+  end: number;
+  padTop: number;
+  padBottom: number;
+  listRef: (node: HTMLUListElement | null) => void;
+  onScroll: (event: React.UIEvent<HTMLUListElement>) => void;
+  scrollToIndex: (index: number) => void;
+};
+
+/**
+ * The visible slice of a long list (documentation-portal's hook, same name and shape). Rows are one
+ * fixed height (measured from the first drawn row, so the larger-text mode's taller rows are
+ * honoured), the slice is padded above and below so the scrollbar is the true length, and
+ * `scrollToIndex` keeps the keyboard highlight on screen with `nearest` semantics (scroll by one
+ * row, never re-centre). `flat` is false for a grouped list, which is never virtualised.
+ */
+function useVirtualWindow(count: number, flat: boolean): VirtualWindow {
+  const virtual = virtualSlice(count, 0, 0, ROW_HEIGHT_GUESS, flat).virtual;
+  const [node, setNode] = useState<HTMLUListElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(288);
+  const [rowHeight, setRowHeight] = useState(ROW_HEIGHT_GUESS);
+
+  useEffect(() => {
+    if (!node || !virtual) return;
+    setViewport(node.clientHeight || 288);
+    const row = node.querySelector<HTMLElement>('[role="option"]');
+    if (row && row.offsetHeight > 0) setRowHeight(row.offsetHeight);
+  }, [node, virtual, count]);
+
+  // The node twice over: in state so the measuring effect re-runs when the list mounts, and in a ref
+  // so `scrollToIndex` (an effect-time call) may write its scrollTop without mutating state.
+  const nodeRef = useRef<HTMLUListElement | null>(null);
+  const listRef = useCallback((next: HTMLUListElement | null) => {
+    nodeRef.current = next;
+    setNode(next);
+  }, []);
+  const onScroll = useCallback((event: React.UIEvent<HTMLUListElement>) => {
+    setScrollTop(event.currentTarget.scrollTop);
+  }, []);
+  const scrollToIndex = useCallback(
+    (index: number) => {
+      const list = nodeRef.current;
+      if (!list) return;
+      list.scrollTop = scrollTopToShow(index, rowHeight, list.scrollTop, list.clientHeight);
+      setScrollTop(list.scrollTop);
+    },
+    [rowHeight]
+  );
+
+  return { ...virtualSlice(count, scrollTop, viewport, rowHeight, flat), listRef, onScroll, scrollToIndex };
 }
 
 /**
@@ -364,7 +437,10 @@ function useSelectList(
     [options, query, searchable, serverAnswered]
   );
   const { windowed, pinned } = useMemo(() => {
-    if (filtered.length <= RENDER_CAP) return { windowed: filtered, pinned: 0 };
+    // A LOCAL list is never cut: past `VIRTUALIZE_AT` the panel virtualises it instead, so every row
+    // is reachable by scrolling. Only a server answer is held to `RENDER_CAP` (its page size), and a
+    // caller that asked for exactly that many rows never reaches the window below.
+    if (!serverAnswered || filtered.length <= RENDER_CAP) return { windowed: filtered, pinned: 0 };
     const window = filtered.slice(0, RENDER_CAP);
     // A cap must never hide what the reader already picked. India is the 100-somethingth of 246
     // dial codes, so the plain first-80 window reopened the country picker with no tick anywhere in
@@ -405,7 +481,7 @@ function useSelectList(
     return missing.length
       ? { windowed: [...missing, ...window], pinned: missing.length }
       : { windowed: window, pinned: 0 };
-  }, [filtered, pins]);
+  }, [filtered, pins, serverAnswered]);
   // `windowed`, NOT `rendered`, and the rename is load-bearing rather than tidying. Everything this
   // hook returns is a fact about the CORPUS, and the array actually drawn may carry one row that is
   // not in the corpus at all — the `noneLabel` row, which each component prepends after this. Both
@@ -851,6 +927,15 @@ export type SearchableSelectProps = {
    * It forces the filter box on, because the box is where the term comes from.
    */
   createAction?: SelectCreateAction;
+  /**
+   * Draw a Clear (x) button beside the trigger while a value is chosen; pressing it calls
+   * `onChange("")` and puts focus back on the trigger. Optional, off by default — absent is the old
+   * behaviour exactly. It is a SIBLING of the trigger, never inside it (a button may not contain a
+   * button), and 44px on a phone. documentation-portal's `SearchableSelect` has the same prop.
+   */
+  clearable?: boolean;
+  /** The Clear button's accessible name. Defaults to "Clear <ariaLabel>" or "Clear selection". */
+  clearLabel?: string;
 };
 
 export function SearchableSelect({
@@ -868,7 +953,9 @@ export function SearchableSelect({
   advanceOnSelect = true,
   serverQuery,
   noneLabel,
-  createAction
+  createAction,
+  clearable = false,
+  clearLabel
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
   /**
@@ -958,6 +1045,8 @@ export function SearchableSelect({
    */
   const noneOption = useMemo(() => noneOptionFor(noneLabel, options), [noneLabel, options]);
   const noneRow = noneOption && !query.trim() ? noneOption : null;
+  /** The Clear button shows only while there is something to clear and the field can change. */
+  const showClear = clearable && !disabled && value !== "" && value != null;
   const rendered = useMemo(
     () => (noneRow ? [noneRow, ...windowed] : windowed),
     [noneRow, windowed]
@@ -992,7 +1081,17 @@ export function SearchableSelect({
       ? highlight
       : firstEnabled(rendered);
   const activeId = safeHighlight >= 0 ? `${baseId}-opt-${safeHighlight}` : undefined;
-  useScrollHighlightIntoView(open, safeHighlight, baseId);
+  const {
+    virtual: listVirtual,
+    start: listStart,
+    end: listEnd,
+    padTop: listPadTop,
+    padBottom: listPadBottom,
+    listRef,
+    onScroll: onListScroll,
+    scrollToIndex
+  } = useVirtualWindow(rendered.length, !rendered.some((option) => option.group));
+  useScrollHighlightIntoView(open, safeHighlight, baseId, listVirtual, scrollToIndex);
 
   /**
    * The row the trigger reads back — the caller's, or the "none" row when the value is cleared.
@@ -1399,7 +1498,7 @@ export function SearchableSelect({
         // instead of moving on to the next field.
         data-form-field=""
         data-searchable-select=""
-        className={TRIGGER_CLASS}
+        className={cn(TRIGGER_CLASS, showClear && "pr-16 pointer-coarse:pr-20")}
       >
         {/*
           `ink-500`, NOT the `ink-300` placeholder rung, and the distinction is what the token
@@ -1430,6 +1529,20 @@ export function SearchableSelect({
           aria-hidden
         />
       </button>
+      {showClear ? (
+        <button
+          type="button"
+          aria-label={clearLabel ?? (ariaLabel ? `Clear ${ariaLabel}` : "Clear selection")}
+          title="Clear"
+          onClick={() => {
+            onChange("");
+            triggerRef.current?.focus({ preventScroll: true });
+          }}
+          className="absolute right-8 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-ink-500 transition hover:bg-surface-50 hover:text-ink-900 focus-visible:outline-2 focus-visible:outline-purple-600 pointer-coarse:h-11 pointer-coarse:w-11"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      ) : null}
 
       <AnchoredPopover
         open={open}
@@ -1473,9 +1586,12 @@ export function SearchableSelect({
             />
           ) : null}
           <ul
+            ref={listRef}
             id={listboxId}
             role="listbox"
             aria-label={ariaLabel ?? "Options"}
+            onScroll={onListScroll}
+            style={listVirtual ? { paddingTop: listPadTop, paddingBottom: listPadBottom } : undefined}
             className="min-h-0 max-h-72 shrink overflow-y-auto overscroll-contain py-1"
           >
             {/*
@@ -1486,13 +1602,17 @@ export function SearchableSelect({
               options and break the ownership the highlight is announced through.
             */}
             {groups.map((bucket) => {
-              const rows = bucket.rows.map(({ option, index }) => {
+              // Virtualised only when flat, so the one bucket's indices ARE the window's indices.
+              const visible = listVirtual ? bucket.rows.slice(listStart, listEnd) : bucket.rows;
+              const rows = visible.map(({ option, index }) => {
                 const active = option.value === value;
                 return (
                   <li
                     key={option.value}
                     id={`${baseId}-opt-${index}`}
                     role="option"
+                    aria-setsize={listVirtual ? rendered.length : undefined}
+                    aria-posinset={listVirtual ? index + 1 : undefined}
                     aria-selected={active}
                     aria-disabled={option.disabled || undefined}
                     title={optionTitle(option)}
@@ -1680,7 +1800,18 @@ export type SearchableMultiSelectProps = {
    * empty array, and a second spelling of that state is the thing `bulk` above exists to prevent.
    */
   serverQuery?: SelectServerQuery;
+  /**
+   * Draw each selection as a chip under the trigger, with a remove button on each. **On by default**
+   * (owner's ruling, 2026-10-17: "chips for selections with remove"); a trigger reading "3 selected"
+   * tells nobody WHICH three. A disabled option's chip has no remove button — the panel would refuse
+   * that untick too. Pass `false` only where the screen already lists the selection beside the
+   * control, so it is not drawn twice.
+   */
+  chips?: boolean;
 };
+
+/** Chips drawn before "and N more": enough for a field's answer, few enough not to bury the form. */
+export const CHIP_LIMIT = 12;
 
 export function SearchableMultiSelect({
   values,
@@ -1697,7 +1828,8 @@ export function SearchableMultiSelect({
   confirmOnSelect = true,
   confirmLabel = "Confirm",
   bulk = true,
-  serverQuery
+  serverQuery,
+  chips = true
 }: SearchableMultiSelectProps) {
   const [open, setOpen] = useState(false);
   /** This control's own term, unread when `serverQuery` owns it — see the single-select's. */
@@ -1748,7 +1880,17 @@ export function SearchableMultiSelect({
       ? highlight
       : firstEnabled(rendered);
   const activeId = safeHighlight >= 0 ? `${baseId}-opt-${safeHighlight}` : undefined;
-  useScrollHighlightIntoView(open, safeHighlight, baseId);
+  const {
+    virtual: listVirtual,
+    start: listStart,
+    end: listEnd,
+    padTop: listPadTop,
+    padBottom: listPadBottom,
+    listRef,
+    onScroll: onListScroll,
+    scrollToIndex
+  } = useVirtualWindow(rendered.length, !rendered.some((option) => option.group));
+  useScrollHighlightIntoView(open, safeHighlight, baseId, listVirtual, scrollToIndex);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -2084,6 +2226,41 @@ export function SearchableMultiSelect({
         />
       </button>
 
+      {chips && values.length ? (
+        <ul className="mt-2 flex flex-wrap gap-1.5" aria-label={ariaLabel ? `${ariaLabel}: selected` : "Selected"}>
+          {values.slice(0, CHIP_LIMIT).map((value) => {
+            const option = options.find((candidate) => candidate.value === value);
+            const label = option?.label ?? value;
+            const removable = !disabled && !option?.disabled;
+            return (
+              <li
+                key={value}
+                className="inline-flex min-h-8 max-w-full items-center gap-1 rounded-full border border-purple-200 bg-purple-50 py-0.5 pl-3 pr-1 text-xs font-medium text-purple-800 dark:border-purple-800 dark:bg-purple-950/40 dark:text-purple-200"
+              >
+                <span className="min-w-0 truncate">{label}</span>
+                {removable ? (
+                  <button
+                    type="button"
+                    aria-label={`Remove ${label}`}
+                    onClick={() => onChange(values.filter((kept) => kept !== value))}
+                    // 28px to look at, 44px to hit on a phone: the `before:` box widens the target
+                    // past the chip's edge without making every chip taller.
+                    className="relative grid h-7 w-7 shrink-0 place-items-center rounded-full text-purple-700 transition hover:bg-purple-100 dark:text-purple-200 dark:hover:bg-purple-900 pointer-coarse:before:absolute pointer-coarse:before:-inset-2 pointer-coarse:before:content-['']"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                ) : (
+                  <span className="w-2" aria-hidden />
+                )}
+              </li>
+            );
+          })}
+          {values.length > CHIP_LIMIT ? (
+            <li className="self-center text-xs text-ink-500">and {values.length - CHIP_LIMIT} more</li>
+          ) : null}
+        </ul>
+      ) : null}
+
       <AnchoredPopover
         open={open}
         onClose={close}
@@ -2125,21 +2302,28 @@ export function SearchableMultiSelect({
             <div className="flex shrink-0 justify-end border-b border-line-200 p-2">{bulkButton}</div>
           ) : null}
           <ul
+            ref={listRef}
             id={listboxId}
             role="listbox"
             aria-multiselectable
             aria-label={ariaLabel ?? "Options"}
+            onScroll={onListScroll}
+            style={listVirtual ? { paddingTop: listPadTop, paddingBottom: listPadBottom } : undefined}
             className="min-h-0 max-h-72 shrink overflow-y-auto overscroll-contain py-1"
           >
             {/* Grouped or flat, with the row indices unchanged either way — see the single-select. */}
             {groups.map((bucket) => {
-              const rows = bucket.rows.map(({ option, index }) => {
+              // Virtualised only when flat, so the one bucket's indices ARE the window's indices.
+              const visible = listVirtual ? bucket.rows.slice(listStart, listEnd) : bucket.rows;
+              const rows = visible.map(({ option, index }) => {
                 const checked = chosen.has(option.value);
                 return (
                   <li
                     key={option.value}
                     id={`${baseId}-opt-${index}`}
                     role="option"
+                    aria-setsize={listVirtual ? rendered.length : undefined}
+                    aria-posinset={listVirtual ? index + 1 : undefined}
                     aria-selected={checked}
                     aria-disabled={option.disabled || undefined}
                     title={optionTitle(option)}

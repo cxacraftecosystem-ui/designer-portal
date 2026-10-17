@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
@@ -223,6 +224,8 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
     var next by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
+    var useRecoveryCode by remember { mutableStateOf(false) }
+    var codeErrorKey by remember { mutableIntStateOf(0) }
     val askCode = firstPasswordNeedsCode(hasPassword, user)
     var reveal by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -268,6 +271,7 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
                     heldProof = proof
                     error = failure.message
                     code = ""
+                    codeErrorKey++
                 } else {
                     error = failure.apiErrorMessage(PASSWORD_CHANGE_NOT_SENT)
                 }
@@ -351,15 +355,18 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
                 modifier = Modifier.fillMaxWidth()
             )
             if (askCode) {
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { code = it; error = null; saved = null },
-                    label = { Text(FIRST_PASSWORD_CODE_LABEL) },
-                    supportingText = { Text(FIRST_PASSWORD_CODE_NOTE) },
-                    singleLine = true,
+                // The six boxes, or a separate box for a recovery code — `TwoStepCodeEntry`.
+                TwoStepCodeEntry(
+                    useRecovery = useRecoveryCode,
+                    onUseRecoveryChange = { useRecoveryCode = it; error = null },
+                    code = code,
+                    onCodeChange = { code = it; error = null; saved = null },
+                    allowRecovery = true,
                     enabled = !busy,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
+                    isError = codeErrorKey > 0 && code.isEmpty(),
+                    errorKey = codeErrorKey,
+                    totpLabel = FIRST_PASSWORD_CODE_LABEL,
+                    totpHint = FIRST_PASSWORD_CODE_NOTE,
                 )
             }
             saved?.let {
@@ -389,7 +396,7 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
                         error = problem
                         return@Button
                     }
-                    if (askCode && code.isBlank()) {
+                    if (askCode && (if (useRecoveryCode) code.isBlank() else !OtpCode.isComplete(code))) {
                         error = FIRST_PASSWORD_CODE_MISSING
                         return@Button
                     }

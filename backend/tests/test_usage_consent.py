@@ -837,6 +837,11 @@ def sign_in(monkeypatch: pytest.MonkeyPatch, store: SimpleNamespace) -> Iterator
     monkeypatch.setattr(auth_routes.access_roster, "mark_access_seen", _noop)
     monkeypatch.setattr(auth_routes.access_roster, "admits", lambda _row: True)
     monkeypatch.setattr(auth_routes, "verify_password", lambda _raw, _hash: True)
+    # The password sign-in checks through `verify_password_or_decoy` since 3f7dedf7 (a missing account
+    # costs a decoy bcrypt round, so timing does not say which addresses exist). Stubbing only
+    # `verify_password` left this fixture's "not-a-real-hash" reaching the real check, which refuses a
+    # malformed stored hash out loud — the four sign-in-gate tests then failed on the hash, not the gate.
+    monkeypatch.setattr(auth_routes, "verify_password_or_decoy", lambda _raw, _hash: True)
     monkeypatch.setattr(
         auth_routes, "create_access_token", lambda **_kwargs: "a-real-looking-token"
     )

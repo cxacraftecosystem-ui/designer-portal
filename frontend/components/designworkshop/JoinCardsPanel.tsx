@@ -17,6 +17,7 @@
  * its inspector or a director is refused by the server too, and that sentence is shown as given.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Ban, Loader2, Printer, QrCode } from "lucide-react";
 
@@ -249,10 +250,7 @@ export function JoinCardsPanel({
                       onChange={(event) => setPeople(event.target.value)}
                     />
                   </label>
-                  <label className="flex items-center gap-2 pb-2 text-xs text-ink-700">
-                    <input type="checkbox" checked={anyNumber} onChange={(event) => setAnyNumber(event.target.checked)} />
-                    Any number
-                  </label>
+                  <Toggle label="Any number" checked={anyNumber} onChange={setAnyNumber} />
                   <label className="grid w-32 gap-1 text-xs font-medium text-ink-700">
                     Valid for (days)
                     <input

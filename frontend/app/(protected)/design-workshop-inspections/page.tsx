@@ -82,6 +82,7 @@ import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
 import type { AddressReference, PageResult } from "@/lib/types";
+import { CalendarField } from "@/components/ui/CalendarField";
 
 const PAGE_SIZE = 20;
 
@@ -328,32 +329,26 @@ export default function DesignWorkshopInspectionsPage() {
           ariaLabel="Filter by type of workshop"
           advanceOnSelect={false}
         />
-        <label className="grid gap-1 text-xs text-ink-500">
-          Started on or after
-          <input
-            className="field-input"
-            type="date"
-            value={dateFrom}
-            max={dateTo || undefined}
-            onChange={(event) => {
-              setDateFrom(event.target.value);
-              setPage(1);
-            }}
-          />
-        </label>
-        <label className="grid gap-1 text-xs text-ink-500">
-          Started on or before
-          <input
-            className="field-input"
-            type="date"
-            value={dateTo}
-            min={dateFrom || undefined}
-            onChange={(event) => {
-              setDateTo(event.target.value);
-              setPage(1);
-            }}
-          />
-        </label>
+        <CalendarField
+          label="Started on or after"
+          value={dateFrom}
+          max={dateTo || undefined}
+          maxLabel="Started on or before"
+          onChange={(value) => {
+            setDateFrom(value);
+            setPage(1);
+          }}
+        />
+        <CalendarField
+          label="Started on or before"
+          value={dateTo}
+          min={dateFrom || undefined}
+          minLabel="Started on or after"
+          onChange={(value) => {
+            setDateTo(value);
+            setPage(1);
+          }}
+        />
       </div>
       {activeFilters > 0 ? (
         <p className="mb-4 flex flex-wrap items-center gap-2 text-xs text-ink-500">

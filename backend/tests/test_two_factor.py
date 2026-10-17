@@ -199,12 +199,12 @@ ON = (
     "reset-target", "reset-peer", "regen", "no-leak", "expired", "lock", "dataset",
     "lock-recovery", "recovery-budget", "fully-locked", "mail", "lapsed", "window", "concurrent",
     "concurrent-http", "race", "escalate", "decay-25", "decay-23", "spend-disable", "spend-regen",
-    "reset-lock",
+    "reset-lock", "cancel-on",
 )
 #: Seeded at ADMIN rather than RESEARCHER: a peer an admin may not manage, and dataset-token holders.
 ADMIN_SLUGS = ("reset-peer", "dataset", "lock")
 #: Accounts with it OFF.
-OFF = ("plain", "enrol", "researcher")
+OFF = ("plain", "enrol", "researcher", "pending", "stale")
 
 
 @pytest.fixture(scope="module")
@@ -414,7 +414,7 @@ def test_setup_enable_status_new_codes_and_disable(world):
     client = world["client"]
     headers = _bearer(world["ids"]["enrol"])
     assert client.get("/api/auth/two-factor", headers=headers).json() == {
-        "enabled": False, "recovery_codes_remaining": 0, "enabled_at": None,
+        "enabled": False, "pending": False, "recovery_codes_remaining": 0, "enabled_at": None,
     }
     setup = client.post("/api/auth/two-factor/setup", headers=headers)
     assert setup.status_code == 200, setup.text
@@ -458,6 +458,103 @@ def test_setup_enable_status_new_codes_and_disable(world):
     assert client.get("/api/auth/two-factor", headers=headers).json()["enabled"] is False
     signed_in = _password_login(world, "enrol")
     assert "accessToken" in signed_in.json()
+
+
+# ── A setup is not "on" until a code confirms it ─────────────────────────────────────────────────
+
+
+class _Row:
+    def __init__(self, **values: Any) -> None:
+        self.__dict__.update(values)
+
+
+def test_a_pending_setup_is_live_for_fifteen_minutes_and_never_reads_as_on():
+    now = datetime.now(UTC)
+    fresh = _Row(twoFactorEnabled=False, twoFactorPendingSecret="v1.a.b.c", twoFactorPendingSince=now - timedelta(minutes=14))
+    stale = _Row(twoFactorEnabled=False, twoFactorPendingSecret="v1.a.b.c", twoFactorPendingSince=now - timedelta(minutes=16))
+    undated = _Row(twoFactorEnabled=False, twoFactorPendingSecret="v1.a.b.c", twoFactorPendingSince=None)
+    nothing = _Row(twoFactorEnabled=False, twoFactorPendingSecret=None, twoFactorPendingSince=None)
+    on = _Row(twoFactorEnabled=True, twoFactorPendingSecret=None, twoFactorPendingSince=None,
+              twoFactorRecoveryCodes=["h"] * 8, twoFactorEnabledAt=now)
+
+    assert two_factor.PENDING_SETUP_MINUTES == 15
+    assert two_factor.pending_is_live(fresh, now) is True
+    assert two_factor.pending_is_live(stale, now) is False
+    assert two_factor.pending_is_live(undated, now) is False, "a key shown before the timestamp existed is abandoned"
+    assert two_factor.pending_is_live(nothing, now) is False
+    assert two_factor.pending_is_live(on, now) is False
+    assert [two_factor.has_stale_pending(row, now) for row in (fresh, stale, undated, nothing, on)] == [
+        False, True, True, False, False,
+    ]
+    status = two_factor.status_of(fresh, now)
+    assert status["enabled"] is False and status["pending"] is True, "pending is never on"
+    assert two_factor.status_of(stale, now)["pending"] is False
+    assert two_factor.status_of(on, now) == {
+        "enabled": True, "pending": False, "recovery_codes_remaining": 8, "enabled_at": now,
+    }
+
+
+@needs_db
+def test_an_unconfirmed_setup_is_off_signs_in_without_a_code_and_cancel_discards_it(world):
+    client = world["client"]
+    user_id = world["ids"]["pending"]
+    headers = _bearer(user_id)
+    setup = client.post("/api/auth/two-factor/setup", headers=headers)
+    assert setup.status_code == 200, setup.text
+    secret = setup.json()["secret"]
+
+    state = client.get("/api/auth/two-factor", headers=headers).json()
+    assert state["enabled"] is False and state["pending"] is True
+    # A pending-only account is NOT challenged: only a confirmed second factor asks for a code.
+    signed_in = _password_login(world, "pending")
+    assert signed_in.status_code == 200, signed_in.text
+    assert signed_in.json()["accessToken"] and "two_factor_required" not in signed_in.json()
+
+    assert client.post("/api/auth/two-factor/setup/cancel", headers=headers).status_code == 204
+    row = _run(world, _row, user_id)
+    assert row.twoFactorPendingSecret is None and row.twoFactorPendingSince is None
+    assert row.twoFactorEnabled is False
+    assert client.get("/api/auth/two-factor", headers=headers).json()["pending"] is False
+    # Idempotent, and a code from the discarded key switches nothing on.
+    assert client.post("/api/auth/two-factor/setup/cancel", headers=headers).status_code == 204
+    refused = client.post(
+        "/api/auth/two-factor/enable", json={"code": two_factor.current_totp(secret)}, headers=headers
+    )
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["detail"] == two_factor.NO_SETUP_DETAIL
+    assert client.get("/api/auth/two-factor", headers=headers).json()["enabled"] is False
+
+
+@needs_db
+def test_cancel_never_touches_a_second_factor_that_is_on(world):
+    client = world["client"]
+    user_id = world["ids"]["cancel-on"]
+    headers = _bearer(user_id)
+    before = _run(world, _row, user_id)
+    assert client.post("/api/auth/two-factor/setup/cancel", headers=headers).status_code == 204
+    after = _run(world, _row, user_id)
+    assert after.twoFactorEnabled is True
+    assert after.twoFactorSecret == before.twoFactorSecret
+    assert after.twoFactorRecoveryCodes == before.twoFactorRecoveryCodes
+    _challenge(_password_login(world, "cancel-on"))
+
+
+@needs_db
+def test_a_setup_older_than_fifteen_minutes_is_cleared_and_cannot_be_confirmed(world):
+    client = world["client"]
+    user_id = world["ids"]["stale"]
+    headers = _bearer(user_id)
+    secret = client.post("/api/auth/two-factor/setup", headers=headers).json()["secret"]
+    _run(world, _set, user_id, twoFactorPendingSince=datetime.now(UTC) - timedelta(minutes=16))
+
+    refused = client.post(
+        "/api/auth/two-factor/enable", json={"code": two_factor.current_totp(secret)}, headers=headers
+    )
+    assert refused.status_code == 400 and refused.json()["detail"] == two_factor.NO_SETUP_DETAIL
+    state = client.get("/api/auth/two-factor", headers=headers).json()
+    assert state == {"enabled": False, "pending": False, "recovery_codes_remaining": 0, "enabled_at": None}
+    assert _run(world, _row, user_id).twoFactorPendingSecret is None, "the status read clears it"
+    assert "accessToken" in _password_login(world, "stale").json()
 
 
 @needs_db
@@ -592,6 +689,7 @@ def test_no_serializer_carries_a_secret_user_field():
         "passwordHash": "$2b$12$" + "x" * 53,
         "twoFactorSecret": "v1.a.b.c",
         "twoFactorPendingSecret": "v1.d.e.f",
+        "twoFactorPendingSince": now,
         "twoFactorRecoveryCodes": ["$2b$12$hash"],
         "twoFactorLastStep": 59_000_000,
         "twoFactorFailedAttempts": 3,

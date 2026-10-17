@@ -50,6 +50,8 @@ import {
 } from "@/lib/signIn";
 import { resetTwoFactorForUser } from "@/lib/twoFactor";
 import type { PageResult, User, UserRole } from "@/lib/types";
+import { Toggle, ToggleSwitch } from "@/components/ui/Toggle";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 import {
   ACCOUNT_STATUS_LABEL,
@@ -93,10 +95,10 @@ function GrantCell({
 }) {
   return (
     <td className="px-4 py-3 text-ink-700">
-      <label className="inline-flex items-center gap-2">
-        <input type="checkbox" checked={included} disabled={!editable} aria-label={label} onChange={(event) => onChange(event.target.checked)} />
-        <span>{included ? "Yes" : "No"}</span>
-      </label>
+      <span className="inline-flex items-center gap-2">
+        <ToggleSwitch checked={included} disabled={!editable} label={label} onChange={onChange} />
+        <span aria-hidden>{included ? "Yes" : "No"}</span>
+      </span>
     </td>
   );
 }
@@ -931,49 +933,27 @@ function UsersScreen() {
               </p>
             ) : null}
             {passwordMode === "NONE" && mailAvailable ? (
-              <label className="flex items-start gap-2 text-sm text-ink-700">
-                <input
-                  type="checkbox"
-                  checked={sendLink}
-                  onChange={(event) => setSendLink(event.target.checked)}
-                  className="mt-1"
-                />
-                <span>Email them a link to set a password too</span>
-              </label>
+              <Toggle checked={sendLink} onChange={setSendLink} label="Email them a link to set a password too" />
             ) : null}
           </fieldset>
           {passwordMode === "SET" && edgeSpace ? <EdgeSpaceNote /> : null}
           {passwordMode === "SET" ? (
           <div className="grid gap-2">
             {/* Ticked by default and SENT EITHER WAY: what the box says is what the account owes. */}
-            <label className="flex items-start gap-2 text-sm text-ink-700">
-              <input
-                type="checkbox"
-                checked={requireChange}
-                onChange={(event) => setRequireChange(event.target.checked)}
-                className="mt-1"
-              />
-              <span>Require a new password at first sign-in</span>
-            </label>
+            <Toggle checked={requireChange} onChange={setRequireChange} label="Require a new password at first sign-in" />
             <RequireChangeNote required={requireChange} when="first" />
           </div>
           ) : null}
           {admin ? (
-            <div className="flex flex-wrap gap-2">
-              <label className="flex items-center gap-2 rounded-md border border-line-200 bg-field-100 px-3 py-2 text-sm text-ink-muted">
-                <input name="canManageQuestionnaire" type="checkbox" />
-                Manage questionnaire
-              </label>
+            <div className="grid gap-1 sm:grid-cols-2 sm:gap-4">
+              <Toggle name="canManageQuestionnaire" label="Manage questionnaire" />
               {/* Crafts and workshops are NOT here, deliberately. They are rank-only now
                   (require_craft_manager / require_workshop_manager = Professor and above), so a
                   checkbox for them would set a column nothing reads — a control that looks like it
                   grants access and does not is worse than no control at all. Promote the person
                   instead. And neither box is drawn for a provisioner who is not an admin: the server
                   refuses a ministry admin any grant, so offering one would only manufacture a 403. */}
-              <label className="flex items-center gap-2 rounded-md border border-line-200 bg-field-100 px-3 py-2 text-sm text-ink-muted">
-                <input name="canDownloadDataset" type="checkbox" />
-                Download dataset
-              </label>
+              <Toggle name="canDownloadDataset" label="Download dataset" />
             </div>
           ) : null}
           {createError ? (
@@ -1106,34 +1086,23 @@ function UsersScreen() {
                     </td>
                     <td className="px-4 py-3 text-ink-700">{user.email}</td>
                     <td className="px-4 py-3">
-                      {/* A native <select>, and no filter box: `assignableRoles` is the role ladder
-                          from `lib/permissions` — the whole ladder at most, fewer for anybody below
-                          master admin — which is a fixed vocabulary of the kind the option-count rule
-                          deliberately leaves plain. It is also rendered once per table row, and a
-                          themed popover per row on a twenty-row page is twenty portalled panels for
-                          a list of a few words.
-
-                          WHAT IS *NOT* SETTLED HERE, so the next reader does not read this comment as
-                          a defence of everything about the control: this is a PERMISSION surface
-                          rendered outside the themed register while the same page's "role for new
-                          user" picker at the top uses `Select`. One page, one question, two controls.
-                          That inconsistency is worth closing, on those grounds and not on
-                          searchability — which is why it is named rather than quietly left. */}
+                      {/* The themed dropdown, no filter box: `assignableRoles` is the role ladder from
+                          `lib/permissions`, a fixed vocabulary short enough to read at a glance. It was
+                          a native <select> until 2026-10-17, the one permission control on this page
+                          outside the themed register; the owner's rule now forbids a plain <select>
+                          on any surface, which closes the inconsistency this note used to name. */}
                       {offers.changeRole ? (
-                        <select
-                          className="field-input max-w-44"
+                        <SearchableSelect
+                          className="max-w-52"
                           value={user.role}
-                          aria-label={`Role of ${user.email}`}
-                          onChange={(event) => updateRole(user, event.target.value)}
-                        >
-                          {assignableRoles(currentUser)
+                          ariaLabel={`Role of ${user.email}`}
+                          searchable={false}
+                          onChange={(value) => updateRole(user, value)}
+                          options={assignableRoles(currentUser)
                             .filter((role) => role !== "MASTER_ADMIN" || isMasterAdmin(currentUser))
-                            .map((role) => (
-                              <option key={role} value={role}>
-                                {roleLabel(role)}
-                              </option>
-                            ))}
-                        </select>
+                            .map((role) => ({ value: role, label: roleLabel(role) }))}
+                          advanceOnSelect={false}
+                        />
                       ) : (
                         <span className="text-sm text-ink-700">{roleLabel(user.role)}</span>
                       )}
@@ -1291,18 +1260,9 @@ function UsersScreen() {
             </div>
             <div className="grid content-start gap-2 rounded-md border border-line-200 bg-field-50 p-3">
               <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">Grant</div>
-              <label className="flex items-center gap-2 text-sm text-ink">
-                <input type="checkbox" checked={grantAdmin} onChange={(event) => setGrantAdmin(event.target.checked)} />
-                Administrator access (Admin role)
-              </label>
-              <label className="flex items-center gap-2 text-sm text-ink">
-                <input type="checkbox" checked={grantQuestionnaire} onChange={(event) => setGrantQuestionnaire(event.target.checked)} />
-                Manage questionnaire
-              </label>
-              <label className="flex items-center gap-2 text-sm text-ink">
-                <input type="checkbox" checked={grantDataset} onChange={(event) => setGrantDataset(event.target.checked)} />
-                Download dataset
-              </label>
+              <Toggle checked={grantAdmin} onChange={setGrantAdmin} label="Administrator access (Admin role)" />
+              <Toggle checked={grantQuestionnaire} onChange={setGrantQuestionnaire} label="Manage questionnaire" />
+              <Toggle checked={grantDataset} onChange={setGrantDataset} label="Download dataset" />
               <button
                 type="button"
                 className="field-button mt-2"
@@ -1386,7 +1346,7 @@ function UsersScreen() {
               ["Sign-in", ACCOUNT_STATUS_LABEL[accountStatus(viewing)]],
               ["First signed in", viewing.firstLoginAt ? formatDate(viewing.firstLoginAt) : "Not yet"],
               ["Last signed in", viewing.lastLoginAt ? formatDate(viewing.lastLoginAt) : "Not recorded"],
-              ["Two-step verification", viewing.twoFactorEnabled ? "On" : "Off"]
+              ["Two-step verification", viewing.twoFactorEnabled ? "Turned on" : "Not turned on"]
             ].map(([label, value]) => (
               <div key={label} className="grid gap-0.5 sm:grid-cols-[13rem_minmax(0,1fr)] sm:gap-3">
                 <dt className="font-semibold text-ink-900">{label}</dt>

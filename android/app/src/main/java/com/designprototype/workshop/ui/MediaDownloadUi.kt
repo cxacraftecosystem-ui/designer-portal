@@ -18,14 +18,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +41,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -174,11 +180,113 @@ private class PendingSave {
 }
 
 /**
- * The one Download control every upload surface draws: the repo's download icon and the word
- * "Download", as `AndroidUriPreview` has always drawn it, so it reads the same on every row.
+ * The action buttons on a media card, tile or row — Retry and Download — drawn ONE way on every
+ * surface (upload queue, outbox, record forms, stage attachments, media screens). The web's twin is
+ * `MediaActionButton` (frontend/components/media/MediaActionButton.tsx).
  *
- * [unavailableReason] disables it and says why, both on screen and to TalkBack. It is for one case
- * only — the local bytes are genuinely gone — and never for a file that is still uploading.
+ * WHY (owner, 2026-10-17: "the buttons for retry and download on media card are not clearly visible").
+ * They were 12sp TextButtons with 2dp of vertical padding: a purple word on a white card, easy to miss
+ * and well under a thumb's 48dp. Now each is a [FilledTonalButton] with its OWN pale-purple ground, a
+ * 1dp purple edge and deep-purple ink ([MediaActionColors]), carrying the icon AND the word, at least
+ * 48dp tall — the same look as the web twin (purple-50 ground, purple border, purple-800 ink).
+ *
+ * It does NOT use the theme's secondaryContainer: this app maps that slot to surface-100, which is
+ * about 1.05:1 against the white card in light and 1.13:1 against the dark card, so the button's
+ * ground and edge vanished and it read as bold text. [MediaActionColorsTest] pins the edge at 3:1 or
+ * better against the card and surface-50, and the ink at 4.5:1 or better on the ground, in both themes.
+ */
+@Composable
+fun MediaActionButton(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    /** The full name for TalkBack — "Download interview-3.m4a". */
+    accessibleLabel: String? = null,
+) {
+    val colors = MediaActionColors.forTheme(MaterialTheme.field.isDark)
+    FilledTonalButton(
+        onClick = onClick,
+        enabled = enabled,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+        colors = ButtonDefaults.filledTonalButtonColors(
+            containerColor = colors.ground,
+            contentColor = colors.ink,
+            disabledContainerColor = colors.disabledGround,
+            disabledContentColor = colors.disabledInk,
+        ),
+        border = BorderStroke(1.dp, if (enabled) colors.edge else colors.disabledEdge),
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .semantics { accessibleLabel?.let { contentDescription = it } },
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+    }
+}
+
+/**
+ * The media action button's colours, from the purple ramp, per theme. Plain values (no Compose
+ * lookup) so a JVM unit test can measure every pair.
+ *
+ * Light: purple-50 ground, purple-600 edge (5.2:1 on the white card, 4.9:1 on surface-50),
+ * purple-800 ink (9.4:1 on the ground). Dark: purple-950 ground, purple-500 edge (5.0:1 on the
+ * dark card, 4.7:1 on surface-50), purple-200 ink (12:1 on the ground). Disabled keeps a visible
+ * edge (line-200 is too faint to say "a button is here") but drops the ink to the placeholder rung.
+ */
+@Immutable
+data class MediaActionColors(
+    val ground: Color,
+    val edge: Color,
+    val ink: Color,
+    val disabledGround: Color,
+    val disabledEdge: Color,
+    val disabledInk: Color,
+) {
+    companion object {
+        val Light = MediaActionColors(
+            ground = FieldPalette.Purple50,
+            edge = FieldPalette.Purple600,
+            ink = FieldPalette.Purple800,
+            disabledGround = FieldPalette.Surface100Light,
+            disabledEdge = FieldPalette.Ink300Light,
+            disabledInk = FieldPalette.Ink500Light,
+        )
+        val Dark = MediaActionColors(
+            ground = FieldPalette.Purple950,
+            edge = FieldPalette.Purple500,
+            ink = FieldPalette.Purple200,
+            disabledGround = FieldPalette.Surface100Dark,
+            disabledEdge = FieldPalette.Ink300Dark,
+            disabledInk = FieldPalette.Ink500Dark,
+        )
+
+        fun forTheme(isDark: Boolean): MediaActionColors = if (isDark) Dark else Light
+    }
+}
+
+/** "Retry" on a failed upload — the same button as Download, so the two read as one pair. */
+@Composable
+fun MediaRetryButton(fileName: String?, onRetry: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    MediaActionButton(
+        label = "Retry",
+        icon = Icons.Filled.Refresh,
+        onClick = onRetry,
+        enabled = enabled,
+        accessibleLabel = fileName?.takeIf { it.isNotBlank() }?.let { "Retry $it" },
+        modifier = modifier,
+    )
+}
+
+/**
+ * The one Download control every upload surface draws — [MediaActionButton] with the download icon
+ * and the word "Download", so it reads the same on every row.
+ *
+ * [unavailableReason] disables it and says why, both on screen (under the button, never beside it,
+ * so a long sentence cannot squeeze the button) and to TalkBack. It is for one case only — the local
+ * bytes are genuinely gone — and never for a file that is still uploading.
  *
  * [onTile] draws it as an outlined button in that ink, for a row sitting on a coloured tile (the
  * purple "N files ready" card), where the theme's primary text button all but vanished (release
@@ -207,21 +315,16 @@ fun MediaDownloadButton(
         }
         return
     }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
-        TextButton(
+    Column(modifier = modifier) {
+        MediaActionButton(
+            label = "Download",
+            icon = Icons.Filled.Download,
             onClick = onDownload,
             enabled = unavailableReason == null,
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-            modifier = Modifier.semantics {
-                contentDescription = unavailableReason?.let { "Download $fileName. $it" } ?: "Download $fileName"
-            },
-        ) {
-            Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("Download", fontSize = 12.sp)
-        }
+            accessibleLabel = unavailableReason?.let { "Download $fileName. $it" } ?: "Download $fileName",
+        )
         if (unavailableReason != null) {
-            Text(unavailableReason, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(unavailableReason, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
     }
 }

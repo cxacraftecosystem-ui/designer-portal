@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.MediaActionButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -204,11 +205,12 @@ internal fun WorkshopSyncActions(
             modifier = Modifier.fillMaxWidth()
         ) {
             if (!status.isFullySynced) {
-                OutlinedButton(onClick = onRetry, enabled = !busy) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (status.remoteId == null) "Upload" else "Try again now")
-                }
+                MediaActionButton(
+                    label = if (status.remoteId == null) "Upload" else "Try again now",
+                    icon = Icons.Filled.Refresh,
+                    onClick = onRetry,
+                    enabled = !busy,
+                )
             }
             Spacer(Modifier.weight(1f))
             // Offered ONLY when there is something genuinely duplicated on the server, and it names

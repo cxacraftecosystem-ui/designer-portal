@@ -88,8 +88,42 @@ test.describe("localMediaFileName", () => {
 test.describe("every upload surface offers Download", () => {
   test("the shared button reads 'Download' with the repo's download icon", () => {
     const button = read("components", "media", "DownloadMediaButton.tsx");
-    expect(button).toContain('import { Download } from "lucide-react"');
-    expect(button).toMatch(/<Download className="h-3\.5 w-3\.5" aria-hidden \/>\s*Download\s*<\/button>/);
+    // The tonal `MediaActionButton` since 2026-10-17 (the owner could not see the old 2px chip): the
+    // icon AND the word, 44px on a phone.
+    expect(button).toContain('label="Download"');
+    expect(button).toContain("icon={DOWNLOAD_ICON}");
+    const action = read("components", "media", "MediaActionButton.tsx");
+    expect(action).toContain('import { Download, RefreshCw } from "lucide-react"');
+    expect(action).toContain('export const DOWNLOAD_ICON = <Download className="h-4 w-4" aria-hidden />;');
+    expect(action).toContain("min-h-11");
+  });
+
+  test("the media action button's edge stands out from the card at 3:1, and its ink reads at 4.5:1, light and dark", () => {
+    const action = read("components", "media", "MediaActionButton.tsx");
+    for (const cls of [
+      "border-purple-600 bg-purple-50",
+      "text-purple-800",
+      "dark:border-purple-500 dark:bg-purple-950 dark:text-purple-200",
+      "pointer-coarse:min-h-11"
+    ]) {
+      expect(action).toContain(cls);
+    }
+    expect(action, "the 1.6:1 purple-300 edge is gone").not.toContain("border-purple-300");
+    const lum = (hex: string) => {
+      const [r, g, b] = [1, 3, 5]
+        .map((at) => parseInt(hex.slice(at, at + 2), 16) / 255)
+        .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a: string, b: string) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    // purple-600 / purple-500 edges against the light card + surface-50 and the dark card + surface-50.
+    for (const ground of ["#ffffff", "#faf9fd"]) expect(ratio("#9148d2", ground)).toBeGreaterThanOrEqual(3);
+    for (const ground of ["#1a1725", "#201c2d"]) expect(ratio("#aa69e9", ground)).toBeGreaterThanOrEqual(3);
+    expect(ratio("#5f1c93", "#f9f5ff"), "purple-800 on purple-50").toBeGreaterThanOrEqual(4.5);
+    expect(ratio("#e7d5fe", "#2f0d4b"), "purple-200 on purple-950").toBeGreaterThanOrEqual(4.5);
   });
 
   test("the helper revokes its object URL through saveBlobToDisk", () => {

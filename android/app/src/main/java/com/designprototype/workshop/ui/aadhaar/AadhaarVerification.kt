@@ -58,6 +58,8 @@ import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.AadhaarClient
 import com.designprototype.workshop.data.AadhaarFeatures
 import com.designprototype.workshop.data.AadhaarOtpIssuedDto
+import com.designprototype.workshop.ui.OtpCode
+import com.designprototype.workshop.ui.OtpCodeField
 import com.designprototype.workshop.data.AadhaarSubject
 import com.designprototype.workshop.data.AadhaarSummaryDto
 import com.designprototype.workshop.data.DwQrReadResult
@@ -472,13 +474,13 @@ fun AadhaarVerifyCard(
                 Text(AadhaarCopy.VID_HINT, color = MaterialTheme.field.muted, fontSize = 12.sp)
                 val current = issued
                 if (current != null) {
-                    OutlinedTextField(
+                    // The owner's six boxes (`OtpCodeField`): digits only, a paste fills all six.
+                    OtpCodeField(
                         value = otp,
                         onValueChange = { otp = it },
-                        label = { Text("The six-digit code UIDAI sent") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        modifier = Modifier.fillMaxWidth(),
+                        label = "The six-digit code UIDAI sent",
+                        enabled = !busy,
+                        autoFocus = true,
                     )
                 }
                 Button(
@@ -496,7 +498,7 @@ fun AadhaarVerifyCard(
                             run("The code could not be checked. Try again.") { client.verifyOtp(subject, uid, otp, current) }
                         }
                     },
-                    enabled = !busy && uid.isNotBlank() && (current == null || otp.isNotBlank()),
+                    enabled = !busy && uid.isNotBlank() && (current == null || OtpCode.isComplete(otp)),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) { Text(if (busy) "Please wait…" else if (current == null) "Send the code" else "Verify") }
                 TextButton(onClick = { reset() }, enabled = !busy) { Text(AadhaarCopy.CANCEL) }

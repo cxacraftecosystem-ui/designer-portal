@@ -56,6 +56,8 @@ import {
 import type { GreyPlane } from "@/lib/imageQuality";
 import type { Point } from "@/lib/photoMeasure";
 import type { MediaFile } from "@/lib/types";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { Toggle } from "@/components/ui/Toggle";
 
 /**
  * A photograph this panel could make a plate from: a media id, or a `dwlocal:` reference to bytes
@@ -542,35 +544,22 @@ export function SketchRectifyField({
               <Scan className="h-4 w-4" aria-hidden />
               Find the sheet
             </button>
-            <label className="flex items-center gap-2 text-xs text-ink-700">
-              <input
-                type="checkbox"
-                checked={lineArt}
-                onChange={(event) => setLineArt(event.target.checked)}
-                className="h-4 w-4 accent-purple-700"
-              />
-              Extract line art
-            </label>
-            <label className="flex items-center gap-2 text-xs text-ink-700">
-              {/* A native <select>, deliberately. ASPECTS is four sheet ratios declared in this file
-                  and it will not grow — the fixed-vocabulary side of the rule in
-                  `SearchableSelectProps.searchable`, where a filter box is a tab stop and a "No
-                  matches" state over a list read at a glance. It also sits inside a <label>, which
-                  a themed dropdown may not do (a <label> forwards a stray click into the menu and
-                  slams it shut), and it takes no id from `Dropdown` to bind that label to. */}
+            <Toggle checked={lineArt} onChange={setLineArt} label="Extract line art" className="gap-3" />
+            {/* The themed dropdown with no filter box (owner's rule, 2026-10-17: no plain <select> on
+                any surface). ASPECTS is four sheet ratios declared in this file and will not grow, so
+                `searchable={false}`; named by `ariaLabel`, because a <label> cannot name its button. */}
+            <span aria-hidden className="text-xs text-ink-700">
               Sheet
-              <select
-                className="field-input w-auto! py-1! text-xs"
-                value={aspectKey}
-                onChange={(event) => setAspectKey(event.target.value)}
-              >
-                {ASPECTS.map((entry) => (
-                  <option key={entry.key} value={entry.key}>
-                    {entry.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            </span>
+            <SearchableSelect
+              className="w-40"
+              ariaLabel="Sheet"
+              searchable={false}
+              value={aspectKey}
+              onChange={setAspectKey}
+              options={ASPECTS.map((entry) => ({ value: entry.key, label: entry.label }))}
+              advanceOnSelect={false}
+            />
           </div>
 
           {!lineArt ? (

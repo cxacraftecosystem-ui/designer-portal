@@ -129,6 +129,7 @@ import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, passwordRuleLine } from "@/li
 import type { UserRole } from "@/lib/types";
 // The other end of the pre-filled link to Manage users: one module spells the query string for both.
 import { passwordAccountHref } from "@/app/(protected)/users/accountAdmin";
+import { Toggle } from "@/components/ui/Toggle";
 import {
   ACCESS_LIST_STALE_NOTE,
   ACCESS_LIST_UNREADABLE_BODY,
@@ -1260,14 +1261,8 @@ function SignInMethodField() {
             maxLength={MAX_PASSWORD_LENGTH}
             className="field-input"
           />
-          <label className="flex items-center gap-2 text-sm text-ink-700">
-            <input type="checkbox" checked={showPassword} onChange={(event) => setShowPassword(event.target.checked)} />
-            Show the password
-          </label>
-          <label className="flex items-center gap-2 text-sm text-ink-700">
-            <input type="checkbox" name="mustChangePassword" defaultChecked />
-            Ask them to choose a new one at first sign-in
-          </label>
+          <Toggle label="Show the password" checked={showPassword} onChange={setShowPassword} />
+          <Toggle name="mustChangePassword" defaultChecked label="Ask them to choose a new one at first sign-in" />
           <p className="text-xs leading-5 text-ink-500">
             {passwordRuleLine("Fill in their full name too — it becomes the name on the account.")}
           </p>

@@ -1,11 +1,11 @@
 "use client";
 
+import { CalendarField } from "@/components/ui/CalendarField";
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { CalendarRange, FilterX, Search, X } from "lucide-react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { CUT_NOTICE_LIVE_REGION } from "@/components/data/cappedList";
-import { DateField } from "@/components/forms/DateTimeField";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import {
   ACCESS_INSTITUTION_NOTE,
@@ -449,33 +449,25 @@ export function RosterFilterBar({
                 calendar" button — so the box announces itself as "From Open calendar" instead of
                 "From". `DateTimeField`'s own header draws this exact diagram.
               */}
-              <div className="grid min-w-0 gap-1">
-                <label className="field-label" htmlFor={fromId}>
-                  {ROSTER_LABELS.dateFrom}
-                </label>
-                <DateField
-                  id={fromId}
-                  value={filters.from}
-                  onChange={(iso) => set({ from: iso })}
-                  // Bidirectional clamping, and the bound is NAMED so the refusal can say which
-                  // field to change first — otherwise a rejected date is a dead end, because the
-                  // field that has to move is not mentioned anywhere on screen.
-                  max={filters.to || undefined}
-                  maxLabel={ROSTER_LABELS.dateTo}
-                />
-              </div>
-              <div className="grid min-w-0 gap-1">
-                <label className="field-label" htmlFor={toId}>
-                  {ROSTER_LABELS.dateTo}
-                </label>
-                <DateField
-                  id={toId}
-                  value={filters.to}
-                  onChange={(iso) => set({ to: iso })}
-                  min={filters.from || undefined}
-                  minLabel={ROSTER_LABELS.dateFrom}
-                />
-              </div>
+              <CalendarField
+                id={fromId}
+                label={ROSTER_LABELS.dateFrom}
+                value={filters.from}
+                onChange={(iso) => set({ from: iso })}
+                // Bidirectional clamping, and the bound is NAMED so the refusal can say which
+                // field to change first — otherwise a rejected date is a dead end, because the
+                // field that has to move is not mentioned anywhere on screen.
+                max={filters.to || undefined}
+                maxLabel={ROSTER_LABELS.dateTo}
+              />
+              <CalendarField
+                id={toId}
+                label={ROSTER_LABELS.dateTo}
+                value={filters.to}
+                onChange={(iso) => set({ to: iso })}
+                min={filters.from || undefined}
+                minLabel={ROSTER_LABELS.dateFrom}
+              />
             </div>
           ) : null}
         </fieldset>

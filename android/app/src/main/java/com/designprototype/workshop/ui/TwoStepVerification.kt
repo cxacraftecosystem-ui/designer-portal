@@ -7,6 +7,12 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.Canvas
+import com.designprototype.workshop.data.AppScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.foundation.layout.heightIn
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -170,6 +176,71 @@ private fun copyText(context: Context, label: String, text: String): Boolean = r
  */
 const val CHALLENGE_ENDED_DETAIL = "This sign-in has timed out. Sign in again."
 
+/* ── 0. The code entry every two-step form shares ─────────────────────────────────────────────── */
+
+/**
+ * The six boxes ([OtpCodeField]) for an authenticator code and — where one is also accepted — a
+ * SEPARATE text box for a recovery code, reached by "Use a recovery code instead". The web's
+ * `TwoStepCodeEntry`. Switching kind empties the box: half a code of one kind is not half the other.
+ */
+@Composable
+fun TwoStepCodeEntry(
+    useRecovery: Boolean,
+    onUseRecoveryChange: (Boolean) -> Unit,
+    code: String,
+    onCodeChange: (String) -> Unit,
+    allowRecovery: Boolean,
+    enabled: Boolean,
+    isError: Boolean,
+    errorKey: Int,
+    onComplete: ((String) -> Unit)? = null,
+    totpLabel: String = "6-digit code from your authenticator app",
+    totpHint: String? = null,
+    autoFocus: Boolean = false,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (allowRecovery && useRecovery) {
+            OutlinedTextField(
+                value = code,
+                onValueChange = { onCodeChange(it.take(20)) },
+                label = { Text("Recovery code") },
+                placeholder = { Text("xxxx-xxxx") },
+                supportingText = { Text("One of the recovery codes you saved when you turned this on. Each one works once.") },
+                singleLine = true,
+                enabled = enabled,
+                isError = isError,
+                textStyle = MaterialTheme.typography.titleMedium.copy(fontFamily = FieldDisplayFontFamily),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            OtpCodeField(
+                value = code,
+                onValueChange = onCodeChange,
+                label = totpLabel,
+                supportingText = totpHint,
+                onComplete = onComplete,
+                isError = isError,
+                errorKey = errorKey,
+                enabled = enabled,
+                autoFocus = autoFocus,
+            )
+        }
+        if (allowRecovery) {
+            TextButton(
+                enabled = enabled,
+                onClick = {
+                    onCodeChange("")
+                    onUseRecoveryChange(!useRecovery)
+                },
+                modifier = Modifier.heightIn(min = 48.dp)
+            ) {
+                Text(if (useRecovery) "Use your authenticator app instead" else "Use a recovery code instead")
+            }
+        }
+    }
+}
+
 /* ── 1. The sign-in's second step ─────────────────────────────────────────────────────────────── */
 
 @Composable
@@ -186,7 +257,27 @@ fun TwoStepChallengeForm(
     var code by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var errorKey by remember { mutableIntStateOf(0) }
     var dead by remember { mutableStateOf(false) }
+
+    fun submit(entered: String) {
+        if (busy || dead || entered.isBlank()) return
+        if (!useRecovery && !OtpCode.isComplete(entered)) return
+        scope.launch {
+            busy = true
+            error = null
+            runCatching { repository.verifyTwoStep(challengeToken, entered) }
+                .onSuccess { onSignedIn(it) }
+                .onFailure { failure ->
+                    code = ""
+                    errorKey++
+                    val message = failure.apiErrorMessage("That code didn't work. Try again.")
+                    if ((failure as? HttpException)?.code() == 401 && message == CHALLENGE_ENDED_DETAIL) dead = true
+                    error = message
+                }
+            busy = false
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -210,16 +301,18 @@ fun TwoStepChallengeForm(
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (!dead) {
-                    OutlinedTextField(
-                        value = code,
-                        onValueChange = { code = it.take(20) },
-                        label = { Text(if (useRecovery) "Recovery code" else "6-digit code") },
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = if (useRecovery) KeyboardType.Ascii else KeyboardType.NumberPassword
-                        ),
-                        modifier = Modifier.fillMaxWidth()
+                    TwoStepCodeEntry(
+                        useRecovery = useRecovery,
+                        onUseRecoveryChange = { useRecovery = it; error = null },
+                        code = code,
+                        onCodeChange = { code = it },
+                        allowRecovery = true,
+                        enabled = !busy,
+                        isError = error != null,
+                        errorKey = errorKey,
+                        onComplete = { submit(it) },
+                        totpLabel = "6-digit code",
+                        autoFocus = true,
                     )
                 }
                 error?.let {
@@ -235,31 +328,10 @@ fun TwoStepChallengeForm(
                     Button(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Sign in again") }
                 } else {
                     Button(
-                        enabled = !busy && code.isNotBlank(),
-                        onClick = {
-                            scope.launch {
-                                busy = true
-                                error = null
-                                runCatching { repository.verifyTwoStep(challengeToken, code) }
-                                    .onSuccess { onSignedIn(it) }
-                                    .onFailure { failure ->
-                                        code = ""
-                                        val message = failure.apiErrorMessage("That code didn't work. Try again.")
-                                        if ((failure as? HttpException)?.code() == 401 && message == CHALLENGE_ENDED_DETAIL) dead = true
-                                        error = message
-                                    }
-                                busy = false
-                            }
-                        },
+                        enabled = !busy && (if (useRecovery) code.isNotBlank() else OtpCode.isComplete(code)),
+                        onClick = { submit(code) },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text(if (busy) "Checking…" else "Verify") }
-                    TextButton(onClick = {
-                        useRecovery = !useRecovery
-                        code = ""
-                        error = null
-                    }) {
-                        Text(if (useRecovery) "Use your authenticator app instead" else "Use a recovery code instead")
-                    }
                 }
             }
         }
@@ -270,12 +342,81 @@ fun TwoStepChallengeForm(
 
 /* ── 2. The account's own switch ──────────────────────────────────────────────────────────────── */
 
+/**
+ * What the "Two-step verification" switch shows — the web's `twoStepSwitchView` (lib/twoStepSwitch.ts),
+ * row for row, pinned by `TwoStepSwitchTest`.
+ *
+ * THE RULE THE OWNER REPORTED BROKEN (2026-10-17): it reads On ONLY when the server says it is on —
+ * `/enable` accepted a code. A setup in progress reads "Setting up…" and is not checked; a setup the
+ * server still holds from an earlier visit reads Off with "start again"; never On, and never a request
+ * for a code nobody saved.
+ */
+object TwoStepSwitch {
+    enum class Phase { IDLE, SETUP, CODES, DISABLE, REGENERATE }
+
+    data class View(val checked: Boolean, val statusLine: String)
+
+    private val dayFormat = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.UK)
+
+    /** "17 Oct 2026" from the server's ISO instant, or null when it is not one. */
+    fun onSince(iso: String?): String? = iso?.let { text ->
+        runCatching { java.time.OffsetDateTime.parse(text).atZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDate() }
+            .recoverCatching { java.time.LocalDateTime.parse(text.removeSuffix("Z")).toLocalDate() }
+            .getOrNull()
+            ?.format(dayFormat)
+    }
+
+    fun recoveryCodesLeft(count: Int): String = when {
+        count <= 0 -> "No recovery codes left"
+        count == 1 -> "1 recovery code left"
+        else -> "$count recovery codes left"
+    }
+
+    fun view(status: TwoFactorStatusDto?, phase: Phase): View {
+        val enabled = status?.enabled == true
+        return when {
+            phase == Phase.SETUP -> View(false, "Setting up… Nothing is switched on until the code is checked.")
+            phase == Phase.DISABLE && enabled -> View(true, "Enter a code to turn it off.")
+            status == null -> View(false, "Loading…")
+            enabled -> View(true, onLine(status))
+            status.pending -> View(false, "Off · You started setting this up and did not finish. Switch it on to start again.")
+            else -> View(false, "Off")
+        }
+    }
+
+    private fun onLine(status: TwoFactorStatusDto): String =
+        listOf(onSince(status.enabledAt)?.let { "On since $it" } ?: "On", recoveryCodesLeft(status.recoveryCodesRemaining))
+            .joinToString(" · ")
+
+    /**
+     * Away this long in the background, a setup is abandoned rather than paused for a look at the
+     * authenticator app. The web's `SETUP_AWAY_LIMIT_MS` (lib/twoStepSwitch.ts) is the same number.
+     */
+    const val AWAY_LIMIT_MILLIS: Long = 5L * 60L * 1000L
+
+    /**
+     * Leaving setup DISCARDS the unconfirmed key: Cancel, switching it back off, Back, leaving the
+     * screen, and coming back after more than [AWAY_LIMIT_MILLIS] in the background. A SHORT trip to
+     * the background does not — the person is very likely in their authenticator app reading the code.
+     * The server's 15-minute limit covers the case where they never come back at all.
+     */
+    enum class Leave { CANCEL, SWITCH_OFF, SCREEN_CLOSED, BACKGROUNDED }
+
+    fun leavingDiscards(leave: Leave, awayMillis: Long = 0L): Boolean =
+        if (leave == Leave.BACKGROUNDED) awayMillis > AWAY_LIMIT_MILLIS else true
+
+    /** Back from the background in setup, the server no longer holds the key: setup is over. */
+    fun setupExpired(phase: Phase, status: TwoFactorStatusDto?): Boolean =
+        phase == Phase.SETUP && status != null && !status.enabled && !status.pending
+}
+
 private sealed interface TwoStepStep {
-    data object Status : TwoStepStep
-    data class Setup(val setup: TwoFactorSetupDto) : TwoStepStep
-    data class Codes(val codes: List<String>) : TwoStepStep
-    data object ConfirmDisable : TwoStepStep
-    data object ConfirmRegenerate : TwoStepStep
+    val phase: TwoStepSwitch.Phase
+    data object Idle : TwoStepStep { override val phase = TwoStepSwitch.Phase.IDLE }
+    data class Setup(val setup: TwoFactorSetupDto) : TwoStepStep { override val phase = TwoStepSwitch.Phase.SETUP }
+    data class Codes(val codes: List<String>) : TwoStepStep { override val phase = TwoStepSwitch.Phase.CODES }
+    data object ConfirmDisable : TwoStepStep { override val phase = TwoStepSwitch.Phase.DISABLE }
+    data object ConfirmRegenerate : TwoStepStep { override val phase = TwoStepSwitch.Phase.REGENERATE }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -307,9 +448,9 @@ fun TwoStepVerificationScreen(
 }
 
 /**
- * The card itself: off → "Turn on" → setup → recovery codes; on → status, codes left, "Make new
- * recovery codes", "Turn off". The recovery codes are shown ONCE — the server keeps only hashes — so
- * that step stays on screen until "I've saved them" is pressed.
+ * The card: an [AppToggle] labelled "Two-step verification" whose state is the SERVER's, plus whichever
+ * step is open under it — setup (key, QR, six boxes), the recovery codes (shown once, until "I've saved
+ * them"), or a code to turn it off / make new codes.
  */
 @Composable
 fun TwoStepVerificationCard(repository: WorkshopRepository) {
@@ -317,14 +458,26 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<TwoFactorStatusDto?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var step by remember { mutableStateOf<TwoStepStep>(TwoStepStep.Status) }
+    var step by remember { mutableStateOf<TwoStepStep>(TwoStepStep.Idle) }
     var code by remember { mutableStateOf("") }
+    var useRecovery by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var errorKey by remember { mutableIntStateOf(0) }
     var notice by remember { mutableStateOf<String?>(null) }
+    val inSetup by rememberUpdatedState(step is TwoStepStep.Setup)
 
     suspend fun load() {
-        runCatching { repository.twoFactorStatus() }
+        runCatching {
+            var answer = repository.twoFactorStatus()
+            // A setup left over from an earlier visit and never finished: it is Off, and with no setup
+            // on THIS screen nobody can finish it, so forget the key now rather than keep it.
+            if (!answer.enabled && answer.pending && !inSetup) {
+                runCatching { repository.cancelTwoFactorSetup() }
+                answer = answer.copy(pending = false)
+            }
+            answer
+        }
             .onSuccess { status = it; loadError = null }
             .onFailure { loadError = it.apiErrorMessage("Two-step verification could not be loaded.") }
     }
@@ -334,21 +487,79 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
     fun go(next: TwoStepStep) {
         step = next
         code = ""
+        useRecovery = false
         error = null
     }
 
-    fun submit() {
+    // Back from the background: away longer than AWAY_LIMIT_MILLIS, the setup is abandoned and its key
+    // discarded. A shorter trip (very likely to the authenticator app) keeps it; the status is re-read,
+    // and a setup the server has expired meanwhile is over too — the switch drops to Off and says so.
+    val lifecycleOwner = context as? androidx.lifecycle.LifecycleOwner
+    DisposableEffect(lifecycleOwner) {
+        var stoppedAt: Long? = null
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                stoppedAt = android.os.SystemClock.elapsedRealtime()
+            }
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
+                val away = stoppedAt?.let { android.os.SystemClock.elapsedRealtime() - it } ?: 0L
+                stoppedAt = null
+                if (inSetup && TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.BACKGROUNDED, away)) {
+                    go(TwoStepStep.Idle)
+                    notice = "Setup was stopped because you were away. Two-step verification is still off. Switch it on to get a new code to scan."
+                    scope.launch {
+                        runCatching { repository.cancelTwoFactorSetup() }
+                        load()
+                    }
+                }
+            }
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                scope.launch {
+                    load()
+                    if (TwoStepSwitch.setupExpired(step.phase, status)) {
+                        go(TwoStepStep.Idle)
+                        notice = "Setup timed out. Nothing was switched on. Switch it on to start again."
+                    }
+                }
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
+    }
+
+    // Leaving the screen mid-setup discards the unconfirmed key — on a scope that outlives this card.
+    DisposableEffect(Unit) {
+        onDispose {
+            if (inSetup && TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.SCREEN_CLOSED)) {
+                AppScope.io.launch { runCatching { repository.cancelTwoFactorSetup() } }
+            }
+        }
+    }
+
+    fun leaveSetup() {
+        go(TwoStepStep.Idle)
+        notice = "Setup cancelled. Two-step verification is still off."
+        scope.launch {
+            runCatching { repository.cancelTwoFactorSetup() }
+            load()
+        }
+    }
+
+    fun submit(entered: String) {
+        if (busy || entered.isBlank()) return
+        val needsSix = step !is TwoStepStep.ConfirmDisable || !useRecovery
+        if (needsSix && !OtpCode.isComplete(entered)) return
         scope.launch {
             busy = true
             error = null
             notice = null
             runCatching {
                 when (step) {
-                    is TwoStepStep.Setup -> go(TwoStepStep.Codes(repository.enableTwoFactor(code)))
-                    TwoStepStep.ConfirmRegenerate -> go(TwoStepStep.Codes(repository.makeNewRecoveryCodes(code)))
+                    is TwoStepStep.Setup -> go(TwoStepStep.Codes(repository.enableTwoFactor(entered)))
+                    TwoStepStep.ConfirmRegenerate -> go(TwoStepStep.Codes(repository.makeNewRecoveryCodes(entered)))
                     TwoStepStep.ConfirmDisable -> {
-                        repository.disableTwoFactor(code)
-                        go(TwoStepStep.Status)
+                        repository.disableTwoFactor(entered)
+                        go(TwoStepStep.Idle)
                         notice = "Two-step verification is off."
                     }
                     else -> Unit
@@ -357,19 +568,45 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
                 load()
             }.onFailure {
                 code = ""
+                errorKey++
                 error = it.apiErrorMessage("That code didn't work. Try again.")
             }
             busy = false
         }
     }
 
+    fun startSetup() {
+        scope.launch {
+            busy = true
+            error = null
+            notice = null
+            runCatching { repository.beginTwoFactorSetup() }
+                .onSuccess { go(TwoStepStep.Setup(it)) }
+                .onFailure { error = it.apiErrorMessage("Setup could not be started.") }
+            busy = false
+        }
+    }
+
+    val current = status
+    val view = TwoStepSwitch.view(current, step.phase)
+
     PreferenceCard {
         PreferenceCardHeading(Icons.Filled.Security, "Two-step verification")
-        Text(
-            "After you sign in, also enter a 6-digit code from an authenticator app on your phone, such as " +
+        AppToggle(
+            label = "Two-step verification",
+            description = "After you sign in, also enter a 6-digit code from an authenticator app on your phone, such as " +
                 "Google Authenticator or Microsoft Authenticator.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.field.muted
+            status = view.statusLine,
+            checked = view.checked,
+            enabled = current != null,
+            busy = busy,
+            onCheckedChange = { on ->
+                when {
+                    on -> startSetup()
+                    step is TwoStepStep.Setup -> leaveSetup()
+                    current?.enabled == true -> go(TwoStepStep.ConfirmDisable)
+                }
+            }
         )
         (error ?: loadError)?.let {
             Text(
@@ -382,23 +619,13 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
         notice?.let {
             Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }, fontSize = 13.sp)
         }
+        if (current == null && loadError != null) {
+            OutlinedButton(onClick = { scope.launch { load() } }) { Text("Try again") }
+        }
 
-        val current = status
-        when {
-            current == null -> if (loadError != null) {
-                OutlinedButton(onClick = { scope.launch { load() } }) { Text("Try again") }
-            } else {
-                Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
-            }
-
-            step == TwoStepStep.Status && current.enabled -> {
-                Text("On", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                Text(
-                    "Recovery codes left: ${current.recoveryCodesRemaining} of 10",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp
-                )
-                if (current.recoveryCodesRemaining <= 2) {
+        when (val shown = step) {
+            TwoStepStep.Idle -> if (current?.enabled == true) {
+                if ((current?.recoveryCodesRemaining ?: 0) <= 2) {
                     Text(
                         "You are running out of recovery codes. Make new ones so you can still get in without your phone.",
                         color = MaterialTheme.colorScheme.error,
@@ -408,157 +635,146 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
                 OutlinedButton(onClick = { go(TwoStepStep.ConfirmRegenerate) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Make new recovery codes")
                 }
-                OutlinedButton(
-                    onClick = { go(TwoStepStep.ConfirmDisable) },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Turn off") }
             }
 
-            step == TwoStepStep.Status -> Button(
-                enabled = !busy,
-                onClick = {
-                    scope.launch {
-                        busy = true
-                        error = null
-                        notice = null
-                        runCatching { repository.beginTwoFactorSetup() }
-                            .onSuccess { go(TwoStepStep.Setup(it)) }
-                            .onFailure { error = it.apiErrorMessage("Setup could not be started.") }
-                        busy = false
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text(if (busy) "Starting…" else "Turn on") }
-
-            else -> when (val shown = step) {
-                is TwoStepStep.Setup -> {
-                    val uri = TwoFactorCode.authenticatorUri(shown.setup.otpauthUri)
-                    Text("1. Add this account to your authenticator app.", fontSize = 14.sp)
-                    if (uri != null) {
-                        Button(
-                            onClick = {
-                                try {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
-                                } catch (_: ActivityNotFoundException) {
-                                    notice = "No authenticator app was found on this phone. Install one, or copy the key."
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Open in authenticator app") }
-                    }
-                    Text("Or type this key into the app:", color = MaterialTheme.field.muted, fontSize = 13.sp)
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            TwoFactorCode.grouped(shown.setup.secret),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 14.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedButton(onClick = {
-                            notice = if (copyText(context, "Authenticator key", shown.setup.secret)) "Key copied." else null
-                        }) { Text("Copy key") }
-                    }
-                    Text("Or scan it from another device:", color = MaterialTheme.field.muted, fontSize = 13.sp)
-                    QrSquare(shown.setup.qrSvg)
-                    Text("2. Enter the 6-digit code the app shows.", fontSize = 14.sp)
-                    CodeBox(code, { code = it }, "6-digit code", allowRecovery = false)
-                    Button(enabled = !busy && code.isNotBlank(), onClick = { submit() }, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (busy) "Checking…" else "Turn on")
-                    }
-                    TextButton(onClick = { go(TwoStepStep.Status) }) { Text("Cancel") }
+            is TwoStepStep.Setup -> {
+                BackHandler { leaveSetup() }
+                val uri = TwoFactorCode.authenticatorUri(shown.setup.otpauthUri)
+                Text("1. Add this account to your authenticator app.", fontSize = 14.sp)
+                if (uri != null) {
+                    Button(
+                        onClick = {
+                            try {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+                            } catch (_: ActivityNotFoundException) {
+                                notice = "No authenticator app was found on this phone. Install one, or copy the key."
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Open in authenticator app") }
                 }
-
-                is TwoStepStep.Codes -> {
-                    Text("Save these codes", display = true, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Text("Or type this key into the app:", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "If you lose your phone, each code gets you in once instead of the 6-digit code. Keep them " +
-                            "somewhere safe. They will not be shown again.",
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp
+                        TwoFactorCode.grouped(shown.setup.secret),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp,
+                        modifier = Modifier.weight(1f)
                     )
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        shown.codes.chunked(2).forEach { pair ->
-                            Row(modifier = Modifier.fillMaxWidth()) {
-                                pair.forEach { recovery ->
-                                    Text(recovery, fontFamily = FontFamily.Monospace, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                                }
+                    OutlinedButton(onClick = {
+                        notice = if (copyText(context, "Authenticator key", shown.setup.secret)) "Key copied." else null
+                    }) { Text("Copy key") }
+                }
+                Text("Or scan it from another device:", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                QrSquare(shown.setup.qrSvg)
+                Text(
+                    "2. Enter the 6-digit code the app shows. Two-step verification switches on only when this code is checked.",
+                    fontSize = 14.sp
+                )
+                OtpCodeField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = "6-digit code",
+                    supportingText = "Codes change every 30 seconds. Type the one on screen now.",
+                    onComplete = { submit(it) },
+                    isError = error != null,
+                    errorKey = errorKey,
+                    enabled = !busy,
+                )
+                Button(enabled = !busy && OtpCode.isComplete(code), onClick = { submit(code) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (busy) "Checking…" else "Turn on")
+                }
+                TextButton(onClick = { leaveSetup() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
+            }
+
+            is TwoStepStep.Codes -> {
+                Text("Save these codes", display = true, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Text(
+                    "If you lose your phone, each code gets you in once instead of the 6-digit code. Keep them " +
+                        "somewhere safe. They will not be shown again.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    shown.codes.chunked(2).forEach { pair ->
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            pair.forEach { recovery ->
+                                Text(recovery, fontFamily = FontFamily.Monospace, fontSize = 15.sp, modifier = Modifier.weight(1f))
                             }
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(
-                            onClick = {
-                                notice = if (copyText(context, "Recovery codes", shown.codes.joinToString("\n"))) {
-                                    "Recovery codes copied."
-                                } else null
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Copy") }
-                        OutlinedButton(
-                            onClick = {
-                                val send = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, "Design Prototype Workshop recovery codes")
-                                    putExtra(Intent.EXTRA_TEXT, shown.codes.joinToString("\n"))
-                                }
-                                runCatching { context.startActivity(Intent.createChooser(send, "Save recovery codes")) }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Share") }
-                    }
-                    Button(onClick = { go(TwoStepStep.Status); notice = null }, modifier = Modifier.fillMaxWidth()) {
-                        Text("I've saved them")
-                    }
                 }
-
-                TwoStepStep.ConfirmDisable, TwoStepStep.ConfirmRegenerate -> {
-                    val disabling = shown == TwoStepStep.ConfirmDisable
-                    CodeBox(
-                        code,
-                        { code = it },
-                        if (disabling) "Code" else "6-digit code",
-                        allowRecovery = disabling
-                    )
-                    Text(
-                        if (disabling) "Enter the 6-digit code from your authenticator app, or one of your recovery codes."
-                        else "Enter the code from your authenticator app. Your old recovery codes will stop working.",
-                        color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
-                    )
-                    Button(
-                        enabled = !busy && code.isNotBlank(),
-                        onClick = { submit() },
-                        colors = if (disabling) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                        else ButtonDefaults.buttonColors(),
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (busy) "Checking…" else if (disabling) "Turn off" else "Make new codes") }
-                    TextButton(onClick = { go(TwoStepStep.Status) }) { Text("Cancel") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = {
+                            notice = if (copyText(context, "Recovery codes", shown.codes.joinToString("\n"))) {
+                                "Recovery codes copied."
+                            } else null
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Copy") }
+                    OutlinedButton(
+                        onClick = {
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, "Design Prototype Workshop recovery codes")
+                                putExtra(Intent.EXTRA_TEXT, shown.codes.joinToString("\n"))
+                            }
+                            runCatching { context.startActivity(Intent.createChooser(send, "Save recovery codes")) }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Share") }
                 }
+                Button(onClick = { go(TwoStepStep.Idle); notice = null }, modifier = Modifier.fillMaxWidth()) {
+                    Text("I've saved them")
+                }
+            }
 
-                TwoStepStep.Status -> Unit
+            TwoStepStep.ConfirmDisable, TwoStepStep.ConfirmRegenerate -> {
+                val disabling = shown == TwoStepStep.ConfirmDisable
+                if (disabling) {
+                    TwoStepCodeEntry(
+                        useRecovery = useRecovery,
+                        onUseRecoveryChange = { useRecovery = it; error = null },
+                        code = code,
+                        onCodeChange = { code = it },
+                        allowRecovery = true,
+                        enabled = !busy,
+                        isError = error != null,
+                        errorKey = errorKey,
+                        onComplete = { submit(it) },
+                        totpHint = "Enter the code your authenticator app shows now to turn two-step verification off.",
+                        autoFocus = true,
+                    )
+                } else {
+                    OtpCodeField(
+                        value = code,
+                        onValueChange = { code = it },
+                        label = "6-digit code from your authenticator app",
+                        supportingText = "Your old recovery codes will stop working.",
+                        onComplete = { submit(it) },
+                        isError = error != null,
+                        errorKey = errorKey,
+                        enabled = !busy,
+                        autoFocus = true,
+                    )
+                }
+                val ready = if (disabling && useRecovery) code.isNotBlank() else OtpCode.isComplete(code)
+                Button(
+                    enabled = !busy && ready,
+                    onClick = { submit(code) },
+                    colors = if (disabling) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    else ButtonDefaults.buttonColors(),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (busy) "Checking…" else if (disabling) "Turn off" else "Make new codes") }
+                TextButton(onClick = { go(TwoStepStep.Idle) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
             }
         }
     }
-}
-
-@Composable
-private fun CodeBox(value: String, onChange: (String) -> Unit, label: String, allowRecovery: Boolean) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { onChange(it.take(20)) },
-        label = { Text(label) },
-        singleLine = true,
-        textStyle = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
-        keyboardOptions = KeyboardOptions(
-            keyboardType = if (allowRecovery) KeyboardType.Ascii else KeyboardType.NumberPassword
-        ),
-        modifier = Modifier.fillMaxWidth()
-    )
 }

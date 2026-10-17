@@ -92,7 +92,7 @@ fun firstPasswordNeedsCode(hasPassword: Boolean, user: UserDto?): Boolean =
     !hasPassword && user?.twoFactorEnabled == true
 
 const val FIRST_PASSWORD_CODE_LABEL = "Code from your authenticator app"
-const val FIRST_PASSWORD_CODE_NOTE = "Two-step verification is on for your account. A recovery code works here too."
+const val FIRST_PASSWORD_CODE_NOTE = "Two-step verification is on for your account."
 
 // ── Users → Help them back in ───────────────────────────────────────────────────────────────────
 

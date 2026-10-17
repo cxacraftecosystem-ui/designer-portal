@@ -17,6 +17,7 @@ import { MapPinned } from "lucide-react";
 
 import { OFFLINE_STATES } from "@/components/forms/LocationFields";
 import { describeApiDetail } from "@/lib/api";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 import { listRegionalDirectors, setRegionalDirectorStates, type RegionalDirectorScope } from "./annualPlan";
 
@@ -139,26 +140,18 @@ export function RegionalStatesPanel() {
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className="sr-only" htmlFor={`add-state-${director.id}`}>
-                    Add a state for {director.name || director.email}
-                  </label>
-                  <select
-                    id={`add-state-${director.id}`}
-                    className="field-input max-w-xs"
+                  <SearchableSelect
+                    className="w-full max-w-xs"
+                    ariaLabel={`Add a state for ${director.name || director.email}`}
                     value={choice}
                     disabled={busy}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setAdding((current) => ({ ...current, [director.id]: value }));
-                    }}
-                  >
-                    <option value="">Choose a state to add…</option>
-                    {offered.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
+                    searchable
+                    placeholder="Choose a state to add…"
+                    emptyLabel="Every state is already assigned"
+                    options={offered.map((name) => ({ value: name, label: name }))}
+                    onChange={(value) => setAdding((current) => ({ ...current, [director.id]: value }))}
+                    advanceOnSelect={false}
+                  />
                   <button
                     type="button"
                     className="field-button-secondary"

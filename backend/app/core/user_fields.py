@@ -17,6 +17,7 @@ SECRET_USER_FIELDS: tuple[str, ...] = (
     # deliberately NOT here: the users screen shows the first and the account screen the second.
     "twoFactorSecret",
     "twoFactorPendingSecret",
+    "twoFactorPendingSince",
     "twoFactorRecoveryCodes",
     "twoFactorLastStep",
     "twoFactorFailedAttempts",

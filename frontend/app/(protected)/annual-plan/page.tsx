@@ -54,6 +54,7 @@ import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/components/AuthProvider";
 import { describeApiDetail } from "@/lib/api";
 import { canManageAnnualPlan } from "@/lib/permissions";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 import {
   downloadPlanExport,
@@ -350,26 +351,23 @@ export default function AnnualPlanPage() {
 
       <div className="panel mb-5 grid gap-3 p-4 md:grid-cols-2 lg:grid-cols-4">
         <div className="grid gap-1">
-          <label className="field-label" htmlFor="plan-year">
-            Plan year
-          </label>
-          <select
-            id="plan-year"
-            className="field-input"
-            value={planYear ?? ""}
-            onChange={(event) => {
-              setPlanYear(event.currentTarget.value ? Number(event.currentTarget.value) : null);
+          <span className="field-label">Plan year</span>
+          <SearchableSelect
+            ariaLabel="Plan year"
+            value={planYear == null ? "" : String(planYear)}
+            onChange={(value) => {
+              setPlanYear(value ? Number(value) : null);
               setPage(1);
             }}
-          >
-            {years == null ? <option value="">Loading…</option> : null}
-            {years?.length === 0 ? <option value="">No plan uploaded yet</option> : null}
-            {years?.map((entry) => (
-              <option key={entry.planYear} value={entry.planYear}>
-                {entry.planYearLabel} · {entry.total} planned
-              </option>
-            ))}
-          </select>
+            options={(years ?? []).map((entry) => ({
+              value: String(entry.planYear),
+              label: `${entry.planYearLabel} · ${entry.total} planned`
+            }))}
+            placeholder={years == null ? "Loading…" : "Choose a plan year"}
+            emptyLabel={years == null ? "Loading…" : "No plan uploaded yet"}
+            disabled={years == null}
+            advanceOnSelect={false}
+          />
         </div>
 
         <div className="grid gap-1">

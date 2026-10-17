@@ -65,6 +65,7 @@
  * why no recogniser is bundled to make the local route universal.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Loader2, MonitorCheck, ScanLine, ShieldAlert, Trash2, X } from "lucide-react";
 
@@ -381,21 +382,14 @@ export function IdentityCardReader({
         to stop reading checkboxes.
       */}
       {browserReads === true && offered === true ? (
-        <label className="flex items-start gap-2 text-xs leading-5 text-ink-700">
-          <input
-            type="checkbox"
-            className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-purple-700"
-            checked={readHere}
-            disabled={disabled || reading}
-            onChange={(event) => setReadHere(event.currentTarget.checked)}
-            data-testid="identity-reader-read-here"
-          />
-          <span>
-            Read it on this computer — the photograph is not sent anywhere, and this works with no connection. Unticked,
-            the photograph is read online, which reads a worn or angled card better and is the only way to read a
-            Pehchan card.
-          </span>
-        </label>
+        <Toggle
+          label="Read it on this computer"
+          description="The photograph is not sent anywhere, and this works with no connection. Switched off, the photograph is read online, which reads a worn or angled card better and is the only way to read a Pehchan card."
+          checked={readHere}
+          disabled={disabled || reading}
+          onChange={setReadHere}
+          testId="identity-reader-read-here"
+        />
       ) : null}
 
       {browserReads === true && offered !== true ? (

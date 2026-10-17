@@ -1,5 +1,6 @@
 "use client";
 
+import { ToggleSwitch } from "@/components/ui/Toggle";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -17,7 +18,6 @@ import {
   Compass,
   DraftingCompass,
   Eye,
-  EyeOff,
   FileSearch,
   FileSignature,
   FileSpreadsheet,
@@ -1045,21 +1045,16 @@ export function DynamicIslandNav() {
           <div className="ml-1 flex items-center gap-1.5">
             {/* Offered to admins only — and it can merely hide admin chrome, never unlock it. */}
             {canAdmin && !compact ? (
-              <button
-                type="button"
-                onClick={toggleAdminView}
-                aria-pressed={adminMode}
-                title={adminMode ? "Admin view: ON" : "Admin view: OFF"}
-                className={cn(
-                  "hidden items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-medium transition sm:inline-flex",
-                  adminMode
-                    ? "border-purple-300 bg-purple-50 text-purple-700"
-                    : "border-line-200 bg-card text-ink-500 hover:bg-surface-50"
-                )}
-              >
-                {adminMode ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}
-                {adminMode ? "Admin view: ON" : "Admin view: OFF"}
-              </button>
+              // A real switch (owner's rule, 2026-10-17): its position and `aria-checked` say on or
+              // off, so there is no "ON"/"OFF" word to read. hidden below `sm` as before — there
+              // `sm` the sheet footer's switch is a phone user's way to flip it.
+              <ToggleSwitch
+                label="Admin view"
+                showLabel
+                checked={adminMode}
+                onChange={() => toggleAdminView()}
+                className="min-h-9! rounded-full border border-line-200 bg-card py-0 pl-2.5 pr-1 max-sm:hidden pointer-coarse:min-h-11!"
+              />
             ) : null}
             <button
               ref={menuButtonRef}
@@ -1149,10 +1144,7 @@ export function DynamicIslandNav() {
               </div>
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line-200 pt-4">
                 {canAdmin ? (
-                  <button type="button" onClick={toggleAdminView} aria-pressed={adminMode} className="field-button-secondary">
-                    {adminMode ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
-                    {adminMode ? "Admin view: ON" : "Admin view: OFF"}
-                  </button>
+                  <ToggleSwitch label="Admin view" showLabel checked={adminMode} onChange={() => toggleAdminView()} />
                 ) : null}
                 <div className="ml-auto text-right text-xs">
                   <div className="font-medium text-ink-900">{user.name}</div>

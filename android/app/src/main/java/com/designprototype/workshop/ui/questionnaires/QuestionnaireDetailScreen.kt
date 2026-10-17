@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.ui.AppToggle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -1475,10 +1476,7 @@ private fun QuestionDialog(
                     dictate = !busy,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = required, onCheckedChange = { required = it })
-                    Text("Required", color = MaterialTheme.field.body, fontSize = 13.sp)
-                }
+                AppToggle(label = "Required", checked = required, onCheckedChange = { required = it })
             }
         },
         confirmButton = {

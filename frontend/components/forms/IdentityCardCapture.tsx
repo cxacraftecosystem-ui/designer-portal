@@ -89,6 +89,7 @@
  * shape `deps.py` names: the UI offering what the API refuses.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useEffect, useId, useRef, useState } from "react";
 import { AlertTriangle, Camera, Check, ImageIcon, Loader2, MonitorCheck, X } from "lucide-react";
 
@@ -407,20 +408,14 @@ export function IdentityCardCapture({
         the photograph not being kept.
       */}
       {canKeep ? (
-        <label className="flex items-start gap-2 text-xs leading-5 text-ink-700">
-          <input
-            type="checkbox"
-            className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-purple-700"
-            checked={keepPhotograph}
-            disabled={disabled || reading}
-            onChange={(event) => setKeepPhotograph(event.currentTarget.checked)}
-            data-testid="identity-keep-photograph"
-          />
-          <span>
-            Keep the photograph on this record. Left unticked, the card is read and the picture is not stored anywhere —
-            which is what happens if you do not decide.
-          </span>
-        </label>
+        <Toggle
+          label="Keep the photograph on this record"
+          description="Left off, the card is read and the picture is not stored anywhere — which is what happens if you do not decide."
+          checked={keepPhotograph}
+          disabled={disabled || reading}
+          onChange={setKeepPhotograph}
+          testId="identity-keep-photograph"
+        />
       ) : null}
 
       <div className="flex flex-wrap gap-2">
@@ -441,20 +436,14 @@ export function IdentityCardCapture({
         before the camera opens rather than discovered afterwards.
       */}
       {localUsable && offered === true ? (
-        <label className="flex items-start gap-2 text-xs leading-5 text-ink-700">
-          <input
-            type="checkbox"
-            className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-purple-700"
-            checked={readHere}
-            disabled={disabled || reading}
-            onChange={(event) => setReadHere(event.currentTarget.checked)}
-            data-testid="identity-read-here"
-          />
-          <span>
-            Read it on this computer — the photograph is not sent anywhere, and this works with no connection. Unticked,
-            the photograph is read online, which handles a worn or angled card better.
-          </span>
-        </label>
+        <Toggle
+          label="Read it on this computer"
+          description="The photograph is not sent anywhere, and this works with no connection. Switched off, the photograph is read online, which handles a worn or angled card better."
+          checked={readHere}
+          disabled={disabled || reading}
+          onChange={setReadHere}
+          testId="identity-read-here"
+        />
       ) : null}
 
       {localUsable && offered !== true ? (

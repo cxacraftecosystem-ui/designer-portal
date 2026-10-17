@@ -55,6 +55,7 @@ import { listDesignWorkshops, saveBlobToDisk, type DwSummary } from "@/lib/desig
 import { formatDateTime } from "@/lib/format";
 import { canEditOwnOrAdmin, isAdmin } from "@/lib/permissions";
 import { cachedQuestionnaireNotice, loadQuestionnaireWithCache } from "@/lib/questionnaireFormCache";
+import { Toggle } from "@/components/ui/Toggle";
 import {
   designWorkshopOptions,
   deviceLooksOffline,
@@ -956,10 +957,7 @@ export default function QuestionnaireDetailPage() {
                   placeholder="Shown under the question when answering"
                   explainWhenUnavailable={false}
                 />
-                <label className="flex items-center gap-2 text-sm text-ink-700">
-                  <input type="checkbox" name="isRequired" className="h-4 w-4 rounded border-line-200" />
-                  Required
-                </label>
+                <Toggle name="isRequired" label="Required" />
                 <div>
                   <button className="field-button" disabled={busy}>
                     Add question

@@ -43,6 +43,7 @@
  * not have the text on screen.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Download, Loader2, Trash2 } from "lucide-react";
 
@@ -343,19 +344,18 @@ export function AiVerbReviewDialog({
             ) : null}
 
             {cues.hasSpeakers ? (
-              <label className="flex items-start gap-2 text-xs leading-5 text-ink-700">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={speakers}
-                  onChange={(event) => setSpeakers(event.target.checked)}
-                />
-                <span>
-                  Put the speaker label in front of each line. <strong className="font-semibold">The labels are the
-                  engine&apos;s own guess</strong> — it can merge two quiet voices or split one person who moved away
-                  from the microphone. A .vtt file includes this caution; a .srt file carries the labels alone.
-                </span>
-              </label>
+              <Toggle
+                label="Put the speaker label in front of each line"
+                description={
+                  <>
+                    <strong className="font-semibold">The labels are the engine&apos;s own guess</strong> — it can merge two
+                    quiet voices or split one person who moved away from the microphone. A .vtt file includes this caution;
+                    a .srt file carries the labels alone.
+                  </>
+                }
+                checked={speakers}
+                onChange={setSpeakers}
+              />
             ) : null}
 
             <div className="flex flex-wrap gap-2">

@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.Icons
 import com.designprototype.workshop.data.userMessage
 
 import android.net.Uri
@@ -551,9 +553,9 @@ private fun OutboxFailureCard(
                         Text("Re-pick it", fontSize = 12.sp)
                     }
                 }
-                OutlinedButton(onClick = onRetry, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text("Try again", fontSize = 12.sp)
-                }
+                // The shared tonal media button — icon and word, 48dp — so Try again reads the same on
+                // every queued row as Retry and Download do on every media card.
+                MediaActionButton(label = "Try again", icon = Icons.Filled.Refresh, onClick = onRetry, enabled = !busy)
                 OutlinedButton(onClick = onDiscard, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
                     // "this copy" on a clash, for the reason the confirmation dialog gives at length:
                     // the row a designer is reading names a record on the SERVER, and an unqualified

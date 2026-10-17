@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.ui.AppToggle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -232,17 +233,12 @@ internal fun ReuseQuestionnaireDialog(
                     lineHeight = 16.sp,
                 )
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Checkbox(
-                        checked = changeDescription,
-                        onCheckedChange = { changeDescription = it },
-                        enabled = !busy,
-                    )
-                    Text("Give the copy a different description", fontSize = 12.sp)
-                }
+                AppToggle(
+                    label = "Give the copy a different description",
+                    checked = changeDescription,
+                    onCheckedChange = { changeDescription = it },
+                    enabled = !busy,
+                )
                 if (changeDescription) {
                     OutlinedTextField(
                         value = description,

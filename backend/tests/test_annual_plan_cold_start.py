@@ -323,7 +323,7 @@ def test_every_ministry_class_carries_its_dark_pair(path: Path):
             assert "dark:bg-ministry-950/40" in tokens, classes
 
 
-def test_the_purple_left_in_this_parcel_is_the_checkbox_accent_and_the_sort_toggle():
+def test_the_purple_left_in_this_parcel_is_the_sort_toggle_and_the_switch_stays_purple():
     """BOTH ARE THERE ON PURPOSE — the two places the hand-off table was NOT followed.
 
     ⚠ THIS EXPECTATION WAS WIDENED IN 0.0.12, DELIBERATELY, AND IT IS THE TEST THAT WAS WRONG.
@@ -386,7 +386,11 @@ def test_the_purple_left_in_this_parcel_is_the_checkbox_accent_and_the_sort_togg
         "page.tsx": [
             "mt-1 justify-self-start text-xs font-medium text-purple-700 underline dark:text-purple-300"
         ],
-        "UploadPlanDialog.tsx": ["mt-1 h-4 w-4 shrink-0 accent-purple-700"],
+        # The withdraw-absent checkbox became the shared `Toggle` switch on 2026-10-17 (every on/off
+        # setting is a switch). Its purple track is drawn inside components/ui/Toggle.tsx, not by a
+        # class in this file, so the dialog itself now carries no purple — the sanction above still
+        # applies to the switch: it is the dialog's dangerous control and stays the action colour.
+        "UploadPlanDialog.tsx": [],
         "PromoteDialog.tsx": [],
         "PlanUploadReport.tsx": [],
     }, purple

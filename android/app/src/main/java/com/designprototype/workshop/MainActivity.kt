@@ -156,7 +156,11 @@ import com.designprototype.workshop.ui.WorkshopLogo
 import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.OfflineOutboxTray
+import com.designprototype.workshop.ui.AppToggle
+import com.designprototype.workshop.ui.CalendarField
+import com.designprototype.workshop.ui.MediaActionButton
 import com.designprototype.workshop.ui.MediaDownloadButton
+import com.designprototype.workshop.ui.MediaRetryButton
 import com.designprototype.workshop.ui.MediaDownloadNotice
 import com.designprototype.workshop.ui.rememberMediaDownloader
 import com.designprototype.workshop.data.mediaDisplayNameOf
@@ -549,7 +553,6 @@ import com.designprototype.workshop.ui.walkthroughSeen
 import kotlinx.coroutines.launch
 import coil3.compose.AsyncImage
 import retrofit2.HttpException
-import android.app.DatePickerDialog
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -5741,18 +5744,13 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider()
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Process during an off-peak window", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "When on, transcription & refinement run only between the times below (IST), so the " +
-                        "heavy work happens when nobody is uploading. When off, they run immediately.",
-                    color = Muted,
-                    fontSize = 12.sp
-                )
-            }
-            Switch(checked = windowEnabled, onCheckedChange = { windowEnabled = it })
-        }
+        AppToggle(
+            label = "Process during an off-peak window",
+            description = "When on, transcription & refinement run only between the times below (IST), so the " +
+                "heavy work happens when nobody is uploading. When off, they run immediately.",
+            checked = windowEnabled,
+            onCheckedChange = { windowEnabled = it }
+        )
         if (windowEnabled) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 Box(modifier = Modifier.weight(1f)) { TimePickerField("Start", startTime) { startTime = it } }
@@ -8245,13 +8243,11 @@ private fun GridMeasurementSection(
 
     @Composable
     fun GridGroupRow(key: String, label: String, hint: String) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Checkbox(
-                checked = enabled.contains(key),
-                onCheckedChange = { checked -> enabled = if (checked) enabled + key else enabled - key }
-            )
-            Text(label, color = Body, fontSize = 14.sp)
-        }
+        AppToggle(
+            label = label,
+            checked = enabled.contains(key),
+            onCheckedChange = { checked -> enabled = if (checked) enabled + key else enabled - key }
+        )
         if (enabled.contains(key)) {
             Text(hint, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -9547,25 +9543,10 @@ private fun CheckboxMultiSelectField(
 
 @Composable
 private fun DatePickerField(label: String, value: LocalDate?, onChange: (LocalDate) -> Unit) {
-    val context = LocalContext.current
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, color = Muted, fontSize = 12.sp)
-        OutlinedButton(
-            onClick = {
-                val initial = value ?: LocalDate.now()
-                DatePickerDialog(
-                    context,
-                    { _, year, month, day -> onChange(LocalDate.of(year, month + 1, day)) },
-                    initial.year,
-                    initial.monthValue - 1,
-                    initial.dayOfMonth
-                ).show()
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(value?.toString() ?: "Pick date")
-        }
-    }
+    // The shared `CalendarField` (typed dd/mm/yyyy or the themed calendar) instead of the platform's
+    // own DatePickerDialog behind a button reading "2026-10-17" (owner's rule, 2026-10-17). Not
+    // clearable: every caller here needs a day.
+    CalendarField(label = label, value = value, onValueChange = { day -> day?.let(onChange) }, clearable = false)
 }
 
 private enum class RecPhase { IDLE, RECORDING, PAUSED, RECORDED }
@@ -11713,7 +11694,7 @@ private fun ArtisanForm(
          * box, computed by the server's own rule (`deriveAgeYears`, the port). Web parity: the
          * record page shows the same sentence under the same control.
          */
-        FieldDateField(
+        CalendarField(
             label = "Date of birth",
             value = dateOfBirth,
             onValueChange = { dateOfBirth = it },
@@ -11732,7 +11713,7 @@ private fun ArtisanForm(
                 else "Age $age. The workshop's participant table shows an age, worked out from this."
             }
         )
-        FieldDateField(
+        CalendarField(
             label = "Practising since",
             value = craftStartDate,
             onValueChange = { craftStartDate = it },
@@ -14260,10 +14241,11 @@ private fun ProcessForm(
         // and not the other is the cross-surface divergence the whole reference lane exists to end.
         TextInput("What happens in this process", notes, minLines = 3, rich = true, resetKey = editing?.id) { notes = it }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Checkbox(checked = preProcessAvailable, onCheckedChange = { preProcessAvailable = it })
-            Text("Pre-processes available", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-        }
+        AppToggle(
+            label = "Pre-processes available",
+            checked = preProcessAvailable,
+            onCheckedChange = { preProcessAvailable = it }
+        )
         if (preProcessAvailable) {
             Text("Attach the pre-process media (required).", color = Muted, fontSize = 12.sp)
             if (existingPreMedia.isNotEmpty()) {
@@ -14325,13 +14307,11 @@ private fun ProcessForm(
                         media = step.media,
                         emphasizeVideo = true,
                         beforeLocation = {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                                Checkbox(
-                                    checked = step.recordAdditional,
-                                    onCheckedChange = { step.recordAdditional = it; if (!it) step.notes = "" }
-                                )
-                                Text("Record additional information", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-                            }
+                            AppToggle(
+                                label = "Record additional information",
+                                checked = step.recordAdditional,
+                                onCheckedChange = { step.recordAdditional = it; if (!it) step.notes = "" }
+                            )
                             if (step.recordAdditional) {
                                 MultiNoteInput(label = "Additional context for this step", value = step.notes, resetKey = step.key) { step.notes = it }
                             }
@@ -15231,10 +15211,11 @@ private fun TranscriptRefineControls(
                         "Refining" + (if (mode) " and translating" else "") + " this transcript runs it through an " +
                             "AI model (gpt-4o-mini), which incurs a small extra cost each time you do it. Continue?"
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = dontRemind, onCheckedChange = { dontRemind = it })
-                        Text("Do not remind me again", fontSize = 13.sp)
-                    }
+                    AppToggle(
+                        label = "Do not remind me again",
+                        checked = dontRemind,
+                        onCheckedChange = { dontRemind = it }
+                    )
                 }
             },
             confirmButton = {
@@ -18670,9 +18651,12 @@ private fun MediaProcessingJobRow(
         }
         if (retryable) {
             if (isAdmin) {
-                OutlinedButton(onClick = onRetry, enabled = !busy) {
-                    Text(if (busy) "Re-queuing…" else "Retry", fontSize = 13.sp)
-                }
+                MediaActionButton(
+                    label = if (busy) "Re-queuing…" else "Retry",
+                    icon = Icons.Filled.Refresh,
+                    onClick = onRetry,
+                    enabled = !busy,
+                )
             } else {
                 Text("An admin can re-run this.", color = Muted, fontSize = 11.sp)
             }
@@ -18792,19 +18776,13 @@ private fun AndroidUriPreview(
         progress != null && progress >= 1f -> Text("Uploaded", color = SuccessGreen, fontSize = 12.sp)
     }
     if (onRetry != null || downloadable) {
+        // Real tonal buttons, icon and word, 48dp (owner's report, 2026-10-17) — `MediaActionButton`.
         Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top
         ) {
             if (failed && onRetry != null) {
-                TextButton(
-                    onClick = onRetry,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Retry", fontSize = 12.sp)
-                }
+                MediaRetryButton(fileName = uri.lastPathSegment, onRetry = onRetry)
             }
             if (downloadable) {
                 MediaDownloadButton(
@@ -18930,11 +18908,12 @@ private fun AndroidSavedMediaPreview(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             // `readableUrl`, NOT `media.url`: a refreshed signature that reached the thumbnail and
             // not the download is the shape of "the picture is there and Save fails".
-            TextButton(onClick = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) }) {
-                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Save to device", fontSize = 12.sp)
-            }
+            MediaActionButton(
+                label = "Download",
+                icon = Icons.Filled.Download,
+                onClick = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) },
+                accessibleLabel = "Download ${media.originalFilename}",
+            )
             if (onDelete != null) {
                 TextButton(onClick = { confirmDelete = true }) {
                     Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
@@ -19902,13 +19881,12 @@ private fun QuestionnaireForm(
         ) { recordMode = it }
         // On by default: keep the UI to just the record button; reveal answer boxes only on demand.
         var hideAnswers by remember { mutableStateOf(true) }
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Do not display answer text boxes", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-                Text("On by default — show only the record button. Toggle off to type written answers.", color = Muted, fontSize = 11.sp)
-            }
-            Switch(checked = hideAnswers, onCheckedChange = { hideAnswers = it })
-        }
+        AppToggle(
+            label = "Do not display answer text boxes",
+            description = "On by default — show only the record button. Toggle off to type written answers.",
+            checked = hideAnswers,
+            onCheckedChange = { hideAnswers = it }
+        )
         LocationAddressEditor(
             repository = repository,
             value = capturedLocation,
@@ -21376,7 +21354,7 @@ private fun UserManagementForm(
                         DetailRow("Download entire dataset", if (targetIsProfessorPlus || appUser.canDownloadDataset) "Granted" else "Not granted")
                         DetailRow("Signs in with", accountSignInMethod(appUser))
                         DetailRow("Last sign-in", accountLastSignIn(appUser))
-                        DetailRow("Two-step verification", if (appUser.twoFactorEnabled) "On" else "Off")
+                        DetailRow("Two-step verification", if (appUser.twoFactorEnabled) "Turned on" else "Not turned on")
                         if (mayUpdateUser) {
                             OutlinedButton(
                                 onClick = { updatingUsers = updatingUsers + appUser.id },

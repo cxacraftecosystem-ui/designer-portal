@@ -4258,6 +4258,11 @@ class WorkshopRepository(
 
     suspend fun beginTwoFactorSetup(): TwoFactorSetupDto = twoFactorApi.setup()
 
+    /** Discard an unconfirmed setup. Idempotent; never touches a second factor that is on. */
+    suspend fun cancelTwoFactorSetup() {
+        twoFactorApi.cancelSetup()
+    }
+
     suspend fun enableTwoFactor(code: String): List<String> =
         twoFactorApi.enable(TwoFactorCodeRequest(code.trim())).recoveryCodes
 

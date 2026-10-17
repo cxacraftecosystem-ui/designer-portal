@@ -1,5 +1,6 @@
 "use client";
 
+import { CalendarField } from "@/components/ui/CalendarField";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -13,7 +14,6 @@ import { Field, Select, TextInput } from "@/components/FormControls";
 import { AadhaarField, aadhaarValidationError, isMaskedIdentityNumber } from "@/components/forms/AadhaarField";
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
-import { DateField } from "@/components/forms/DateTimeField";
 import { HeldPostNotice, useRecordFilingHold } from "@/components/designworkshop/HeldPostNotice";
 import { DosDontsField } from "@/components/forms/DosDontsField";
 import { DuplicateArtisanDialog } from "@/components/forms/DuplicateArtisanDialog";
@@ -457,9 +457,7 @@ export function ArtisanForm({
    */
   const derivedFieldsId = useId();
   const dobId = `${derivedFieldsId}-dob`;
-  const dobHintId = `${derivedFieldsId}-dob-hint`;
   const craftStartId = `${derivedFieldsId}-craft-start`;
-  const craftStartHintId = `${derivedFieldsId}-craft-start-hint`;
   // No `experienceId`: since 2026-08-30 the experience is a PAIR of themed dropdowns, and `Select`
   // deliberately forwards no `id` to its trigger — so a `<label htmlFor>` would point at nothing.
   // The pair is named by `FieldBlock`’s `role="group"` and each box by its own `aria-label`; only
@@ -1325,9 +1323,6 @@ export function ArtisanForm({
           {/* Not `Field`: see `derivedFieldsId` above for why a `<DateField>` may not be wrapped in
               a `<label>`, and why the hint sits outside it. */}
           <div className="grid min-w-0 gap-1">
-            <label className="field-label" htmlFor={dobId}>
-              Date of birth
-            </label>
             {/*
               `DateField` and NOT `<TextInput type="date">`, and this was the last native date input
               left in the app. A native date input formats itself from the BROWSER's locale rather
@@ -1352,8 +1347,10 @@ export function ArtisanForm({
               That is why this control keeps a text input rather than being a button that only opens
               a picker.
             */}
-            <DateField
+            {/* CalendarField draws the hint under the box and ties it to the input as `${dobId}-hint`. */}
+            <CalendarField
               id={dobId}
+              label="Date of birth"
               name="dateOfBirth"
               value={dateOfBirth}
               onChange={(iso) => {
@@ -1361,13 +1358,12 @@ export function ArtisanForm({
                 markDirty();
               }}
               max={todayIso}
-              describedBy={dobHintId}
+              hint={
+                derivedAge === null
+                  ? "The workshop's participant table shows an age, worked out from this."
+                  : `Age ${derivedAge}. The workshop's participant table shows an age, worked out from this.`
+              }
             />
-            <p id={dobHintId} className="text-xs leading-5 text-ink-muted">
-              {derivedAge === null
-                ? "The workshop's participant table shows an age, worked out from this."
-                : `Age ${derivedAge}. The workshop's participant table shows an age, worked out from this.`}
-            </p>
           </div>
           {/* THE FEEDER THE EXPERIENCE BELOW IS DERIVED FROM, at the owner's request that experience
               become a derived field with a date of joining the craft behind it.
@@ -1375,11 +1371,9 @@ export function ArtisanForm({
               migration deliberately refuses to guess one, so an old record showing this box empty is
               the expected state — not a gap for somebody to fill in from a printout. */}
           <div className="grid min-w-0 gap-1">
-            <label className="field-label" htmlFor={craftStartId}>
-              Practising since
-            </label>
-            <DateField
+            <CalendarField
               id={craftStartId}
+              label="Practising since"
               name="craftStartDate"
               value={craftStartDate}
               onChange={(iso) => {
@@ -1387,13 +1381,12 @@ export function ArtisanForm({
                 markDirty();
               }}
               max={todayIso}
-              describedBy={craftStartHintId}
+              hint={
+                derivedExperience === null
+                  ? "The date the artisan took up the craft. The years of experience are worked out from it."
+                  : `${derivedExperience} years of experience, worked out from this — the figure the workshop and the report use.`
+              }
             />
-            <p id={craftStartHintId} className="text-xs leading-5 text-ink-muted">
-              {derivedExperience === null
-                ? "The date the artisan took up the craft. The years of experience are worked out from it."
-                : `${derivedExperience} years of experience, worked out from this — the figure the workshop and the report use.`}
-            </p>
           </div>
           {/*
             ── THE EXPERIENCE PAIR: TWO DROPDOWNS ON ONE LINE, UNDER ONE HEADING ──────────────
