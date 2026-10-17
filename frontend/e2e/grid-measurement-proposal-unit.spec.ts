@@ -315,14 +315,11 @@ test("a failed read says WHICH failure it was, because they need different thing
 test("the copy says the control needs a connection, in Android's words", () => {
   // §1.3 of the frontend reference: Android owns the wording, and a researcher moves between the two
   // apps mid-workshop. Where Android has a sentence and the web has none, copying is the whole rule.
-  // These clauses are asserted rather than the full string because the Kotlin literal is assembled
-  // across four concatenated lines; each clause below is the load-bearing half of one of them.
+  // These clauses are the load-bearing parts of the one sentence both clients carry.
   const android = readFileSync(ANDROID_MAIN, "utf8");
   for (const clause of [
-    "Reading the photo needs a connection",
-    "offered for you to check and accept",
-    "nothing is written into a",
-    "field until you press the button"
+    "Needs a connection",
+    "you confirm before anything is filled"
   ]) {
     expect(android, `${clause} — has the handset's grid hint been reworded?`).toContain(clause);
     expect(GRID_SECTION_HINT).toContain(clause);

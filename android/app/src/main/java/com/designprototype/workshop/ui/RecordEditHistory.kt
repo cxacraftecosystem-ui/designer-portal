@@ -263,9 +263,8 @@ const val RECORD_EDIT_HISTORY_TITLE: String = "Edit history"
  * an admin the left-hand column was the old Aadhaar number when it never is.
  */
 const val RECORD_EDIT_HISTORY_CAPTION: String =
-    "Original values are the first \"before\" of each field — except identity and contact fields " +
-        "(Aadhaar, Pehchan card, phone, email, address), where only the fact that they changed is " +
-        "recorded, never the value. Visible to the owner and admins."
+    "Identity and contact fields (Aadhaar, Pehchan card, phone, email, address) record only that " +
+        "they changed, never the value. Visible to the owner and admins."
 
 /** Drawn when the ledger is readable and empty. The web's `No edits recorded.` */
 const val RECORD_EDIT_HISTORY_EMPTY: String = "No edits recorded."

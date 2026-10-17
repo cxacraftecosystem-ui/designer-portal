@@ -609,9 +609,9 @@ export function eligibleInspectorNotice({
   searched: boolean;
 }): string {
   if (truncated && !searched) {
-    return "Too many accounts to show them all — search a name or email to reach the rest.";
+    return "Too many to list — search by name or email.";
   }
-  if (truncated) return "Too many matches to show them all — narrow the search.";
+  if (truncated) return "Too many matches — narrow the search.";
   // "AN ACCOUNT THAT MAY INSPECT" AND NO LONGER "AN INSPECTOR / REVIEWER ACCOUNT": since 2026-10-09
   // the list also holds the Ministry Admin, admin and master admin accounts, and a sentence naming
   // only the tier would tell somebody searching for an admin by name that admins are not offered.

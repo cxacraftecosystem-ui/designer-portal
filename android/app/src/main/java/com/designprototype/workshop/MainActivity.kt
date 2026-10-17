@@ -945,19 +945,19 @@ private enum class DashGroup(
 ) {
     DESIGNERS(
         "For designers",
-        "Running a design & prototype workshop, and the two halves of it reached without one in hand."
+        "Design & prototype workshops, sketches and reviews."
     ),
     RECORDS(
         "Records",
-        "The repository a workshop draws on — the people, the things they make, and how they make them."
+        "Artisans, products, processes and tools."
     ),
     MISC(
         "Miscellaneous",
-        "Reading what is already recorded, and the errands around it."
+        "Browse, map, scan and share."
     ),
     ADMIN(
         "Admin",
-        "Who may do what, and how the app is set up."
+        "Users, access and settings."
     )
 }
 
@@ -8327,9 +8327,9 @@ private fun GridMeasurementSection(
             color = Muted,
             fontSize = 12.sp
         )
-        GridGroupRow("lengthBreadth", "Length & breadth (one photo)", "Top-down photo on the grid.")
+        GridGroupRow("lengthBreadth", "Length & breadth (one photo)", "Top-down photo on the grid — offers length and breadth.")
         if (includeHeight) {
-            GridGroupRow("height", "Height (one photo)", "Side-on photo against the grid.")
+            GridGroupRow("height", "Height (one photo)", "Side-on photo against the grid — offers a height.")
         }
     }
 }

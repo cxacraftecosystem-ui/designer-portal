@@ -160,15 +160,12 @@ export const GRID_FAILED_STATUS = "Analysis failed — enter it manually";
  * by `PhotoMeasureField`) is the one that needs nothing, and it is the default wherever it exists.
  */
 export const GRID_SECTION_HINT =
-  "Place the object on a 1-inch grid sheet. Length and breadth are read from a single top-down " +
-  "photo; height needs its own side-on photo. Reading the photo needs a connection, and the " +
-  "inches it returns are offered for you to check and accept — nothing is written into a " +
-  "field until you press the button.";
+  "Place the object on a 1-inch grid. One top-down photo gives length and breadth; a side photo gives height. Needs a connection; you confirm before anything is filled.";
 
 /** Per-group hints. Android's, and they say "offers" rather than "fills" for the reason above. */
 export const GRID_GROUP_HINTS: Readonly<Record<GridGroup, string>> = {
-  lengthBreadth: "Top-down photo of the object on the grid — offers both length and breadth.",
-  height: "Side-on photo of the object against the grid — offers a height."
+  lengthBreadth: "Top-down photo on the grid — offers length and breadth.",
+  height: "Side-on photo against the grid — offers a height."
 };
 
 /** Per-group checkbox labels. Android's. */

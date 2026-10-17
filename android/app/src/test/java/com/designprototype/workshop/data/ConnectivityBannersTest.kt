@@ -87,7 +87,7 @@ class ConnectivityBannersTest {
             offlineSavedMessage(kept, isCorrection = false, serverDown = true),
         )
         assertEquals(
-            "Saved on this device. It will be sent when you have a signal.",
+            "Saved on this phone. It sends when you're online.",
             offlineSavedMessage(kept, isCorrection = false),
         )
     }

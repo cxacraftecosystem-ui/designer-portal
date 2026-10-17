@@ -1235,7 +1235,7 @@ export const DW_LOCAL_START_ACTION = "Start one on this device";
  * is never coming.
  */
 export const DW_LOCAL_START_NOTE =
-  "Not a workshop yet. You will link it to one of your workshops when the connection returns.";
+  "Not a workshop yet. Link it to one when online.";
 
 /** The row's marker, once such a draft exists. */
 export const DW_LOCAL_DRAFT_UNLINKED = "Started on this device. Not a workshop yet.";
