@@ -488,9 +488,7 @@ fun encodeWorkshopCode(recordType: String, id: String?): DwEncodeResult {
     if (isDeviceLocalId(type, trimmed)) {
         return DwEncodeResult.Refused(
             DwEncodeRefusal.ID_IS_DEVICE_LOCAL,
-            "This workshop exists only on this device, so there is nothing for anybody else to scan " +
-                "yet — a code for it would open nothing on their phone. It gets a shareable code once " +
-                "it has uploaded: connect this device, let it sync, and print the code then."
+            "Not uploaded yet — sync, then print its code."
         )
     }
 
@@ -671,9 +669,7 @@ fun decodeWorkshopCode(input: String?): DwDecodeResult {
     if (isDeviceLocalId(recordType, id)) {
         return DwDecodeResult.Refused(
             DwDecodeRefusal.DEVICE_LOCAL,
-            "That code names a workshop that had not been shared yet when it was written down — it " +
-                "only ever meant anything on the device that made it. Ask whoever created the " +
-                "workshop to sync their device and send you the code it prints then."
+            "This code was made before the workshop uploaded. Ask its creator to sync and send a new code."
         )
     }
     if (!ID_PATTERN.matches(id)) {
@@ -1061,10 +1057,7 @@ fun unresolvedWorkshopCodeMessage(recordType: DwWorkshopRecordType): String {
         //
         // Word for word the web's, in `frontend/lib/workshopCodes.ts`: two clients explaining one
         // refusal two ways is the failure this whole file is written against.
-        return "No design workshop you can open matches that code. If a colleague has just shared " +
-            "it with you, the workshop is there and you have not been added to it yet — only an " +
-            "admin can do that, so send them the code and ask to be put on it. Everything you have " +
-            "already recorded on this device stays where it is."
+        return "No workshop you can open matches this code. Ask an admin to add you — your work here is kept."
     }
     // `lowercase()` and not `toLowerCase()`: the latter is the DEFAULT locale, and on a handset set to
     // Turkish it maps `I` to a dotless `ı`, so an "Interview" would be described to a designer with a

@@ -151,11 +151,11 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     fields: [
       "What should be corrected?",
       "Which stage is it about? — “The report as a whole”, or one named stage",
-      "“File a suggestion” — leaves the report where it is",
-      "“Send the report back” — moves it to Needs revision"
+      "“Suggest” — leaves the report where it is",
+      "“Send back” — moves it to Needs revision"
     ],
     watch: [
-      "File a suggestion keeps the report where it is. Send it back moves it to Needs revision.",
+      "Suggest keeps the report where it is. Send back moves it to Needs revision.",
       "Notes can't be edited or withdrawn. File another if you change your mind.",
       "You can file notes once the report is handed in.",
       "Nothing here changes a workshop's content; sending back changes only its status.",

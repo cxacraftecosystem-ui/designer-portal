@@ -552,7 +552,7 @@ function FeedbackPanel({
               type="button"
             >
               {busy === "file" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-              File a suggestion
+              Suggest
             </button>
             <button
               className="field-button"
@@ -561,7 +561,7 @@ function FeedbackPanel({
               type="button"
             >
               {busy === "send" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-              Send the report back
+              Send back
             </button>
           </ActionGroup>
           <p className="text-xs leading-5 text-ink-500">

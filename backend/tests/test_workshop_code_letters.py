@@ -206,9 +206,9 @@ def test_the_two_clients_agree_about_every_letter_in_both_directions() -> None:
 #: wherever it is scanned, so the duplication is pinned rather than trusted. Matched by their
 #: opening clause and compared whole, so a sentence reworded on one side alone fails here.
 _SHARED_SENTENCES = (
-    "This workshop exists only on this device, so there is nothing for anybody else to scan yet",
-    "That code names a workshop that had not been shared yet when it was written down",
-    "No design workshop you can open matches that code. If a colleague has just shared it with you",
+    "Not uploaded yet — sync, then print its code.",
+    "This code was made before the workshop uploaded.",
+    "No workshop you can open matches this code.",
 )
 
 

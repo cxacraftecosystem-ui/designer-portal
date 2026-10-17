@@ -11917,7 +11917,10 @@ private fun ArtisanForm(
  * afternoon is cancelled".
  */
 internal const val WORKSHOP_CREATE_REFUSAL =
-    "Only ministry and admin accounts create workshops. Ask one to open yours; it appears here once you're added."
+    "Workshops are created by the ministry — a Ministry Admin, an admin or the master admin. Ask " +
+        "them to open the workshop for your cluster; it will appear in your list as soon as you are " +
+        "added to it, and you can then record artisans, products, tools, processes and interviews " +
+        "against it exactly as before. Any workshop you already have access to is open to you now."
 
 /**
  * The refusal in the form's own slot, under the form's own heading — and the door that is still open.
