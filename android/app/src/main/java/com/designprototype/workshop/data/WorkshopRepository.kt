@@ -2288,6 +2288,10 @@ class WorkshopRepository(
         body: DwInspectionFeedbackBody
     ): DwInspectionFeedbackAnswerDto = api.sendInspectionBack(workshopId, body)
 
+    /** Mark the current round "Checked, no corrections", or take it back. Online only. */
+    suspend fun setInspectionRoundCleared(workshopId: String, cleared: Boolean): DwInspectionFeedbackAnswerDto =
+        if (cleared) api.clearInspectionRound(workshopId) else api.withdrawInspectionClearance(workshopId)
+
     /** Every note this account has written on this phone and not yet seen onto the record. */
     suspend fun queuedInspectionNotes(context: Context, workshopId: String? = null): List<DwQueuedInspectionNote> {
         val owner = cachedUser()?.id?.takeIf { it.isNotBlank() } ?: return emptyList()

@@ -713,6 +713,8 @@ data class DwInspectionDetailDto(
      * button on stages that have no write route at all.
      */
     val mayRecordFeedback: Boolean = false,
+    /** This inspector's "Checked, no corrections" on the current round, or null (2026-10-17). */
+    val myClearedAt: String? = null,
 )
 
 /**
