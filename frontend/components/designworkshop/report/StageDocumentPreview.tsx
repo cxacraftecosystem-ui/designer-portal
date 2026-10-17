@@ -101,6 +101,42 @@ export function useStableBlocks(next: PreviewBlock[]): PreviewBlock[] {
  */
 export const LIVE_DEBOUNCE_MS = 250;
 
+/**
+ * The most one load of the preview may take — the draft, the registry, the kept sources and the
+ * server's document — before the panel stops saying "Building the document…" and offers Try again.
+ * None of those requests carries a timeout of its own, so a stalled connection used to leave the
+ * panel building for ever. Android's `DW_LIVE_PREVIEW_TIMEOUT_MS`, to the ms.
+ */
+export const PREVIEW_DEADLINE_MS = 20_000;
+
+/** Thrown by {@link withDeadline} when the work outlives its deadline. */
+export class PreviewDeadlineError extends Error {
+  constructor() {
+    super("The preview took too long to build.");
+    this.name = "PreviewDeadlineError";
+  }
+}
+
+/**
+ * `work`, or a {@link PreviewDeadlineError} once `ms` have passed — whichever settles first. The work
+ * is not cancelled: a late answer still lands through the caller's own generation check.
+ */
+export function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new PreviewDeadlineError()), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 /** Per-viewer convenience: whether the preview was left open. Never state anything depends on. */
 const OPEN_KEY = "dw_stage_preview_open";
 
@@ -290,7 +326,7 @@ export function StageDocumentPreview({
       const userId = draftSessionUserId();
       const offline = typeof navigator !== "undefined" && navigator.onLine === false;
       const fromServer = localOnly === false && !offline;
-      try {
+      const run = async () => {
         const [nextDraft, nextRegistry] = await Promise.all([
           draftId ? loadDraft(draftId).catch(() => null) : Promise.resolve(null),
           loadRegistry()
@@ -336,6 +372,14 @@ export function StageDocumentPreview({
           setBaseError(null);
         }
         drawn.current = token;
+      };
+      try {
+        await withDeadline(run(), PREVIEW_DEADLINE_MS);
+      } catch {
+        // Never a spinner without end: the pages already up stay up, and the panel offers Try again.
+        if (generation.current === mine) {
+          setBaseError({ message: "The preview couldn't be built.", offline: false });
+        }
       } finally {
         if (generation.current === mine) setBusy(false);
       }
@@ -532,11 +576,27 @@ export function StageDocumentPreview({
               </p>
 
               {baseError && !shown ? (
-                <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {baseError.offline
-                    ? "The document couldn't be built just now. Everything captured is safe, and it will be built again on the next save."
-                    : baseError.message}
-                </p>
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+                >
+                  <p className="min-w-0 flex-1">
+                    {baseError.offline
+                      ? "The document couldn't be built just now. Everything captured is safe, and it will be built again on the next save."
+                      : baseError.message}
+                  </p>
+                  <button
+                    type="button"
+                    className="shrink-0 font-semibold underline underline-offset-2"
+                    disabled={busy}
+                    onClick={() => {
+                      setBaseError(null);
+                      void load(refreshToken);
+                    }}
+                  >
+                    Try again
+                  </button>
+                </div>
               ) : null}
 
               {shown ? (

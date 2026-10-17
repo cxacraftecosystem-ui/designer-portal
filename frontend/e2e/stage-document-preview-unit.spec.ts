@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-import { sliceStageBlocks } from "@/components/designworkshop/report/StageDocumentPreview";
+import {
+  PreviewDeadlineError,
+  sliceStageBlocks,
+  withDeadline
+} from "@/components/designworkshop/report/StageDocumentPreview";
 import type { PreviewBlock } from "@/components/designworkshop/report/previewModel";
 import type { DwRun } from "@/lib/designWorkshops";
 
@@ -220,4 +224,19 @@ test("case and doubled spaces do not decide whether a stage is found", () => {
     "cluster, area &  craft   BACKGROUND",
     "Found anyway."
   ]);
+});
+
+/*
+  THE PANEL NEVER BUILDS FOR EVER. None of the preview's requests carries a timeout of its own, so a
+  stalled connection — or a workshop with no draft on this device whose server read never answers —
+  left "Building the document…" up indefinitely. `withDeadline` is what turns that into Try again.
+*/
+test("a load that never answers fails at its deadline instead of building for ever", async () => {
+  const never = new Promise<string>(() => undefined);
+  await expect(withDeadline(never, 20)).rejects.toBeInstanceOf(PreviewDeadlineError);
+});
+
+test("a load that answers in time is passed through, value and failure alike", async () => {
+  await expect(withDeadline(Promise.resolve("pages"), 1000)).resolves.toBe("pages");
+  await expect(withDeadline(Promise.reject(new Error("401")), 1000)).rejects.toThrow("401");
 });

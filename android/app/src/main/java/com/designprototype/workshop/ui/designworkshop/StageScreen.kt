@@ -1351,20 +1351,40 @@ fun StageScreen(
         )
 
         /*
-          THE STAGE'S PAGES, LIVE. Rebuilt from the draft on disk with this screen's unsaved answers
-          laid over it, on the same debounce rhythm the web uses — see [DwStageDocumentPreview].
+          THE STAGE'S PAGES, LIVE. Rebuilt from the draft on disk merged with the server's copy (read
+          once per screen, the report screen's merge) with this screen's unsaved answers laid over it,
+          on the same debounce rhythm the web uses; see [dwStagePreviewDraft].
           Closed until asked for: building the document is the right cost for a designer who wants to
           see it and the wrong one for every stage open.
         */
+        val previewServerCopy = remember(workshopId, scope) { DwPreviewServerCopy(scope) }
         DwStageDocumentPreview(
             workshopId = workshopId,
             stageTitle = spec.title,
             schema = previewSchema,
             revision = revision,
-            liveDraft = {
-                WorkshopDraftStore.load(appContext, workshopId)?.let { disk ->
-                    disk.copy(stages = disk.stages + (spec.key to dwLiveStageDraft(spec, state, disk.stages[spec.key])))
+            liveDraft = liveDraft@{
+                val remoteId = syncId
+                val read = if (remoteId == null) {
+                    DwServerRead.NotNeeded
+                } else {
+                    previewServerCopy.read(online = ConnectivityObserver.isOnline(appContext)) {
+                        repository.designWorkshopStages(remoteId)
+                    }
                 }
+                val registry = previewSchema ?: return@liveDraft DwStagePreviewSource(null, read)
+                DwStagePreviewSource(
+                    draft = dwStagePreviewDraft(
+                        schema = registry,
+                        workshopId = workshopId,
+                        stageKey = spec.key,
+                        local = WorkshopDraftStore.load(appContext, workshopId),
+                        remoteId = remoteId,
+                        remote = (read as? DwServerRead.Read)?.copy,
+                        live = { existing -> dwLiveStageDraft(spec, state, existing) },
+                    ),
+                    serverRead = read,
+                )
             },
         )
 

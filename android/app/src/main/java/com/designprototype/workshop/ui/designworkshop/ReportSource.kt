@@ -233,7 +233,7 @@ internal fun reportSourceFor(
  * choosing the near-empty .docx this whole file exists to stop; anyone tempted to drop the carry in
  * `stageDraftFromRemote` is choosing to delete an answer on the designer's behalf.
  */
-private fun StageDraft.holdsWork(): Boolean =
+internal fun StageDraft.holdsWork(): Boolean =
     values.keys.any { !it.startsWith("_") } || rows.isNotEmpty() || custom.isNotEmpty()
 
 /**
