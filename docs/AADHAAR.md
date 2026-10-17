@@ -101,11 +101,12 @@ Under the Aadhaar Act, 2016 and the Aadhaar (Authentication and Offline Verifica
 | `aadhaarVerifyNameMatch` | the name comparison's verdict |
 | `aadhaarVerifyById`, `aadhaarVerifyDecidedById`, `aadhaarVerifyDecidedAt` | who verified; which admin decided a mismatch, and when |
 
-**Never stored, never logged**: the full Aadhaar number, the VID, the photograph, the address, the
-QR text, the ZIP or XML, the share code, the mobile number or e-mail typed for the hash check, the
-OTP, the PID block, the session key, any raw UIDAI response. Everything is processed in memory and
-discarded when the request returns. The OTP throttle (`AadhaarOtpThrottle`) holds an HMAC of the
-number under a server secret, the caller's id and a time — not the number.
+**Never stored or logged by verification**: the full Aadhaar number, the VID, the photograph, the
+address, the QR text, the ZIP or XML, the share code, the mobile number or e-mail typed for the hash
+check, the OTP, the PID block, the session key, any raw UIDAI response. Everything is processed in
+memory and discarded when the request returns. The OTP throttle (`AadhaarOtpThrottle`) holds an HMAC
+of the number under a server secret, the caller's id and a time — not the number. What the artisan
+register keeps of a typed number is the next paragraph, not this one.
 
 **`Artisan.aadhaarNumber` is untouched.** It is the deduplication key a researcher types, stored and
 masked (`XXXX XXXX 9012`) exactly as before (`drop_masked_identity_numbers`,
