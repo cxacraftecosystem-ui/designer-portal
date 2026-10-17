@@ -358,4 +358,7 @@ def test_every_approvals_route_stands_behind_the_authority_and_the_literal_comes
         "/design-workshop-approvals/{workshop_id}/approve",
         "/design-workshop-approvals/{workshop_id}/revise",
         "/design-workshop-approvals/{workshop_id}/hand-on",
+        # 2026-10-18: "Approve and hand on" and a re-issued office link, behind the same authority.
+        "/design-workshop-approvals/{workshop_id}/approve-and-hand-on",
+        "/design-workshop-approvals/{workshop_id}/delivery/resend",
     }

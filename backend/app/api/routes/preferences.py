@@ -7,6 +7,7 @@ from app.core.db import db
 from app.core.deps import can_approve_design_workshops, get_current_user, role_value
 from app.schemas.preferences import NotificationPreferencesUpdate, PreferencesUpdateRequest
 from app.services import email_outbox, mailer
+from app.services.design_workshop_inspectors import holds_any_inspection
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
@@ -74,7 +75,7 @@ async def _reviews_hand_ins(user: Any) -> bool:
         return True
     if role_value(user) == "INSPECTOR":
         return True
-    return await db.designworkshopinspector.count(where={"userId": user.id}) > 0
+    return await holds_any_inspection(user.id)
 
 
 async def _notification_payload(row: Any, user: Any) -> dict[str, Any]:

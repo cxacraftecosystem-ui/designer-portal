@@ -159,7 +159,9 @@ def test_every_route_on_the_prefix_carries_the_sanction_gate_read_included() -> 
     # a hard-coded number here is that adding a door to this prefix has to be a DELIBERATE act,
     # because every door on it reads a register of named designers, their personal addresses and
     # the public money attached to them. Do not loosen this into an inequality.
-    assert len(routes) == 11, [getattr(r, "path", None) for r in routes]
+    # TWELVE SINCE 2026-10-18: "Remind designers" (`POST /{id}/remind`) e-mails the designers an
+    # order names what Workshop Setup still needs, behind the same gate.
+    assert len(routes) == 12, [getattr(r, "path", None) for r in routes]
     for route in routes:
         calls = _dependency_calls(route.dependant)
         assert sanction_routes.require_sanction_recorder in calls, route.path

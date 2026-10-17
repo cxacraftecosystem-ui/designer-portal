@@ -768,16 +768,15 @@ async def notify_record_comment(
 async def hand_in_audience(workshop_id: str) -> list[tuple[Any, bool]]:
     """``[(account, is_approver)]``: the workshop's assigned inspectors, then the approving authority
     (every Ministry Admin and master admin). An account in both is listed once, as an inspector."""
-    inspectors = await db.designworkshopinspector.find_many(
-        where={"designWorkshopId": workshop_id}, include={"user": True}
-    )
+    from app.services.design_workshop_inspectors import inspector_accounts
+
+    inspectors = await inspector_accounts(workshop_id)
     approvers = await db.user.find_many(
         where={"role": {"in": ["MINISTRY_ADMIN", "MASTER_ADMIN"]}}, order={"createdAt": "desc"}, take=MAX_FANOUT
     )
     people: dict[str, tuple[Any, bool]] = {}
-    for row in inspectors:
-        if row.user is not None:
-            people.setdefault(row.user.id, (row.user, False))
+    for person in inspectors:
+        people.setdefault(person.id, (person, False))
     for person in approvers:
         people.setdefault(person.id, (person, True))
     return list(people.values())
