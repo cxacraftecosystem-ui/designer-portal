@@ -42,7 +42,6 @@ import { Eye, EyeOff, KeyRound } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { TwoStepCodeEntry, type TwoStepCodeKind } from "@/components/TwoStepCodeEntry";
 import { isCompleteCode } from "@/components/ui/otpCode";
-import { setToken } from "@/lib/api";
 import { isUnreachable } from "@/lib/failureTriage";
 import { googleClientId, loadGoogleIdentity } from "@/lib/googleIdentity";
 import {
@@ -167,11 +166,10 @@ export function ChangePasswordCard() {
       setShow(false);
       setProof(null);
       if (fresh) {
-        // THE TOKEN THIS TAB HOLDS WAS JUST RETIRED with every other session of the account — the
+        // THE SESSION THIS TAB HELD WAS JUST RETIRED with every other session of the account — the
         // server binds a session to the password it was opened with. The fresh one came back in the
-        // answer's `X-Session-Token` header; adopted before `/me` is re-read, or the re-read is
-        // refused and this tab is signed out by its own change.
-        setToken(fresh);
+        // answer's `X-Session-Token` header, and this site's change-password route has already put it
+        // in the session cookie, so the `/me` re-read below goes out with it.
         void refreshMe();
         setChanged(settingFirst ? PASSWORD_ADDED : CHANGED_HERE_ONLY);
       } else if (settingFirst) {

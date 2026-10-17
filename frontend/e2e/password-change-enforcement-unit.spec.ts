@@ -8,6 +8,7 @@ import {
   PASSWORD_CHANGE_REQUIRED_HEADER,
   apiFetch,
   apiFetchWithHeaders,
+  getSessionMarker,
   onPasswordChangeRequired,
   sessionOwesPasswordChange,
   setSessionOwesPasswordChange
@@ -15,7 +16,13 @@ import {
 import { isCredentialExpiry, isPasswordChangeRefusal, isUnreachable } from "@/lib/failureTriage";
 import { MediaBatchError } from "@/lib/media";
 import { currentPasswordRefused } from "@/lib/passwordChange";
+import { SESSION_ROTATED_HEADER } from "@/lib/sessionCookie";
 import { SESSION_TOKEN_HEADER, changeOwnPassword } from "@/lib/signIn";
+
+import { installSessionCookie, removeSessionCookie, type FakeSessionCookie } from "./support/fakeSessionCookie";
+
+/** The current fake marker cookie; replaced by every `installFakeWindow`. */
+let session: FakeSessionCookie = installSessionCookie(null);
 
 /**
  * THE PASSWORD GATE, ENFORCED BY THE SERVER AND MET — NOT SUFFERED — BY THE CLIENT.
@@ -88,14 +95,9 @@ function backendConstant(name: string): string | null {
  */
 function installFakeWindow(pathname: string, storedToken: string | null): Recorded {
   const recorded: Recorded = { assign: [], replace: [] };
-  const store = new Map<string, string>();
-  if (storedToken) store.set("field_repo_token", storedToken);
+  // The session the page can see is its marker cookie (the token itself is HttpOnly).
+  session = installSessionCookie(storedToken);
   (globalThis as Record<string, unknown>).window = {
-    localStorage: {
-      getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => void store.set(key, value),
-      removeItem: (key: string) => void store.delete(key)
-    },
     location: {
       pathname,
       protocol: "http:",
@@ -115,9 +117,8 @@ function respond(status: number, detail: string, headers: Record<string, string>
     });
 }
 
-const tokenNow = () =>
-  ((globalThis as Record<string, unknown>).window as { localStorage: { getItem(k: string): string | null } })
-    .localStorage.getItem("field_repo_token");
+/** The session this page still believes in: null once `apiFetch` has ended it. */
+const tokenNow = () => getSessionMarker();
 
 function asBatchFailure(error: unknown, name = "loom.jpg"): MediaBatchError {
   return new MediaBatchError(`All 1 media file(s) failed to upload (${name}).`, [
@@ -127,6 +128,7 @@ function asBatchFailure(error: unknown, name = "loom.jpg"): MediaBatchError {
 
 test.afterEach(() => {
   delete (globalThis as Record<string, unknown>).window;
+  removeSessionCookie();
   (globalThis as Record<string, unknown>).fetch = realFetch;
   // Module state, and this worker runs other spec files after this one.
   setSessionOwesPasswordChange(false);
@@ -308,12 +310,12 @@ test("a re-read that fails on the connection keeps the account it already had", 
   const body = refresh.slice(0, refresh.indexOf("}, [adopt]);"));
   const caught = body.slice(body.indexOf("} catch (err) {"), body.indexOf("} finally {"));
   expect(caught).toMatch(
-    /if \(err instanceof ApiError && \(err\.status === 401 \|\| err\.status === 403\) && !sessionReplacedSince\(sentWith\)\) \{\s*setToken\(null\);\s*adopt\(null\);\s*\}/
+    /if \(err instanceof ApiError && \(err\.status === 401 \|\| err\.status === 403\) && !sessionReplacedSince\(sentWith\)\) \{\s*endSession\(\);\s*adopt\(null\);\s*\}/
   );
   expect((caught.match(/adopt\(/g) ?? []).length, "and nowhere else in the catch").toBe(1);
-  // `sentWith` is the token the re-read went out with, read before the request — not after it.
-  expect(body.indexOf("const sentWith = getToken();")).toBeGreaterThan(-1);
-  expect(body.indexOf("const sentWith = getToken();")).toBeLessThan(body.indexOf('apiFetch<User>("/me"'));
+  // `sentWith` is the session the re-read went out with, read before the request — not after it.
+  expect(body.indexOf("const sentWith = getSessionMarker();")).toBeGreaterThan(-1);
+  expect(body.indexOf("const sentWith = getSessionMarker();")).toBeLessThan(body.indexOf('apiFetch<User>("/me"'));
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -328,25 +330,24 @@ function answer(status: number, body: unknown, before?: () => void, headers: Rec
   };
 }
 
-const setStoredToken = (token: string) =>
-  ((globalThis as Record<string, unknown>).window as { localStorage: { setItem(k: string, v: string): void } })
-    .localStorage.setItem("field_repo_token", token);
+/** The site's answer replaced the session (a sign-in, a password change): a new marker cookie. */
+const setStoredToken = (token: string) => session.set(token);
 
-test("changeOwnPassword hands back the fresh session from its header, and null where none came back", async () => {
+test("changeOwnPassword reports a renewed session from the site's header, and false where none came", async () => {
   // Since 2026-10-09 every token carries the fingerprint of the password it was opened with, so the
-  // change retires the token that sent it — and answers with one minted after the write, in the
-  // `X-Session-Token` header. The body stays `{"ok": true}`: see `SESSION_TOKEN_HEADER`.
+  // change retires the token that sent it — and the API answers with one minted after the write, in
+  // `X-Session-Token`. Since 2026-10-17 this site's change-password route puts that token in the
+  // HttpOnly cookie and answers `X-Session-Rotated: 1` instead: the page learns only that it happened.
   installFakeWindow("/settings", "a-token-the-change-will-retire");
-  answer(200, { ok: true }, undefined, { "X-Session-Token": "a-fresh-token" });
-  expect(await changeOwnPassword("old-password", "new-password")).toBe("a-fresh-token");
-  // The helper hands it over and adopts nothing itself: the caller adopts it before re-reading /me.
-  expect(tokenNow()).toBe("a-token-the-change-will-retire");
+  answer(200, { ok: true }, undefined, { [SESSION_ROTATED_HEADER]: "1" });
+  expect(await changeOwnPassword("old-password", "new-password")).toBe(true);
 
-  // An older server — or a header the browser was not allowed to read: nothing to adopt.
+  // An older server, or no renewal: nothing changed hands.
   answer(200, { ok: true });
-  expect(await changeOwnPassword("old-password", "new-password")).toBeNull();
-  answer(200, { ok: true }, undefined, { "X-Session-Token": "  " });
-  expect(await changeOwnPassword("old-password", "new-password"), "a blank header is no token").toBeNull();
+  expect(await changeOwnPassword("old-password", "new-password")).toBe(false);
+  // The API's own header, should one ever slip past the site, is not something the page takes.
+  answer(200, { ok: true }, undefined, { "X-Session-Token": "a-fresh-token" });
+  expect(await changeOwnPassword("old-password", "new-password"), "the page never takes a token").toBe(false);
 });
 
 test("a token in the change-password BODY is never adopted, whatever a server puts there", async () => {
@@ -358,16 +359,14 @@ test("a token in the change-password BODY is never adopted, whatever a server pu
   */
   installFakeWindow("/settings", "a-token-the-change-will-retire");
   answer(200, { ok: true, accessToken: "a-token-in-the-body" });
-  expect(await changeOwnPassword("old-password", "new-password")).toBeNull();
-  answer(200, { ok: true, accessToken: "a-token-in-the-body" }, undefined, { "X-Session-Token": "the-header-token" });
-  expect(await changeOwnPassword("old-password", "new-password")).toBe("the-header-token");
+  expect(await changeOwnPassword("old-password", "new-password")).toBe(false);
 
   expect(SESSION_TOKEN_HEADER, "spelled once, lower-case: Headers.get is case-insensitive").toBe("x-session-token");
   // From the declaration to the first closing brace at the start of a line — `^` under the `m` flag, so
   // a CRLF checkout matches exactly as an LF one does.
   const body = /export async function changeOwnPassword\([\s\S]*?^\}/m.exec(SIGN_IN)?.[0] ?? "";
   expect(body, "the helper was located").toContain('apiFetchWithHeaders<unknown>("/auth/change-password"');
-  expect(body).toContain("headers.get(SESSION_TOKEN_HEADER)");
+  expect(body).toContain("sessionRotated(headers)");
   expect(body, "and nothing reads the body for a token").not.toContain("accessToken");
 });
 
@@ -461,11 +460,7 @@ test("a 401 for a token this tab has since replaced keeps the session that repla
 
 test("a token CLEARED while the request was out is not 'replaced': the usual 401 handling stands", async () => {
   const recorded = installFakeWindow("/products", "a-dying-token");
-  answer(401, { detail: "This session is no longer valid. Sign in again." }, () =>
-    ((globalThis as Record<string, unknown>).window as { localStorage: { removeItem(k: string): void } }).localStorage.removeItem(
-      "field_repo_token"
-    )
-  );
+  answer(401, { detail: "This session is no longer valid. Sign in again." }, () => session.set(null));
   await apiFetch("/products?page=1").catch(() => undefined);
   expect(tokenNow()).toBeNull();
   expect(recorded.replace).toEqual(["/login"]);

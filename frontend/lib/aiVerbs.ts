@@ -52,7 +52,7 @@
  * to is the money and the meter, not the plumbing.
  */
 
-import { API_BASE, ApiError, ApiUnconfiguredError, apiFetch, assertApiConfigured, describeApiDetail, getToken } from "@/lib/api";
+import { API_BASE, ApiError, ApiUnconfiguredError, apiFetch, assertApiConfigured, describeApiDetail } from "@/lib/api";
 import { fileNameFromDisposition } from "@/lib/designWorkshops";
 import { blockText, orderedRange, sliceSpans, type DocRange, type RichDoc } from "@/lib/richText";
 import { isUnreachable } from "@/lib/offline";
@@ -478,9 +478,8 @@ export async function downloadDesignWorkshopSubtitles(
 ): Promise<DwSubtitleFile> {
   assertApiConfigured();
 
+  // No Authorization header: the call is same-origin, so the session cookie goes with it.
   const headers = new Headers();
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const response = await fetch(
     `${API_BASE}/api/design-workshops/${workshopId}/ai-layers/${layerId}/subtitles.${format}` +

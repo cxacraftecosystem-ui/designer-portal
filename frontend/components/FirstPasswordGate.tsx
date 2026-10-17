@@ -29,7 +29,6 @@ import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, Lock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { setToken } from "@/lib/api";
 import { isUnreachable } from "@/lib/failureTriage";
 import {
   PASSWORD_CHANGE_PROMPT,
@@ -154,14 +153,12 @@ export function FirstPasswordGate({
     setSaving(true);
     setError(null);
     try {
-      const fresh = await changeOwnPassword(current, next);
       // THE SESSION THIS FORM WAS SENT WITH IS RETIRED BY ITS OWN SUCCESS — the server binds a session
       // to the password it was opened with, which is what ends a session somebody else opened with
-      // the temporary password. The fresh one arrives in the answer's `X-Session-Token` header and is
-      // adopted BEFORE `onDone`, whose re-read of `/me` must go out with it or be refused. Null keeps
-      // today's behaviour: an older server retired nothing, and a header the browser could not read
-      // costs the person one sign-in with the password they have just chosen.
-      if (fresh) setToken(fresh);
+      // the temporary password. The fresh one arrives in the answer's `X-Session-Token` header, and
+      // this site's change-password route puts it in the session cookie before the answer reaches
+      // this line, so `onDone`'s re-read of `/me` already goes out with it. Nothing to adopt here.
+      await changeOwnPassword(current, next);
       onDone();
     } catch (err) {
       if (currentPasswordRefused(err)) {

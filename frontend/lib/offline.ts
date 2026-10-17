@@ -122,7 +122,7 @@
  * A STORE THAT CANNOT BE READ IS NOT AN EMPTY STORE. See {@link OutboxStoreHealth}.
  */
 
-import { ApiError, apiFetch, getToken, sessionOwesPasswordChange } from "@/lib/api";
+import { ApiError, apiFetch, getSessionMarker, sessionOwesPasswordChange } from "@/lib/api";
 // `underlyingIsTransient` AND NOT `isTransient` FOR THE DRAIN. They are two readings of one table
 // and differ only in whether a wrapper is opened first; the drain needs the opened one, because
 // every media failure it meets arrives inside a `MediaBatchError` and a false here MARKS the item
@@ -1958,7 +1958,7 @@ async function runSync(): Promise<SyncResult> {
   // round trip per queued file to be told so. (It was also the only defence while `uploadMediaBatch`
   // could not be told to stay put on a 401; both legs pass `redirectOn401: false` now, so this is
   // once again just the cheap answer to a question already settled.)
-  if (typeof window !== "undefined" && !getToken()) {
+  if (typeof window !== "undefined" && !getSessionMarker()) {
     return {
       synced: 0,
       failed: 0,

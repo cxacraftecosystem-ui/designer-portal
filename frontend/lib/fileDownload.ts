@@ -39,7 +39,7 @@
  * what the reader had to do next.
  */
 
-import { API_BASE, ApiError, assertApiConfigured, describeApiDetail, getToken } from "@/lib/api";
+import { API_BASE, ApiError, assertApiConfigured, describeApiDetail } from "@/lib/api";
 
 /** A file fetched from the API: the bytes, and the name the server asked for it to be saved as. */
 export type FetchedFile = {
@@ -125,9 +125,8 @@ export function saveBlobToDisk(blob: Blob, fileName: string): void {
 export async function fetchFile(path: string, fallbackName: string): Promise<FetchedFile> {
   assertApiConfigured();
 
+  // No Authorization header: the call is same-origin, so the session cookie goes with it.
   const headers = new Headers();
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const response = await fetch(`${API_BASE}/api${path}`, { headers, cache: "no-store" });
   if (!response.ok) {

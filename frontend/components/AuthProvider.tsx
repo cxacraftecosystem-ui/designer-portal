@@ -8,12 +8,13 @@ import { clearReportCache } from "@/lib/offlineReport/reportCache";
 import {
   ApiError,
   apiFetch,
-  getToken,
+  endSession,
+  getSessionMarker,
   onPasswordChangeRequired,
   sessionReplacedSince,
-  setSessionOwesPasswordChange,
-  setToken
+  setSessionOwesPasswordChange
 } from "@/lib/api";
+import { migrateStoredToken } from "@/lib/session";
 import type { loginBody } from "@/lib/oidcSignIn";
 import { mustChangePassword } from "@/lib/signIn";
 import { isTwoFactorChallenge, type SignInResult, type TwoFactorChallenge } from "@/lib/twoFactor";
@@ -63,7 +64,7 @@ type AuthContextValue = {
    */
   markPasswordChanged: () => void;
   /**
-   * Forget this tab's session without asking the server anything: the token and the account, gone.
+   * Forget this tab's session without asking the API anything: the session cookie and the account, gone.
    *
    * For the moment the server has ALREADY ended the account's sessions — `/set-password` after a
    * redemption, which stamps `sessionsValidFrom` — so the token held here is dead and the account
@@ -96,8 +97,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshMe = useCallback(async () => {
     const probe = ++probes.current;
-    /** The token this re-read goes out with — see the catch. */
-    const sentWith = getToken();
+    /** The session this re-read goes out with (its marker, never the token) — see the catch. */
+    const sentWith = getSessionMarker();
     try {
       /*
         `redirectOn401: false` is load-bearing, not tidiness.
@@ -139,7 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // session already let go of, and ending the account here would sign the person out the moment
       // they complied (`sessionReplacedSince`, which `apiFetch` asks too).
       if (err instanceof ApiError && (err.status === 401 || err.status === 403) && !sessionReplacedSince(sentWith)) {
-        setToken(null);
+        endSession();
         adopt(null);
       }
       // AND KEEP THE ACCOUNT ON THOSE TOO. This used to null `user` while keeping the token, and a
@@ -152,7 +153,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [adopt]);
 
   useEffect(() => {
-    refreshMe();
+    // A browser signed in before the cookie session shipped still has its token in localStorage:
+    // move it into the cookie (and out of storage) before the first `/me`, so that person stays
+    // signed in. Settles at once for everybody else. See `migrateStoredToken`.
+    void migrateStoredToken().finally(() => refreshMe());
   }, [refreshMe]);
 
   /*
@@ -177,14 +181,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   /**
-   * A sign-in's answer, taken: a session is adopted and its account returned; a TWO-STEP CHALLENGE is
-   * returned untouched, with no token stored and no account adopted — nobody is signed in until
+   * A sign-in's answer, taken: its account is adopted and returned — the session itself is already in
+   * the HttpOnly cookie the sign-in route set, and the answer no longer carries the token at all. A
+   * TWO-STEP CHALLENGE is returned untouched, with no session and no account adopted — nobody is signed in until
    * `verifyTwoFactor` turns it into a session. The caller branches on `isTwoFactorChallenge`.
    */
   const open = useCallback(
     (result: SignInResult): User | TwoFactorChallenge => {
       if (isTwoFactorChallenge(result)) return result;
-      setToken(result.accessToken);
       adopt(result.user);
       return result.user;
     },
@@ -247,7 +251,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await apiFetch("/auth/logout", { method: "POST" });
     } finally {
-      setToken(null);
+      // The sign-out route clears the cookie whatever the API said; this forgets it in the page.
+      endSession();
       adopt(null);
       // The copies kept for a report built with no connection are this account's; a shared laptop
       // must not hand them to the next person who signs in. Drafts are NOT touched — see
@@ -270,7 +275,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refreshMe]);
 
   const clearSession = useCallback(() => {
-    setToken(null);
+    endSession();
     adopt(null);
   }, [adopt]);
 

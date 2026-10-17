@@ -35,6 +35,8 @@ import { absenceProvesIneligible } from "@/lib/designWorkshopViewers";
 import { selfReleaseRefusal, selfReleaseRefused } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 
+import { installSessionCookie } from "./support/fakeSessionCookie";
+
 /**
  * A WORKSHOP SOMEBODY INSPECTS OR SUPERVISES IS READ-ONLY TO THEM — AND EVERY SCREEN THAT WRITES IT
  * SAYS SO BEFORE THEY TYPE.
@@ -85,15 +87,10 @@ const realFetch = globalThis.fetch;
 const account = (role: UserRole, id = `u-${role.toLowerCase()}`): User =>
   ({ id, email: `${id}@example.org`, name: role, role }) as User;
 
-/** A window just real enough for `apiFetch`: a token to send and a location it may inspect. */
+/** A window just real enough for `apiFetch`: a signed-in session and a location it may inspect. */
 function installFakeWindow() {
-  const store = new Map<string, string>([["field_repo_token", "a-perfectly-good-token"]]);
+  installSessionCookie("a-perfectly-good-token");
   (globalThis as Record<string, unknown>).window = {
-    localStorage: {
-      getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => void store.set(key, value),
-      removeItem: (key: string) => void store.delete(key)
-    },
     location: { pathname: "/design-workshops/w1", protocol: "http:", assign: () => undefined, replace: () => undefined }
   };
 }

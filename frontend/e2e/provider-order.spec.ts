@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { sessionTokenOf } from "./support/session";
+
 /**
  * The transcription provider ranking on /settings/api-keys.
  *
@@ -70,14 +72,13 @@ async function signIn(page: Page, email: string, password: string) {
  * be asserting against AppShell's lock panel. Set the same preference the toggle writes.
  */
 async function enableAdminView(page: Page) {
-  const id = await page.evaluate(() => {
-    const token = window.localStorage.getItem("field_repo_token") ?? "";
+  const id = await page.evaluate((token) => {
     try {
       return String(JSON.parse(atob(token.split(".")[1] ?? "")).sub ?? "");
     } catch {
       return "";
     }
-  });
+  }, await sessionTokenOf(page));
   expect(id, "expected a subject claim in the stored JWT after sign-in").toBeTruthy();
   await page.evaluate((sub) => window.localStorage.setItem(`field_repo_admin_view:${sub}`, "on"), id);
 }

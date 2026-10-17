@@ -193,23 +193,22 @@ test("the receipt is said into a status region that exists before it has anythin
   expect(CARD).not.toMatch(/className=\{changed \? "[^"]+" : "hidden"\}/);
 });
 
-test("the session the change answers with is adopted before anything re-reads /me", () => {
+test("the session the change answers with is in the cookie before anything re-reads /me", () => {
   /*
     Since 2026-10-09 the server binds every session to the password it was opened with, so this change
     retires the token that sent it along with every other session — and answers with a fresh one, in
-    its `X-Session-Token` header (the body stays `{"ok": true}`; `changeOwnPassword` reads the header
-    and `password-change-enforcement-unit.spec.ts` drives it). The card adopts it, THEN re-reads the
-    account; the other order is a re-read refused with the token the change just retired, and a tab
-    signed out by its own success. With no header the card does exactly what it did before.
+    its `X-Session-Token` header. Since 2026-10-17 this site's change-password route puts that token in
+    the HttpOnly session cookie before the answer reaches the card, and `changeOwnPassword` resolves
+    `true` (`X-Session-Rotated`; `password-change-enforcement-unit.spec.ts` drives it). So the card has
+    nothing to adopt — and must not try: no script may hold the token. It re-reads the account on a
+    renewal and does exactly what it did before without one.
   */
   expect(SUBMIT).toContain("settingFirst && proof ? await setFirstPassword(next, proof, askCode ? code : undefined) : await changeOwnPassword(current, next);");
-  const adopted = SUBMIT.slice(SUBMIT.indexOf("if (fresh) {"), SUBMIT.indexOf("} else {"));
-  expect(adopted, "the adoption arm was located").toContain("setToken(fresh);");
-  expect(adopted.indexOf("setToken(fresh);"), "adopted first").toBeLessThan(adopted.indexOf("void refreshMe();"));
+  const renewed = SUBMIT.slice(SUBMIT.indexOf("if (fresh) {"), SUBMIT.indexOf("} else {"));
+  expect(renewed, "the renewal arm was located").toContain("void refreshMe();");
   const older = SUBMIT.slice(SUBMIT.indexOf("} else {"), SUBMIT.indexOf("} catch (err) {"));
-  expect(older, "an older server: nothing changes hands").not.toContain("setToken(");
   expect(older).not.toContain("refreshMe(");
-  expect(CARD).toMatch(/import \{ setToken \} from "@\/lib\/api";/);
+  expect(CARD, "no script touches the session token").not.toMatch(/setToken|getToken|localStorage/);
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

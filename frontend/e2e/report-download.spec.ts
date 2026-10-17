@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { signIn } from "./support/session";
+import { signIn, sessionTokenOf } from "./support/session";
 
 /**
  * The report actually downloads.
@@ -43,7 +43,7 @@ for (const format of ["DOCX", "PDF"] as const) {
 
     // The API answers the same request happily — proven here so a failure below is unambiguously
     // the client's, not the server's.
-    const token = await page.evaluate(() => window.localStorage.getItem("field_repo_token"));
+    const token = await sessionTokenOf(page);
     const direct = await page.request.post(`${API}/api/design-workshops/${WORKSHOP}/report`, {
       headers: { Authorization: `Bearer ${token}` },
       data: { formats: [format], record: false }
