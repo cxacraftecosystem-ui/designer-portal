@@ -33,6 +33,12 @@ import pytest
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
+#: A TEST-ONLY Aadhaar fingerprint key (services/aadhaar_fingerprint.py), so every artisan write in
+#: the suite works on a machine whose shell and backend/.env carry none. Never a deployed value.
+TEST_AADHAAR_FINGERPRINT_KEY = "test-only-aadhaar-fingerprint-key-not-a-secret-0123"
+if not os.environ.get("AADHAAR_FINGERPRINT_KEY"):
+    os.environ["AADHAAR_FINGERPRINT_KEY"] = TEST_AADHAAR_FINGERPRINT_KEY
+
 
 # --------------------------------------------------------------------------------------
 # The two async plugins, in the one order under which an anyio test's async fixtures share its loop

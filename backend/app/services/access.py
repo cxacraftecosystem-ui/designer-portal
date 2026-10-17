@@ -462,6 +462,20 @@ async def record_revision(
                 "old": jsonable_encoder(old_value),
                 "new": jsonable_encoder(new_value),
             }
+    # THE AADHAAR IS ONE ANSWER STORED IN TWO COLUMNS (services/aadhaar_fingerprint.py), and the
+    # ledger records it as the one field the editor touched, ``aadhaarNumber``, valueless like every
+    # redacted field. The two columns are deliberately NOT in REVISION_REDACTED_FIELDS: they never
+    # reach the ledger at all, because they are folded into that one entry here. Before the backfill a row's number may still sit in the legacy column, so
+    # "had one" asks every column.
+    if "aadhaarFingerprint" in changes or "aadhaarLast4" in changes:
+        from app.services.aadhaar_fingerprint import has_aadhaar
+
+        changes.pop("aadhaarFingerprint", None)
+        changes.pop("aadhaarLast4", None)
+        changes["aadhaarNumber"] = _redacted_change(
+            "had" if has_aadhaar(record) else None,
+            "has" if data.get("aadhaarFingerprint") else None,
+        )
     if not changes:
         return
     # ``client or db`` would be wrong for the same reason ``os.environ.setdefault`` was wrong in

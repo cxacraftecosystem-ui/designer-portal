@@ -28,7 +28,7 @@ from app.schemas.records import (
     WorkshopUpdate,
     drop_masked_identity_numbers,
 )
-from app.services import design_workshop_posts
+from app.services import aadhaar_fingerprint, design_workshop_posts
 from app.services.access import record_revision
 from app.services.concurrency import gather_reads
 from app.services.record_design_workshop import (
@@ -688,8 +688,25 @@ async def edit_reviewed_record(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Change at least one field before saving.",
         )
+    # The artisan's Aadhaar is stored as a fingerprint and its last four (services/
+    # aadhaar_fingerprint.py), here exactly as on PATCH /artisans.
+    if key == "artisan":
+        try:
+            aadhaar_fingerprint.seal(data, previous=record)
+        except aadhaar_fingerprint.FingerprintKeyMissing as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Aadhaar numbers can't be saved right now. Try again shortly.",
+            ) from exc
     changed = sorted(
-        field for field, value in data.items() if not values_match(get_value(record, field), value)
+        {
+            # The log names the field the reviewer edited, never the stored halves of it.
+            aadhaar_fingerprint.NUMBER_FIELD
+            if field in (aadhaar_fingerprint.FINGERPRINT_FIELD, aadhaar_fingerprint.LAST4_FIELD)
+            else field
+            for field, value in data.items()
+            if not values_match(get_value(record, field), value)
+        }
     )
 
     # THREE WRITES, ONE TRANSACTION (2026-09-03). A reviewer's edit produces a RecordRevision, the

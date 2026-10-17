@@ -34,7 +34,7 @@ import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
-import { ApiError, apiFetch, buildQuery, listResource } from "@/lib/api";
+import { ApiError, apiFetch, listResource } from "@/lib/api";
 import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, type BatchProgress } from "@/lib/media";
@@ -144,7 +144,10 @@ async function findArtisanByAadhaar(digits: string | null, excludeArtisanId: str
   const number = (digits ?? "").trim();
   if (!number || isMaskedIdentityNumber(number) || aadhaarValidationError(number)) return null;
   try {
-    const result = await apiFetch<AadhaarLookupResult>(`/artisans/lookup/aadhaar${buildQuery({ number })}`);
+    const result = await apiFetch<AadhaarLookupResult>("/artisans/lookup/aadhaar", {
+      method: "POST",
+      body: JSON.stringify({ number })
+    });
     const found = result.found ? (result.artisan ?? null) : null;
     return found && found.id !== excludeArtisanId ? found : null;
   } catch {

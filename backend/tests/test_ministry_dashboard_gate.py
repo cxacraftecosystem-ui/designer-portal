@@ -464,7 +464,9 @@ def test_the_beneficiary_export_is_the_shared_one_and_masks_by_construction() ->
     }
     assert identity_labels, "the artisan registry no longer declares the regulated identity columns"
     source = (REPO / "backend/app/services/record_fields.py").read_text(encoding="utf-8")
-    assert "mask_aadhaar(a.aadhaarNumber)" in source
+    # The Aadhaar column is the mask built from the last four digits the register keeps (it keeps
+    # no number since 2026-10-17); the Pehchan card still goes through ``mask_aadhaar``.
+    assert '_f("Aadhaar number", aadhaar_fingerprint.stored_mask)' in source
     assert "mask_aadhaar(a.pehchanCardNumber)" in source
 
 

@@ -23,6 +23,7 @@ import copy
 import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
@@ -196,7 +197,7 @@ def verify_enveloped(
 
 def sign_enveloped(
     root: etree._Element,
-    private_key: rsa.RSAPrivateKey,
+    private_key: rsa.RSAPrivateKey | Any,
     certificate: x509.Certificate,
     *,
     signature_method: str = RSA_SHA256,

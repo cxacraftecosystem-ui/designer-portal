@@ -280,6 +280,9 @@ ARTISAN_CARRIED = {
     # evidence table for "nothing was missed", and a carried column sitting in the refused list
     # would make it evidence for the opposite.
     "aadhaarNumber": "participant.aadhaarNumber (MASKED — see the identity test)",
+    # Since 2026-10-17 the mask is built from the last four (services/aadhaar_fingerprint.py); the
+    # legacy number above is read only for a row the backfill has not reached.
+    "aadhaarLast4": "participant.aadhaarNumber (MASKED, as XXXX XXXX + these four)",
     "address": "participant.address",
     "notes": "participant.recordNotes",
     "dos": "participant.dos",
@@ -319,6 +322,7 @@ _AADHAAR_VERIFICATION = "not carried — an Aadhaar verification result, never c
 
 ARTISAN_NOT_CARRIED = {
     "status": _MUTABLE_VERDICT,
+    "aadhaarFingerprint": "the dedup key, an HMAC under a server secret — it never leaves the API",
     "reviewNotes": "bookkeeping — internal moderation",
     "reviewedById": "bookkeeping — internal moderation",
     "reviewedAt": "bookkeeping — internal moderation",

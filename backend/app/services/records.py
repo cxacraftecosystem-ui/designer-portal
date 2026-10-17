@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.core.db import db
 from app.core.user_fields import SECRET_USER_FIELDS
+from app.services import aadhaar_fingerprint
 from app.services.artisan_identity import mask_aadhaar
 from app.services.concurrency import gather_reads
 
@@ -658,6 +659,18 @@ def _redact_sensitive(
         if _AADHAAR_SENTINEL in value:
             for key in _AADHAAR_RESULT_KEYS:
                 value.pop(key, None)
+        # AN ARTISAN NODE IS SERVED THE MASK, TO EVERY VIEWER (2026-10-17). The register keeps a
+        # fingerprint and the last four digits, never the number (services/aadhaar_fingerprint.py),
+        # so there is no "raw" value left to unmask: ``aadhaarNumber`` becomes "XXXX XXXX 9012"
+        # (or the legacy column's mask before the backfill) and the fingerprint never leaves.
+        if (
+            aadhaar_fingerprint.FINGERPRINT_FIELD in value
+            or aadhaar_fingerprint.LAST4_FIELD in value
+        ) and not isinstance(
+            value.get(aadhaar_fingerprint.LAST4_FIELD, value.get(aadhaar_fingerprint.FINGERPRINT_FIELD)),
+            (dict, list),
+        ):
+            aadhaar_fingerprint.public_view(value)
         if not unmasked and not (viewer_id and value.get("createdById") == viewer_id):
             for key in _IDENTITY_KEYS:
                 if key in value:
@@ -2241,6 +2254,9 @@ PROVENANCE_SKIP_FIELDS = {
     # is belt and braces, so a future caller that merges provenance without popping still cannot
     # attribute it.
     MARKER_BODY_KEY,
+    # The last four digits are the other half of one answer, the Aadhaar; its stamp is filed under
+    # ``aadhaarNumber`` by the fingerprint (see :func:`merge_field_provenance`).
+    aadhaar_fingerprint.LAST4_FIELD,
 }
 
 #: The ``extraMetadata`` keys :func:`merge_field_provenance` must NOT carry forward off the stored
@@ -2358,7 +2374,14 @@ def merge_field_provenance(
             # instead of replacing them. The merge also gives every field its OWN dict — this line
             # used to assign the one shared ``stamp`` object to every changed field, which meant any
             # later per-field edit of the provenance blob silently edited all of them.
-            provenance[field] = stamp | stamps.get(field, {})
+            # The Aadhaar is stored as a fingerprint, and its stamp stays under the field the form
+            # shows (``aadhaarNumber``), so "who entered this" still sits beside the Aadhaar box.
+            key = (
+                aadhaar_fingerprint.NUMBER_FIELD
+                if field == aadhaar_fingerprint.FINGERPRINT_FIELD
+                else field
+            )
+            provenance[key] = stamp | stamps.get(field, {})
 
     if provenance:
         base_extra["fieldProvenance"] = provenance

@@ -1890,6 +1890,58 @@ jobs:
             echo \"two-step key pinned: \$(grep -c -E \"^TWO_FACTOR_(ENCRYPTION_KEY|PREVIOUS_KEYS)=\" \"\$ENVFILE\" || true) line(s)\"
           '"
 
+      # The artisan register's Aadhaar fingerprint key (2026-10-17): the HMAC key every stored
+      # Aadhaar fingerprint is made with (backend/app/services/aadhaar_fingerprint.py), ONE value shared
+      # with the Field Repository so the two registers match. An Actions SECRET, on ssh's STDIN, like
+      # the two-step key above, and for the same reasons it FAILS rather than ships without it: a
+      # release with no key answers 503 to every artisan save carrying an Aadhaar, and a release with a
+      # DIFFERENT key than the live one makes every stored fingerprint unmatchable, duplicates
+      # included. Shape-checked on the runner first. Backup: SSM /iit/shared/aadhaar-fingerprint-key.
+      - name: Pin the Aadhaar fingerprint key
+        env:
+          SHA: ${{ env.REL_ID }}
+          AADHAAR_FINGERPRINT_KEY: ${{ secrets.AADHAAR_FINGERPRINT_KEY }}
+        run: |
+          key="$(printf '%s' "$AADHAAR_FINGERPRINT_KEY" | tr -d '[:space:]')"
+          # A digest of the live key, never the key: compared, not printed.
+          live=$(ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          v=$({ grep -E '^AADHAAR_FINGERPRINT_KEY=' /home/ubuntu/app/current/backend/.env 2>/dev/null || true; } | tail -n1 | cut -d= -f2- | tr -d "[:space:]\"'")
+          printf '%s' "$v" | sha256sum | cut -c1-16
+          REMOTE
+          )
+          empty=$(printf '' | sha256sum | cut -c1-16)
+          if [ -z "$key" ]; then
+            if [ "$live" != "$empty" ]; then
+              echo "::error::The AADHAAR_FINGERPRINT_KEY secret is empty or missing, but the live release has one. Restore the secret before deploying (SSM /iit/shared/aadhaar-fingerprint-key)."
+              exit 1
+            fi
+            echo "::warning::AADHAAR_FINGERPRINT_KEY is not set; artisan saves carrying an Aadhaar will answer 503"
+            exit 0
+          fi
+          KEY="$key" python3 - <<'PY' || exit 1
+          import base64, binascii, os
+          try:
+              raw = base64.b64decode(os.environ["KEY"], validate=True)
+          except (binascii.Error, ValueError):
+              raw = b""
+          if len(raw) != 32:
+              print("::error::AADHAAR_FINGERPRINT_KEY is not 32 bytes of base64; nothing was deployed.")
+              raise SystemExit(1)
+          PY
+          mine=$(printf '%s' "$key" | sha256sum | cut -c1-16)
+          if [ "$live" != "$empty" ] && [ "$live" != "$mine" ]; then
+            echo "::error::AADHAAR_FINGERPRINT_KEY differs from the live release's. Changing it makes every stored fingerprint unmatchable; nothing was deployed."
+            exit 1
+          fi
+          printf '%s\n' "AADHAAR_FINGERPRINT_KEY=$key" | ssh ubuntu@${{ secrets.EC2_HOST }} "ENVFILE='/home/ubuntu/app/releases/$SHA/backend/.env' bash -c '
+            set -euo pipefail
+            frag=\$(cat)
+            [ -s \"\$ENVFILE\" ] && [ -n \"\$(tail -c1 \"\$ENVFILE\")\" ] && printf \"\n\" >> \"\$ENVFILE\"
+            sed -i \"/^AADHAAR_FINGERPRINT_KEY=/d\" \"\$ENVFILE\"
+            printf \"%s\n\" \"\$frag\" >> \"\$ENVFILE\"
+            echo \"Aadhaar fingerprint key pinned: \$(grep -c -E \"^AADHAAR_FINGERPRINT_KEY=.\" \"\$ENVFILE\" || true) line\"
+          '"
+
       # ─── THE VENV, AND WHY IT IS COPIED RATHER THAN REBUILT OR HARD-LINKED ──────────────────
       #
       # A venv per release is what makes the symlink flip a real rollback: roll back to a release

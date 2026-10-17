@@ -129,7 +129,7 @@ from pydantic import ValidationError
 
 from app.schemas.common import LocationInput
 from app.schemas.records import ArtisanCreate
-from app.services import design_workshops, records
+from app.services import aadhaar_fingerprint, design_workshops, records
 from app.services.artisan_identity import mask_aadhaar
 from app.services.artisan_xlsx import MAX_ARTISANS, ParsedArtisan, ParsedArtisanList
 from app.services.xlsx_table import ParseProblem
@@ -184,6 +184,16 @@ async def import_artisans(
     whole argument, which is the single most important decision in this feature.
     """
     from app.core.db import db
+
+    # No fingerprint key, no import: every row carries an Aadhaar, and none could be stored or
+    # matched. Asked before the ledger row so a misconfigured server changes nothing.
+    try:
+        aadhaar_fingerprint.configured_key()
+    except aadhaar_fingerprint.FingerprintKeyMissing as exc:
+        logger.error("artisan import refused: %s", exc)
+        raise HTTPException(
+            status_code=503, detail="Aadhaar numbers can't be saved right now. Try again shortly."
+        ) from exc
 
     # ── THE LEDGER ROW IS WRITTEN FIRST, WITH ZEROS. ────────────────────────────────────────────
     # It is the FIRST write this function makes, so a deployment whose migration has not run fails
@@ -374,20 +384,32 @@ async def _identity_clashes(rows: list[ParsedArtisan]) -> dict[str, Any]:
     pehchans = sorted({a.pehchanCardNumber for a in rows if a.pehchanCardNumber})
     if not aadhaars and not pehchans:
         return {}
+    # The register holds fingerprints, so the file's numbers are fingerprinted to be looked up, and
+    # the answer is keyed back by the number the row carries. Legacy rows (before the backfill) are
+    # matched on the old column as well.
+    number_of = {aadhaar_fingerprint.fingerprint_of(n): n for n in aadhaars}
     clauses: list[dict[str, Any]] = []
     if aadhaars:
-        clauses.append({"aadhaarNumber": {"in": aadhaars}})
+        clauses.append({aadhaar_fingerprint.FINGERPRINT_FIELD: {"in": sorted(number_of)}})
+        if await aadhaar_fingerprint.legacy_pending(db):
+            clauses.append({"aadhaarNumber": {"in": aadhaars}})
     if pehchans:
         clauses.append({"pehchanCardNumber": {"in": pehchans}})
     found = await db.artisan.find_many(
         where={"OR": clauses}, include={"craft": True, "designWorkshop": True}
     )
+    file_numbers = set(aadhaars)
     by_number: dict[str, Any] = {}
     for row in found:
-        for column in ("aadhaarNumber", "pehchanCardNumber"):
-            value = getattr(row, column, None)
-            if value:
-                by_number[value] = row
+        number = number_of.get(getattr(row, aadhaar_fingerprint.FINGERPRINT_FIELD, None) or "")
+        if number:
+            by_number[number] = row
+        legacy = getattr(row, "aadhaarNumber", None) if aadhaar_fingerprint.LEGACY_COLUMN_PRESENT else None
+        if legacy and legacy in file_numbers:
+            by_number[legacy] = row
+        pehchan = getattr(row, "pehchanCardNumber", None)
+        if pehchan:
+            by_number[pehchan] = row
     return by_number
 
 
@@ -548,6 +570,8 @@ async def _create_one(
         return ImportOutcome.REFUSED, None
 
     data = records.clean_data(payload.model_dump())
+    # Fingerprint and last four in place of the number, as ``create_artisan`` does.
+    number = aadhaar_fingerprint.seal(data)
     try:
         # ``allow_create=False`` — see this module's header. A typo'd craft name is a refused ROW,
         # never a new entry in the controlled vocabulary.
@@ -580,7 +604,12 @@ async def _create_one(
             "artisan import row %s lost the unique race on an identity column; linking instead",
             artisan.row,
         )
-        winner = await db.artisan.find_first(where={"aadhaarNumber": artisan.aadhaarNumber})
+        winner = await db.artisan.find_first(
+            where=aadhaar_fingerprint.match_where(
+                number or artisan.aadhaarNumber,
+                legacy=await aadhaar_fingerprint.legacy_pending(db),
+            )
+        )
         if winner is None:
             refuse(
                 artisan.row,
@@ -598,7 +627,7 @@ async def _create_one(
 #: ``_IDENTITY_CONSTRAINTS``. A service reaching into a ROUTE module for a private name is the
 #: dependency direction this codebase refuses, and the alternative — promoting that constant —
 #: would move a message table this module has no use for. Two column names, one line.
-_IDENTITY_COLUMNS = ("aadhaarNumber", "pehchanCardNumber")
+_IDENTITY_COLUMNS = (aadhaar_fingerprint.FINGERPRINT_FIELD, "aadhaarNumber", "pehchanCardNumber")
 
 
 def _is_identity_violation(error: Exception) -> bool:

@@ -174,9 +174,10 @@ async def apply_to_user(user: Any, identity: VerifiedIdentity, actor: Any) -> An
 
 
 def stored_aadhaar_last4(artisan: Any) -> str | None:
-    number = getattr(artisan, "aadhaarNumber", None)
-    digits = "".join(ch for ch in str(number or "") if ch.isdigit())
-    return digits[-4:] if len(digits) == 12 else None
+    """The last four digits the artisan register holds (``aadhaarLast4``; the register keeps no number)."""
+    from app.services.aadhaar_fingerprint import stored_last4
+
+    return stored_last4(artisan)
 
 
 async def apply_to_artisan(artisan: Any, identity: VerifiedIdentity, actor: Any) -> Any:

@@ -135,7 +135,8 @@ erDiagram
   Artisan {
     string name
     string localName
-    string aadhaarNumber "UNIQUE — the deduplication key"
+    string aadhaarFingerprint "UNIQUE — HMAC of the Aadhaar, the deduplication key"
+    string aadhaarLast4 "the four digits every screen shows"
     string pehchanCardNumber "UNIQUE when held"
     string dos "required"
     string donts "required"
@@ -919,3 +920,19 @@ EOF
 **Review trigger:** any file under `backend/prisma/migrations/`. A new migration means this document
 needs a human read, not just a regenerated count — a new column is a fact, but what the column
 *means* is the part only a person can write.
+
+## The Aadhaar fingerprint — added 2026-10-17
+
+**The register keeps no Aadhaar number.** `Artisan.aadhaarFingerprint` (HMAC-SHA256 of the 12 digits
+under `AADHAAR_FINGERPRINT_KEY`, lower-case hex, `@unique`) is the deduplication key, and
+`Artisan.aadhaarLast4` is what every surface shows as `XXXX XXXX 9012`. Both are written only by
+`services/aadhaar_fingerprint.seal`, from the number a client typed, which is then dropped; CHECK
+constraints hold them to 64 hex characters and four digits, and to "both or neither". The legacy
+`aadhaarNumber` column is written only to clear it, is read only to mask and match rows not yet
+backfilled, and is dropped by the deferred migration — run order in `backend/DEPLOY_AWS.md`,
+"Aadhaar fingerprint". The edit history records an Aadhaar change under `aadhaarNumber`, valueless.
+
+**`AadhaarLogArchive`** is the ledger of Aadhaar log archives (Regulation 18(3)): entries older than
+two years leave `RecordRevision` only in the transaction that writes one of these rows, after the
+object has read back from the encrypted backup bucket; `deleteAfter` is when the object is removed.
+**`AadhaarLegalHold`** suspends both for one record. [AADHAAR.md](AADHAAR.md) §3.
