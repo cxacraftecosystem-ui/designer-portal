@@ -72,7 +72,6 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
-    assert_expected_updated_at,
     attach_location,
     clean_data,
     client_key_replay,
@@ -81,6 +80,7 @@ from app.services.records import (
     count_and_page,
     enum_filter_or_422,
     hydrate_relations,
+    lock_and_assert_expected_updated_at,
     merge_field_provenance,
     public_encode,
     require_record,
@@ -1038,7 +1038,8 @@ async def update_workshop(
         # down, which is point 1 of the paragraph above arrived at from the other side. ``None``
         # passes and changes nothing, which is every client shipped to date. See
         # ``records.assert_expected_updated_at``.
-        assert_expected_updated_at(workshop, expected_updated_at)
+        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
+        await lock_and_assert_expected_updated_at(tx, "workshop", workshop, expected_updated_at)
         privileged = access.at_least("EDIT")
         if privileged:
             await record_revision(workshop, current_user, data, "workshop", client=tx)

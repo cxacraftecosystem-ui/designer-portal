@@ -15,12 +15,12 @@ from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import (
     Relation,
     apply_status_policy_update,
-    assert_expected_updated_at,
     clean_data,
     contains,
     count_and_page,
     hydrate_relations,
     include_of,
+    lock_and_assert_expected_updated_at,
     merge_field_provenance,
     public_encode,
     require_record,
@@ -217,7 +217,8 @@ async def update_craft(
         # indexed a string. Corrected 2026-09-03. A ``code`` is NOT being added to the collision:
         # the sentence is the contract the create already shipped, and giving one member of a pair a
         # new shape to make a comment true is the wrong way round.
-        assert_expected_updated_at(craft, expected_updated_at)
+        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
+        await lock_and_assert_expected_updated_at(tx, "craft", craft, expected_updated_at)
         await guard_record_edit(craft, current_user, data, "craft", client=tx)
         # Craft has no status column, so this is a no-op here; wired for parity with the other 6
         # PATCHes.

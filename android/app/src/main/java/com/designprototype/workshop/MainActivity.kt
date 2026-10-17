@@ -10714,6 +10714,9 @@ private fun EditScreen(
 ) {
     // For [cachedRecordForCorrection]: a record opened before can be corrected with no signal.
     val editContext = LocalContext.current.applicationContext
+    /** Set when the record on screen is this phone's saved copy — drawn as [CachedCopyNote]. */
+    var recordCachedNote by remember(recordId) { mutableStateOf<String?>(null) }
+    recordCachedNote?.let { CachedCopyNote(it) }
     // A failed read is drawn as a failure with Try again, never as "Fetching…" for ever, and the
     // delete section waits for a record that actually loaded (UX audit 2026-10-16, DA-06).
     var loadFailed by remember(recordId) { mutableStateOf<String?>(null) }
@@ -10726,7 +10729,7 @@ private fun EditScreen(
             var answersLoading by remember(recordId) { mutableStateOf(true) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { cachedRecordForCorrection(editContext, "artisan", recordId, ArtisanDetailDto.serializer(), onError) { repository.artisan(recordId) } }
+                runCatching { cachedRecordForCorrection(editContext, "artisan", recordId, ArtisanDetailDto.serializer(), { recordCachedNote = it }) { repository.artisan(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load artisan") }
                 runCatching { repository.artisanQuestionnaire(recordId) }
@@ -10756,7 +10759,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<ProductDetailDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { cachedRecordForCorrection(editContext, "product", recordId, ProductDetailDto.serializer(), onError) { repository.product(recordId) } }
+                runCatching { cachedRecordForCorrection(editContext, "product", recordId, ProductDetailDto.serializer(), { recordCachedNote = it }) { repository.product(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load product") }
             }
@@ -10780,7 +10783,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<ProcessDetailDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { cachedRecordForCorrection(editContext, "process", recordId, ProcessDetailDto.serializer(), onError) { repository.process(recordId) } }
+                runCatching { cachedRecordForCorrection(editContext, "process", recordId, ProcessDetailDto.serializer(), { recordCachedNote = it }) { repository.process(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load process") }
             }
@@ -10802,7 +10805,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<ToolDetailDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { cachedRecordForCorrection(editContext, "tool", recordId, ToolDetailDto.serializer(), onError) { repository.tool(recordId) } }
+                runCatching { cachedRecordForCorrection(editContext, "tool", recordId, ToolDetailDto.serializer(), { recordCachedNote = it }) { repository.tool(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load tool") }
             }
@@ -10826,7 +10829,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<WorkshopDetailDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { cachedRecordForCorrection(editContext, "workshop", recordId, WorkshopDetailDto.serializer(), onError) { repository.workshop(recordId) } }
+                runCatching { cachedRecordForCorrection(editContext, "workshop", recordId, WorkshopDetailDto.serializer(), { recordCachedNote = it }) { repository.workshop(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load workshop") }
             }
@@ -10849,7 +10852,7 @@ private fun EditScreen(
             var detail by remember(recordId) { mutableStateOf<CraftDto?>(null) }
             LaunchedEffect(recordId, loadAttempt) {
                 loadFailed = null
-                runCatching { cachedRecordForCorrection(editContext, "craft", recordId, CraftDto.serializer(), onError) { repository.craft(recordId) } }
+                runCatching { cachedRecordForCorrection(editContext, "craft", recordId, CraftDto.serializer(), { recordCachedNote = it }) { repository.craft(recordId) } }
                     .onSuccess { detail = it; loaded = true }
                     .onFailure { loadFailed = it.userMessage("Unable to load craft") }
             }
@@ -11010,8 +11013,10 @@ private fun CraftForm(
 
     // ONE KEY PER CRAFT BEING TYPED (2026-10-16): sent as `Idempotency-Key` on the online create and
     // carried into the outbox if that create loses its answer, so the server writes it once.
-    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
-    fun submit(forceOffline: Boolean = false) {
+    // A NEW KEY FOR EVERY SUBMIT, and the SAME body and key for its outbox fallback (2026-10-16):
+    // see [OnlineAttempt]. A key reused for a changed form would be refused by the server as
+    // "a different request", and the photographs of a create that had landed never attached.
+    fun submit(forceOffline: Boolean = false, retry: OnlineAttempt<CraftCreateRequest>? = null) {
         if (!validateRequired(listOf(
                 RequiredCheck(name.isBlank(), { nameError = it }, nameFocus)
             ))) { onError("Fill in the highlighted field."); return }
@@ -11021,7 +11026,8 @@ private fun CraftForm(
             // Not asked twice: a forced re-run follows an online attempt that already asked.
             if (!forceOffline && !workshop.confirmSubmission()) return@launch
             saving = true
-            val body = CraftCreateRequest(
+            val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
+            val body = retry?.body ?: CraftCreateRequest(
                 name = name.trim(),
                 localName = localName.blankToNull(),
                 category = category.blankToNull(),
@@ -11075,7 +11081,7 @@ private fun CraftForm(
                 // error over a form the designer then has to remember to save again.
                 if (!landed && repository.isTransient(it)) {
                     saving = false
-                    submit(forceOffline = true)
+                    submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
                     return@launch
                 }
                 onError(it.userMessage("Unable to save craft"))
@@ -11437,8 +11443,10 @@ private fun ArtisanForm(
     }
 
     // ONE KEY PER ARTISAN BEING TYPED (2026-10-16) — see the identical note on the craft form.
-    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
-    fun submit(forceOffline: Boolean = false) {
+    // A NEW KEY FOR EVERY SUBMIT, and the SAME body and key for its outbox fallback (2026-10-16):
+    // see [OnlineAttempt]. A key reused for a changed form would be refused by the server as
+    // "a different request", and the photographs of a create that had landed never attached.
+    fun submit(forceOffline: Boolean = false, retry: OnlineAttempt<ArtisanCreateRequest>? = null) {
         val dosText = joinNumbered(dosItems)
         val dontsText = joinNumbered(dontsItems)
         if (!validateRequired(listOf(
@@ -11491,7 +11499,8 @@ private fun ArtisanForm(
         scope.launch {
             if (!forceOffline && !link.confirmSubmission()) return@launch
             saving = true
-            val body = ArtisanCreateRequest(
+            val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
+            val body = retry?.body ?: ArtisanCreateRequest(
                 name = name.trim(),
                 localName = localName.blankToNull(),
                 gender = gender.blankToNull(),
@@ -11585,7 +11594,7 @@ private fun ArtisanForm(
                 // The connection went mid-request: into the outbox under the same key.
                 if (!landed && repository.isTransient(it)) {
                     saving = false
-                    submit(forceOffline = true)
+                    submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
                     return@launch
                 }
                 // A duplicate Aadhaar/Pehchan number comes back as a structured 409 whose message
@@ -12037,8 +12046,10 @@ private fun WorkshopForm(
     }
 
     // ONE KEY PER WORKSHOP BEING TYPED (2026-10-16) — see the identical note on the craft form.
-    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
-    fun submit(forceOffline: Boolean = false) {
+    // A NEW KEY FOR EVERY SUBMIT, and the SAME body and key for its outbox fallback (2026-10-16):
+    // see [OnlineAttempt]. A key reused for a changed form would be refused by the server as
+    // "a different request", and the photographs of a create that had landed never attached.
+    fun submit(forceOffline: Boolean = false, retry: OnlineAttempt<WorkshopCreateRequest>? = null) {
         if (!validateRequired(listOf(
                 RequiredCheck(title.isBlank(), { titleError = it }, titleFocus),
                 RequiredCheck(place.isBlank(), { placeError = it }, placeFocus)
@@ -12053,7 +12064,8 @@ private fun WorkshopForm(
             // On edit, only send the relation when it changed (the backend replaces & re-checks it).
             val artisanIdsParam = if (!isEdit || selectedArtisans != originalArtisans) selectedArtisans.toList() else null
             val craftIdsParam = if (!isEdit || selectedCrafts != originalCrafts) selectedCrafts.toList() else null
-            val body = WorkshopCreateRequest(
+            val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
+            val body = retry?.body ?: WorkshopCreateRequest(
                 title = title.trim(),
                 workshopType = workshopType,
                 date = start,
@@ -12103,7 +12115,7 @@ private fun WorkshopForm(
             }.onFailure {
                 if (!landed && repository.isTransient(it)) {
                     saving = false
-                    submit(forceOffline = true)
+                    submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
                     return@launch
                 }
                 onError(it.userMessage("Unable to save workshop"))
@@ -12361,8 +12373,10 @@ private fun ProductForm(
     }
 
     // ONE KEY PER PRODUCT BEING TYPED (2026-10-16) — see the identical note on the craft form.
-    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
-    fun submit(forceOffline: Boolean = false) {
+    // A NEW KEY FOR EVERY SUBMIT, and the SAME body and key for its outbox fallback (2026-10-16):
+    // see [OnlineAttempt]. A key reused for a changed form would be refused by the server as
+    // "a different request", and the photographs of a create that had landed never attached.
+    fun submit(forceOffline: Boolean = false, retry: OnlineAttempt<ProductCreateRequest>? = null) {
         if (!validateRequired(listOf(
                 RequiredCheck(productName.isBlank(), { productNameError = it }, productNameFocus),
                 RequiredCheck(craftName.isBlank(), { craftNameError = it }, craftNameFocus),
@@ -12373,7 +12387,8 @@ private fun ProductForm(
         scope.launch {
             if (!forceOffline && !link.confirmSubmission()) return@launch
             saving = true
-            val body = ProductCreateRequest(
+            val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
+            val body = retry?.body ?: ProductCreateRequest(
                 productName = productName.trim(),
                 localName = localName.blankToNull(),
                 craftName = craftName.trim(),
@@ -12485,7 +12500,7 @@ private fun ProductForm(
             }.onFailure {
                 if (!landed && repository.isTransient(it)) {
                     saving = false
-                    submit(forceOffline = true)
+                    submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
                     return@launch
                 }
                 onError(it.userMessage("Unable to save product"))
@@ -13091,8 +13106,10 @@ private fun ToolForm(
     }
 
     // ONE KEY PER TOOL BEING TYPED (2026-10-16) — see the identical note on the craft form.
-    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
-    fun submit(forceOffline: Boolean = false) {
+    // A NEW KEY FOR EVERY SUBMIT, and the SAME body and key for its outbox fallback (2026-10-16):
+    // see [OnlineAttempt]. A key reused for a changed form would be refused by the server as
+    // "a different request", and the photographs of a create that had landed never attached.
+    fun submit(forceOffline: Boolean = false, retry: OnlineAttempt<ToolCreateRequest>? = null) {
         if (!validateRequired(listOf(
                 RequiredCheck(toolkitName.isBlank(), { toolkitNameError = it }, toolkitNameFocus),
                 RequiredCheck(craftName.isBlank(), { craftNameError = it }, craftNameFocus),
@@ -13103,7 +13120,8 @@ private fun ToolForm(
         scope.launch {
             if (!forceOffline && !link.confirmSubmission()) return@launch
             saving = true
-            val body = ToolCreateRequest(
+            val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
+            val body = retry?.body ?: ToolCreateRequest(
                 toolkitName = toolkitName.trim(),
                 localName = localName.blankToNull(),
                 englishName = englishName.blankToNull(),
@@ -13275,7 +13293,7 @@ private fun ToolForm(
                 // The connection went mid-request: into the outbox under the same key.
                 if (!landed && repository.isTransient(it)) {
                     saving = false
-                    submit(forceOffline = true)
+                    submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
                     return@launch
                 }
                 onError(it.userMessage("Unable to save tool"))
@@ -13879,8 +13897,10 @@ private fun ProcessForm(
     }
 
     // ONE KEY PER PROCESS BEING TYPED (2026-10-16) — see the identical note on the craft form.
-    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
-    fun submit(forceOffline: Boolean = false) {
+    // A NEW KEY FOR EVERY SUBMIT, and the SAME body and key for its outbox fallback (2026-10-16):
+    // see [OnlineAttempt]. A key reused for a changed form would be refused by the server as
+    // "a different request", and the photographs of a create that had landed never attached.
+    fun submit(forceOffline: Boolean = false, retry: OnlineAttempt<ProcessCreateRequest>? = null) {
         nameError = null; productError = null; stepsError = null; preMediaError = null; artisanError = null
         var firstInvalid = false
         if (name.isBlank()) { nameError = "This field cannot be empty"; if (!firstInvalid) { firstInvalid = true; runCatching { nameFocus.requestFocus() } } }
@@ -13920,7 +13940,8 @@ private fun ProcessForm(
                     notes = if (s.recordAdditional) s.notes.trim().ifBlank { null } else null
                 )
             }
-            val body = ProcessCreateRequest(
+            val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
+            val body = retry?.body ?: ProcessCreateRequest(
                 name = name.trim(),
                 productId = productId,
                 preProcessAvailable = preProcessAvailable,
@@ -14067,7 +14088,7 @@ private fun ProcessForm(
                 // The connection went mid-request: into the outbox under the same key.
                 if (!landed && repository.isTransient(it)) {
                     saving = false
-                    submit(forceOffline = true)
+                    submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
                     return@launch
                 }
                 onError(it.userMessage("Unable to save process"))
@@ -16413,6 +16434,8 @@ private fun ViewDataScreen(
     }
 
     val viewContext = LocalContext.current.applicationContext
+    /** Set when the list on screen is this phone's saved copy — drawn as [CachedCopyNote]. */
+    var listCachedNote by remember(mode) { mutableStateOf<String?>(null) }
     LaunchedEffect(mode) {
         loadingList = true
         selectedId = ""
@@ -16430,8 +16453,10 @@ private fun ViewDataScreen(
                     "view-artisans",
                     kotlinx.serialization.builtins.ListSerializer(ArtisanDto.serializer()),
                 ) { repository.artisans() }
-                if (interviewsRead.fromCache || artisansRead.fromCache) {
-                    onError(readCacheNotice(interviewsRead.cachedAt ?: artisansRead.cachedAt))
+                listCachedNote = if (interviewsRead.fromCache || artisansRead.fromCache) {
+                    readCacheNotice(interviewsRead.cachedAt ?: artisansRead.cachedAt)
+                } else {
+                    null
                 }
                 val interviews = interviewsRead.value
                 val arts = artisansRead.value
@@ -16451,7 +16476,8 @@ private fun ViewDataScreen(
                 artisanFilterList = involved.values.sortedBy { it.name.lowercase() }
             }.onFailure { onError(it.userMessage("Unable to load questionnaires")) }
         } else {
-            runCatching { loadViewEntriesCached(viewContext, repository, mode, onCached = onError) }
+            listCachedNote = null
+            runCatching { loadViewEntriesCached(viewContext, repository, mode, onCached = { listCachedNote = it }) }
                 .onSuccess { options = it }
                 .onFailure { onError(it.userMessage("Unable to load list")) }
         }
@@ -16465,6 +16491,7 @@ private fun ViewDataScreen(
     }
 
     RecordCard(title = "View data") {
+        listCachedNote?.let { CachedCopyNote(it) }
         Text("Pick a record type, then an entry.", color = Muted, fontSize = 12.sp)
         DropdownField(
             label = "Record type",
@@ -17913,6 +17940,8 @@ private fun AndroidMediaForm(
     // The record a restored draft was linked to, applied once that record type's list has loaded
     // (choosing a type clears the record, so setting both at once would lose it).
     var restoredEntryId by remember { mutableStateOf<String?>(null) }
+    /** Set when the record list is this phone's saved copy — drawn as [CachedCopyNote]. */
+    var entriesCachedNote by remember { mutableStateOf<String?>(null) }
     // Kept on disk until uploaded or queued, so a killed app gives the chosen files back.
     val draft = rememberFormDraft(
         key = "media:new",
@@ -18020,7 +18049,8 @@ private fun AndroidMediaForm(
         entryOptions = emptyList()
         val mode = linkedMode ?: return@LaunchedEffect
         loadingEntries = true
-        runCatching { loadViewEntriesCached(context, repository, mode, onCached = onError) }
+        entriesCachedNote = null
+        runCatching { loadViewEntriesCached(context, repository, mode, onCached = { entriesCachedNote = it }) }
             .onSuccess { entryOptions = it }
             .onFailure { error -> onError(error.userMessage("Unable to load ${mode.label} entries")) }
         loadingEntries = false
@@ -18028,6 +18058,7 @@ private fun AndroidMediaForm(
 
     RecordCard(title = "Capture media") {
         FormDraftRestoredNote(draft)
+        entriesCachedNote?.let { CachedCopyNote(it) }
         // "transcription", not "Whisper transcription": the backend now runs a provider chain
         // (ElevenLabs → Deepgram → Whisper), so naming one of them tells the researcher something
         // that is only sometimes true. The web misc-media screen already says it this way.
@@ -19220,7 +19251,6 @@ private fun QuestionnaireForm(
     var quickProblem by remember(editing) { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     // ONE KEY PER INTERVIEW BEING TYPED (2026-10-16) — see the identical note on the craft form.
-    val createKey = remember(editing) { java.util.UUID.randomUUID().toString() }
     // Kept on disk until saved: the answers, the clips and the transcripts' own words (without
     // which a restored transcript would read as typed by hand), so a killed app loses none of it.
     val draft = rememberFormDraft(
@@ -20352,7 +20382,9 @@ private fun QuestionnaireForm(
             )
         }
 
-        fun submit(forceOffline: Boolean = false) {
+        // A new key per submit; its outbox fallback carries the same key AND the same `now`, so the
+        // queued request is byte-for-byte the one the online attempt sent. See [OnlineAttempt].
+        fun submit(forceOffline: Boolean = false, retry: OnlineAttempt<String>? = null) {
             if (!validateRequired(listOf(
                     RequiredCheck(title.isBlank(), { titleError = it }, titleFocus)
                 ))) { onError("Fill in the highlighted field."); return }
@@ -20365,7 +20397,8 @@ private fun QuestionnaireForm(
                     // the confirmation is on screen.
                     if (!forceOffline && !link.confirmSubmission()) return@launch
                     saveState = SaveState.SAVING
-                    val now = Instant.now().toString()
+                    val now = retry?.body ?: Instant.now().toString()
+                    val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
                     // Only send answers this interviewer actually added or changed; untouched answers
                     // (including those entered by other interviewers) are left exactly as they were.
                     val responsesToSend = questions.mapNotNull { question ->
@@ -20583,9 +20616,10 @@ private fun QuestionnaireForm(
                         saveState = SaveState.IDLE
                         // THE CONNECTION WENT MID-CREATE (2026-10-16): into the outbox under the same
                         // key, so the server writes this sitting once however many times it is sent.
-                        // A correction whose PATCH never landed goes the same way (2026-10-17).
+                        // A correction whose PATCH never landed goes the same way (2026-10-17); a create
+                        // carries its recordedAt and key, so the replay is byte-for-byte the same request.
                         if ((if (isEdit) !editLanded else !createLanded) && repository.isTransient(failure)) {
-                            submit(forceOffline = true)
+                            submit(forceOffline = true, retry = if (isEdit) null else OnlineAttempt(now, createKey))
                             return@launch
                         }
                         /*
@@ -23235,6 +23269,16 @@ private fun MappingStatTile(label: String, value: Int, modifier: Modifier = Modi
 
 /** Serializer for offline-queued create requests (record forms persist their request as JSON). */
 private val offlineFormJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+/**
+ * ONE ONLINE ATTEMPT AT A CREATE: the exact body it sent and the `Idempotency-Key` it sent it under
+ * (2026-10-16, release blocker). When the connection goes mid-request the form re-runs its save with
+ * this, so the outbox entry carries the SAME bytes under the SAME key: had the first request landed,
+ * the server answers the replay from the stored record instead of refusing it as a different request
+ * — which is what happened while the fallback rebuilt the body with a fresh `recordedAt` (and, for four
+ * types, a fresh `clientKey`), and the photographs of a record that existed were never attached.
+ */
+private data class OnlineAttempt<T>(val body: T, val key: String)
 
 /**
  * Offline save: when there's no connection, persist this record (and copies of its captured media)

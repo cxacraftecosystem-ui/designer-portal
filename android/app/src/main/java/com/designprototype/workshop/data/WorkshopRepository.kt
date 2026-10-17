@@ -5669,7 +5669,10 @@ class WorkshopRepository(
         api.discardUnmappedRecord(bucket, recordId)
 
     suspend fun createArtisan(body: ArtisanCreateRequest, idempotencyKey: String? = null): ArtisanDto =
-        api.createArtisan(body, idempotencyKey)
+        // `withIdentityAnswer` HERE TOO, because the outbox replay applies it: the online attempt and
+        // its replay must send the same bytes under one Idempotency-Key, or a create that landed is
+        // refused as "a different request" on its replay (2026-10-16 release blocker).
+        api.createArtisan(withIdentityAnswer(body), idempotencyKey)
 
     suspend fun artisan(id: String): ArtisanDetailDto = api.artisan(id)
 
@@ -7650,7 +7653,10 @@ class WorkshopRepository(
         // minted in `replayEntry` would be a NEW key on every pass, so the second send of a create
         // whose answer was lost would look to the server like a different create — and make the
         // second record this exists to prevent. The key has to be exactly as old as the entry.
-        val clientKey = clientKeyForNewEntry(type, targetId)
+        // NO clientKey WHEN AN ONLINE ATTEMPT'S KEY IS CARRIED (2026-10-16): the online create sent
+        // no clientKey, so adding one here would make the replay a different request under the same
+        // Idempotency-Key, and a create that had landed would be refused instead of answered.
+        val clientKey = if (idempotencyKey != null) null else clientKeyForNewEntry(type, targetId)
         try {
             OfflineOutbox.enqueue(
                 context,
@@ -7972,7 +7978,6 @@ class WorkshopRepository(
     private suspend fun replayEntry(
         context: Context,
         queued: PendingEntry,
-        rebasedOnMatch: Boolean = false,
     ): ReplayOutcome {
         appContextForReplay = context.applicationContext
         var entry = queued
@@ -7992,6 +7997,11 @@ class WorkshopRepository(
                 throw e
             } catch (e: Throwable) {
                 if (isTransient(e)) return ReplayOutcome.Retry
+                // THE SERVER ALREADY HOLDS A RECORD FOR THIS KEY (422 IDEMPOTENCY_KEY_REUSED): the first
+                // send landed and its answer was lost, and this replay differs in some byte. The record
+                // exists; ask what it was, and carry on to its photographs instead of refusing.
+                val recovered = recoverReusedKey(entry, e)
+                if (recovered != null) recovered else run {
                 // A 409 IS ITS OWN ANSWER, AND IT IS ASKED FOR BEFORE THE BODY IS READ.
                 // `isConflictRefusal` reads only the status code — the same reason `isTransient`
                 // above it is safe to ask first — because `apiRefusal` below consumes Retrofit's
@@ -8010,18 +8020,19 @@ class WorkshopRepository(
                     null
                 }
                 if (staleAt != null) {
-                    // THE CORRECTION ALREADY LANDED AND ONLY ITS ANSWER WAS LOST. A PATCH that
-                    // committed while the connection dropped is queued again with the old version,
-                    // so its replay is refused although nobody else touched the record. When the
-                    // server already holds every value this correction sends, nothing needs
-                    // choosing: it is re-based on the server's version and sent once more (an
-                    // identical write), and its files go up as usual.
-                    if (!rebasedOnMatch && runCatching { reviewCorrection(entry)?.fields?.isEmpty() == true }
-                            .getOrDefault(false)
-                    ) {
-                        entry = entry.copy(baseUpdatedAt = staleAt.ifBlank { null } ?: entry.baseUpdatedAt)
-                        OfflineOutbox.update(context, entry)
-                        return replayEntry(context, entry, rebasedOnMatch = true)
+                    // NOTHING TO REVIEW: the record moved, but not in any field this correction changes
+                    // (or it already holds what this one sets). Re-based and sent again at once,
+                    // once, rather than shown to a person as an empty "Review changes".
+                    val emptyReview = if (queued.staleRetried) null else emptyStaleReview(context, entry)
+                    if (emptyReview != null) {
+                        val rebased = entry.copy(
+                            // The version the record holds NOW, read with the review; the refusal's
+                            // own stamp when the review could not say.
+                            baseUpdatedAt = emptyReview.currentUpdatedAt ?: staleAt.ifBlank { null } ?: entry.baseUpdatedAt,
+                            staleRetried = true,
+                        )
+                        OfflineOutbox.update(context, rebased)
+                        return replayEntry(context, rebased)
                     }
                     return ReplayOutcome.Rejected(
                         STALE_CORRECTION_SENTENCE,
@@ -8112,9 +8123,16 @@ class WorkshopRepository(
                     },
                     schemaSkew = refusal.schemaSkew,
                 )
+                }
             }
             entry = entry.copy(createdId = created.id, createdStepIds = created.stepIds)
             OfflineOutbox.update(context, entry)
+            // A CORRECTION THAT LANDED MOVES THE RECORD'S VERSION, so any LATER queued correction to
+            // the same record — composed on this phone, against the version this one replaced — is
+            // re-based on the new one instead of being refused as a conflict with itself.
+            if (entry.targetId != null && created.updatedAt != null) {
+                OfflineOutbox.advanceBase(context, entry.type, entry.targetId!!, created.updatedAt, exceptId = entry.id)
+            }
         }
 
         val alreadyUp = entry.uploadedMedia.toMutableSet()
@@ -8407,7 +8425,29 @@ class WorkshopRepository(
         else body.copy(pehchanCardAvailable = body.pehchanCardNumber != null)
 
     /** What a replayed create produced: the record's server id, plus a process's step ids in order. */
-    private data class CreatedRecord(val id: String, val stepIds: List<String> = emptyList())
+    private data class CreatedRecord(
+        val id: String,
+        val stepIds: List<String> = emptyList(),
+        /** A correction's new `updatedAt`, so later queued corrections re-base on it. */
+        val updatedAt: String? = null,
+    )
+
+    /**
+     * What the server created under this entry's own key, when it refused the replay as a different
+     * request (422 `IDEMPOTENCY_KEY_REUSED`). Null for any other failure, or when the server has no
+     * stored answer to give, in which case the refusal stands and is shown.
+     */
+    private suspend fun recoverReusedKey(entry: PendingEntry, error: Throwable): CreatedRecord? {
+        val key = entry.idempotencyKey ?: return null
+        if (error !is HttpException || error.code() != 422) return null
+        if (peekErrorBody(error)?.contains("IDEMPOTENCY_KEY_REUSED") != true) return null
+        val answer = runCatching { api.idempotencyAnswer(key) }.getOrNull() ?: return null
+        return createdFromStoredAnswer(answer.body)?.let { (id, steps) -> CreatedRecord(id, steps) }
+    }
+
+    /** A stale correction's review when it is EMPTY (nothing it changes disagrees now), else null. */
+    private suspend fun emptyStaleReview(context: Context, entry: PendingEntry): StaleCorrectionReview? =
+        runCatching { reviewStaleCorrection(context, entry.id)?.takeIf { it.fields.isEmpty() } }.getOrNull()
 
     /**
      * Replay one entry's WRITE: a create, a correction to a record the server already holds, or —
@@ -8499,47 +8539,39 @@ class WorkshopRepository(
             // asked; on a PATCH the same substitution would send a DERIVED `pehchanCardAvailable`
             // over whatever is stored, which on an old entry would answer a question about a card
             // nobody asked about. An edit form seeds the field from the record, so it is already set.
-            "artisan" -> CreatedRecord(
-                updateArtisan(
-                    target,
-                    offlineJson.decodeFromString<ArtisanCreateRequest>(entry.payloadJson),
-                    cleared,
-                    narrow,
-                ).id
-            )
-            "product" -> CreatedRecord(
-                updateProduct(target, offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson), cleared, narrow).id
-            )
-            "tool" -> CreatedRecord(
-                updateTool(target, offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson), cleared, narrow).id
-            )
-            "workshop" -> CreatedRecord(
-                updateWorkshop(target, offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson), cleared, narrow).id
-            )
-            "craft" -> CreatedRecord(
-                updateCraft(target, offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson), cleared, narrow).id
-            )
+            "artisan" -> updateArtisan(
+                target,
+                offlineJson.decodeFromString<ArtisanCreateRequest>(entry.payloadJson),
+                cleared,
+                narrow,
+            ).let { CreatedRecord(it.id, updatedAt = it.updatedAt) }
+            "product" -> updateProduct(target, offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson), cleared, narrow)
+                .let { CreatedRecord(it.id, updatedAt = it.updatedAt) }
+            "tool" -> updateTool(target, offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson), cleared, narrow)
+                .let { CreatedRecord(it.id, updatedAt = it.updatedAt) }
+            "workshop" -> updateWorkshop(target, offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson), cleared, narrow)
+                .let { CreatedRecord(it.id, updatedAt = it.updatedAt) }
+            "craft" -> updateCraft(target, offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson), cleared, narrow)
+                .let { CreatedRecord(it.id, updatedAt = it.updatedAt) }
             // The step ids come back from the UPDATE too, and they have to be read: a queued
             // correction can carry step media, and `linkTargetFor` resolves `stepIndex` against this
             // list. Reading only the id would attach a step photograph to nothing.
             "process" -> updateProcess(target, offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson), cleared, narrow)
-                .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }) }
+                .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }, updatedAt = detail.updatedAt) }
             // AN INTERVIEW CORRECTION (2026-10-17). Its answers are a diff against what the form was
             // opened on, so it is safe to replay only against that same version — which the server
             // can now say, because an answer written by anybody moves the interview's `updatedAt`.
             // Sent as JSON so it carries only its changed keys and that version; a moved interview is
             // a 409 `record_changed`, held below for "Review changes". See `InterviewCorrection.kt`.
-            "questionnaire" -> CreatedRecord(
-                api.updateInterviewJson(
-                    target,
-                    interviewCorrectionBody(
-                        offlineJson.parseToJsonElement(entry.payloadJson) as JsonObject,
-                        entry.changedKeys,
-                        entry.baseUpdatedAt,
-                        cleared,
-                    ),
-                ).id
-            )
+            "questionnaire" -> api.updateInterviewJson(
+                target,
+                interviewCorrectionBody(
+                    offlineJson.parseToJsonElement(entry.payloadJson) as JsonObject,
+                    entry.changedKeys,
+                    entry.baseUpdatedAt,
+                    cleared,
+                ),
+            ).let { CreatedRecord(it.id, updatedAt = it.updatedAt) }
             else -> throw IllegalStateException("Unknown offline correction type: ${entry.type}")
         }
     }

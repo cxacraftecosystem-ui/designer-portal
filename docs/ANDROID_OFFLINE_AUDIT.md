@@ -42,7 +42,7 @@ the last section.
 | Sign-in, 12/45 s loop, connectivity callback | Yes — `MainActivity.kt:1812`, `MainActivity.kt:1850` | Unchanged |
 | Join-card flush at process start and on network | Yes — `android/app/src/main/java/com/designprototype/workshop/ui/DwInductionFlusher.kt:128` (`watch`) | Unchanged |
 | **App closed, phone rebooted** | **No** — every queue waited for the app to be reopened | `BackgroundSync` job (`BackgroundSync.kt:124`, `OutboxSyncJobService`) |
-| Retry and backoff | 12 s while anything is queued, in-process only | Plus the platform's exponential backoff from 30 s when a background pass leaves work waiting on a working network (`backgroundSyncShouldRetry`, `BackgroundSync.kt:120`) |
+| Retry and backoff | 12 s while anything is queued, in-process only | Plus the platform's exponential backoff from 30 s when a background pass leaves work waiting on a working network (`backgroundSyncShouldRetry`, `BackgroundSync.kt:137`) |
 
 **Why JobScheduler and not WorkManager.** The comments this app carried against a background
 scheduler (`WorkshopSync.kt`, `DwInductionFlusher.kt`) objected to the dependency and its bundled
@@ -192,6 +192,39 @@ authoring, the designer profile and "Report something", and appearance changes m
     when tapped (`QuestionnaireOfflineCopy.kt`). A copy changes nothing on the original, so it is a
     queued step (`QFormOp.REUSE`) behind any step still waiting for the source, with an
     `Idempotency-Key`.
+
+---
+
+## 3a. The release review's fixes (2026-10-16)
+
+The designer release review found one blocker and four follow-ups in this work; all are fixed, with
+tests.
+
+1. **Blocker — the outbox fallback sent a different body under the same key.** When an online create
+   lost its connection, the form re-ran its save to queue it, and the re-run rebuilt the body with a
+   fresh `recordedAt` (and, for product, tool, workshop and process, a fresh `clientKey`). Had the first
+   request landed, the replay was a different request under the same `Idempotency-Key`: the server
+   answered 422, the outbox parked it as refused, and its photographs were never attached. Now every
+   submit mints a new key and its fallback carries the exact body and key of the attempt it follows
+   (`OnlineAttempt` in `MainActivity.kt`); a queued entry that carries an online key gets no second
+   `clientKey`; the online artisan create applies the same identity default as its replay. And if a
+   replay is ever refused as a different request anyway (an older build's entry), the outbox asks
+   `GET /api/idempotency-keys/{key}` (backend `routes/idempotency_keys.py`) for the record the first
+   send made and carries on to its photographs. Pinned end to end by
+   `android/app/src/test/java/com/designprototype/workshop/data/OutboxReplayEndToEndTest.kt`.
+2. **The version check raced.** Two corrections composed against one version could both pass the
+   comparison against a row read before the transaction. The seven routes now re-read the row with
+   `SELECT … FOR UPDATE` inside the transaction (`records.lock_and_assert_expected_updated_at`); the
+   second waits and is refused. Pinned by `backend/tests/test_record_update_precondition_lock.py`,
+   including a two-transaction race on a local database.
+3. **False conflicts.** A correction that lands re-bases every later queued correction to the same
+   record on its new `updatedAt`, and a stale refusal whose review would be empty is re-based and sent
+   again at once (once) instead of being shown as an empty "Review changes"; the tray does the same if a
+   review it opens turns out empty.
+4. **Smaller ones.** The "copy saved on this phone" notes in the record editor, view data and the media
+   screen are drawn as `CachedCopyNote` rather than sent as messages; a stored answer that could not be
+   saved releases its running marker; draft writes ask for a background pass at most once a minute
+   while online; and the Aadhaar migration's `CREATE TYPE`s are guarded so a re-run does not fail.
 
 ---
 

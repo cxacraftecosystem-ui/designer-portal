@@ -344,6 +344,7 @@ def test_the_interview_route_pops_the_key_and_asks_before_the_ledger_write():
     )
     body = source[source.index("async def update_interview(") :]
     popped = body.index("take_expected_updated_at(data)")
-    asked = body.index("assert_expected_updated_at(interview")
+    # The interview claims its version to the millisecond (records.claim_expected_updated_at).
+    asked = body.index("claim_expected_updated_at(tx.questionnaireinterview, interview")
     wrote = body.index("guard_record_edit(")
     assert popped < asked < wrote

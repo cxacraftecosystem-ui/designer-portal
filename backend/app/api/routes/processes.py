@@ -25,7 +25,6 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
-    assert_expected_updated_at,
     clean_data,
     client_key_replay,
     client_key_replay_after_violation,
@@ -33,6 +32,7 @@ from app.services.records import (
     count_and_page,
     enum_filter_or_422,
     hydrate_relations,
+    lock_and_assert_expected_updated_at,
     media_url_owners,
     merge_field_provenance,
     prose_contains,
@@ -589,7 +589,8 @@ async def update_process(
         # THE STEP PLAN ABOVE HAS WRITTEN NOTHING YET, so refusing here is still clean: ``_plan_steps``
         # is pure and the ``guard_record_edit(…, {})`` probe issues no statement (its own comment says
         # why). ``_apply_steps`` is inside this transaction, below, and goes with the rollback.
-        assert_expected_updated_at(process, expected_updated_at)
+        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
+        await lock_and_assert_expected_updated_at(tx, "process", process, expected_updated_at)
         await guard_record_edit(process, current_user, data, "process", client=tx)
         await apply_status_policy_update(current_user, process, data)
         # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's

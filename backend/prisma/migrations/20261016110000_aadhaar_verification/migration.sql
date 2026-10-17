@@ -3,9 +3,23 @@
 -- and no column can hold an Aadhaar number, a VID, a photograph, an address, a share code, an OTP
 -- or a signed payload -- only the last four digits UIDAI itself prints and the fields it signed.
 
-CREATE TYPE "AadhaarVerifyStatus" AS ENUM ('VERIFIED', 'NAME_MISMATCH', 'REJECTED');
+-- Guarded, so a database that already has the types (a half-applied run, a restored dump) does
+-- not fail the deploy on them.
+DO $$
+BEGIN
+    CREATE TYPE "AadhaarVerifyStatus" AS ENUM ('VERIFIED', 'NAME_MISMATCH', 'REJECTED');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END
+$$;
 
-CREATE TYPE "AadhaarVerifyMethod" AS ENUM ('SECURE_QR', 'OFFLINE_XML', 'ONLINE_OTP', 'ONLINE_EKYC');
+DO $$
+BEGIN
+    CREATE TYPE "AadhaarVerifyMethod" AS ENUM ('SECURE_QR', 'OFFLINE_XML', 'ONLINE_OTP', 'ONLINE_EKYC');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END
+$$;
 
 ALTER TABLE "User"
     ADD COLUMN "aadhaarVerifyStatus" "AadhaarVerifyStatus",
