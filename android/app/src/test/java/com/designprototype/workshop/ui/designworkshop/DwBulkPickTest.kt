@@ -43,7 +43,8 @@ class DwBulkPickTest {
     @Test
     fun `the shipped registry offers it on the roster, certificates, follow-ups and sketch reviews`() {
         val asset = File("src/main/assets/design-workshop-schema.json")
-        if (!asset.exists()) return
+        // A missing file is a FAILURE, not a pass: a moved asset must not turn this test green.
+        assertTrue("${asset.absolutePath} is missing", asset.exists())
         val schema = schemaJson.decodeFromString(SchemaResponse.serializer(), asset.readText(Charsets.UTF_8))
         val offered = schema.stages.flatMap { it.entities }
             .mapNotNull { entity -> dwBulkField(entity)?.let { entity.key to it.refModel } }
@@ -92,9 +93,62 @@ class DwBulkPickTest {
     }
 
     @Test
+    fun `an all press on a cut-short list says it added the first n, in the web's words`() {
+        val field = ref("participantRef", "DwParticipant").copy(label = "Participants")
+        val options = (1..4).map { DwReferenceOption(id = "p$it", label = "Name $it") }
+        val outcome = dwBulkAdd(options, field, mapOf(field.key to field), emptySet(), stageEntries = 0)
+        assertEquals(
+            "Added the first 4. Use add several from participants for the rest.",
+            dwBulkAddedSentence(outcome, truncated = true, fieldLabel = field.label),
+        )
+        assertEquals("Added 4 rows.", dwBulkAddedSentence(outcome, truncated = false, fieldLabel = field.label))
+    }
+
+    @Test
+    fun `a cut-short add that also hit the cap says only the refusal, never two counts`() {
+        val field = ref("participantRef", "DwParticipant")
+        val options = (1..10).map { DwReferenceOption(id = "p$it", label = "Name $it") }
+        val outcome = dwBulkAdd(options, field, mapOf(field.key to field), emptySet(), stageEntries = 497)
+        val sentence = dwBulkAddedSentence(outcome, truncated = true, fieldLabel = "Participants")
+        assertTrue(sentence.startsWith("Added 3 of 10"))
+        assertTrue("first" !in sentence)
+    }
+
+    @Test
+    fun `the bulk add asks for the server's ceiling, and the sheet says when the list is one page`() {
+        assertEquals(200, DW_BULK_PAGE)
+        assertEquals("Showing the first 200. Search to find the rest.", dwBulkCutShortNote(200))
+        val backend = File("../../backend/app/services/design_workshops.py")
+        assertTrue("${backend.absolutePath} is missing", backend.exists())
+        assertTrue(backend.readText(Charsets.UTF_8).contains("REFERENCE_LIMIT_MAX = $DW_BULK_PAGE"))
+    }
+
+    @Test
+    fun `an offline search filters the held list on the name and the second line`() {
+        val options = listOf(
+            DwReferenceOption(id = "a", label = "Ramesh Kumar", hint = "Bagru"),
+            DwReferenceOption(id = "b", label = "Sita Devi", hint = "Sanganer"),
+        )
+        assertEquals(listOf("a"), dwBulkLocalSearch(options, "ram bagru").map { it.id })
+        assertEquals(listOf("b"), dwBulkLocalSearch(options, "SANG").map { it.id })
+        assertEquals(options, dwBulkLocalSearch(options, "  "))
+    }
+
+    @Test
+    fun `opening a stage reads the cache only, and the server is asked when the bulk controls are used`() {
+        val stage = File("src/main/java/com/designprototype/workshop/ui/designworkshop/StageScreen.kt")
+        assertTrue("${stage.absolutePath} is missing", stage.exists())
+        val source = stage.readText(Charsets.UTF_8)
+        assertTrue(source.contains("cacheOnly = true,"))
+        assertTrue(source.contains("limit = DW_BULK_PAGE,"))
+        assertTrue(source.contains("bulkScope.launch { refreshBulk() }"))
+        assertTrue(source.contains("dwBulkAddedSentence(outcome, truncated = truncated"))
+    }
+
+    @Test
     fun `the shortcut labels are the web's, word for word`() {
         val web = File("../../frontend/components/designworkshop/bulkPick.ts")
-        if (!web.exists()) return
+        assertTrue("${web.absolutePath} is missing", web.exists())
         val source = web.readText(Charsets.UTF_8)
         listOf("DwParticipant", "DwFinalProduct", "DwSketch", "DwPrototype").forEach { model ->
             val label = dwBulkAllLabel(model)!!

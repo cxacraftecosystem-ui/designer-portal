@@ -969,6 +969,10 @@ fun SearchableMultiSelectSheet(
     options: List<SelectOption>,
     emptyMessage: String = GENERIC_EMPTY_LINE,
     createAction: SelectCreateAction? = null,
+    /** Non-null when [options] is the server's answer to the box. See [SearchableSelectField.onSearch]. */
+    onSearch: ((String) -> Unit)? = null,
+    /** One muted line under the count, e.g. that the list is one page of a longer one. */
+    note: String? = null,
     onDismiss: () -> Unit,
     onApply: (Set<String>) -> Unit
 ) {
@@ -982,6 +986,8 @@ fun SearchableMultiSelectSheet(
         emptyMessage = emptyMessage,
         createAction = createAction,
         bulk = true,
+        onSearch = onSearch,
+        note = note,
         onDismiss = onDismiss,
         onApply = onApply
     )
@@ -1078,6 +1084,8 @@ private fun SearchablePickerSheet(
     onSearch: ((String) -> Unit)? = null,
     /** See [SearchableSelectField.loadMore]. */
     loadMore: SelectLoadMore? = null,
+    /** See [SearchableMultiSelectSheet.note]. */
+    note: String? = null,
     onDismiss: () -> Unit,
     onApply: (Set<String>) -> Unit
 ) {
@@ -1310,6 +1318,9 @@ private fun SearchablePickerSheet(
                             enabled = draft.isNotEmpty()
                         ) { Text("Clear all", fontSize = 12.sp) }
                     }
+                }
+                if (!note.isNullOrBlank()) {
+                    Text(note, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
                 }
             }
             HorizontalDivider(color = MaterialTheme.field.hairline)

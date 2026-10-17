@@ -4,6 +4,7 @@ import com.designprototype.workshop.data.DwReferenceOption
 import com.designprototype.workshop.data.EntityDto
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.dwRefId
+import com.designprototype.workshop.data.plural
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -27,6 +28,12 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /** The server's `MAX_STAGE_ROWS` and the web's `STAGE_ROW_CAP`: entries one stage save may carry. */
 internal const val DW_STAGE_ENTRY_CAP = 500
+
+/**
+ * How many options the bulk add asks the server for: its `REFERENCE_LIMIT_MAX` and the web's
+ * `REFERENCE_PAGE_MAX`. The single pickers keep the server's default page of 50.
+ */
+internal const val DW_BULK_PAGE = 200
 
 /** How many refused names a bulk-add sentence lists before "and N more". The web's `DROPPED_NAMES_SHOWN`. */
 internal const val DW_DROPPED_NAMES_SHOWN = 6
@@ -108,4 +115,42 @@ internal fun dwBulkRefusal(outcome: DwBulkAdd): String? {
     val more = outcome.dropped.size - DW_DROPPED_NAMES_SHOWN
     return "Added ${outcome.created.size} of ${outcome.asked} — room for ${outcome.room} on this stage. " +
         "Not added: $names${if (more > 0) " and $more more" else ""}. Delete rows to make room."
+}
+
+/**
+ * The web's trigger wording for the bulk picker ("Add several from participants"), which its
+ * cut-short sentence quotes. Kept here so the two clients' sentences match word for word.
+ */
+internal fun dwBulkTriggerPhrase(fieldLabel: String): String = "add several from ${fieldLabel.lowercase()}"
+
+/**
+ * The one line after a bulk add. The refusal wins (some rows did not fit, so "the first N" would
+ * contradict it); otherwise a list the server cut short says so (rule 10), with the web's words;
+ * otherwise the count.
+ */
+internal fun dwBulkAddedSentence(outcome: DwBulkAdd, truncated: Boolean, fieldLabel: String): String =
+    dwBulkRefusal(outcome)
+        ?: if (truncated && outcome.created.isNotEmpty()) {
+            "Added the first ${outcome.created.size}. Use ${dwBulkTriggerPhrase(fieldLabel)} for the rest."
+        } else {
+            "Added ${plural(outcome.created.size, "row")}."
+        }
+
+/** Said inside the bulk sheet when the list it holds is one page of a longer one. */
+internal fun dwBulkCutShortNote(shown: Int): String = "Showing the first $shown. Search to find the rest."
+
+/** Said when the phone has no copy of the list and the server could not be reached. */
+internal const val DW_BULK_NO_LIST = "This list is not on this phone yet. Connect and try again."
+
+/**
+ * The sheet's options for a search when the server could not answer: the held list, filtered on
+ * the label and sublabel the same way the sheet's own box would have filtered it.
+ */
+internal fun dwBulkLocalSearch(options: List<DwReferenceOption>, term: String): List<DwReferenceOption> {
+    val words = term.trim().lowercase().split(' ', '\t', '\n').filter { it.isNotEmpty() }
+    if (words.isEmpty()) return options
+    return options.filter { option ->
+        val haystack = "${option.label} ${option.hint}".lowercase()
+        words.all { it in haystack }
+    }
 }
