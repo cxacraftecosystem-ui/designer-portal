@@ -7360,6 +7360,37 @@ class WorkshopRepository(
     }
 
     /**
+     * TYPE THE AADHAAR NUMBER AGAIN for an entry the sync pass is holding because this phone could
+     * not keep the one typed ([AadhaarAtRest.numberWithheld]), then send it.
+     *
+     * Refuses, before changing anything, a number that is not a valid Aadhaar, and the case where the
+     * Keystore still cannot seal: writing the number back would only withhold it again, and the tray
+     * would offer the same box for ever.
+     */
+    suspend fun retypeOutboxAadhaar(context: Context, entryId: String, typed: String): OutboxRetryResult {
+        val number = ArtisanIdentity.normalizeAadhaar(typed)
+        require(ArtisanIdentity.isAadhaar(number)) {
+            ArtisanIdentity.aadhaarError(number) ?: "Enter the 12-digit Aadhaar number."
+        }
+        check(AadhaarAtRest.canSeal()) {
+            "This phone can't keep the number safely right now. Save the artisan again from its form while online."
+        }
+        val online = isOnline(context)
+        if (!OfflineOutbox.retypeAadhaar(context, entryId, number)) {
+            return OutboxRetryResult(false, 0, 1, 0, attempted = false)
+        }
+        val moved = syncOutbox(context)
+        val stillQueued = OfflineOutbox.all(context).any { it.id == entryId }
+        return OutboxRetryResult(
+            requestedSent = !stillQueued,
+            refusedSent = if (stillQueued) 0 else 1,
+            refusedTried = 1,
+            othersSent = (moved - if (stillQueued) 0 else 1).coerceAtLeast(0),
+            attempted = online,
+        )
+    }
+
+    /**
      * The options for a re-picked workshop link, as the tray's picker needs them: id and label.
      *
      * ── IT ASKS THE SERVER AND NEVER A CACHE, LIKE EVERY OTHER ACCESS LIST ────────────────────
@@ -7809,6 +7840,19 @@ class WorkshopRepository(
                   lasting five seconds in a courtyard.
                 */
                 if (dwDraftIsForAnotherAccount(queued.ownerUserId, signedIn)) continue
+                // A TYPED AADHAAR THIS PHONE COULD NOT KEEP (2026-10-18): the Keystore could not seal
+                // it, or can no longer open the seal (a restore, a new device). Sending the rest would
+                // replay a correction as "keep the number on record" — answered 200, the new number
+                // lost — or a create as a bare 422. So the entry is held, on this phone's own word,
+                // until the number is typed again from the tray (`retypeOutboxAadhaar`). Not for an
+                // entry whose record is already on the server: only its files are left to send.
+                if (queued.createdId == null && AadhaarAtRest.numberWithheld(queued.payloadJson)) {
+                    if (queued.failure != AadhaarAtRest.RETYPE_REASON) {
+                        OfflineOutbox.markFailure(context, queued.id, AadhaarAtRest.RETYPE_REASON)
+                        notifyUser(context, "\"${queued.label}\" needs the Aadhaar number again. Open the outbox to type it.")
+                    }
+                    continue
+                }
                 // Already triaged as permanent: this one is waiting on a person, not on the network —
                 // UNLESS it is waiting on an update instead, in which case this run is the one that
                 // gets to find out whether the update has landed. The identical gate the design
