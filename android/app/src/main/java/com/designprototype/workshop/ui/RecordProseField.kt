@@ -939,6 +939,16 @@ fun RecordProseField(
     focusRequester: FocusRequester? = null,
     /** Drawn under the box — `TitleCaseHint` and friends, so a caller keeps its existing extras. */
     below: @Composable () -> Unit = {},
+    /**
+     * Rich boxes only: store the DOCUMENT when it carries formatting, rather than its flattening.
+     *
+     * Off everywhere except a column the web already writes as a document — today one,
+     * `DesignerProfile.addressLine` (DA-28). Its value then goes through [recordStoredKeepingFormat],
+     * the web's `encodeStoredRichText` rule, so a bolded word survives a save from either client and
+     * an unformatted address is still stored as plain prose. The "bold and italic aren't saved" line
+     * is not drawn, because here they are.
+     */
+    keepFormatting: Boolean = false,
 ) {
     /**
      * The recogniser's running guess, drawn in the box but NOT yet in the store.
@@ -1018,7 +1028,10 @@ fun RecordProseField(
                     // record's `String?` column. Read its block comment before changing it: the
                     // alternative shape renders as visible JSON braces in a CSV, a report and a
                     // reviewer's edit box, and it does so silently.
-                    val stored = recordStoredFromDoc(fromEditorDoc(next)).orEmpty()
+                    val doc = fromEditorDoc(next)
+                    val stored = (
+                        if (keepFormatting) recordStoredKeepingFormat(doc) else recordStoredFromDoc(doc)
+                        ).orEmpty()
                     // Recorded BEFORE the value goes up, so the round trip that comes back is
                     // recognised as this editor's own and does not re-seed it.
                     mine = stored
@@ -1044,7 +1057,9 @@ fun RecordProseField(
                  */
                 onError = { message -> dictationError = message },
             )
-            Text(RECORD_RICH_TEXT_NOTE, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            if (!keepFormatting) {
+                Text(RECORD_RICH_TEXT_NOTE, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            }
         } else {
             val focusManager = LocalFocusManager.current
             OutlinedTextField(

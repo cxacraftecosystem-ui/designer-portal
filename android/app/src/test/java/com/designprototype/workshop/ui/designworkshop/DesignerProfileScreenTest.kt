@@ -1,6 +1,12 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.data.DesignerProfileDto
+import com.designprototype.workshop.report.Mark
+import com.designprototype.workshop.report.RichBlock
+import com.designprototype.workshop.report.RichDoc
+import com.designprototype.workshop.report.RichSpan
+import com.designprototype.workshop.ui.recordDocFromStored
+import com.designprototype.workshop.ui.recordStoredKeepingFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -336,14 +342,13 @@ class DesignerProfileScreenTest {
     // ── The address column after it took rich text on the web (2026-08-30) ───────────────────────
 
     /*
-      WHY THESE FOUR TESTS EXIST, IN ONE PARAGRAPH.
+      WHY THESE TESTS EXIST, IN ONE PARAGRAPH.
 
-      `DesignerProfile.addressLine` is now read by the web through a rich-text editor and written as
-      one of two shapes in the SAME `String?` column: the designer's prose when nothing is formatted,
-      and `{"blocks":[…]}` the moment a word is bolded. This handset has no rich editor for it and
-      deliberately is not getting one (see `designerProfileAddressText`), which leaves it with two
-      obligations it can fail SILENTLY — show the words rather than the braces, and hand the document
-      back unharmed on a save it had nothing to do with. Neither failure raises an error: the first
+      `DesignerProfile.addressLine` is read and written by a rich-text editor on both clients (the web
+      since 2026-08-30, this handset since DA-28) as one of two shapes in the SAME `String?` column:
+      the designer's prose when nothing is formatted, and `{"blocks":[…]}` the moment a word is
+      bolded. That leaves obligations that can fail SILENTLY — count the words rather than the braces,
+      hand the document back unharmed on a save it had nothing to do with, and keep a mark typed here. Neither failure raises an error: the first
       looks like a designer who pasted something odd into their address, and the second looks like
       nothing at all until somebody opens the browser again and their formatting is gone.
 
@@ -388,56 +393,76 @@ class DesignerProfileScreenTest {
     fun `saving an untouched profile hands the formatted address back byte for byte`() {
         /*
           THE ONE THAT PREVENTS DATA LOSS. `designerProfileUpdateJson` writes every column on every
-          save so that an emptied box can clear a value — so without this rule, a designer opening
-          this screen to correct their DEPARTMENT would post the flattened address over the document,
-          and the formatting they typed in a browser would be gone with nothing said on either
-          client. The body is built from the form the way the screen builds it.
+          save so that an emptied box can clear a value — so a designer opening this screen to correct
+          their DEPARTMENT must post the document they never touched, exactly as it is stored.
         */
         val document = """{"blocks":[{"kind":"PARAGRAPH","spans":""" +
             """[{"text":"12 Nagar Road, "},{"text":"Bagru","marks":["BOLD"]}]}]}"""
         val stored = DesignerProfileDto(displayName = "Meera Nair", addressLine = document)
         val form = stored.toForm()
 
-        assertEquals("12 Nagar Road, Bagru", form.addressLine)
-        assertEquals(
-            "an untouched address must be sent back as the STORED string, not as its flattening",
-            document,
-            form.toBody(form, document).addressLine,
-        )
+        // The rich box is handed the COLUMN, so it can show the bold (DA-28).
+        assertEquals(document, form.addressLine)
+        assertEquals(document, form.toBody(form, document).addressLine)
 
-        // A save that changed something else entirely still leaves it alone — which is the case that
-        // actually happens, and the one a "dirty flag on the whole form" would have got wrong.
         val elsewhere = form.copy(department = "Textile Design")
         assertEquals(document, elsewhere.toBody(form, document).addressLine)
+
+        // The editor re-serialises what it is handed: the same document spelt differently (keys in
+        // another order, spacing) is still the same address, and the stored string is what goes back.
+        val respelt = """{ "blocks": [ { "spans": [ {"text":"12 Nagar Road, "}, """ +
+            """{"marks":["BOLD"],"text":"Bagru"} ], "kind": "PARAGRAPH" } ] }"""
+        assertEquals(document, form.copy(addressLine = respelt).toBody(form, document).addressLine)
     }
 
     @Test
-    fun `editing the address on the handset replaces the document with what was typed`() {
+    fun `formatting typed on the handset round-trips through the column`() {
         /*
-          THE OTHER HALF, AND IT IS DELIBERATE RATHER THAN A LIMITATION. A designer who retypes their
-          address on a phone means the address to be what they typed; keeping the old document's
-          marks over new words would be the app deciding it knew better. What must not happen is that
-          this is a SURPRISE, which is why the box prints a line saying so while the stored value
-          carries formatting — pinned by the source check below.
+          DA-28. The address box is the rich editor and stores by the web's `encodeStoredRichText`
+          rule. A designer who bolds a word on the phone must find it bold in the browser, and the
+          document they saved must come back into the box unchanged — read, re-stored, read again.
         */
-        val document = """{"blocks":[{"kind":"PARAGRAPH","spans":""" +
-            """[{"text":"12 Nagar Road, "},{"text":"Bagru","marks":["BOLD"]}]}]}"""
-        val form = DesignerProfileDto(addressLine = document).toForm()
-        val edited = form.copy(addressLine = "14 Nagar Road, Bagru")
+        val typed = RichDoc(
+            blocks = listOf(
+                RichBlock(spans = listOf(RichSpan("12 Nagar Road, "), RichSpan("Bagru", setOf(Mark.BOLD)))),
+                RichBlock(spans = listOf(RichSpan("Jaipur 303007", setOf(Mark.ITALIC)))),
+            ),
+        )
+        val saved = recordStoredKeepingFormat(typed)!!
+        assertTrue("a bolded address must be stored as a document: $saved", saved.startsWith("{\"blocks\""))
+        assertEquals(typed, recordDocFromStored(saved))
+        assertEquals("it must be stable on a second save", saved, recordStoredKeepingFormat(recordDocFromStored(saved)))
 
-        assertEquals("14 Nagar Road, Bagru", edited.toBody(form, document).addressLine)
+        // What the web writes for the same document is byte-for-byte what the phone writes.
+        val web = """{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"12 Nagar Road, "},""" +
+            """{"text":"Bagru","marks":["BOLD"]}]},{"kind":"PARAGRAPH","spans":""" +
+            """[{"text":"Jaipur 303007","marks":["ITALIC"]}]}]}"""
+        assertEquals(web, saved)
 
+        // Edited on the phone, the body carries the formatting — not a flattening of it.
+        val form = DesignerProfileDto(addressLine = "12 Nagar Road").toForm()
+        assertEquals(saved, form.copy(addressLine = saved).toBody(form, "12 Nagar Road").addressLine)
+
+        // AND AN UNFORMATTED ADDRESS STAYS PROSE, byte for byte — every live row is one of these, and
+        // a document written for it would put braces in every reader that has not learnt to flatten.
+        val plain = RichDoc(blocks = listOf(RichBlock(spans = listOf(RichSpan("12 Nagar Road, Bagru")))))
+        assertEquals("12 Nagar Road, Bagru", recordStoredKeepingFormat(plain))
+        assertEquals(null, recordStoredKeepingFormat(RichDoc()))
+
+        // The ceiling counts the words, never the braces.
+        assertEquals("12 Nagar Road, Bagru Jaipur 303007", designerProfileAddressText(saved))
+    }
+
+    @Test
+    fun `the address box is the rich editor that keeps its formatting`() {
         val source = screenSource()
         assertTrue(
-            "the address box no longer warns that editing it here replaces the web's formatting — " +
-                "the replacement is defensible and the surprise is not, so if the wording changed, " +
-                "update this test rather than dropping the sentence",
-            source.contains("This address has bold or other styling."),
+            "the address must be edited in the rich box that stores documents (DA-28)",
+            Regex("""label = "Address line",[\s\S]{0,400}rich = true,\s*keepFormatting = true""").containsMatchIn(source),
         )
-        assertTrue(
-            "the warning is drawn unconditionally, which makes it a paragraph nobody reads by the " +
-                "second visit — it must be gated on the stored value actually carrying formatting",
-            source.contains("designerProfileAddressIsFormatted(storedAddressLine)"),
+        assertFalse(
+            "the old 'saved as plain text' warning describes a loss that no longer happens",
+            source.contains("It will be saved as plain text."),
         )
     }
 

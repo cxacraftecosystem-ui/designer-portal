@@ -12,6 +12,7 @@ import com.designprototype.workshop.report.RichBlock
 import com.designprototype.workshop.report.RichDoc
 import com.designprototype.workshop.report.RichSpan
 import com.designprototype.workshop.report.fromJson
+import com.designprototype.workshop.report.toJson
 import com.designprototype.workshop.report.toPlain
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -399,6 +400,33 @@ fun recordDocFromStored(stored: String?): RichDoc {
  * screen's diff would show a change where nothing was said.
  */
 fun recordStoredFromDoc(doc: RichDoc): String? = toPlain(doc).takeIf { it.isNotBlank() }
+
+/**
+ * Option (a), for a column the WEB already stores as a document — `encodeStoredRichText`'s rule.
+ *
+ * **A document is only ever stringified when it is not expressible as plain text.** Every block a
+ * PARAGRAPH at level 0, aligned LEFT, with no marks, no media and no rows: the prose is written, so
+ * an address nobody formatted keeps exactly the bytes it always had. Anything else — one bold word —
+ * is written as `toJson(doc)`, which is the same canonical shape as the web's `toStored` and the
+ * server's `to_json`, so the column round-trips between the two clients without a mark lost.
+ *
+ * NOT the default and not a change to [recordStoredFromDoc]: the argument above for option (b) still
+ * holds for every column whose readers have not all learnt to flatten. `DesignerProfile.addressLine`
+ * is the one whose have — the web writes documents into it, and the server folds it through
+ * `rich_text.plain_from_stored` wherever it is copied or measured.
+ */
+fun recordStoredKeepingFormat(doc: RichDoc): String? {
+    if (doc.isEmpty) return null
+    val plainProse = doc.blocks.all { block ->
+        block.kind == BlockKind.PARAGRAPH &&
+            block.level == 0 &&
+            block.align == com.designprototype.workshop.report.Align.LEFT &&
+            block.media.isEmpty() &&
+            block.rows.isEmpty() &&
+            block.spans.all { it.marks.isEmpty() }
+    }
+    return if (plainProse) toPlain(doc).takeIf { it.isNotBlank() } else toJson(doc).toString()
+}
 
 /**
  * The one line printed under a rich box, so nobody discovers the trade-off by losing work.
