@@ -720,8 +720,8 @@ export function MediaCaptureField({
         </div>
         {recording ? <RecordingStrip stream={stream} elapsedMs={elapsedMs} /> : null}
         <p className="text-xs text-ink-500">
-          Drag and drop files here, or use the buttons above. Files start uploading as soon as they are attached, and
-          go up unchanged so their photo details (date, place, camera) are kept.
+          {/* The documentation portal's sentence, word for word (artisan form contract, 2026-10-17). */}
+          Or drag files here. Uploads start right away.
         </p>
       </div>
       {/*

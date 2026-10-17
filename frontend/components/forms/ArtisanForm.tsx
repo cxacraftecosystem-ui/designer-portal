@@ -40,7 +40,13 @@ import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
-import { deriveAge, deriveExperienceYears } from "@/lib/recordDerivations";
+import {
+  ARTISAN_FORM_CONTRACT,
+  EXPERIENCE_MONTH_OPTIONS,
+  EXPERIENCE_NOT_STATED,
+  experienceMonthsLabel,
+  missingArtisanDatesSentence
+} from "@/lib/artisanFormContract";
 import { EMAIL_PATTERN, emailValidationError } from "@/lib/textFormats";
 import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
 import { RequiredMark } from "@/components/ui/RequiredMark";
@@ -49,36 +55,14 @@ import { ActionGroup } from "@/components/ui/ActionGroup";
 // Android parity (MainActivity.kt genderOptions).
 const genderOptions = ["Male", "Female", "Transgender", "Other"];
 
-/**
- * The word for “this was never answered”, on both boxes of the experience pair.
- *
- * ── THIS STRING IS THE WHOLE OF THE NULL-VERSUS-ZERO GUARANTEE ON THIS FORM ───────────────
- *
- * It sits on an `<option value="">` placed FIRST in each list, so an untouched dropdown submits the
- * empty string, `textValue` reads that back as null, and the payload carries an explicit null the
- * API's `_CLEARABLE_COLUMNS` honours. Without it the first option would be `0` — `Select`'s
- * uncontrolled fallback is `options[0].value` — and every artisan edited for an unrelated reason
- * would come away claiming 0 years and 0 months of experience, with nothing on screen to say so.
- *
- * A REAL 0 IS STILL PICKABLE and still means something: an artisan who took up the craft this year.
- * That is why the two answers need two different values rather than one clever one, and why
- * `design_workshops.py`, `record_fields.py` and `records.py` all say in their own words that zero is
- * a real answer here and `or` may never be used to test it.
+/*
+ * THE EXPERIENCE PAIR IS THE DOCUMENTATION PORTAL'S (owner decision, 2026-10-17): a number box,
+ * "Experience (years)", bounded 0..90 like `participant.experienceYears`, and a closed picker,
+ * "Experience (months)", 0..11 because the months are a remainder. The months' empty option is
+ * "Not stated" and submits "", which `textValue` reads as null — never 0, which is a real answer
+ * (an artisan who took up the craft this year). See `lib/artisanFormContract` and
+ * `shared/artisan-form-contract.json`.
  */
-const EXPERIENCE_UNANSWERED = "Not recorded";
-
-/**
- * The two option ranges. 0..90 mirrors the stage registry's own bounds for
- * `participant.experienceYears` — a wider list here would offer a number the workshop then refuses
- * on a row it filled in from this very record — and 0..11 is the months column's CHECK constraint.
- *
- * A CLOSED LIST IS WHY NOTHING CLAMPS. The number box these replaced could produce 400 and needed
- * `min`/`max` to refuse it before a 422 took the rest of the record down with it; a dropdown cannot
- * offer what is not in the list, and silently clamping would store a number nobody chose.
- */
-const EXPERIENCE_YEAR_OPTIONS = Array.from({ length: 91 }, (_, index) => index);
-const EXPERIENCE_MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => index);
-
 
 // The Pehchan Yes/No dropdown submits these through the Select's mirror input; `submit` parses them
 // back into the boolean the API expects. Keeping them as the option VALUES (with "Yes"/"No" only as
@@ -378,7 +362,7 @@ function StatusField({
  *  - **Workshop, Craft, Gender, Status** — closed vocabularies behind a themed dropdown. There is no
  *    free text to speak; the answer is picked, and the native type-ahead (focus Gender, press "f",
  *    get Female) is already faster than a sentence.
- *  - **Date of birth, Practising since** — calendar fields. `DateField` parses `dd/mm/yyyy`, and a
+ *  - **Date of birth, Craft start date** — calendar fields. `DateField` parses `dd/mm/yyyy`, and a
  *    recogniser hands back "the fourth of March nineteen seventy one" or "4 3 1971", neither of
  *    which that parser accepts. Worse, the two readings of an ambiguous date are BOTH valid dates,
  *    so a mis-transcribed birthday is a defect nothing anywhere reports.
@@ -459,11 +443,6 @@ export function ArtisanForm({
   const derivedFieldsId = useId();
   const dobId = `${derivedFieldsId}-dob`;
   const craftStartId = `${derivedFieldsId}-craft-start`;
-  // No `experienceId`: since 2026-08-30 the experience is a PAIR of themed dropdowns, and `Select`
-  // deliberately forwards no `id` to its trigger — so a `<label htmlFor>` would point at nothing.
-  // The pair is named by `FieldBlock`’s `role="group"` and each box by its own `aria-label`; only
-  // the hint below them still needs an id, because `aria-describedby` is bound by one.
-  const experienceHintId = `${derivedFieldsId}-experience-hint`;
   const formRef = useRef<HTMLFormElement>(null);
   const [crafts, setCrafts] = useState<Craft[]>([]);
   // Controlled so the carried craft can land in it after the list arrives; a defaultValue is fixed
@@ -647,22 +626,12 @@ export function ArtisanForm({
   const emailErrorId = `${identityLabelId}-email-error`;
 
   /*
-   * ── WHAT THE TWO DATES COME TO TODAY, BY THE SERVER'S OWN RULE ──────────────────────────────
-   *
-   * `lib/recordDerivations` is a PORT of `records.derive_age` and `records.derive_experience_years`,
-   * not a second opinion about either — read its header before changing anything here. The rule is
-   * declared once, on the server, because the server is what the workshop and the report read; this
-   * form shows the same answer so a researcher can check the number they are about to cause before
-   * they cause it. A form that computed its own age would be a figure the save then disagreed with,
-   * which is worse than showing none, because the researcher has already read it.
-   *
-   * `todayIso` is the UTC calendar date, which is what the derivations use as their reference day
-   * and what the previous `<input type="date">` used as its `max`. Nobody is born tomorrow, and
-   * nobody took up a craft tomorrow either.
+   * `todayIso` is the UTC calendar date — the reference day the server derives the age and the
+   * years of experience against. Nobody is born tomorrow, and nobody took up a craft tomorrow either.
+   * The two dates carry no readout here: the documentation portal's form shows none, and both
+   * portals draw the same form (2026-10-17). The record page shows the derived figures.
    */
   const todayIso = new Date().toISOString().slice(0, 10);
-  const derivedAge = deriveAge(dateOfBirth);
-  const derivedExperience = deriveExperienceYears(craftStartDate);
 
   /**
    * The craft dropdown, and what it is NOT showing — see `components/data/cappedList`.
@@ -848,6 +817,18 @@ export function ArtisanForm({
         setSaving(false);
         return;
       }
+      // Both dates are required on every save from this form (2026-10-17). The boxes carry
+      // `required`, so the browser stops a normal submit first; this is the same sentence the server
+      // answers with, for a save that reaches here another way (Save in the unsaved-changes dialog).
+      const missingDates = missingArtisanDatesSentence({
+        dateOfBirth: textValue(form, "dateOfBirth"),
+        craftStartDate: textValue(form, "craftStartDate")
+      });
+      if (missingDates) {
+        setError(missingDates);
+        setSaving(false);
+        return;
+      }
       // The Yes/No dropdown mirrors its option value into FormData; anything other than an explicit
       // "No" means the artisan holds a card, which matches the API's own default of Yes.
       const pehchanAvailable = textValue(form, "pehchanCardAvailable") !== PEHCHAN_NO;
@@ -924,7 +905,10 @@ export function ArtisanForm({
         recordedTimezone,
         location,
         // extraMetadata stays programmatic (EXIF etc.) — the raw JSON textarea was removed.
-        extraMetadata: exifItems.length ? { mediaExif: exifItems } : {}
+        extraMetadata: exifItems.length ? { mediaExif: exifItems } : {},
+        // The artisan form contract this save was made under: the server holds it to both dates.
+        // In the BODY, so the outbox stores it with the entry — see `lib/artisanFormContract`.
+        formContract: ARTISAN_FORM_CONTRACT
       };
       // With no connection this queues to the offline outbox instead of failing at the Save button;
       // the media goes with it, because the artisan will have gone home by the time signal returns.
@@ -1292,7 +1276,7 @@ export function ArtisanForm({
                 nobody touched saved a claim about a person — on a women-majority craft cluster, a
                 silent skew in the dataset. Unanswered stays unanswered; the first row clears it. */}
             <Select name="gender" defaultValue={initial?.gender?.trim() ? initial.gender : ""} onChange={markDirty}>
-              <option value="">Not stated</option>
+              <option value="">Select gender</option>
               {genderOptions.map((option) => (
                 <option key={option}>{option}</option>
               ))}
@@ -1309,17 +1293,18 @@ export function ArtisanForm({
               A DATE AND NOT A NUMBER, TWICE OVER, and that is the shape of both answers. The
               workshop asks for an AGE and for YEARS OF EXPERIENCE; storing either would be wrong
               within a year with nothing anywhere to say so, so what is stored is the DATE and the
-              number is derived from it every time it is read — on this page, in the workshop's
-              participant table, and in the report. That is also why each box carries the sentence
-              it carries: somebody filling one in is answering a question they were not asked, and
-              needs to know why.
+              number is derived from it every time it is read — on the record page, in the
+              workshop's participant table, and in the report.
+
+              BOTH DATES ARE REQUIRED ON EVERY NEW SAVE (owner decision, 2026-10-17, the
+              documentation portal's form adopted whole): labels, order, requiredness and the absence
+              of a hint under either box are that form's. `shared/artisan-form-contract.json` holds
+              both portals to it.
 
               THERE IS NO AGE BOX ON THIS FORM AND THERE NEVER WAS ONE, and the absence is the
               feature rather than an omission. A typed age is the defect `dateOfBirth` exists to
-              prevent, so the age below is a READOUT — text, with no `name`, submitted nowhere and
-              stored nowhere. The experience box that remains is a different thing: it is the STATED
-              number, second in the server's precedence, and it is still typeable for the reason
-              written out on it. */}
+              prevent. The experience boxes below are a different thing: the STATED number, second in
+              the server's precedence. */}
           {/* Not `Field`: see `derivedFieldsId` above for why a `<DateField>` may not be wrapped in
               a `<label>`, and why the hint sits outside it. */}
           <div className="grid min-w-0 gap-1">
@@ -1347,7 +1332,6 @@ export function ArtisanForm({
               That is why this control keeps a text input rather than being a button that only opens
               a picker.
             */}
-            {/* CalendarField draws the hint under the box and ties it to the input as `${dobId}-hint`. */}
             <CalendarField
               id={dobId}
               label="Date of birth"
@@ -1358,22 +1342,21 @@ export function ArtisanForm({
                 markDirty();
               }}
               max={todayIso}
-              hint={
-                derivedAge === null
-                  ? "Used to show age."
-                  : `Age ${derivedAge}.`
-              }
+              // REQUIRED ON EVERY NEW SAVE, and on an edit of a record saved before the rule — that
+              // edit asks for it (2026-10-17). Clearable, so a wrong date can be retyped; Save refuses.
+              required
             />
           </div>
           {/* THE FEEDER THE EXPERIENCE BELOW IS DERIVED FROM, at the owner's request that experience
               become a derived field with a date of joining the craft behind it.
               `Artisan.craftStartDate` is NULL on every row written before 2026-08-23 and the
               migration deliberately refuses to guess one, so an old record showing this box empty is
-              the expected state — not a gap for somebody to fill in from a printout. */}
+              the expected state on read. Since 2026-10-17 it is REQUIRED on every new save, so an
+              edit of such a record asks for it. "Craft start date", the documentation portal's word. */}
           <div className="grid min-w-0 gap-1">
             <CalendarField
               id={craftStartId}
-              label="Practising since"
+              label="Craft start date"
               name="craftStartDate"
               value={craftStartDate}
               onChange={(iso) => {
@@ -1381,122 +1364,51 @@ export function ArtisanForm({
                 markDirty();
               }}
               max={todayIso}
-              hint={
-                derivedExperience === null
-                  ? "When they took up the craft."
-                  : `${derivedExperience} years of experience.`
-              }
+              required
             />
           </div>
           {/*
-            ── THE EXPERIENCE PAIR: TWO DROPDOWNS ON ONE LINE, UNDER ONE HEADING ──────────────
+            ── THE EXPERIENCE PAIR: TWO BOXES, THE DOCUMENTATION PORTAL'S (2026-10-17) ─────────
+            "Experience (years)" is a number box bounded 0..90 — `participant.experienceYears`' bound,
+            so the form cannot hold a number the workshop would refuse. "Experience (months)" is a
+            closed picker, 0..11, because the months are a remainder; its empty option "Not stated"
+            submits "" and the payload sends an explicit null, never 0.
 
-            `FieldBlock` and not a bare `<label htmlFor>`: `Select` forwards no id to its trigger (it
-            is a `<button>`, and the trigger deliberately stays unaddressable so that the handful of
-            native `<select>`s bound by id cannot be swapped for one without losing the binding), so
-            `htmlFor` would point at nothing at all. `FieldBlock` draws a `role="group"` named by the
-            heading, which is how a composite control gets a name, and it is what makes these two
-            boxes read as ONE answer rather than as two adjacent fields.
+            BOTH STAY ENABLED AND NEITHER IS PRE-FILLED FROM THE DATE ABOVE. The craft start date
+            outranks them wherever experience is read, but a disabled control is omitted from
+            FormData, `submit` reads the absence as an explicit null, and `_CLEARABLE_COLUMNS` makes
+            the API clear the column — a stated answer that is right today would be gone.
 
-            EACH BOX ALSO SAYS WHAT IT MEASURES, because a group name is announced on ENTERING the
-            group: a reader who tabs straight onto the second trigger would otherwise hear "6" and
-            nothing else, and with `FieldBlock`’s ambient label it is worse — both triggers would
-            announce "Experience" with a different number after it, one question and two answers. The
-            visible word is contained in the spoken name, which is what keeps this usable by voice.
-
-            THE HINT STAYS OUTSIDE THE GROUP AND IS POINTED AT BY `aria-describedby`, exactly as it
-            was under the number box: text inside a naming element becomes part of the name, so a
-            two-sentence explanation would be read out every time either box took focus.
-
-            THE HEADING DROPS "(years)" BECAUSE THE HEADING NO LONGER NAMES A UNIT — the boxes do.
-            That is only a change on this screen: the export column headers this value reaches are
-            declared once, server-side, in `record_fields.py` (`“Experience (years)”`, a literal
-            heading in four ministry-facing files) and are deliberately untouched. It also lands the
-            same word the stage registry uses for the participant table it fills, which is
-            “Experience”, so the form and the table that quotes it now agree.
+            The months box is a themed dropdown, so it sits in a `FieldBlock` (a `<label>` would fold
+            the trigger's text into its name and close the menu on a stray click) and marks the form
+            dirty by hand.
           */}
-          <FieldBlock
-            label="Experience"
-            hint={
-              <p id={experienceHintId} className="text-xs leading-5 text-ink-muted">
-                {derivedExperience === null
-                  ? "Used if there is no “practising since” date. Leave “Not recorded” rather than 0."
-                  : `The date above sets this (${derivedExperience} years).`}
-              </p>
-            }
-          >
-            {/*
-              ── WHY A STATED ANSWER SURVIVES ON A FORM WHOSE EXPERIENCE IS NOW DERIVED ─────────
-              The date above outranks these boxes everywhere the value is read, so the obvious
-              tidy-up is to delete them, or to disable them whenever a date is present. Both would
-              destroy data that is currently right, which is the one thing this change may not do.
-
-              An artisan who says "about thirty years" and cannot name a year is the ordinary case
-              rather than the exception — `Artisan.experienceYears`' own column comment is an
-              argument for exactly that, and it is kept — and every row written before the join-date
-              column existed answers this question through this number, or through a legacy "30+"
-              sitting behind it. `participant.experienceYears` is a TABLE_COLUMN in a submitted
-              report, so a form that refused to hold their answer would print a blank in the
-              participant table for the oldest and best-documented artisans in the repository.
-
-              DISABLING EITHER BOX WHILE A DATE IS SET WOULD BE WORSE THAN LEAVING THEM ALONE, and
-              not for a style reason: a disabled control is omitted from FormData, `submit` reads the
-              absence as an explicit null, and `_CLEARABLE_COLUMNS` makes the API clear the column.
-              The stated answer would be gone — so clearing the joining date a week later, on a
-              record nobody re-answered, would leave that artisan with no experience at all. A
-              disabled `<select>` behaves identically to the disabled `<input>` that warning was
-              written about. Kept enabled, both answers stand on the row and the precedence decides
-              between them on every read.
-
-              AND NEITHER BOX IS PRE-FILLED FROM THE DERIVED YEARS. `derivedExperience` is shown in
-              the sentence below and written into nothing: seeding a box from it would turn a figure
-              the server recomputes on every read into a frozen stated number, which is precisely the
-              distinction `craftStartDate` was added to draw.
-            */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="grid min-w-0 gap-1">
-                <span className="text-xs font-medium text-ink-500">Years</span>
-                <Select
-                  name="experienceYears"
-                  aria-label="Experience, in whole years"
-                  aria-describedby={experienceHintId}
-                  /*
-                    `?? ""` AND NOT `|| ""`: a stored 0 is falsy, so `||` would open the box on the
-                    empty option and the next save would write null over a real answer. An artisan
-                    who took up the craft this year HAS 0 years of experience.
-                  */
-                  defaultValue={String(initial?.experienceYears ?? "")}
-                  // A themed dropdown is a <button> and fires no native input event, so the form's
-                  // onInput never sees it and the dirty flag has to be raised by hand.
-                  onChange={markDirty}
-                >
-                  {/* FIRST, and its value is the empty string — see EXPERIENCE_UNANSWERED. */}
-                  <option value="">{EXPERIENCE_UNANSWERED}</option>
-                  {EXPERIENCE_YEAR_OPTIONS.map((years) => (
-                    <option key={years} value={years}>
-                      {years}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="grid min-w-0 gap-1">
-                <span className="text-xs font-medium text-ink-500">Months</span>
-                <Select
-                  name="experienceMonths"
-                  aria-label="Experience, in months"
-                  aria-describedby={experienceHintId}
-                  defaultValue={String(initialExperienceMonths ?? "")}
-                  onChange={markDirty}
-                >
-                  <option value="">{EXPERIENCE_UNANSWERED}</option>
-                  {EXPERIENCE_MONTH_OPTIONS.map((months) => (
-                    <option key={months} value={months}>
-                      {months}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            </div>
+          <Field label="Experience (years)">
+            <TextInput
+              name="experienceYears"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={90}
+              step={1}
+              /* `?? ""` AND NOT `|| ""`: a stored 0 is falsy, and 0 is a real answer. */
+              defaultValue={initial?.experienceYears ?? ""}
+              onChange={markDirty}
+            />
+          </Field>
+          <FieldBlock label="Experience (months)">
+            <Select
+              name="experienceMonths"
+              defaultValue={initialExperienceMonths != null ? String(initialExperienceMonths) : ""}
+              onChange={markDirty}
+            >
+              <option value="">{EXPERIENCE_NOT_STATED}</option>
+              {EXPERIENCE_MONTH_OPTIONS.map((months) => (
+                <option key={months} value={String(months)}>
+                  {experienceMonthsLabel(months)}
+                </option>
+              ))}
+            </Select>
           </FieldBlock>
           {/* FieldBlock, not Field: PhoneField contains a themed dropdown, and `Field` is a
               `<label>` — so the visible word "Phone" bound itself to the dial-code trigger (the
@@ -1583,10 +1495,8 @@ export function ArtisanForm({
                 Identity
               </h3>
               <p className="mt-0.5 text-xs text-ink-muted">
-                Prevents duplicate artisans. Masked in shared and exported views.
-                {aadhaarRequired
-                  ? ""
-                  : " Aadhaar is optional — add it only if the artisan agrees."}
+                Masked on every shared or exported view.
+                {aadhaarRequired ? "" : " Optional for this older record — add only with the artisan’s consent."}
               </p>
             </div>
             <AadhaarField

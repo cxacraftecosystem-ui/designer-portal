@@ -149,11 +149,11 @@ contents by craft. Adding it once keeps spellings consistent across everyone's r
 Record the person: who they are, where they work, how to reach them, and what they have learnt.
 
 **What the screen asks for:** Type of workshop, Workshop, Name *(required)*, Local name,
-**Craft** *(required)*, Or new craft name, Place *(required)*, Gender, **Date of birth**,
-**Practising since**, Experience (in whole years and months), Phone, Email, Address, Notes,
-**Aadhaar number** *(required)*, **Artisan Pehchan Card available**, **Artisan Pehchan Card number**
-*(required if the card is available)*, **Do's (positive prompt)** *(required)*, **Don'ts (negative
-prompt)** *(required)*, Status, Artisan media, Location (device fix **and** stated address).
+**Craft** *(required)*, Or new craft name, Place *(required)*, Gender, **Date of birth**
+*(required)*, **Craft start date** *(required)*, Experience (years), Experience (months), Phone,
+Email, Address, Notes, **Aadhaar number** *(required)*, **Artisan Pehchan Card available**,
+**Artisan Pehchan Card number** *(required if the card is available)*, **Do's** *(required)*,
+**Don'ts** *(required)*, Status, Artisan media, Location (device fix **and** stated address).
 
 **Why it exists.** The artisan is the anchor of the dataset — products, processes, tools and
 questionnaire interviews all link back to an artisan record. The Do's and Don'ts are the artisan's
@@ -172,14 +172,16 @@ own hard-won craft knowledge: the part of the archive that cannot be reconstruct
   recognised as "unchanged"; you do not have to retype the number.
 - **Pehchan card**: answer Yes/No first. Answering Yes makes the card number required; answering No
   clears it. It is not possible to store a card number for an artisan who says they hold no card.
-- **Date of birth and *Practising since* are dates, and the numbers come off them.** The design
+- **Date of birth and *Craft start date* are required, and the numbers come off them.** The design
   workshop's participant table wants an age and years of experience; a number stored today is wrong
   within a year with nothing anywhere to say so, so the form keeps the **date** and derives the
-  figure every time it is read — here, in the participant table, and in the report. There is
-  deliberately **no age box**. The *Experience* boxes beside them are the stated fallback, read only
-  while *Practising since* is empty.
-- Photo EXIF is retained and summarised into the notes automatically. Do not transcribe camera
-  details by hand.
+  figure every time it is read — on the record page, in the participant table, and in the report.
+  There is deliberately **no age box**. *Experience (years)* and *Experience (months)* are the stated
+  fallback, read only while the craft start date is empty; leave months on *Not stated* rather than 0.
+- **An artisan recorded before 2026-10-17 may have neither date.** The record still opens and reads
+  as before; saving an edit of it from the artisan form asks for both dates first. Both portals and
+  both apps draw this same form (`shared/artisan-form-contract.json`).
+- Photo details are added to the notes automatically. Do not transcribe camera details by hand.
 - **Location asks two different things** — see the box below.
 
 ---

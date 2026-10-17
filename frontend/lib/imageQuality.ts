@@ -18,8 +18,8 @@ import type { MediaFile } from "@/lib/types";
  *
  * docs/MEDIA_PIPELINE.md §5 records a deliberate refusal to re-encode images: this is a heritage
  * archive, the original file IS the artifact, and a canvas round-trip destroys full resolution and
- * strips the EXIF the app preserves on purpose (`collectExifMetadata`, and the on-screen promise
- * that "captured files go up unchanged"). So this module MEASURES and never modifies. It decodes to
+ * strips the EXIF the app preserves on purpose (`collectExifMetadata`: captured files go up
+ * unchanged). So this module MEASURES and never modifies. It decodes to
  * a scratch bitmap, reads numbers off it, closes it, and leaves the `File` byte-for-byte untouched.
  * There is no `toBlob`, no `toDataURL`, no re-compression and no write path anywhere in this file,
  * and there must never be one — a "helpful" downscale here would quietly become the thing the

@@ -10,7 +10,7 @@
  * Not a swap. The card is the button PLUS a drop target, and that is the house answer rather than a
  * softening of the request: `components/forms/MediaCaptureField.tsx:470-484` is the repository's
  * canonical file drop and it WRAPS its `.file-trigger` buttons in the drop zone, closing with the
- * sentence "Drag and drop files here, or use the buttons above."
+ * sentence "Or drag files here."
  *
  * The reason is stated in this directory's own sibling, `components/sketches/RankableList.tsx:14-25`,
  * about the drag API generally: **`dragstart`/`dragover` do not fire for touch at all on Android
