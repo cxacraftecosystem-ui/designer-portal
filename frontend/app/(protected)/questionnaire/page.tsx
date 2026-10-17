@@ -3433,7 +3433,7 @@ function QuickTranscript({
             {/* A static ring plus the word, never a spinner alone: the CSS reduced-motion rules zero
                 the animation, and a signal that exists only as motion is one a reduced-motion reader
                 never gets. */}
-            <span className="h-3 w-3 animate-spin rounded-full border-2 border-purple-300 border-t-purple-700" aria-hidden />
+            <span className="h-4 w-4 animate-spin rounded-full border-4 border-progress-track border-t-progress-fill" aria-hidden />
             Transcribing…
           </span>
         ) : null}

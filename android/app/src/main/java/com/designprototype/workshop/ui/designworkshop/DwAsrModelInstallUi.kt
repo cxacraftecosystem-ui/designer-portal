@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
+import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
@@ -1921,7 +1921,7 @@ internal fun DwAsrModelBody(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text("Looking at what this phone has…", color = MaterialTheme.field.muted, fontSize = 12.sp)
             }
             return@Column
@@ -2064,7 +2064,7 @@ internal fun DwAsrModelBody(
                     Text(dwTransferHeading(it), color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
                 }
                 live.percent?.let { percent ->
-                    LinearProgressIndicator(
+                    FieldLinearProgressIndicator(
                         progress = { percent.coerceIn(0, 100) / 100f },
                         modifier = Modifier.fillMaxWidth()
                     )

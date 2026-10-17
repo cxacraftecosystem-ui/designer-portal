@@ -28,7 +28,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
+import com.designprototype.workshop.ui.FieldProgressDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -1120,7 +1121,7 @@ fun WorkshopListScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
             }
 
@@ -1518,8 +1519,8 @@ private fun WorkshopCard(
  */
 @Composable
 private fun CompletenessRing(percent: Int) {
-    val track = MaterialTheme.field.surface300
-    val fill = if (percent >= 100) MaterialTheme.field.success else MaterialTheme.colorScheme.primary
+    val track = FieldProgressDefaults.trackColor
+    val fill = if (percent >= 100) FieldProgressDefaults.successColor else FieldProgressDefaults.indicatorColor
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(46.dp)) {
         Canvas(modifier = Modifier.size(46.dp)) {
             val stroke = 5.dp.toPx()
@@ -1541,7 +1542,7 @@ private fun CompletenessRing(percent: Int) {
                 useCenter = false,
                 topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
                 size = box,
-                style = Stroke(width = stroke)
+                style = Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
             )
         }
         Text("$percent", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -2098,7 +2099,7 @@ private fun CreateWorkshopDialog(
                         },
                         trailingIcon = {
                             when {
-                                designerSearching -> CircularProgressIndicator(
+                                designerSearching -> FieldCircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
                                     strokeWidth = 2.dp
                                 )

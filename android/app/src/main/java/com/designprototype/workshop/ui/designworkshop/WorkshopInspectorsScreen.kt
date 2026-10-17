@@ -17,7 +17,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -436,7 +436,7 @@ fun WorkshopInspectorsScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
             }
             return@Column
@@ -491,7 +491,7 @@ fun WorkshopInspectorsScreen(
             },
             trailingIcon = {
                 when {
-                    searching -> CircularProgressIndicator(
+                    searching -> FieldCircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp
                     )

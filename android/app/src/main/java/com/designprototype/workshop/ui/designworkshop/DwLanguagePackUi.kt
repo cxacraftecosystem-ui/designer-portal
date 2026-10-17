@@ -24,8 +24,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
+import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
@@ -591,7 +591,7 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (controller.checking) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text("Checking…", color = MaterialTheme.field.muted, fontSize = 12.sp)
             }
         }
@@ -780,7 +780,7 @@ private fun DwLanguagePackRow(
                 fontSize = 11.sp
             )
             request.percent?.let { percent ->
-                LinearProgressIndicator(
+                FieldLinearProgressIndicator(
                     progress = { percent.coerceIn(0, 100) / 100f },
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -905,7 +905,7 @@ internal fun DwLanguagePackOfferDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                         Text(
                             "Asking this phone whether the $label pack is installed…",
                             color = MaterialTheme.field.muted,

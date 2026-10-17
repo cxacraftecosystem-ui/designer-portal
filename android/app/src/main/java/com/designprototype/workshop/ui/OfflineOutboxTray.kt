@@ -17,7 +17,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -299,7 +298,7 @@ fun OfflineOutboxTray(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         Text("Reading the queue…", color = MaterialTheme.field.muted, fontSize = 12.sp)
                     }
 
@@ -606,7 +605,7 @@ private fun RepickDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         // NOT "there are none", and not silence. A read in flight is the third of the
                         // three facts that share an empty list, and it is the only one that is
                         // genuinely about to change by itself.
@@ -693,7 +692,7 @@ private fun StaleCorrectionDialog(
                 val loaded = review
                 when {
                     problem != null -> Text(problem.orEmpty(), color = MaterialTheme.field.warning, fontSize = 12.sp)
-                    loaded == null -> CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                    loaded == null -> FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                     loaded.fields.isEmpty() -> Text(
                         "The other person's version already holds what you changed. Sending yours changes nothing.",
                         color = MaterialTheme.field.muted,

@@ -13,7 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -410,7 +410,7 @@ private fun DwChooserPeerRound(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                    FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
                     Text(
                         "Reading this workshop's peer round…",
                         color = MaterialTheme.field.muted,

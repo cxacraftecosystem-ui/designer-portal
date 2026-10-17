@@ -106,6 +106,7 @@
  */
 
 import { Toggle } from "@/components/ui/Toggle";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { CloudOff, Download, FileText } from "lucide-react";
@@ -1314,9 +1315,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             <span className="font-medium text-ink-900">Required fields across all 22 stages</span>
             <span className="text-ink-muted">{percent}%</span>
           </div>
-          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-field-200">
-            <div className="h-full rounded-full bg-purple-700" style={{ width: `${percent}%` }} />
-          </div>
+          <ProgressBar percent={percent} className="mt-1.5 h-2" />
         </div>
         {incomplete.length ? (
           <div>

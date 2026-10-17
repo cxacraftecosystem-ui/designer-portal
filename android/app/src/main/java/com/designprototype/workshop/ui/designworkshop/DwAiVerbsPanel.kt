@@ -13,7 +13,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -220,7 +220,7 @@ internal fun DwAiVerbsPanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text(
                     if (runningOnDevice) DW_TIER2_WORKING_SENTENCE else "Working on the passage…",
                     color = MaterialTheme.field.muted,

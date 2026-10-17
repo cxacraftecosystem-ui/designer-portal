@@ -15,7 +15,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -253,7 +252,7 @@ fun PlaceSearchOverlay(
                 trailingIcon = {
                     when {
                         state == PlaceSearchState.Searching ->
-                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                            FieldCircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                         query.isNotEmpty() ->
                             IconButton(onClick = { query = ""; open = false }) {
                                 Icon(Icons.Filled.Close, contentDescription = "Clear the place search", tint = Muted)

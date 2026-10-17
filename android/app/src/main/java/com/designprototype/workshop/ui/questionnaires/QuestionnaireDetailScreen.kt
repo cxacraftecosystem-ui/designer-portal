@@ -14,7 +14,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -290,7 +290,7 @@ fun QuestionnaireDetailScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
             }
 

@@ -12,10 +12,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
+import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -333,7 +333,7 @@ fun QuestionnaireAnswerScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 Text("Opening the questionnaire…", color = MaterialTheme.field.muted, fontSize = 13.sp)
             }
 
@@ -538,7 +538,7 @@ private fun AnswerHeader(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium
             )
-            LinearProgressIndicator(
+            FieldLinearProgressIndicator(
                 progress = { if (total == 0) 0f else answered.toFloat() / total },
                 modifier = Modifier.fillMaxWidth()
             )

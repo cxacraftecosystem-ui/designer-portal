@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 /**
  * THE OWNER'S RULE (2026-10-17), held mechanically: on no surface a plain `<select>`, a native date
  * input, or a single-box six-digit code. Use `SearchableSelect` / `SearchableMultiSelect`,
- * `CalendarField`, and `OtpCodeInput` (field-repo-frontend §11.12).
+ * `CalendarField`, and `OtpCodeInput` (field-repo-frontend §11.11).
  *
  * The scan reads JSX ELEMENTS, not prose: a line that STARTS with `<select` or with `type="date"` is
  * markup, while the many comments explaining why a native control was replaced quote it mid-line.

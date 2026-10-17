@@ -70,7 +70,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
+import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
@@ -669,6 +669,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
+import com.designprototype.workshop.ui.FieldProgressDefaults
 
 /*
  * The address an administrator's password link points at is `SET_PASSWORD_LINK_HOST` and
@@ -5226,7 +5228,7 @@ private fun HomeScreen(
                                 release.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted, fontSize = 12.sp) }
                                 updateError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
                                 if (updateBusy) {
-                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                    FieldLinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                                     Text("Downloading and preparing the installer…", color = Muted, fontSize = 12.sp)
                                 }
                             }
@@ -5606,7 +5608,7 @@ private fun SettingsScreen(
     RecordCard(title = "Settings") {
         if (loading) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 Text("Loading settings…", color = Muted, fontSize = 13.sp)
             }
             return@RecordCard
@@ -9870,10 +9872,11 @@ private fun MediaCaptureSection(
                 val overall = media.uris.map { (media.stagedProgress[it] ?: 0f).coerceIn(0f, 1f) }.average().toFloat()
                 val allDone = media.staged.size >= media.uris.size
                 if (!allDone) {
-                    LinearProgressIndicator(
+                    FieldLinearProgressIndicator(
                         progress = { overall },
                         modifier = Modifier.fillMaxWidth().height(6.dp),
-                        color = Coral
+                        color = FieldProgressDefaults.onBrandTileIndicator,
+                        trackColor = FieldProgressDefaults.onBrandTileTrack
                     )
                 }
                 Text(
@@ -9986,10 +9989,11 @@ private fun AttachedUploadsCard(
         Text("${uris.size} $label(s) attached", color = Canvas, fontWeight = FontWeight.SemiBold)
         val overall = uris.map { (media.stagedProgress[it] ?: 0f).coerceIn(0f, 1f) }.average().toFloat()
         if (!allDone) {
-            LinearProgressIndicator(
+            FieldLinearProgressIndicator(
                 progress = { overall },
                 modifier = Modifier.fillMaxWidth().height(6.dp),
-                color = Coral
+                color = FieldProgressDefaults.onBrandTileIndicator,
+                trackColor = FieldProgressDefaults.onBrandTileTrack
             )
         }
         Text(
@@ -14099,7 +14103,7 @@ private fun ProcessForm(
         }
         when {
             productsLoading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text("Loading this artisan's products…", color = Muted, fontSize = 11.sp)
             }
             productLoadError != null -> Text(productLoadError!!, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
@@ -14530,7 +14534,7 @@ private fun MyActivityScreen(
         }
         when {
             current == null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 Text("Loading your activity…", color = Muted, fontSize = 13.sp)
             }
             // NOTHING ANSWERED. Saying "you haven't recorded anything yet" here would tell a designer
@@ -14875,7 +14879,7 @@ private fun MediaWithTranscript(
         transcribing || (isAudio && (status == null || status in processing)) -> {
             // Still processing — show a buffer icon; the transcript appears here once it's ready.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text(if (transcribing) "Transcribing now…" else "Transcribing audio…", color = Muted, fontSize = 11.sp)
             }
         }
@@ -15025,7 +15029,7 @@ private fun TranscriptRefineControls(
     }
     if (refining) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+            FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
             Text("Refining with AI…", color = Muted, fontSize = 11.sp)
         }
     }
@@ -16674,7 +16678,7 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
         )
         when {
             loading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text("Loading pending records…", color = Muted, fontSize = 12.sp)
             }
             loadError != null -> LoadFailedCard(message = loadError.orEmpty(), onRetry = { refresh() })
@@ -17026,7 +17030,7 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
         )
         if (downloading) {
             val fraction = if (total > 0) done.toFloat() / total.toFloat() else 0f
-            LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+            FieldLinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
             Text("Compiling $done / $total files (${(fraction * 100).toInt()}%)", color = Muted, fontSize = 12.sp)
         }
         resultMessage?.let { Text(it, color = Body, fontSize = 12.sp) }
@@ -18120,7 +18124,7 @@ private fun AndroidMediaForm(
         }
         localMessage?.let { Text(it, color = Muted, fontSize = 12.sp) }
         if (uploading) {
-            LinearProgressIndicator(progress = { uploadFraction }, modifier = Modifier.fillMaxWidth())
+            FieldLinearProgressIndicator(progress = { uploadFraction }, modifier = Modifier.fillMaxWidth())
             uploadProgressText?.let { Text(it, color = Muted, fontSize = 12.sp) }
         }
         Button(
@@ -18596,10 +18600,9 @@ private fun AndroidUriPreview(
             fontSize = 11.sp
         )
         progress != null && progress < 1f -> {
-            LinearProgressIndicator(
+            FieldLinearProgressIndicator(
                 progress = { progress },
-                modifier = Modifier.fillMaxWidth().height(4.dp),
-                color = Coral
+                modifier = Modifier.fillMaxWidth().height(4.dp)
             )
             Text("Uploading ${(progress * 100).toInt()}%", color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
@@ -22502,7 +22505,7 @@ private fun TaskCard(
                 fontSize = 11.sp
             )
             task.percentComplete?.let { percent ->
-                LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth())
+                FieldLinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth())
             }
 
             if (!editable) return@Column
@@ -23219,7 +23222,7 @@ private fun SaveButton(
     Button(onClick = onClick, enabled = enabled && state == SaveState.IDLE, modifier = modifier) {
         when (state) {
             SaveState.SAVING -> {
-                androidx.compose.material3.CircularProgressIndicator(
+                FieldCircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,
                     color = LocalContentColor.current

@@ -24,7 +24,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -1205,7 +1205,7 @@ fun DesignerProfileScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
             }
 
@@ -2417,7 +2417,7 @@ private fun ProfileMediaRow(
                     .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
             ) {
                 when {
-                    busy -> CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                    busy -> FieldCircularProgressIndicator(modifier = Modifier.size(20.dp))
                     model != null -> AsyncImage(
                         model = model,
                         contentDescription = slot.caption(),

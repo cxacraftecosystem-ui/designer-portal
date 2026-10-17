@@ -15,7 +15,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.OpenInFull
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -546,7 +546,7 @@ internal fun DwSketchChooserUploadTab(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                    FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
                     Text(
                         "Reading this workshop's sketches and prototypes…",
                         color = MaterialTheme.field.muted,

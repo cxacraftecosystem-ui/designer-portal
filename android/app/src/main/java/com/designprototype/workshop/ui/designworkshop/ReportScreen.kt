@@ -26,7 +26,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -799,7 +799,7 @@ fun ReportScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 // NAMED, BECAUSE THIS WAIT IS NOW A NETWORK WAIT. Preparing the report used to be a
                 // local file read and was over before the spinner drew; it now reads the workshop's
                 // stages, and on a handset attached to a cell that accepts packets and answers none
@@ -1132,7 +1132,7 @@ fun ReportScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                 Text("Rendering the report on this device…", color = MaterialTheme.field.muted, fontSize = 13.sp)
             }
         }

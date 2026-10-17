@@ -1,5 +1,6 @@
 "use client";
 
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Download, ExternalLink, FileText, Headphones, Image as ImageIcon, Loader2, Maximize2, Video, X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 
@@ -298,9 +299,7 @@ export function MediaPreviewTile({
           ) : null}
         </div>
         {percent !== null && !failed ? (
-          <div className="h-1.5 overflow-hidden rounded-full bg-field-200" aria-hidden>
-            <div className="h-full rounded-full bg-field-600 transition-all" style={{ width: `${percent}%` }} />
-          </div>
+          <ProgressBar percent={percent} aria-hidden fillClassName="transition-all" />
         ) : null}
         {statusLabel || onDownload ? (
           // The status on its own line and the buttons on the next, wrapping: the buttons are full

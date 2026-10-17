@@ -19,7 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.UploadFile
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -133,7 +133,7 @@ internal fun ArtefactDownloadRow(
                 modifier = Modifier.heightIn48(),
             ) {
                 if (working) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 } else {
                     Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
@@ -196,7 +196,7 @@ internal fun WorkbookUploadRow(
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onPick, enabled = !busy, modifier = Modifier.heightIn48()) {
                 if (working) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 } else {
                     Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
                 }

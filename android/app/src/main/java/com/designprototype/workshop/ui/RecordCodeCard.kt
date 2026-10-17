@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -413,7 +412,7 @@ fun RecordCodeSection(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                            FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
                             Text("Drawing the code on this device…", color = MaterialTheme.field.muted, fontSize = 12.sp)
                         }
                     }

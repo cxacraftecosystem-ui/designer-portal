@@ -15,7 +15,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -277,7 +277,7 @@ internal fun ReuseQuestionnaireDialog(
                 }
             ) {
                 if (busy) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp))
+                    FieldCircularProgressIndicator(modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(6.dp))
                 }
                 Text(if (busy) "Copying…" else "Make the copy")

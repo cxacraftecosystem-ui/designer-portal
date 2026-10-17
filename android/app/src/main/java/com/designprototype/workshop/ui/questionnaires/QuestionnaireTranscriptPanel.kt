@@ -13,7 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -132,7 +132,7 @@ fun QuestionnaireQuickTranscript(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (busy) {
-                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                FieldCircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
                 Text(
                     QUESTIONNAIRE_TRANSCRIBING_LINE,
                     // POLITE and not ASSERTIVE: the researcher is mid-interview, and an assertive

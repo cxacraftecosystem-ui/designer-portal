@@ -21,7 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material3.CircularProgressIndicator
+import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -693,7 +693,7 @@ internal fun DwDocumentPreview(
                 .background(MaterialTheme.field.surface50, RoundedCornerShape(10.dp))
         ) {
             when (val shown = state) {
-                is DocState.Loading -> CircularProgressIndicator(modifier = Modifier.size(22.dp))
+                is DocState.Loading -> FieldCircularProgressIndicator(modifier = Modifier.size(22.dp))
                 is DocState.Page -> Image(
                     painter = BitmapPainter(shown.bitmap.asImageBitmap()),
                     contentDescription = "$noun, first page",

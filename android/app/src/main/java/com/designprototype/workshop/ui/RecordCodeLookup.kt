@@ -17,7 +17,6 @@ import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -510,7 +509,7 @@ fun RecordCodeLookupPanel(
                 ) {
                     Text("Look up")
                 }
-                if (busy) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                if (busy) FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
             }
             Text(
                 "Spaces and capitals do not matter. The four characters at the end are a check — if they do not " +

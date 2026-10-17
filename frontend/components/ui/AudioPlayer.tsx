@@ -64,11 +64,13 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
    * `background: var(--audio-range-fill, …)`. So the token resolves in the element's own context and
    * follows the theme, high contrast included (`[data-high-contrast]` re-points this same rung).
    *
-   * The purple stays a literal `oklch()`, correctly: brand purple never inverts.
+   * 2026-10-17: both halves now read the `--progress-*` tokens every bar uses. The unplayed half
+   * was `--line-200`, 1.28:1 on this white card (the voice note whose bar "disappears"), and the
+   * purple-700 fill was 2.32:1 on the dark card; the tinted track and the themed fill fix both.
    */
   const fill =
-    `linear-gradient(to right, oklch(0.47 0.198 305) 0%, oklch(0.47 0.198 305) ${pct}%, ` +
-    `rgb(var(--line-200)) ${pct}%, rgb(var(--line-200)) 100%)`;
+    `linear-gradient(to right, rgb(var(--progress-fill)) 0%, rgb(var(--progress-fill)) ${pct}%, ` +
+    `rgb(var(--progress-track)) ${pct}%, rgb(var(--progress-track)) 100%)`;
 
   return (
     <div className={`flex items-center gap-3 rounded-md border border-line-200 bg-card px-3 py-2 ${className ?? ""}`}>
