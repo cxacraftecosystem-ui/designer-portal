@@ -2876,18 +2876,6 @@ class WorkshopRepository(
      */
     suspend fun pendingAccessCount(): PendingAccessCountDto = api.pendingAccessCount()
 
-    /** The activity list's two calls, for [NotificationSync] (data/AppNotifications.kt). */
-    fun notificationApi(): NotificationApi = object : NotificationApi {
-        override suspend fun list(limit: Int): NotificationPageDto = api.notifications(limit)
-        override suspend fun markRead(body: NotificationReadBody): NotificationReadResultDto = api.markNotificationsRead(body)
-    }
-
-    /** One pass of the activity list for the signed-in account; null when it could not be reached. */
-    suspend fun syncNotifications(context: Context): Int? {
-        val userId = tokenStore.getUser()?.id ?: return null
-        return NotificationSync.sync(context, notificationApi(), userId)
-    }
-
     /**
      * Admit an address by hand. No account is required and none is created.
      *
@@ -9214,6 +9202,18 @@ class WorkshopRepository(
         else -> "DOCUMENT"
     }
 
+
+    /** The activity list's two calls, for [NotificationSync] (data/AppNotifications.kt). */
+    fun notificationApi(): NotificationApi = object : NotificationApi {
+        override suspend fun list(limit: Int): NotificationPageDto = api.notifications(limit)
+        override suspend fun markRead(body: NotificationReadBody): NotificationReadResultDto = api.markNotificationsRead(body)
+    }
+
+    /** One pass of the activity list for the signed-in account; null when it could not be reached. */
+    suspend fun syncNotifications(context: Context): Int? {
+        val userId = tokenStore.getUser()?.id ?: return null
+        return NotificationSync.sync(context, notificationApi(), userId)
+    }
 }
 
 private fun String?.blankToNull(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
