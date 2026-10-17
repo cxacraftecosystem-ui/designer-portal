@@ -532,15 +532,19 @@ avoids entirely. See [DATA_MODEL.md](DATA_MODEL.md) for what the column means to
 
 None of them is a gate, and none of them may be added to branch protection.
 
-**`.github/workflows/backup-db.yml` — nightly database backup.** Daily at 03:00 UTC (08:30 IST:
-after the overnight lull, before the field day, so a red run is seen the same morning), plus manual
-dispatch. It installs PostgreSQL client 17 from PGDG — a hard requirement, because `pg_dump` refuses
+**`.github/workflows/backup-db.yml` — nightly database backup.** Daily at 21:17 UTC (02:47 IST; it
+was 03:00 UTC until 2026-10-18, and GitHub's late starts put it at 12:45-15:20 IST, inside the field
+day), plus manual dispatch. A second schedule, 09:23 UTC, runs only the `freshness` job, which fails
+when the newest nightly dump is over 26 hours old or the newest weekly copy over 8 days old. It installs PostgreSQL client 17 from PGDG — a hard requirement, because `pg_dump` refuses
 to dump a server newer than itself and the runner image ships whatever client it was built with —
 then `pg_dump --no-owner --no-privileges --schema=public`, gzipped, to:
 
 ```
-s3://designrepo-media-626159998512/backups/designer-portal/YYYY-MM-DD.sql.gz
+s3://designrepo-media-626159998512/backups/designer-portal/YYYY-MM-DD.sql.gz          (kept 30 days)
+s3://designrepo-media-626159998512/backups/designer-portal/weekly/YYYY-Www_YYYY-MM-DD.sql.gz  (first run of each week, kept a year)
 ```
+
+The date is the India date, so a late start past midnight UTC still gives each night one key.
 
 **Restore:** `aws s3 cp <key> - | gunzip | psql "$TARGET_DSN"`. That is the whole procedure; the dump
 carries no ownership or grants precisely so it restores into a fresh instance whose roles do not
@@ -550,8 +554,9 @@ Three things about it are deliberate and easy to undo by accident. **The `backup
 private** only because `aws_s3_bucket_policy.media_public_read` grants anonymous `GetObject` on
 `media/*` and on nothing else — do not move these objects under `media/`, and never widen that policy
 to `/*`. **Retention is not in the workflow**: a job that could expire objects would need delete
-rights over the bucket that also holds every photograph in the product, so ~30-day expiry is an
-`aws_s3_bucket_lifecycle_configuration` in `infra/terraform/main.tf` scoped to that prefix. If the
+rights over the bucket that also holds every photograph in the product, so expiry is an
+`aws_s3_bucket_lifecycle_configuration` in `infra/terraform/main.tf`: 30 days for the dated nightly
+keys, 365 for `weekly/`. If the
 rule is ever removed the job keeps working and the bucket grows forever, which is a cost problem
 rather than a data-loss one, and is the right way round. **There is no `|| true` anywhere in the
 file**: every step fails the run, and the last step re-reads the uploaded object's metadata from S3

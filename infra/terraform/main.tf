@@ -359,14 +359,22 @@ resource "aws_s3_bucket_cors_configuration" "media" {
 # obligation is ever placed on this ministry data, this number is the one to change, and it is the
 # only place to change it.
 #
-# THE FILTER IS THE WHOLE SAFETY PROPERTY. `prefix = "backups/"` scopes the rule to the dumps.
+# THE FILTER IS THE WHOLE SAFETY PROPERTY. `prefix = "backups/designer-portal/20"` scopes the rule
+# to the nightly dumps.
 # Without a filter — or with an empty one — this rule expires EVERY OBJECT IN THE BUCKET after
 # thirty days, which would silently delete every photograph, signature and attachment the product
 # has ever stored. Versioning (backups.tf, 2026-10-17) would turn that into delete markers that can
 # be undone, but only for 90 days and only if somebody notices. Any edit to this resource must be
 # read with that sentence in mind.
 #
-# THE SECOND RULE IS THE ONE PLACE AN EMPTY FILTER IS SAFE, because it names no current-version
+# ONE DUMP A WEEK IS KEPT FOR A YEAR (2026-10-18, drill gap 4). The first run of each ISO week also
+# writes `backups/designer-portal/weekly/YYYY-Www_YYYY-MM-DD.sql.gz`, and `keep-weekly-dumps`
+# expires those at 365 days. S3 cannot exclude a prefix from a rule, and with two overlapping
+# expiries the shorter one wins, so the 30-day rule is narrowed to the dated nightly keys,
+# `backups/designer-portal/20…` (every key the job writes starts with the year). The weekly copies
+# sit inside the backup writer's existing prefix: no IAM change.
+#
+# THE THIRD RULE IS THE ONE PLACE AN EMPTY FILTER IS SAFE, because it names no current-version
 # expiry. It removes versions 90 days after they stop being current (an overwritten or deleted
 # photo, an expired dump, an old state file) and delete markers with nothing left behind them.
 #
@@ -380,11 +388,28 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
     status = "Enabled"
 
     filter {
-      prefix = "backups/"
+      prefix = "backups/designer-portal/20"
     }
 
     expiration {
       days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  rule {
+    id     = "keep-weekly-dumps"
+    status = "Enabled"
+
+    filter {
+      prefix = "backups/designer-portal/weekly/"
+    }
+
+    expiration {
+      days = var.weekly_dump_days
     }
 
     abort_incomplete_multipart_upload {
