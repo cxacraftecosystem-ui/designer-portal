@@ -11,6 +11,7 @@ from app.api.routes import (
     asr_models,
     auth,
     craft_codes,
+    cross_portal,
     crafts,
     dashboard,
     data_access,
@@ -80,6 +81,7 @@ api_router.include_router(annual_plan.router)
 api_router.include_router(artisans.router)
 api_router.include_router(crafts.router)
 api_router.include_router(craft_codes.router)
+api_router.include_router(cross_portal.router)
 api_router.include_router(workshops.router)
 # The "Type of workshop" vocabulary — /api/workshop-types. Mounted immediately under `workshops`
 # because the two are read together on every record form: this list fills the FIRST of the form's two

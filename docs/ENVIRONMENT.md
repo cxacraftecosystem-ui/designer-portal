@@ -452,6 +452,29 @@ single element. The method, the compliance choices and the operator runbook are 
 | `AADHAAR_EKYC_ENABLED` | No | `false` | No | Use e-KYC (UIDAI returns the name, year of birth and gender) instead of a yes/no authentication. Needs a KUA licence and the ASA to decrypt the response. |
 | `AADHAAR_KUA_LICENSE_KEY` | With e-KYC on | — | **Yes** | |
 
+### Cross-portal artisan identity (C27) — shipped OFF
+
+One artisan across the two portals. A designer types the Aadhaar or Pehchan number, confirms the
+artisan agreed, and the designer portal's server asks the documentation portal's server for the
+artisan; the form is filled and the records linked. The documentation portal is the source of truth
+for name, local name, gender, date of birth and the Pehchan pair; a linked record is refreshed from
+it. The raw Aadhaar number never leaves either server: the designer portal sends
+`HMAC-SHA256(CROSS_PORTAL_AADHAAR_HMAC_KEY, digits)`. Each server proves itself to the other with
+`CROSS_PORTAL_TOKEN` (a bearer on the request, an HMAC of the body on the answer). The documentation
+portal answers only for an artisan whose "Share with the Designer Portal" consent is recorded.
+
+**Nothing works until all of it is set on BOTH servers** — the flag, both secrets (32 characters or
+more, the same values on the two servers), and `FIELD_REPOSITORY_API_URL` on the designer portal. Anything missing and every `/api/cross-portal/*`
+route answers 404 and no client draws anything. Secrets go to the GitHub Actions secrets **and** the
+box `.env`; none is created by this repository.
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `CROSS_PORTAL_IDENTITY_ENABLED` | No | **`false`** | No | The switch. Off: the feature does not exist. |
+| `CROSS_PORTAL_TOKEN` | With the flag on | — | **Yes** | Shared by both servers. Authenticates requests and signs answers. 32+ characters. |
+| `CROSS_PORTAL_AADHAAR_HMAC_KEY` | With the flag on | — | **Yes** | Shared by both servers. Turns an Aadhaar number into a comparable code. 32+ characters. Rotating it needs both servers changed together; nothing stored depends on it. |
+| `FIELD_REPOSITORY_API_URL` | With the flag on | — | No | The documentation portal's API base up to `/api`, e.g. `https://<docs-api-host>/api`. The designer portal calls it; it never calls back. |
+
 ### Not read by `config.py`
 
 | Variable | Read by | Required | Default | Secret | Notes |

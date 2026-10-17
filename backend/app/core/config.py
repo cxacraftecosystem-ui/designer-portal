@@ -652,6 +652,25 @@ class Settings(BaseSettings):
     aadhaar_otp_limit_per_uid: int = Field(default=3, alias="AADHAAR_OTP_LIMIT_PER_UID")
     aadhaar_otp_window_minutes: int = Field(default=60, alias="AADHAAR_OTP_WINDOW_MINUTES")
 
+    # ── CROSS-PORTAL ARTISAN IDENTITY (C27; docs/ENVIRONMENT.md) ────────────────────────────────
+    #
+    # OFF BY DEFAULT, AND OFF UNTIL BOTH PORTALS HAVE IT. The lookup works only when the flag is on
+    # AND both secrets are set (32 characters or more) on BOTH servers, and, here, FIELD_REPOSITORY_API_URL names the documentation portal's API. Anything missing and
+    # the routes answer 404 and neither client draws a single element. The token authenticates each
+    # server to the other (a bearer on the request, an HMAC of the body on the answer); the HMAC key
+    # turns an Aadhaar number into a code both servers can compare, so the number itself never leaves
+    # either system. Both values are the SAME on the two servers. Never commit either.
+    cross_portal_identity_enabled: bool = Field(
+        default=False, alias="CROSS_PORTAL_IDENTITY_ENABLED"
+    )
+    cross_portal_token: str | None = Field(default=None, alias="CROSS_PORTAL_TOKEN")
+    cross_portal_aadhaar_hmac_key: str | None = Field(
+        default=None, alias="CROSS_PORTAL_AADHAAR_HMAC_KEY"
+    )
+    # The documentation portal's API base, up to and including ``/api`` — e.g.
+    # https://api.<docs-domain>/api . The designer portal calls it; it never calls back.
+    field_repository_api_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_API_URL")
+
     # ABSOLUTE, NOT ".env". See rule 2 in this module's header: a relative env_file is resolved
     # against the working directory, so `python -m uvicorn app.main:app` from backend/ and the same
     # command from the repository root read DIFFERENT configuration — and from the root they read

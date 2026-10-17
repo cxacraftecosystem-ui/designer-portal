@@ -635,6 +635,11 @@ import com.designprototype.workshop.data.ArtisanAnswerDto
 import com.designprototype.workshop.data.ArtisanDetailDto
 import com.designprototype.workshop.data.ArtisanQuestionnaireDto
 import com.designprototype.workshop.data.CraftDto
+import com.designprototype.workshop.data.CrossPortalClient
+import com.designprototype.workshop.data.CrossPortalMatchDto
+import com.designprototype.workshop.data.CrossPortalPrefill
+import com.designprototype.workshop.ui.CrossPortalFindCard
+import com.designprototype.workshop.ui.CrossPortalLinkCard
 import com.designprototype.workshop.data.CreatedRecordDto
 import com.designprototype.workshop.data.AppScope
 import com.designprototype.workshop.data.AddressReferenceDto
@@ -11284,6 +11289,8 @@ private fun ArtisanForm(
     var aadhaar by remember(editing) { mutableStateOf(editing?.aadhaarNumber.orEmpty()) }
     var pehchanAvailable by remember(editing) { mutableStateOf(editing?.pehchanCardAvailable ?: true) }
     var pehchanNumber by remember(editing) { mutableStateOf(editing?.pehchanCardNumber.orEmpty()) }
+    // C27: the Field Repository record this new artisan was filled from, linked after the save.
+    var crossMatch by remember(editing) { mutableStateOf<CrossPortalMatchDto?>(null) }
     /*
      * ── THE TWO FACTS THE DESIGN WORKSHOP ASKS OF EVERY ARTISAN ─────────────────────────────
      *
@@ -11621,6 +11628,13 @@ private fun ArtisanForm(
                     repository.createArtisan(body, createKey).id
                 }
                 landed = true
+                // C27: link to the Field Repository record the form was filled from. The server
+                // re-checks the match from the numbers it just stored; a failure leaves it unlinked.
+                if (!isEdit) {
+                    crossMatch?.let { match ->
+                        runCatching { CrossPortalClient.create(context).createLink(artisanId, match.remoteArtisanId) }
+                    }
+                }
                 uploadAttachments(repository, context, media, "artisan", artisanId, name, "Field media for ${name.trim()}")
                 artisanId
             }.onSuccess { artisanId ->
@@ -11906,6 +11920,26 @@ private fun ArtisanForm(
                 onError = onError,
                 onKeepPhotograph = keepIdentityPhotograph,
             )
+        }
+        if (isEdit) {
+            CrossPortalLinkCard(artisanId = editing!!.id)
+        } else {
+            CrossPortalFindCard(aadhaar = aadhaar, pehchanNumber = pehchanNumber, filled = crossMatch) { match ->
+                val values = CrossPortalPrefill.from(match)
+                values.name?.let { name = it }
+                values.localName?.let { localName = it }
+                values.gender?.let { gender = it }
+                values.phone?.let { phone = it }
+                values.place?.let { place = it }
+                values.pehchanCardAvailable?.let { pehchanAvailable = it }
+                values.pehchanCardNumber?.let { pehchanNumber = it }
+                values.dateOfBirth?.let { parseFieldDate(it) }?.let { dateOfBirth = it }
+                values.craftStartDate?.let { parseFieldDate(it) }?.let { craftStartDate = it }
+                values.experienceYears?.let { experienceYears = it.toString() }
+                values.experienceMonths?.let { experienceMonths = it.toString() }
+                values.craftId?.let { craftId = it }
+                crossMatch = match
+            }
         }
         NumberedListInput(
             label = "Do's",

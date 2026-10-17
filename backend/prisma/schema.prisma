@@ -897,6 +897,28 @@ model CraftSpelling {
   @@index([craftCode])
 }
 
+/// C27: this artisan linked to one in the documentation portal, which is the source of truth for
+/// the identity fields (``services/cross_portal.IDENTITY_FIELDS``). ``consentRecordedById`` is the
+/// designer who recorded, on the day, that the artisan agreed to their details being shared between
+/// the portals. The documentation portal holds the artisan's own consent and refuses a lookup or a
+/// refresh without it. One link per artisan here.
+model CrossPortalArtisanLink {
+  id                   String    @id @default(cuid())
+  artisanId            String    @unique
+  remoteArtisanId      String
+  matchedBy            String
+  consentRecordedById  String?
+  consentRecordedAt    DateTime  @default(now())
+  remoteAcknowledgedAt DateTime?
+  lastRefreshedAt      DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  artisan Artisan @relation(fields: [artisanId], references: [id], onDelete: Cascade)
+
+  @@index([remoteArtisanId])
+}
+
 /// TWO ANSWERS TO TWO DIFFERENT QUESTIONS, and reading one as the other is what this model was
 /// changed to stop.
 ///
@@ -1231,6 +1253,7 @@ model Artisan {
   media     MediaFile[]
   questionnaireInterviews QuestionnaireInterviewArtisan[]
   sectionStatuses QuestionnaireSectionStatus[]
+  crossPortalLink CrossPortalArtisanLink?
 
   // `name` earns its index by being the sort key of the artisan pickers, not by the search box:
   // every text search in this app is a case-insensitive `contains`, which Postgres runs as ILIKE

@@ -51,6 +51,8 @@ import { EMAIL_PATTERN, emailValidationError } from "@/lib/textFormats";
 import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
 import { RequiredMark } from "@/components/ui/RequiredMark";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { CrossPortalFind, CrossPortalLinkPanel } from "@/components/forms/CrossPortalLookup";
+import { linkToFieldRepository, prefillFromMatch, type ArtisanPrefill, type CrossPortalMatch } from "@/lib/crossPortal";
 
 // Android parity (MainActivity.kt genderOptions).
 const genderOptions = ["Male", "Female", "Transgender", "Other"];
@@ -507,6 +509,14 @@ export function ArtisanForm({
   // the state living inside the field components — the Aadhaar digits, the Pehchan pair, the notes
   // rows, the Do's/Don'ts lists — which no amount of `form.reset()` can reach.
   const [formKey, setFormKey] = useState(0);
+  /*
+   * C27 — FILLED FROM THE FIELD REPOSITORY. The controlled boxes take the match directly; the
+   * uncontrolled ones (gender, experience, phone, the Pehchan pair) read `prefill` as their default
+   * and are re-keyed on `prefillKey`, so only they remount and nothing else typed is lost.
+   */
+  const [crossMatch, setCrossMatch] = useState<CrossPortalMatch | null>(null);
+  const [prefill, setPrefill] = useState<ArtisanPrefill>({});
+  const [prefillKey, setPrefillKey] = useState(0);
   const { dirty: typedSinceMount, markDirty, resetDirty } = useUnsavedChanges();
   const [backPromptOpen, setBackPromptOpen] = useState(false);
   /**
@@ -750,8 +760,34 @@ export function ArtisanForm({
    * would be busywork. Clearing the craft would also make the carry-forward banner above lie about
    * a field it no longer fills.
    */
+  function fillFromFieldRepository(match: CrossPortalMatch) {
+    const values = prefillFromMatch(match);
+    if (values.name) setName(values.name);
+    if (values.localName) setLocalName(values.localName);
+    if (values.place) setPlace(values.place);
+    if (values.dateOfBirth) setDateOfBirth(values.dateOfBirth);
+    if (values.craftStartDate) setCraftStartDate(values.craftStartDate);
+    if (values.craftId) setCraftId(values.craftId);
+    setPrefill(values);
+    setPrefillKey((key) => key + 1);
+    setCrossMatch(match);
+    markDirty();
+  }
+
+  /** The two numbers as typed right now, read from the form's own inputs. */
+  function typedIdentityNumbers() {
+    const form = formRef.current;
+    const read = (key: string) => {
+      const value = form ? new FormData(form).get(key) : null;
+      return typeof value === "string" && value.trim() && !isMaskedIdentityNumber(value) ? value.trim() : null;
+    };
+    return { aadhaarNumber: read("aadhaarNumber"), pehchanCardNumber: read("pehchanCardNumber") };
+  }
+
   function discardEntry() {
     setDuplicatePromptOpen(false);
+    setCrossMatch(null);
+    setPrefill({});
     setConflict(null);
     setError(null);
     setMediaFiles([]);
@@ -954,6 +990,15 @@ export function ArtisanForm({
         return;
       }
       const saved = outcome.saved;
+      // C27: link to the record the form was filled from. The server re-checks the match from the
+      // numbers it just stored; a failure leaves the artisan saved and simply unlinked.
+      if (!initial && crossMatch) {
+        try {
+          await linkToFieldRepository(saved.id, crossMatch.remoteArtisanId);
+        } catch {
+          /* Linking can be done later from the artisan's page. */
+        }
+      }
       if (mediaFiles.length) {
         const { failed } = await uploadMediaBatch({
           files: mediaFiles,
@@ -1055,6 +1100,8 @@ export function ArtisanForm({
                 setSavedRecord(null);
                 setMediaFiles([]);
                 setEmail("");
+                setCrossMatch(null);
+                setPrefill({});
                 setDateOfBirth("");
                 setCraftStartDate("");
                 setName("");
@@ -1275,7 +1322,12 @@ export function ArtisanForm({
             {/* NOTHING PRE-SELECTED (UX audit DW-09, 2026-10-16). This defaulted to "Male", so a box
                 nobody touched saved a claim about a person — on a women-majority craft cluster, a
                 silent skew in the dataset. Unanswered stays unanswered; the first row clears it. */}
-            <Select name="gender" defaultValue={initial?.gender?.trim() ? initial.gender : ""} onChange={markDirty}>
+            <Select
+              key={`gender-${prefillKey}`}
+              name="gender"
+              defaultValue={prefill.gender ?? (initial?.gender?.trim() ? initial.gender : "")}
+              onChange={markDirty}
+            >
               <option value="">Select gender</option>
               {genderOptions.map((option) => (
                 <option key={option}>{option}</option>
@@ -1385,6 +1437,7 @@ export function ArtisanForm({
           */}
           <Field label="Experience (years)">
             <TextInput
+              key={`experience-years-${prefillKey}`}
               name="experienceYears"
               type="number"
               inputMode="numeric"
@@ -1392,14 +1445,21 @@ export function ArtisanForm({
               max={90}
               step={1}
               /* `?? ""` AND NOT `|| ""`: a stored 0 is falsy, and 0 is a real answer. */
-              defaultValue={initial?.experienceYears ?? ""}
+              defaultValue={prefill.experienceYears ?? initial?.experienceYears ?? ""}
               onChange={markDirty}
             />
           </Field>
           <FieldBlock label="Experience (months)">
             <Select
+              key={`experience-months-${prefillKey}`}
               name="experienceMonths"
-              defaultValue={initialExperienceMonths != null ? String(initialExperienceMonths) : ""}
+              defaultValue={
+                prefill.experienceMonths != null
+                  ? String(prefill.experienceMonths)
+                  : initialExperienceMonths != null
+                    ? String(initialExperienceMonths)
+                    : ""
+              }
               onChange={markDirty}
             >
               <option value="">{EXPERIENCE_NOT_STATED}</option>
@@ -1416,7 +1476,12 @@ export function ArtisanForm({
               opened a 246-entry country list. The same swap was already made on the designer
               profile form for the same control. */}
           <FieldBlock label="Phone">
-            <PhoneField name="phone" defaultValue={initial?.phone} onValueChange={markDirty} />
+            <PhoneField
+              key={`phone-${prefillKey}`}
+              name="phone"
+              defaultValue={prefill.phone ?? initial?.phone}
+              onValueChange={markDirty}
+            />
           </FieldBlock>
           <Field label="Email">
             <TextInput
@@ -1514,10 +1579,20 @@ export function ArtisanForm({
               onValueChange={markDirty}
             />
             <PehchanFields
-              initialAvailable={initial?.pehchanCardAvailable ?? true}
-              initialNumber={initial?.pehchanCardNumber}
+              key={`pehchan-${prefillKey}`}
+              initialAvailable={prefill.pehchanCardAvailable ?? initial?.pehchanCardAvailable ?? true}
+              initialNumber={prefill.pehchanCardNumber ?? initial?.pehchanCardNumber}
               onDirty={markDirty}
             />
+            {initial?.id ? (
+              <CrossPortalLinkPanel artisanId={initial.id} />
+            ) : (
+              <CrossPortalFind
+                readNumbers={typedIdentityNumbers}
+                onFill={fillFromFieldRepository}
+                filled={crossMatch}
+              />
+            )}
           </div>
           <DosDontsField
             name="dos"
