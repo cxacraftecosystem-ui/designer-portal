@@ -568,7 +568,9 @@ as JSON for `com.designprototype.workshop` with the certificate in `ANDROID_RELE
 when that file breaks, links quietly open in the browser instead of the app. **Since 2026-10-17 a red
 run also opens an issue labelled `outage`**, updates that same issue while the outage lasts (a new
 comment only when what is failing changes), and comments and closes it on the first all-green run;
-the job holds `issues: write` for that and nothing more. documentation-portal runs the same file
+the job holds `issues: write` for that and nothing more. The `outage` label is reserved for the
+probe: it only edits or closes an issue it opened itself (marked by a hidden `outage-signature`
+line), so an issue a person labels `outage` by hand stays open until a person closes it. documentation-portal runs the same file
 shape. The readiness check parses the payload with `jq` and fails on
 three separate conditions: a non-200, `database` not true, and **`latencyMs >= 2000`**. That last one
 is the half that earns its keep — this deployment has a documented history of pool exhaustion whose
