@@ -616,10 +616,10 @@ box, in this order:
      90 more as noncurrent versions (the bucket is versioned), so about 120 days;
    - their replica in `designrepo-offsite-626159998512` (ap-south-2): 35 days under Object Lock
      (GOVERNANCE), then 90 more as noncurrent versions, so about 125 days;
-   - Supabase's own backups and point-in-time recovery (WAL), for as long as the project's plan keeps
-     them (Database → Backups in the dashboard).
+   - the database provider's own backups and point-in-time recovery (WAL), for as long as its plan
+     keeps them ([docs/ENVIRONMENT.md](../docs/ENVIRONMENT.md), "The database", names the provider).
 
-   So a number is gone from every copy about 125 days after the drop, plus the Supabase window. To
+   So a number is gone from every copy about 125 days after the drop, plus the provider's window. To
    end it sooner (an erasure request), an admin deletes the older dump versions in both buckets
    (`--bypass-governance-retention` in ap-south-2).
 
