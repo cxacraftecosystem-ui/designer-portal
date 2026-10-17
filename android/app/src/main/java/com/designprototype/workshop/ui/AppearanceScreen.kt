@@ -368,7 +368,7 @@ private val THEME_OPTIONS = listOf(
     ThemeOption(
         value = THEME_SYSTEM,
         label = "Match my device",
-        helper = "Follows your system's light/dark setting, and switches with it.",
+        helper = "Follows your device's light/dark setting.",
         icon = Icons.Filled.PhoneAndroid
     ),
     ThemeOption(
@@ -400,14 +400,13 @@ private data class AccessibilityOption(
 private val ACCESSIBILITY_OPTIONS = listOf(
     AccessibilityOption(
         label = "Reduce motion",
-        helper = "Stops animations and transitions. Your device's own reduce-motion setting is always " +
-            "honoured too — this only ever adds to it.",
+        helper = "Turns off animations. Your device setting is always respected.",
         read = { it.reducedMotion },
         write = { preferences, next -> preferences.copy(reducedMotion = next) }
     ),
     AccessibilityOption(
         label = "Larger text",
-        helper = "Scales the whole interface up by about a tenth.",
+        helper = "About 10% larger.",
         read = { it.largerText },
         write = { preferences, next -> preferences.copy(largerText = next) }
     ),
@@ -521,7 +520,7 @@ fun AppearanceScreen(
                     if (it is kotlinx.coroutines.CancellationException) return@onFailure
                     // Kept on this device either way; the words say whether it is waiting for signal.
                     error = if (!repository.isOnline(prefsContext)) {
-                        "Saved on this device. It is sent to your account when you are back online."
+                        "Saved on this phone; syncs when online."
                     } else {
                         it.userMessage("Unable to save preferences")
                     }
@@ -569,7 +568,7 @@ fun AppearanceScreen(
             PreferenceCardHeading(Icons.Filled.Palette, "Appearance")
             Text(
                 buildString {
-                    append("Applies to this account everywhere you sign in.")
+                    append("Applies wherever you sign in.")
                     if (current.theme == THEME_SYSTEM) {
                         append(" Your device is currently ")
                         append(if (systemDark) THEME_DARK else THEME_LIGHT)
@@ -592,7 +591,7 @@ fun AppearanceScreen(
         PreferenceCard {
             PreferenceCardHeading(Icons.Filled.Accessibility, "Accessibility")
             Text(
-                "Reading comfort for this account. Each switch applies the moment it is flipped.",
+                "Changes apply instantly.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.field.muted
             )
@@ -644,7 +643,7 @@ fun AppearanceScreen(
         SettingsRow(
             icon = Icons.Filled.VpnKey,
             title = "My AI keys",
-            summary = "Use your own OpenAI, Gemini or Claude key for AI work, billed to you",
+            summary = "Use your own OpenAI, Gemini or Claude key",
             onClick = onOpenMyAiKeys,
         )
 
@@ -682,21 +681,21 @@ fun AppearanceScreen(
         SettingsRow(
             icon = Icons.Filled.Key,
             title = "Password",
-            summary = "Change your password, or set one to sign in with your email address",
+            summary = "Change or set your password",
             onClick = onOpenPassword,
         )
 
         SettingsRow(
             icon = Icons.Filled.Security,
             title = "Two-step verification",
-            summary = "A code from an authenticator app each time you sign in",
+            summary = "Authenticator code at sign-in",
             onClick = onOpenTwoStepVerification,
         )
 
         SettingsRow(
             icon = Icons.Filled.Policy,
             title = "Usage recording",
-            summary = "What is recorded about how you use this app, what is held, and how to withdraw",
+            summary = "What's recorded and how to opt out",
             onClick = onOpenUsageRecording,
         )
 
@@ -704,7 +703,7 @@ fun AppearanceScreen(
             SettingsRow(
                 icon = Icons.Filled.VerifiedUser,
                 title = "Aadhaar verification",
-                summary = "Confirm that this account belongs to you by checking it against your Aadhaar",
+                summary = "Verify this account with Aadhaar",
                 onClick = onOpenAadhaar,
             )
         }

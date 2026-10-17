@@ -581,11 +581,11 @@ object DwSketchRectify {
         val startedAt = System.nanoTime()
         val size = rectifiedSize(corners, maxEdge = options.maxEdge, aspect = options.aspect)
             ?: return DwPlateResult.Refusal(
-                "Those four marks do not enclose a sheet. Drag the handles to the corners of the paper."
+                "Those marks don't enclose a sheet. Drag handles to the paper's corners."
             )
         val rectified = rectifyPlane(plane, corners, size.first, size.second)
             ?: return DwPlateResult.Refusal(
-                "Those corners lie in a straight line, so there is no sheet between them. Move one of the handles."
+                "Corners are in a straight line. Move a handle."
             )
         val finished = if (!options.lineArt) {
             rectified

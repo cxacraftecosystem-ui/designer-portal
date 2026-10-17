@@ -236,10 +236,7 @@ fun DwSketchTraceCompare(
     if (widthGap > 1 || heightGap > 1) {
         DwPanelNote(
             warning = true,
-            text = "The two pictures came back at different sizes — the photograph at " +
-                "${photograph.width}×${photograph.height} and the drawing at " +
-                "${trace.width}×${trace.height} — so they cannot be laid over each other. The trace " +
-                "itself is unaffected and can still be attached; only this comparison is unavailable.",
+            text = "Sizes differ (${photograph.width}×${photograph.height} vs ${trace.width}×${trace.height}), so they can't be overlaid. You can still attach the trace.",
         )
         return
     }
@@ -379,7 +376,7 @@ fun DwSketchTraceCompare(
                     contentDescription = if (mode == DwTraceCompareMode.DIFFERENCE) {
                         DW_TRACE_DIFFERENCE_DESCRIPTION
                     } else {
-                        "The traced drawing laid over the photograph it came from. $speech."
+                        "Trace over its photo. $speech."
                     }
                 },
         ) {
@@ -471,7 +468,7 @@ fun DwSketchTraceCompare(
             }
             if (zoom > 1.01f) {
                 DwCompareBadge(
-                    "${(zoom * 10f).roundToInt() / 10f}× — pinch out to fit",
+                    "${(zoom * 10f).roundToInt() / 10f}× — pinch to fit",
                     Modifier.align(Alignment.BottomStart),
                 )
             }
@@ -489,8 +486,7 @@ fun DwSketchTraceCompare(
             Text(
                 // Said once, under the control, because a gesture nobody is told about is a gesture
                 // nobody uses — and this one is the reason the strip can afford to be below the frame.
-                "Drag the strip to wipe between the two. Press and hold the picture to see the " +
-                    "photograph, and let go to come back.",
+                "Drag to compare. Press and hold to see the photo.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -599,7 +595,7 @@ private fun DwTraceWipeStrip(
                 */
                 progressBarRangeInfo = ProgressBarRangeInfo(position.coerceIn(0f, 1f), 0f..1f)
                 stateDescription = speech
-                contentDescription = "Wipe between the photograph and the traced drawing"
+                contentDescription = "Compare photo and trace"
             },
         contentAlignment = Alignment.CenterStart,
     ) {

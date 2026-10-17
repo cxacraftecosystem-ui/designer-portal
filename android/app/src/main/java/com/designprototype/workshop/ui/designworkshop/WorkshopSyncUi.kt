@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.MediaActionButton
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -152,8 +153,7 @@ internal fun WorkshopSyncActions(
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         if (status.pendingMedia > 0) {
             Text(
-                "${status.pendingMedia} file(s) — ${syncBytes(status.pendingMediaBytes)} — are on this " +
-                    "phone and nowhere else.",
+                "${status.pendingMedia} file(s) (${syncBytes(status.pendingMediaBytes)}) only on this phone.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )
@@ -163,7 +163,7 @@ internal fun WorkshopSyncActions(
             // fault rather than the data's, because the two call for completely different reactions
             // and mixing them teaches the designer to ignore both.
             Text(
-                "Last attempt: $error Nothing has been lost — it will try again on its own.",
+                "Last attempt: $error It will retry automatically.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )
@@ -171,7 +171,7 @@ internal fun WorkshopSyncActions(
 
         if (problems.isNotEmpty()) {
             Text(
-                if (showProblems) "Hide details" else "${problems.size} thing(s) need attention — show details",
+                if (showProblems) "Hide details" else "${problems.size} need attention — details",
                 color = MaterialTheme.colorScheme.primary,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
@@ -189,8 +189,7 @@ internal fun WorkshopSyncActions(
                         Text("• $line", color = MaterialTheme.field.muted, fontSize = 11.sp)
                     }
                     Text(
-                        "Nothing above has been deleted from this device. Everything listed is still " +
-                            "here and still editable.",
+                        "Nothing here has been deleted from this phone.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
@@ -199,11 +198,7 @@ internal fun WorkshopSyncActions(
             }
         }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        ActionRow {
             if (!status.isFullySynced) {
                 MediaActionButton(
                     label = if (status.remoteId == null) "Upload" else "Try again now",
@@ -212,7 +207,6 @@ internal fun WorkshopSyncActions(
                     enabled = !busy,
                 )
             }
-            Spacer(Modifier.weight(1f))
             // Offered ONLY when there is something genuinely duplicated on the server, and it names
             // the amount before it is pressed. An automatic sweep would take away the ability to
             // generate the report on the device that captured it, which is this product's whole

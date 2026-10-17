@@ -101,8 +101,7 @@ const val QUESTIONNAIRE_CLIP_MAX_MILLIS: Long = 15L * 60L * 1000L
 
 /** What the recorder says when it stopped itself. See [QUESTIONNAIRE_CLIP_MAX_MILLIS]. */
 fun questionnaireClipCapLine(): String =
-    "Recording stopped at ${QUESTIONNAIRE_CLIP_MAX_MILLIS / 60000} minutes. The take is kept — " +
-        "record again to continue."
+    "Stopped at ${QUESTIONNAIRE_CLIP_MAX_MILLIS / 60000} minutes. The take is kept — record again to continue."
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════════
  * 3. Why an instant transcript was not attempted
@@ -134,7 +133,7 @@ const val QUESTIONNAIRE_CLIP_KEPT_CLAUSE = "The clip is saved and transcribed la
  * and answers 410) or inventing a fallback id would be a send with nobody's consent behind it.
  */
 fun questionnaireNoWorkshopLine(): String =
-    "Instant transcript needs a design workshop named above. $QUESTIONNAIRE_CLIP_KEPT_CLAUSE"
+    "Instant transcripts need a design workshop named above. $QUESTIONNAIRE_CLIP_KEPT_CLAUSE"
 
 /**
  * The clip is bigger than the dictation route will accept.
@@ -310,7 +309,7 @@ fun questionnaireEditedFlagLabel(edited: Boolean?): String? = when (edited) {
  * person expecting to lose their edits, or worse, pressing Discard to protect words that were never
  * at risk.
  */
-const val QUESTIONNAIRE_OFFER_LINE = "Another take was transcribed. Your words are kept either way."
+const val QUESTIONNAIRE_OFFER_LINE = "Another take was transcribed. Your text is kept."
 const val QUESTIONNAIRE_OFFER_ACCEPT = "Add to answer"
 const val QUESTIONNAIRE_OFFER_DISCARD = "Discard"
 

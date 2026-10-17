@@ -335,7 +335,7 @@ fun AccessRosterScreen(
      */
     fun mutate(what: String, block: suspend () -> Unit) {
         if (!mayManageAccessRoster(repository.cachedUser())) {
-            onError("Only an administrator can decide who may sign in.")
+            onError("Only an admin can manage sign-in access.")
             return
         }
         busy = true
@@ -363,9 +363,7 @@ fun AccessRosterScreen(
 
         if (!canManage) {
             Text(
-                "This is the list of every address allowed into the application, and the queue of " +
-                    "people who tried to get in — a list of named individuals either way. Reading it " +
-                    "is restricted for the same reason deciding it is.",
+                "Who may sign in, and who's waiting. Admin-only.",
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 13.sp,
                 modifier = Modifier
@@ -377,10 +375,7 @@ fun AccessRosterScreen(
         }
 
         Text(
-            "Everybody signs in through this list — except the master admin, who is never gated by " +
-                "it, so there is always somebody who can let people back in. Nothing here is ever " +
-                "deleted: access is granted, refused, suspended and restored, and the entry keeps " +
-                "the history either way.",
+            "Everyone signs in through this list (except the master admin). Entries are never deleted.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -398,9 +393,7 @@ fun AccessRosterScreen(
             fontSize = 16.sp
         )
         Text(
-            "Each of these people proved who they are — a correct password, or a verified Google " +
-                "account — and was turned away because this list did not carry their address. They " +
-                "are told, in words, that they are waiting for you.",
+            "These people signed in successfully but aren't on the list yet.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -408,9 +401,7 @@ fun AccessRosterScreen(
         when {
             !queueLoaded -> RosterLoadingRow("Loading the approval queue…")
             queue.isEmpty() -> Text(
-                "Nobody is waiting. When somebody who is not on this list proves their identity at " +
-                    "the sign-in screen, they appear here — with their address, when they asked and " +
-                    "how many times they have tried.",
+                "Nobody is waiting.",
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp
             )
@@ -498,9 +489,7 @@ fun AccessRosterScreen(
         // from an emptied institution — so this says what they are: an older answer.
         if (readFailure != null && rows.isNotEmpty()) {
             RosterNotice(
-                "These rows are the last answer that arrived. The most recent refresh failed, so a " +
-                    "decision made since then — by you or by another administrator — may not be " +
-                    "shown here yet."
+                "Last refresh failed — recent changes may not show."
             )
         }
 
@@ -526,8 +515,7 @@ fun AccessRosterScreen(
             // on the last page and the step-back guard re-reading.
             rows.isEmpty() && total > 0 -> RosterEmptyState(
                 title = ACCESS_PAST_END_TITLE,
-                body = "None of the $total entries could be listed on this page — this is not an " +
-                    "empty allow-list. Step back a page.",
+                body = "Nothing on this page. Go back a page.",
             )
 
             // NEVER "narrow your search" over a search nobody typed. That advice, printed over an
@@ -660,10 +648,9 @@ fun AccessRosterScreen(
             text = {
                 Text(
                     if (approving) {
-                        "They will be able to sign in from their next attempt, at " +
+                        "They can sign in from their next attempt, as " +
                             (row.admitRole?.let { FieldPermissions.label(it) } ?: "the default joining tier — the lowest rung") +
-                            ". If they already have an account at a lower tier it is raised to match; " +
-                            "an account that is already higher is never lowered by approving somebody."
+                            ". Existing accounts are raised to match, never lowered."
                     } else {
                         // The three things an admin gets wrong about Refuse, all said out loud.
                         //
@@ -681,11 +668,7 @@ fun AccessRosterScreen(
                         // "Any session" and not "their session", because most rows in this queue
                         // belong to somebody who has never had one — the clause has to stay true of
                         // a stranger who only ever asked.
-                        "They will be told their request was reviewed and not approved, and whom to " +
-                            "contact. Any session they are in now ends with it. Nothing is deleted — " +
-                            "the entry stays, with the record of when they asked and how many times " +
-                            "they have tried. Trying again will NOT put them back in the queue: only " +
-                            "you can reopen it, by approving them later."
+                        "They'll be told they weren't approved and whom to contact. Any session they are in now ends with it. Only you can reopen this later."
                     }
                 )
             },
@@ -699,7 +682,7 @@ fun AccessRosterScreen(
                                 repository.approveAccessRequest(row.id, role = row.admitRole)
                             }
                         } else {
-                            mutate("${row.email} was refused. The entry stays on the list.") {
+                            mutate("${row.email} refused.") {
                                 repository.rejectAccessRequest(row.id)
                             }
                         }
@@ -736,11 +719,7 @@ fun AccessRosterScreen(
                   REJECT arm runs the same stamp. Change one, read the other.
                 */
                 Text(
-                    "Suspending ends their access and signs them out now. Any sign-in after that is " +
-                        "refused and tells them their access to this application was ended — not that " +
-                        "their password is wrong. The entry is kept: it records when they joined, and " +
-                        "that record outlives their access. Approving them again here restores it, and " +
-                        "their joining date is not moved by the round trip."
+                    "Suspending signs them out now and blocks future sign-ins. Approve again to restore; their join date is kept."
                 )
             },
             confirmButton = {
@@ -812,13 +791,13 @@ private fun QueueCard(
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 12.sp
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onApprove, enabled = !busy, modifier = Modifier.weight(1f)) {
+            ActionRow {
+                Button(onClick = onApprove, enabled = !busy) {
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Approve")
                 }
-                OutlinedButton(onClick = onReject, enabled = !busy, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onReject, enabled = !busy) {
                     Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Refuse")
@@ -931,8 +910,8 @@ private fun AccessCard(
                 Text(it, color = MaterialTheme.field.body, fontSize = 12.sp)
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onEdit, enabled = !busy, modifier = Modifier.weight(1f)) {
+            ActionRow {
+                OutlinedButton(onClick = onEdit, enabled = !busy) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(RecordOpen.UPDATE_LABEL)
@@ -940,13 +919,13 @@ private fun AccessCard(
                 if (row.status == AccessStatus.ACTIVE) {
                     // Never labelled "Remove". The verb has to say what happens, and what happens is
                     // that the entry stays.
-                    OutlinedButton(onClick = onSuspend, enabled = !busy, modifier = Modifier.weight(1f)) {
+                    OutlinedButton(onClick = onSuspend, enabled = !busy) {
                         Icon(Icons.Filled.Block, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Suspend")
                     }
                 } else {
-                    OutlinedButton(onClick = onApprove, enabled = !busy, modifier = Modifier.weight(1f)) {
+                    OutlinedButton(onClick = onApprove, enabled = !busy) {
                         Icon(Icons.Filled.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(if (row.status == AccessStatus.PENDING) "Approve" else "Let back in")
@@ -1028,8 +1007,7 @@ private fun AccessChip(label: String, background: Color, foreground: Color) {
 private const val ACCESS_LIST_UNREADABLE_TITLE = "The list could not be loaded"
 
 private const val ACCESS_LIST_UNREADABLE_BODY =
-    "This is not showing what exists, and it is not a claim that nobody may sign in — the request " +
-        "for the allow-list did not come back. Nobody's access has been changed by the failure."
+    "Couldn't load the list. No one's access changed."
 
 /**
  * THE FILTERS EXCLUDED EVERYONE. Not the same fact as an empty list, and the difference is the whole
@@ -1041,9 +1019,7 @@ private const val ACCESS_LIST_UNREADABLE_BODY =
 private const val ACCESS_NO_MATCH_TITLE = "Nobody matches these filters"
 
 private const val ACCESS_NO_MATCH_BODY =
-    "Clear them to see everyone this application has ever admitted, refused or suspended — the " +
-        "refused and suspended entries included, which are the ones that explain why somebody " +
-        "cannot sign in. The filters search the whole list, not only the entries already shown."
+    "Clear filters to see everyone, including refused and suspended."
 
 /**
  * THE LIST IS GENUINELY EMPTY, ANSWERED AND NONE. §3.5's *genuinely-empty, unscoped*.
@@ -1054,8 +1030,7 @@ private const val ACCESS_NO_MATCH_BODY =
 private const val ACCESS_NOBODY_YET_TITLE = "Nobody is on the list yet"
 
 private const val ACCESS_NOBODY_YET_BODY =
-    "Add the first address above — the master admin can always sign in regardless of this list, " +
-        "which is what makes it safe to start empty."
+    "Add the first email above. The master admin can always sign in."
 
 /** THE PAGER IS PAST THE END. Rows exist, none of them are here; it looks like emptiness and is not. */
 private const val ACCESS_PAST_END_TITLE = "Nothing on this page"
@@ -1123,13 +1098,9 @@ private fun AccessEditDialog(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     if (existing == null) {
-                        "No account has to exist yet: the address is admitted now and the account is " +
-                            "created the first time that person signs in. Adding somebody here IS " +
-                            "approving them, so they never appear in the queue."
+                        "Adding someone approves them; their account is created at first sign-in."
                     } else {
-                        "The name, tier and note are your own record of whom you admitted and why. " +
-                            "Changing them cannot change whether this person may sign in — use " +
-                            "Approve, Refuse or Suspend for that."
+                        "Name, tier and note are for your records only. Use Approve, Refuse or Suspend to change access."
                     },
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp

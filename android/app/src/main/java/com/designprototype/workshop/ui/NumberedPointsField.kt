@@ -252,10 +252,12 @@ internal fun NumberedListInput(
                 }
             }
         }
-        TextButton(onClick = { onChange(rows + "") }, enabled = enabled) {
-            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("Add point")
+        ActionRow {
+            TextButton(onClick = { onChange(rows + "") }, enabled = enabled) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Add point")
+            }
         }
         if (error != null) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
     }

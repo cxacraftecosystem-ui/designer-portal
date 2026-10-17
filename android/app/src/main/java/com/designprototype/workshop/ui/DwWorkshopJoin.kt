@@ -237,22 +237,19 @@ fun dwInductionNote(
     val waited = elapsedNowMs - pending.scannedAtElapsedMs
 
     return buildString {
-        append("Scanned from the card with no connection and sent when signal returned. ")
+        append("Scanned with no connection; sent when back online. ")
         if (!rebootedOrClockMoved && waited >= 0) {
-            append("Measured on this device's uptime clock, which cannot be set by hand, the scan ")
-            append("happened ")
+            append("Scanned ")
             append(dwSpanInWords(waited))
-            append(" before this was sent. ")
+            append(" before sending (uptime clock, which cannot be set by hand). ")
         } else {
             // NAMED, NOT GUESSED AT. The elapsed measure is only meaningful across one boot with an
             // unchanged clock, and claiming it anyway would be inventing precision.
-            append("This device has restarted or had its clock changed since the scan, so how long ")
-            append("ago the scan happened cannot be measured here. ")
+            append("Scan time unknown — the phone restarted or had its clock changed. ")
         }
-        append("The device's own clock said the scan was at ")
+        append("Phone clock at scan (what the handset claims): ")
         append(pending.scannedAtDeviceUtc)
-        append(" (UTC) — that is what the handset claims, and a phone's date can be changed by ")
-        append("anyone holding it. Whichever scan was uploaded first counts.")
+        append(" UTC. Whichever scan was uploaded first counts.")
     }
 }
 
@@ -713,10 +710,7 @@ sealed interface DwJoinOutcome {
  * job drains this queue, so the sentence promises a send whether or not the app is still open.
  */
 fun dwJoinQueuedMessage(): String =
-    "There is no connection, so the card has been kept on this device along with the time you " +
-        "scanned it. It is sent by itself as soon as this device has signal, even if the app " +
-        "has been closed by then. " +
-        "Nothing is sent yet, so nobody can see it yet. You do not need to scan again."
+    "Offline — the card is kept on this device with the time you scanned it. Nothing is sent yet; it sends automatically and you do not need to scan again."
 
 /**
  * Ask to join one design workshop, sending the code as evidence.
@@ -756,8 +750,7 @@ suspend fun dwSendJoinAsk(context: Context, pending: DwPendingInduction): DwJoin
             // body. The fallback is deliberately the same shape — conditional, promising nothing.
             DwJoinOutcome.Asked(
                 ack.detail?.takeIf { it.isNotBlank() }
-                    ?: "If that workshop exists and you are not already on it, an administrator can " +
-                    "now see that you have asked to join. Asking again will not send a second request."
+                    ?: "Request sent. An admin can now see it."
             )
         } catch (error: HttpException) {
             // 422 IS THE ONE STATUS THAT MEANS SOMETHING SPECIFIC, and it is safe to show because it
@@ -768,9 +761,7 @@ suspend fun dwSendJoinAsk(context: Context, pending: DwPendingInduction): DwJoin
             // card's fault and re-scanning would not help.
             if (error.code() == 422) {
                 DwJoinOutcome.Refused(
-                    dwJoinBodyRefusal(error) ?: "That card was refused: the code does not match the " +
-                        "workshop it is for. Read the code printed under the QR again, or ask for a " +
-                        "fresh card."
+                    dwJoinBodyRefusal(error) ?: "Card refused — the code doesn't match. Re-check it or ask for a new card."
                 )
             } else {
                 DwJoinOutcome.Queued(dwJoinQueuedMessage())

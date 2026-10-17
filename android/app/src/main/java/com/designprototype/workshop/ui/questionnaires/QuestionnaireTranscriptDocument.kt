@@ -138,6 +138,7 @@ fun QuestionnaireTranscriptActions(
         }
     }
 
+    // Not an ActionRow: a text toolbar (state left, Copy/Download right).
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,

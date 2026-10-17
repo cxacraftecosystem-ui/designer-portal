@@ -26,7 +26,7 @@ class OfflineQueueMessageTest {
     @Test
     fun `a clean save says one thing and does not mention files at all`() {
         val text = offlineSavedMessage(result(files = 4), isCorrection = false)
-        assertEquals("Saved on this device. It will be sent when you have a signal.", text)
+        assertEquals("Saved on this phone. It sends when you're online.", text)
         assertTrue(result(files = 4).allFilesQueued)
         // Silence about the photographs is the point: a notice saying "all 4 files were saved" on top
         // of the SAVED tick is noise, and noise on this channel teaches people to dismiss it.
@@ -44,7 +44,7 @@ class OfflineQueueMessageTest {
             "a queued correction must not read as though the fix has landed:\n$text",
             text.contains("the office still sees the earlier version"),
         )
-        assertTrue(text, text.contains("saved on this device"))
+        assertTrue(text, text.contains("saved on this phone"))
         // WHEN IT GOES, and nothing about the overwrite. A queued correction replays as a whole body
         // with no version check; that gap is recorded in docs/OPEN_FINDINGS.md and is not narrated
         // on a toast (2026-10-10).
@@ -94,7 +94,7 @@ class OfflineQueueMessageTest {
     /**
      * THE CLEAN SAVE IS THE MEASURE THE OTHERS ARE HELD TO.
      *
-     * "Saved on this device. It will be sent when you have a signal." is the sentence this whole file
+     * "Saved on this phone. It sends when you're online." is the sentence this whole file
      * is about — one state, one promise, nine words — and it has never needed changing. Pinned as an
      * upper bound on its neighbours so that "terse" is a property of the surface rather than of
      * whichever string somebody looked at last.

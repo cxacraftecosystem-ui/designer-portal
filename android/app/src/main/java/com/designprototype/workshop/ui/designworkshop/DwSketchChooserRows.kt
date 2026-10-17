@@ -569,17 +569,13 @@ internal fun dwChooserSaveNote(push: StagePush?, what: String): String = when (p
     is StagePush.Sent -> "$what is saved on this phone and online."
     StagePush.AlreadySent -> "$what is saved. It is already online."
     is StagePush.HeldBack ->
-        "$what is saved on this phone. Sending it is waiting on ${push.files} attachment" +
-            "${if (push.files == 1) "" else "s"} from this stage that are still only on this " +
-            "device — the sync tray carries them, and this goes up with them."
+        "$what saved on this phone. Uploads with ${push.files} pending attachment${if (push.files == 1) "" else "s"}."
     StagePush.NoRemoteYet ->
-        "$what is saved on this phone. It uploads once this workshop has been uploaded."
+        "$what saved on this phone. Uploads after the workshop does."
     StagePush.NothingToSend ->
-        "$what is saved on this phone. There is no local copy of this stage to send, so it stays " +
-            "here until this phone has read that stage once."
+        "$what saved on this phone. Uploads after you open this stage."
     StagePush.NotSent, null ->
-        "$what is saved on this phone, but sending it did not complete. It goes up with the next " +
-            "sync — the sync tray follows it."
+        "$what saved on this phone. Upload didn't finish; it retries next sync."
 }
 
 /**

@@ -133,7 +133,7 @@ fun QuestionnaireListScreen(
                 .onSuccess { result ->
                     uploadReport = result.report
                     reload++
-                    onMessage("“${result.questionnaire.title}” was created from that workbook.")
+                    onMessage("“${result.questionnaire.title}” created.")
                 }
                 .onFailure { error ->
                     if (error !is CancellationException) {
@@ -240,9 +240,7 @@ fun QuestionnaireListScreen(
         // bound none of the .xlsx endpoints; leaving it standing over a "Upload a workbook" button
         // would be the screen contradicting itself about what the handset can do.
         Text(
-            "Questionnaires you built, and the ones attached to a design workshop you work on. " +
-                "Open one to record a sitting, section by section — or download it as a spreadsheet, " +
-                "send its questions to another designer, and upload one you were sent.",
+            "Your questionnaires and those on your workshops. Open one to record answers, or exchange them as spreadsheets.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -316,7 +314,7 @@ fun QuestionnaireListScreen(
                     }
                 )
                 Text(
-                    "Prefer a spreadsheet? Download the pro-forma, fill it in, then upload it here.",
+                    "Prefer a spreadsheet? Download the pro-forma, fill it in, and upload it.",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp
                 )
@@ -329,11 +327,7 @@ fun QuestionnaireListScreen(
                     // in a designer's Downloads folder with .xlsx on the end, one of them behaves
                     // differently from the other two, and a designer finds that out AFTER the upload
                     // unless the door says so first.
-                    blurb = "Creates a NEW questionnaire. This door takes a filled-in pro-forma, or a " +
-                        "question set a colleague sent you. If the file came out of this platform — " +
-                        "it has a Questionnaire ID or Question IDs in it — its QUESTIONS are imported " +
-                        "and its ANSWERS are not: those answers already exist here under the names of " +
-                        "the people who recorded them. You are told either way.",
+                    blurb = "Creates a new questionnaire from a pro-forma or a shared question set. Files from this platform import questions only, not answers.",
                     busy = interchangeBusy,
                     working = uploading,
                     onPick = pickWorkbook,
@@ -369,7 +363,7 @@ fun QuestionnaireListScreen(
             label = "Show deactivated",
             checked = showDeactivated,
             onCheckedChange = { showDeactivated = it },
-            description = "Deactivating hides a questionnaire from new interviews. Its answers are kept.",
+            description = "Hidden from new interviews; answers kept.",
         )
 
         when {
@@ -390,8 +384,7 @@ fun QuestionnaireListScreen(
             }
 
             offline -> Text(
-                "Could not connect, so this list may be incomplete. Questionnaires are kept " +
-                    "online, not on this phone. Try again where there is a signal.",
+                "Offline — this list may be incomplete.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp
             )
@@ -400,9 +393,7 @@ fun QuestionnaireListScreen(
                 if (search.isNotBlank()) {
                     "Nothing matches “$search”."
                 } else {
-                    "No questionnaires yet. Download the pro-forma above, type your questions into it " +
-                        "on a computer and upload the filled-in file — here or on the website — or " +
-                        "tap New to start an empty one and add questions by hand."
+                    "No questionnaires yet. Upload a filled-in pro-forma, or tap New."
                 }
             )
 
@@ -416,7 +407,7 @@ fun QuestionnaireListScreen(
         // what is missing from them.
         partial?.let { (shown, total) ->
             Text(
-                "Showing $shown of $total questionnaires. Search by title or description to reach the rest.",
+                "Showing $shown of $total. Search to find the rest.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp
             )
@@ -430,7 +421,7 @@ fun QuestionnaireListScreen(
             onDismiss = { showCreate = false },
             onCreated = { id ->
                 showCreate = false
-                onMessage("Questionnaire started. Add sections and questions, or upload a filled-in pro-forma on a computer.")
+                onMessage("Questionnaire created. Add sections and questions.")
                 onOpen(id)
             },
             onError = onError,
@@ -680,7 +671,7 @@ private fun CreateQuestionnaireDialog(
                     enabled = !busy,
                     onSelect = { kind = it }
                 )
-                EmptyNote("Decides which stage of the report this questionnaire's answers are filed under.")
+                EmptyNote("Sets which report stage these answers go under.")
             }
         },
         confirmButton = {
@@ -714,8 +705,7 @@ private fun CreateQuestionnaireDialog(
                                 // Kept on this phone under a temporary id, and opened anyway: its
                                 // sections and questions are written now and uploaded in order.
                                 onError(
-                                    "“${title.trim()}” is kept on this phone and uploads when there " +
-                                        "is a connection. You can add its sections and questions now."
+                                    "“${title.trim()}” saved on this phone; uploads when online. You can add questions now."
                                 )
                                 onCreated(created.id)
                             } else if (created != null) {

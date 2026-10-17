@@ -62,27 +62,23 @@ data class AccessRefusalChrome(
  */
 fun accessRefusalChrome(refusal: AccessRefusal): AccessRefusalChrome? = when (refusal) {
     AccessRefusal.PENDING -> AccessRefusalChrome(
-        heading = "You are on the list, waiting for an administrator",
+        heading = "Waiting for an admin to approve you",
         advice =
-            "Your password is not the problem and resetting it will not help. An administrator has " +
-                "been shown your request and has to approve it before you can sign in. Trying again " +
-                "does not move you up the queue — it is recorded as another attempt on the same request.",
+            "Your password is fine. An admin needs to approve your request; retrying won't speed it up.",
         waiting = true,
     )
 
     AccessRefusal.REJECTED -> AccessRefusalChrome(
         heading = "Your request was reviewed and not approved",
         advice =
-            "Signing in again will not reopen it — an administrator has to. Contact them directly if " +
-                "you believe this is a mistake.",
+            "Only an admin can reopen this. Contact them if it's a mistake.",
         waiting = false,
     )
 
     AccessRefusal.SUSPENDED -> AccessRefusalChrome(
-        heading = "Your access to this application has been suspended",
+        heading = "Your access has been suspended",
         advice =
-            "This is not a password problem. An administrator ended this address's access and only an " +
-                "administrator can restore it.",
+            "Not a password issue. Only an admin can restore access.",
         waiting = false,
     )
 
@@ -92,17 +88,14 @@ fun accessRefusalChrome(refusal: AccessRefusal): AccessRefusalChrome? = when (re
     AccessRefusal.DESIGNER_SUSPENDED -> AccessRefusalChrome(
         heading = "Your designer empanelment has ended",
         advice =
-            "Your account itself is not barred — the institution's designer roster no longer carries " +
-                "this address. Ask an administrator to restore you on the designer roster.",
+            "Your email is no longer on the designer roster. Ask an admin to restore it.",
         waiting = false,
     )
 
     AccessRefusal.QUEUE_FULL -> AccessRefusalChrome(
         heading = "Requests to join are temporarily closed",
         advice =
-            "Nothing about you was refused and nothing was recorded, so waiting will not help: an " +
-                "administrator has to clear the approval queue before new requests can be accepted. " +
-                "Contact one directly.",
+            "The approval queue is full, so your request wasn't recorded. Contact an admin.",
         waiting = false,
     )
 

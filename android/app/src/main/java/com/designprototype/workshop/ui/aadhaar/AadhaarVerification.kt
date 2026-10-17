@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.aadhaar
 
+import com.designprototype.workshop.ui.ActionRow
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -99,13 +100,13 @@ object AadhaarCopy {
     const val METHOD_HEADING = "How would you like to verify?"
     const val VERIFIED = "Verified with Aadhaar."
     const val MISMATCH =
-        "UIDAI's signature checked out, but the name UIDAI holds is not the name on this record. An administrator will compare the two and decide."
+        "Verified by UIDAI, but the name differs from this record. An admin will review it."
     const val NO_QR_IN_PICTURE =
-        "No Aadhaar QR code could be read in that picture. Use a sharp, straight-on photograph or screenshot with the whole large QR code in it."
+        "No Aadhaar QR found. Use a sharp, straight-on image of the whole QR code."
     const val NOT_A_SECURE_QR =
-        "That is not an Aadhaar Secure QR code. Scan the large QR code on the Aadhaar letter, card or e-Aadhaar."
+        "Not an Aadhaar Secure QR. Scan the large QR on the letter, card or e-Aadhaar."
     const val VID_HINT =
-        "A 16-digit Virtual ID is better: it can be generated from UIDAI's website or app and keeps the Aadhaar number itself private. Neither is kept."
+        "A 16-digit Virtual ID (from UIDAI) keeps the Aadhaar number private. Neither is stored."
 
     /** The consent notice. The SAME sentences as `frontend/lib/aadhaar.ts`'s `consentPoints`. */
     fun consentPoints(subject: AadhaarSubject): List<String> {
@@ -249,7 +250,7 @@ fun AadhaarVerifyCard(
             error = AadhaarCopy.NOT_A_SECURE_QR
             return
         }
-        run("The QR code could not be verified. Try again.") { client.secureQr(subject, text) }
+        run("Couldn't verify the QR. Try again.") { client.secureQr(subject, text) }
     }
 
     val pickPicture = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -274,7 +275,7 @@ fun AadhaarVerifyCard(
         scope.launch {
             val bytes = withContext(Dispatchers.IO) { readBytes(context, uri) }
             if (bytes == null) {
-                error = "That file could not be read. Pick the ZIP file UIDAI gave you."
+                error = "Couldn't read that file. Pick the ZIP from UIDAI."
             } else {
                 zipBytes = bytes
                 zipName = uri.lastPathSegment?.substringAfterLast('/') ?: "offline e-KYC file"
@@ -310,8 +311,8 @@ fun AadhaarVerifyCard(
                     }
                 } else {
                     Text(
-                        if (subject is AadhaarSubject.Self) "Confirm that this account belongs to you by checking it against your Aadhaar."
-                        else "Confirm this artisan's identity against their Aadhaar.",
+                        if (subject is AadhaarSubject.Self) "Verify this account with your Aadhaar."
+                        else "Verify this artisan with their Aadhaar.",
                         fontSize = 14.sp,
                     )
                 }
@@ -365,7 +366,9 @@ fun AadhaarVerifyCard(
                 Button(onClick = { step = Step.METHOD }, enabled = agreed, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(AadhaarCopy.CONTINUE)
                 }
-                TextButton(onClick = { reset() }) { Text(AadhaarCopy.CANCEL) }
+                ActionRow {
+                    TextButton(onClick = { reset() }) { Text(AadhaarCopy.CANCEL) }
+                }
             }
 
             Step.METHOD -> {
@@ -374,22 +377,24 @@ fun AadhaarVerifyCard(
                     MethodRow(
                         icon = { Icon(Icons.Filled.Image, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         title = "The Aadhaar QR code",
-                        note = "Scan the large QR code on the Aadhaar letter, PVC card or e-Aadhaar, or read it from a picture.",
+                        note = "Scan the large QR on the letter, PVC card or e-Aadhaar, or use a picture.",
                     ) { step = Step.QR }
                     MethodRow(
                         icon = { Icon(Icons.Filled.FolderZip, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         title = "The offline e-KYC file",
-                        note = "The ZIP file downloaded from UIDAI's website (Aadhaar Paperless Offline e-KYC), and the share code chosen while downloading it.",
+                        note = "The Offline e-KYC ZIP from UIDAI, plus its share code.",
                     ) { step = Step.ZIP }
                 }
                 if (features.online) {
                     MethodRow(
                         icon = { Icon(Icons.Filled.Key, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         title = "A one-time code from UIDAI",
-                        note = "UIDAI sends a code to the mobile number registered with the Aadhaar.",
+                        note = "Sent to the Aadhaar-registered mobile.",
                     ) { step = Step.OTP }
                 }
-                TextButton(onClick = { reset() }) { Text(AadhaarCopy.CANCEL) }
+                ActionRow {
+                    TextButton(onClick = { reset() }) { Text(AadhaarCopy.CANCEL) }
+                }
             }
 
             Step.QR -> {
@@ -407,7 +412,9 @@ fun AadhaarVerifyCard(
                     Spacer(Modifier.width(6.dp))
                     Text(if (busy) "Reading…" else "Read it from a picture")
                 }
-                TextButton(onClick = { reset() }, enabled = !busy) { Text(AadhaarCopy.CANCEL) }
+                ActionRow {
+                    TextButton(onClick = { reset() }, enabled = !busy) { Text(AadhaarCopy.CANCEL) }
+                }
             }
 
             Step.ZIP -> {
@@ -428,7 +435,7 @@ fun AadhaarVerifyCard(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "Optional: type the mobile number or e-mail registered with the Aadhaar and it will be checked against the file too. Neither is kept.",
+                    "Optional: registered mobile or email to cross-check. Not stored.",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp,
                 )
@@ -458,7 +465,9 @@ fun AadhaarVerifyCard(
                     enabled = !busy && zipBytes != null && shareCode.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) { Text(if (busy) "Checking…" else "Verify") }
-                TextButton(onClick = { reset() }, enabled = !busy) { Text(AadhaarCopy.CANCEL) }
+                ActionRow {
+                    TextButton(onClick = { reset() }, enabled = !busy) { Text(AadhaarCopy.CANCEL) }
+                }
             }
 
             Step.OTP -> {
@@ -501,7 +510,9 @@ fun AadhaarVerifyCard(
                     enabled = !busy && uid.isNotBlank() && (current == null || OtpCode.isComplete(otp)),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) { Text(if (busy) "Please wait…" else if (current == null) "Send the code" else "Verify") }
-                TextButton(onClick = { reset() }, enabled = !busy) { Text(AadhaarCopy.CANCEL) }
+                ActionRow {
+                    TextButton(onClick = { reset() }, enabled = !busy) { Text(AadhaarCopy.CANCEL) }
+                }
             }
         }
 
@@ -590,7 +601,7 @@ fun AadhaarUserBadge(account: UserDto, viewer: UserDto?) {
             title = { Text("Aadhaar name differs") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("UIDAI's signature on the document checked out, but the names do not match closely enough to accept on their own.")
+                    Text("Verified by UIDAI, but the names don't match closely enough.")
                     Text("Name on the account: ${account.name}")
                     Text("Name as UIDAI holds it: ${account.aadhaarVerifyName ?: "UIDAI returned no name for this method"}")
                     error?.let { Text(it, color = RefusedInk) }

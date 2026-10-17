@@ -207,12 +207,9 @@ val DW_QR_SAMPLE_LADDER: List<Int> = listOf(2, 1, 4)
  */
 fun dwQrNothingFound(source: DwQrSource): String = when (source) {
     DwQrSource.CAMERA ->
-        "No QR code was found in that photograph. Fill the frame with the code, hold the phone " +
-            "steady and flat to the card, and try again — or type the code printed underneath it."
+        "No QR code found. Fill the frame, hold steady, or type the code below it."
     DwQrSource.PICTURE ->
-        "No QR code could be read in that picture. If it is a screenshot, a crop tight around the " +
-            "code often reads when the whole screen does not. Otherwise, type the code printed " +
-            "under the QR, or ask whoever sent it for the code as text."
+        "Couldn't read a QR code. Try a tighter crop, or type the code."
 }
 
 /**
@@ -224,9 +221,7 @@ fun dwQrNothingFound(source: DwQrSource): String = when (source) {
  * closed on its own decoder, where HEIC got its own refusal for exactly this reason.
  */
 const val DW_QR_UNREADABLE_PICTURE =
-    "That picture could not be opened on this phone. Some formats a camera or a chat app produces " +
-        "(HEIC, for instance) cannot be read here. Take a photograph of the code with this app " +
-        "instead, or type the code printed under the QR."
+    "That picture could not be opened (formats like HEIC aren't supported). Scan with the camera or type the code."
 
 /**
  * ZXing, on a bitmap decoded off the device, walking [DW_QR_SAMPLE_LADDER].

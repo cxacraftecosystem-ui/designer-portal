@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import com.designprototype.workshop.data.userMessage
 
 import androidx.compose.foundation.background
@@ -118,11 +120,10 @@ internal fun InspectionFeedbackPanel(
         report.refreshed[record.id]?.let(onRecord)
         outcome = when {
             report.sent > 0 && kind == DwInspectionNoteKind.SEND_BACK ->
-                "Sent back. The report now reads Needs revision and your suggestion is on the record."
-            report.sent > 0 -> "Filed. Your suggestion is on the record against this submission round."
-            report.held > 0 -> "Not filed — the reason is under your note below. Nothing has been lost."
-            else -> "Kept on this phone. It will be sent when this phone is back online, after the " +
-                "report is checked again."
+                "Sent back — now Needs revision."
+            report.sent > 0 -> "Suggestion filed."
+            report.held > 0 -> "Not filed — see the reason below your note."
+            else -> "Saved on this phone. Sends when you're online."
         }
         reread++
     }
@@ -148,7 +149,7 @@ internal fun InspectionFeedbackPanel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                problem = "Your note could not be kept on this phone, so it is still in the box. " +
+                problem = "Couldn't save your note here; it's still in the box. " +
                     (e.message?.takeIf { it.isNotBlank() } ?: "Try again.")
             } finally {
                 busy = false
@@ -206,7 +207,7 @@ internal fun InspectionFeedbackPanel(
                                     note = item.note
                                     stageKey = item.stageKey.orEmpty()
                                     runCatching { repository.discardInspectionNote(appContext, item.id) }
-                                    outcome = "Your note is back in the box, as you wrote it."
+                                    outcome = "Your note is back in the box."
                                     reread++
                                 }
                             },
@@ -233,7 +234,7 @@ internal fun InspectionFeedbackPanel(
             // ── The box ─────────────────────────────────────────────────────────────────────────
             when {
                 !record.mayRecordFeedback -> Text(
-                    "Suggestions cannot be filed on this workshop from this account.",
+                    "You can't file suggestions on this workshop.",
                     color = MaterialTheme.field.body,
                     fontSize = 13.sp
                 )
@@ -246,7 +247,7 @@ internal fun InspectionFeedbackPanel(
                         onValueChange = { note = it; problem = null },
                         label = { Text("What should be corrected?") },
                         placeholder = {
-                            Text("Name what is wrong and what it should say. This goes to the designers as written.")
+                            Text("What's wrong and what it should say.")
                         },
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp)
@@ -260,22 +261,25 @@ internal fun InspectionFeedbackPanel(
                         enabled = !busy,
                         onSelect = { stageKey = it }
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // Short labels so the pair stays on one line in two equal halves at 360dp.
+                    ActionRow {
                         OutlinedButton(
                             onClick = { file(DwInspectionNoteKind.SUGGESTION) },
                             enabled = !busy && note.isNotBlank()
-                        ) { Text("File a suggestion") }
+                        ) { Text("Suggest") }
                         Button(
                             onClick = { confirmSendBack = true },
                             enabled = !busy && note.isNotBlank()
-                        ) { Text("Send the report back") }
-                        if (busy) FieldCircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        ) { Text("Send back") }
+                    }
+                    if (busy) {
+                        FieldCircularProgressIndicator(
+                            modifier = Modifier.size(18.dp).align(Alignment.CenterHorizontally),
+                            strokeWidth = 2.dp
+                        )
                     }
                     Text(
-                        "Filing a suggestion leaves the report where it is. Sending it back moves it to " +
-                            "Needs revision, which is what puts it on its designers' desks. Neither can be " +
-                            "edited or withdrawn once it is on the record. Without signal your note is kept " +
-                            "on this phone and sent when you are back online.",
+                        "Suggest keeps the report as is; Send back moves it to Needs revision. Neither can be undone.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -303,10 +307,7 @@ internal fun InspectionFeedbackPanel(
             title = { Text("Send this report back to its designers?") },
             text = {
                 Text(
-                    "The report moves to Needs revision and its designers are the ones who act on it " +
-                        "next. Your suggestion is recorded with your name against this submission round, " +
-                        "and it stays on the record afterwards. They hand it back in by correcting the " +
-                        "stages. Suggestions cannot be edited or withdrawn afterwards."
+                    "The report goes back to its designers as Needs revision, with your suggestion recorded under your name. This can't be undone."
                 )
             },
             confirmButton = {
@@ -325,8 +326,7 @@ internal fun InspectionFeedbackPanel(
             title = { Text("Discard this note?") },
             text = {
                 Text(
-                    "It has not reached the record, so discarding it removes the only copy, which is " +
-                        "on this phone. If you still want to say it, put it back in the box instead."
+                    "This is the only copy. Put it back in the box instead?"
                 )
             },
             confirmButton = {
@@ -401,13 +401,15 @@ private fun QueuedNoteCard(
             Text(dwQueuedNoteSentence(item), color = MaterialTheme.field.muted, fontSize = 11.sp)
         } else {
             InspectionNotice(held, warning = true)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ActionRow {
                 if (mayRefile) {
                     OutlinedButton(onClick = onRefile, enabled = !busy) { Text("File against this round") }
                 }
                 OutlinedButton(onClick = onBackToBox, enabled = !busy) { Text("Back to the box") }
             }
         }
-        TextButton(onClick = onDiscard, enabled = !busy) { Text("Discard") }
+        ActionRow {
+            TextButton(modifier = Modifier.destructiveAction(), onClick = onDiscard, enabled = !busy) { Text("Discard") }
+        }
     }
 }

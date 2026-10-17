@@ -94,9 +94,7 @@ class WorkshopOptionsTest {
     @Test
     fun `the offline sentence refuses to claim the list is empty`() {
         assertEquals(
-            "This device has not received the artisans list yet, so there is nothing to pick here. " +
-                "That is not a claim that there are none. Connect once and the list is kept on the " +
-                "device from then on.",
+            "No artisans list yet. Connect once to download it.",
             offlineListLine("artisans")
         )
     }
@@ -113,8 +111,7 @@ class WorkshopOptionsTest {
     @Test
     fun `the read-failed sentence says the record still saves`() {
         assertEquals(
-            "The design workshops list could not be loaded, so this is not showing what exists. " +
-                "Nothing you have entered is at risk — this record can be saved without it.",
+            "Couldn't load design workshops. You can still save without it.",
             couldNotListLine("design workshops")
         )
     }
@@ -129,7 +126,7 @@ class WorkshopOptionsTest {
     @Test
     fun `scoped emptiness names an administrator and unscoped emptiness does not`() {
         assertEquals(
-            "No design workshops are open to this account. An administrator can give you access to one.",
+            "No design workshops available. An admin can give you access.",
             scopedEmptyLine("design workshops")
         )
         assertEquals("No crafts have been recorded yet.", unscopedEmptyLine("crafts"))
@@ -368,8 +365,7 @@ class WorkshopOptionsTest {
     fun `the cap sentence prints both numbers and names where the rest are`() {
         val line = workshopCapLine(shown = 20, total = 121, kind = WorkshopListKind.DESIGN)
         assertEquals(
-            "Showing the 20 most recent of 121. Open Design workshops to search the whole list, " +
-                "then come back.",
+            "Latest 20 of 121. Search in Design workshops for others.",
             line
         )
     }

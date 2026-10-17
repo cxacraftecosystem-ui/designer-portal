@@ -214,6 +214,5 @@ private fun unknownStageWarning(schema: SchemaResponse): String? {
     val unknown = unknownStages(schema)
     if (unknown.isEmpty()) return null
     val titles = schema.stages.filter { it.key in unknown }.map { it.title.ifBlank { it.key } }
-    return "${unknown.size} stage(s) are printed at the end of the report " +
-        "(${titles.joinToString(", ")}). Update the app to print them in their usual place."
+    return "${unknown.size} stage(s) printed at the end (${titles.joinToString(", ")}). Update the app to fix the order."
 }

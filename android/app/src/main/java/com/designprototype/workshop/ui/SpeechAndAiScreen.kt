@@ -290,7 +290,9 @@ private fun DwDeviceTierBody(
             models = tier2Models,
         )
 
-        OutlinedButton(onClick = { probeCount += 1 }) { Text("Check again") }
+        ActionRow {
+            OutlinedButton(onClick = { probeCount += 1 }) { Text("Check again") }
+        }
     }
 }
 

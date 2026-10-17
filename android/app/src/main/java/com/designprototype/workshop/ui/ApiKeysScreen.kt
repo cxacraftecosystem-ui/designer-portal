@@ -270,7 +270,7 @@ class ApiKeysState internal constructor(
                 .onSuccess { result ->
                     val value = result.value
                     if (value.isNullOrEmpty()) {
-                        notice = "Nothing to reveal — ${secret.label} has no value set anywhere."
+                        notice = "${secret.label} has no value."
                     } else {
                         revealedValues[secret.key] = value
                         notice = null
@@ -315,9 +315,9 @@ class ApiKeysState internal constructor(
                 .onSuccess { row ->
                     replaceRow(row)
                     notice = if (row.lastStatus == "OK") {
-                        "${row.label} is working — the provider accepted the key."
+                        "${row.label} works."
                     } else {
-                        "${row.label} failed — ${row.lastError ?: "the provider rejected the key."}"
+                        "${row.label} failed — ${row.lastError ?: "key rejected."}"
                     }
                 }
                 .onFailure { error = it.apiErrorMessage("Unable to test that key") }
@@ -350,7 +350,7 @@ class ApiKeysState internal constructor(
                     replaceRow(row)
                     hide(row.key)
                     cancelEdit()
-                    notice = "${row.label} saved — it is live for everyone right now, no restart needed."
+                    notice = "${row.label} saved — live now."
                 }
                 .onFailure { error = it.apiErrorMessage("Unable to save that key") }
             finish()
@@ -376,9 +376,9 @@ class ApiKeysState internal constructor(
                     hide(row.key)
                     confirmingClear = null
                     notice = if (row.source == SOURCE_ENVIRONMENT) {
-                        "${row.label}: the saved value is removed and the default value applies again."
+                        "${row.label}: saved value removed; default applies."
                     } else {
-                        "${row.label}: the saved value is removed. This key now has no value."
+                        "${row.label}: saved value removed; no value now."
                     }
                 }
                 .onFailure { error = it.apiErrorMessage("Unable to clear that override") }
@@ -535,8 +535,7 @@ fun ApiKeysScreen(
         }
 
         Text(
-            "Every key the portal can use. Test one to check it with the " +
-                "provider before a field team depends on it.",
+            "Test a key with its provider before teams rely on it.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -580,14 +579,12 @@ private fun ApiKeysLiveBanner() {
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Text(
-            "Saved keys take effect immediately, for everyone.",
+            "Saved keys apply immediately for everyone.",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
         Text(
-            "A key saved here replaces the default straight away, for every feature that uses it. " +
-                "Values are encrypted at rest, are never written to logs, and revealing one is " +
-                "recorded against your account.",
+            "Saved keys replace defaults immediately. Encrypted, never logged; reveals are recorded.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
@@ -623,10 +620,7 @@ private fun ApiKeysRestrictedCard() {
                 )
             }
             Text(
-                "The key VALUES are limited to the master admin account. Ordinary admins manage " +
-                    "people and records; handing out live provider credentials stays with the " +
-                    "single master admin. The provider ranking above is yours — you can reorder the " +
-                    "engines and test whether each provider's key works.",
+                "Key values are master-admin only. You can reorder providers and test keys.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -730,7 +724,7 @@ private fun ApiKeyCard(
                             contentDescription = if (plaintext != null) {
                                 "Hide ${secret.label}"
                             } else {
-                                "Reveal ${secret.label} (recorded against your account)"
+                                "Reveal ${secret.label} (logged)"
                             },
                             tint = if (secret.configured) tokens.body else tokens.placeholder,
                             modifier = Modifier.size(20.dp)
@@ -818,14 +812,10 @@ private fun ApiKeyCard(
             HorizontalDivider(color = tokens.hairline)
 
             // --- Actions ---------------------------------------------------------------------
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            ActionRow {
                 OutlinedButton(
                     onClick = { state.test(secret) },
                     enabled = rowBusy != ApiKeyAction.TEST,
-                    modifier = Modifier.weight(1f)
                 ) {
                     if (rowBusy == ApiKeyAction.TEST) {
                         FieldCircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
@@ -837,7 +827,6 @@ private fun ApiKeyCard(
                 }
                 Button(
                     onClick = { state.startEdit(secret) },
-                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         if (secret.source == SOURCE_DATABASE || secret.source == SOURCE_ENVIRONMENT) {
@@ -853,13 +842,15 @@ private fun ApiKeyCard(
                 }
             }
             if (secret.source == SOURCE_DATABASE) {
-                TextButton(
-                    onClick = { state.startClear(secret) },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Clear override")
+                ActionRow {
+                    TextButton(
+                        onClick = { state.startClear(secret) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Clear override")
+                    }
                 }
             }
 
@@ -925,23 +916,18 @@ private fun ApiKeyEditPanel(secret: ManagedSecretDto, state: ApiKeysState, busy:
             modifier = Modifier.fillMaxWidth()
         )
         Text(
-            "Saving replaces the value for everyone at once, effective immediately.",
+            "Applies to everyone immediately.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        ActionRow {
             OutlinedButton(
                 onClick = state::cancelEdit,
                 enabled = !busy,
-                modifier = Modifier.weight(1f)
             ) { Text("Cancel") }
             Button(
                 onClick = { state.save(secret) },
                 enabled = state.draft.isNotBlank() && !busy,
-                modifier = Modifier.weight(1f)
             ) {
                 if (busy) {
                     FieldCircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
@@ -969,19 +955,14 @@ private fun ApiKeyClearPanel(secret: ManagedSecretDto, state: ApiKeysState, busy
             color = MaterialTheme.colorScheme.onErrorContainer
         )
         Text(
-            "The saved value is deleted and the default value applies again. If there is no " +
-                "default for this key, the features that need it stop working.",
+            "Deletes the saved value; the default applies. Without a default, dependent features stop.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onErrorContainer
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        ActionRow {
             OutlinedButton(
                 onClick = state::cancelClear,
                 enabled = !busy,
-                modifier = Modifier.weight(1f)
             ) { Text("Keep it") }
             Button(
                 onClick = { state.clearOverride(secret) },
@@ -990,7 +971,6 @@ private fun ApiKeyClearPanel(secret: ManagedSecretDto, state: ApiKeysState, busy
                     containerColor = MaterialTheme.colorScheme.error,
                     contentColor = MaterialTheme.colorScheme.onError
                 ),
-                modifier = Modifier.weight(1f)
             ) {
                 if (busy) {
                     FieldCircularProgressIndicator(
@@ -1086,9 +1066,9 @@ private fun ApiKeyStatusBadge(status: String) {
 // ---------------------------------------------------------------------------------------------
 
 private fun apiKeySourceHelp(source: String): String = when (source) {
-    SOURCE_DATABASE -> "Saved here — this value replaces the default."
-    SOURCE_ENVIRONMENT -> "Using the default value. Saving here replaces it."
-    else -> "No value — the features that need it are switched off."
+    SOURCE_DATABASE -> "Saved here — overrides the default."
+    SOURCE_ENVIRONMENT -> "Using the default."
+    else -> "No value — dependent features are off."
 }
 
 /**

@@ -69,7 +69,7 @@ import java.io.File
  * function's caller empties first, so the remedy the sentence names is a remedy the screen offers.
  */
 const val DW_UPDATE_DOWNLOAD_RETRY_MESSAGE =
-    "Unable to download the update — check your connection and try again."
+    "Couldn't download the update. Check your connection and try again."
 
 /**
  * True when [expectedBytes] is known and the file on disk is not that long.

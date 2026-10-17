@@ -462,15 +462,13 @@ fun RichTextEditor(
             if (item == null || !item.mediaType.equals("IMAGE", ignoreCase = true)) {
                 bridge.detach(id)
                 onError(
-                    "Only a photograph can be placed inside a narrative. Video, audio and documents " +
-                        "belong in this stage's own media fields."
+                    "Only photos can go in a narrative. Use the stage's media fields for other files."
                 )
                 return@attach
             }
             commit(insertImage(doc, anchor, id), moveFocus = true)
             onMessage(
-                "Photograph placed. The line under it is its caption — it prints beneath the " +
-                    "picture, and it can be formatted like any other sentence."
+                "Photo added. The line below it is its caption."
             )
         }
     }
@@ -1029,7 +1027,7 @@ private fun InlinePhotograph(
                         fontWeight = FontWeight.Medium,
                     )
                     Text(
-                        "This picture is held in the online workshop record.",
+                        "Stored online.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

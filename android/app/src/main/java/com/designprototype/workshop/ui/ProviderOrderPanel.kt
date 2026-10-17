@@ -194,8 +194,8 @@ class ProviderOrderState internal constructor(
             // Refusing silently reads as a broken button. Say which engine is stuck, and why.
             val blocked = list[from]
             val reason = blocked.frozenReason ?: "It has not passed a provider test."
-            announcement = "${blocked.name} cannot move there yet. $reason"
-            warning = "${blocked.name} stays below the engines that have passed a test. $reason"
+            announcement = "${blocked.name} can't move there yet. $reason"
+            warning = "${blocked.name} stays below tested engines. $reason"
             return
         }
         val moved = list[from]
@@ -223,7 +223,7 @@ class ProviderOrderState internal constructor(
                         warning = note
                         announcement = "Saved with changes. $note"
                     } else {
-                        notice = "Saved. The next transcription job uses this order — nothing needs restarting."
+                        notice = "Saved. The next job uses this order."
                         announcement = "Order saved."
                     }
                 }
@@ -245,11 +245,11 @@ class ProviderOrderState internal constructor(
                     if (after?.keyState == STT_KEY_PASSING) {
                         // The thaw is the point, and it has already happened in the rows above by
                         // the time this line is read — no reload, no save.
-                        notice = "${provider.name} answered. It is verified now and can be ranked wherever you like."
-                        announcement = "${provider.name} passed its test and is now rankable."
+                        notice = "${provider.name} passed and can be ranked anywhere."
+                        announcement = "${provider.name} passed its test."
                     } else {
                         val why = after?.testError ?: "the provider refused the key"
-                        warning = "${provider.name} did not pass: $why. It stays below the engines that did."
+                        warning = "${provider.name} failed: $why. It stays below passing engines."
                         announcement = "${provider.name} failed its test."
                     }
                 }
@@ -325,9 +325,7 @@ fun ProviderOrderPanel(
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                "The engine at the top is tried first; if it fails, or has no API key, the next one down " +
-                    "takes the job. An engine can only be ranked once it has passed a test — tap Test to ask " +
-                    "the provider whether its key works. This applies to everyone, not just this phone.",
+                "The top engine is tried first; if it fails, the next takes over. Test an engine to rank it. Applies to everyone.",
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.muted
             )
@@ -336,7 +334,7 @@ fun ProviderOrderPanel(
             state.trouble?.let { trouble ->
                 ProviderTroubleCard(trouble = trouble, busy = state.loading, onRetry = state::load)
                 Text(
-                    "Showing the default order. It can be changed once the current order has loaded.",
+                    "Default order shown until the current one loads.",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = tokens.muted
@@ -420,11 +418,7 @@ fun ProviderOrderPanel(
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            ActionRow {
                 Button(
                     onClick = state::save,
                     enabled = state.live && state.dirty && !state.saving
@@ -447,7 +441,7 @@ fun ProviderOrderPanel(
             val runnable = state.saved.filter { it.configured }
             if (state.live && !state.dirty && !state.loading && runnable.isNotEmpty()) {
                 Text(
-                    "Currently transcribing with ${runnable.joinToString(" → ") { it.name }}.",
+                    "Transcribing with ${runnable.joinToString(" → ") { it.name }}.",
                     style = MaterialTheme.typography.labelSmall,
                     color = tokens.muted
                 )
@@ -587,20 +581,22 @@ private fun ProviderRow(provider: SttProviderDto, index: Int, state: ProviderOrd
             }
         }
 
-        OutlinedButton(
-            onClick = { state.test(provider) },
-            enabled = live && state.testing == null
-        ) {
-            if (busy) {
-                FieldCircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
-            } else {
-                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+        ActionRow {
+            OutlinedButton(
+                onClick = { state.test(provider) },
+                enabled = live && state.testing == null
+            ) {
+                if (busy) {
+                    FieldCircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
+                } else {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                // The provider's name is IN the label rather than in a separate description, so TalkBack
+                // reads "Test ElevenLabs, button" once instead of reading a description and then the
+                // word "Test" after it.
+                Text(if (busy) "Testing ${provider.name}…" else "Test ${provider.name}", maxLines = 1)
             }
-            Spacer(Modifier.width(6.dp))
-            // The provider's name is IN the label rather than in a separate description, so TalkBack
-            // reads "Test ElevenLabs, button" once instead of reading a description and then the
-            // word "Test" after it.
-            Text(if (busy) "Testing ${provider.name}…" else "Test ${provider.name}", maxLines = 1)
         }
     }
 }
@@ -617,7 +613,7 @@ private fun ProviderMoveArrow(
 ) {
     val direction = if (up) "up" else "down"
     val label = if (blocked) {
-        "Move ${provider.name} $direction — not allowed until it passes a provider test"
+        "Move ${provider.name} $direction — test it first"
     } else {
         // Just the direction. Naming the destination ("up to position 0" on the first row) reads as
         // nonsense; where it actually landed is announced afterwards instead.
@@ -704,14 +700,16 @@ private fun ProviderTroubleCard(trouble: SttTrouble, busy: Boolean, onRetry: () 
             color = tokens.onWarningContainer
         )
         if (trouble.retryable) {
-            OutlinedButton(onClick = onRetry, enabled = !busy) {
-                if (busy) {
-                    FieldCircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
-                } else {
-                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+            ActionRow {
+                OutlinedButton(onClick = onRetry, enabled = !busy) {
+                    if (busy) {
+                        FieldCircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
+                    } else {
+                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text("Try again")
                 }
-                Spacer(Modifier.width(6.dp))
-                Text("Try again")
             }
         }
     }
@@ -778,38 +776,29 @@ private fun providerBanners(state: ProviderOrderState): List<Pair<BannerTone, St
 
     if (runnable.isEmpty()) {
         out += BannerTone.WARN to (
-            "None of these engines has an API key, so recordings cannot be transcribed. The ranking is " +
-                "still saved and applies as soon as a key is added and passes its test."
+            "No engine has a key, so nothing can be transcribed. The order applies once a key passes."
             )
     } else if (verified.isEmpty()) {
         out += BannerTone.INFO to (
-            "None of these engines has been tested, so you can rank them however you like. Tap Test " +
-                "on the one you want first to confirm its key works."
+            "No engines tested yet. Test your first choice to confirm its key."
             )
     } else if (saved.firstOrNull()?.configured == false) {
         out += BannerTone.WARN to (
-            "${saved.first().name} is ranked first but has no API key, so the next recording actually goes " +
-                "to ${runnable.first().name}. Add the ${saved.first().keyLabel} key to make this ranking count."
+            "${saved.first().name} has no key, so ${runnable.first().name} is used. Add the ${saved.first().keyLabel} key."
             )
     }
 
     if (sttOrderViolations(saved) > 0) {
         val stragglers = saved.filterNot { it.rankable }
         out += BannerTone.WARN to (
-            "This saved order puts ${joinSttNames(stragglers.map { it.name })} above " +
-                "${joinSttNames(verified.map { it.name })}, which ${if (verified.size == 1) "has" else "have"} " +
-                "passed a test. The next save moves the untested ${if (stragglers.size == 1) "one" else "ones"} " +
-                "below them; transcription already uses whichever engine answers first."
+            "Untested ${joinSttNames(stragglers.map { it.name })} ${if (stragglers.size == 1) "is" else "are"} above tested ${joinSttNames(verified.map { it.name })}. The next save reorders them."
             )
     }
 
     val failing = saved.filter { it.keyState == STT_KEY_FAILING }
     if (failing.isNotEmpty()) {
         out += BannerTone.WARN to (
-            "${joinSttNames(failing.map { it.name })} still ${if (failing.size == 1) "has" else "have"} a key, " +
-                "so every job keeps trying ${if (failing.size == 1) "it" else "them"} and waiting for the " +
-                "refusal before moving on. Replacing or removing the key is worth doing even though " +
-                "transcription still finishes."
+            "${joinSttNames(failing.map { it.name })} ${if (failing.size == 1) "fails" else "fail"} its test but still ${if (failing.size == 1) "has" else "have"} a key, slowing every job. Replace or remove the key."
             )
     }
     return out

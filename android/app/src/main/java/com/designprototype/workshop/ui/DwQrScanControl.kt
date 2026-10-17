@@ -213,7 +213,7 @@ fun DwQrScanControl(
     ) { uri -> if (uri != null) read(uri, DwQrSource.PICTURE) }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ActionRow {
             OutlinedButton(
                 onClick = {
                     val file = File(qrScratchDir(context), "qr-${System.currentTimeMillis()}.jpg")
@@ -276,12 +276,7 @@ fun DwQrScanControl(
             }
         }
         Text(
-            "Photograph the code, or pick a picture of one you were sent — a screenshot or a " +
-                "forwarded photograph reads just as well. The photograph is not kept. Everything " +
-                // "looking the record up" and not "opening the record": on the reference picker a
-                // code LINKS a record rather than navigating to it, and this one sentence is read on
-                // all three surfaces.
-                "here works with no connection; only looking the record up needs one.",
+            "Photograph the code or pick a picture. Works offline; lookup needs a connection.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,

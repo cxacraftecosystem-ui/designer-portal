@@ -894,8 +894,8 @@ private val WALKTHROUGH_INSPECTOR_FIELDS: Map<String, List<String>> = mapOf(
     "inspection-feedback" to listOf(
         "What should be corrected?",
         "Which stage is it about? — “The report as a whole”, or one named stage",
-        "“File a suggestion” — leaves the report where it is",
-        "“Send the report back” — moves it to Needs revision",
+        "“Suggest” — leaves the report where it is",
+        "“Send back” — moves it to Needs revision",
     ),
     "inspection-review-queue" to listOf(
         "The queue, newest first, with the record's type, title and who submitted it",
@@ -2414,16 +2414,18 @@ private fun WalkthroughHeroCard(
                 fontSize = 14.sp,
                 lineHeight = 21.sp,
             )
-            Button(
-                onClick = onStart,
-                colors = ButtonDefaults.buttonColors(
-                    // Primary is too dark to sit ON the brand tile; this is the role that exists for
-                    // exactly that, and it is why `FieldTokens` carries it separately.
-                    containerColor = MaterialTheme.field.accentOnBrandTile,
-                    contentColor = MaterialTheme.field.brandTile,
-                ),
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) { Text("Start at step 1") }
+            ActionRow {
+                Button(
+                    onClick = onStart,
+                    colors = ButtonDefaults.buttonColors(
+                        // Primary is too dark to sit ON the brand tile; this is the role that exists for
+                        // exactly that, and it is why `FieldTokens` carries it separately.
+                        containerColor = MaterialTheme.field.accentOnBrandTile,
+                        contentColor = MaterialTheme.field.brandTile,
+                    ),
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("Start at step 1") }
+            }
 
             /*
              * THE OTHER DECKS, NAMED AND NOT COUNTED.
@@ -2447,22 +2449,24 @@ private fun WalkthroughHeroCard(
                     style = FieldTextStyles.Eyebrow,
                 )
                 others.forEach { other ->
-                    TextButton(
-                        onClick = { onChooseDeck(other) },
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                            Text(
-                                other.name,
-                                color = MaterialTheme.field.accentOnBrandTile,
-                                style = FieldTextStyles.Link,
-                            )
-                            Text(
-                                other.audience,
-                                color = MaterialTheme.field.onBrandTileMuted,
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp,
-                            )
+                    ActionRow {
+                        TextButton(
+                            onClick = { onChooseDeck(other) },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                Text(
+                                    other.name,
+                                    color = MaterialTheme.field.accentOnBrandTile,
+                                    style = FieldTextStyles.Link,
+                                )
+                                Text(
+                                    other.audience,
+                                    color = MaterialTheme.field.onBrandTileMuted,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp,
+                                )
+                            }
                         }
                     }
                 }
@@ -2562,10 +2566,12 @@ private fun WalkthroughOutroCard(
                 }
             }
 
-            Button(
-                onClick = onFinish,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) { Text("Done") }
+            ActionRow {
+                Button(
+                    onClick = onFinish,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("Done") }
+            }
         }
     }
 }

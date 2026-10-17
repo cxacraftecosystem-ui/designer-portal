@@ -116,7 +116,7 @@ class AppUpdateIntegrityTest {
         // `updateError` and re-enables the confirm button on the same pass. One situation, one
         // sentence — the alternative is two spellings of "the download did not finish" on one screen.
         assertEquals(
-            "Unable to download the update — check your connection and try again.",
+            "Couldn't download the update. Check your connection and try again.",
             thrown?.message,
         )
         assertEquals(DW_UPDATE_DOWNLOAD_RETRY_MESSAGE, thrown?.message)

@@ -41,15 +41,14 @@ fun defaultNewRole(offered: List<String>): String? =
     if ("RESEARCHER" in offered) "RESEARCHER" else offered.firstOrNull()
 
 const val ADD_PERSON_HEADING = "Add a person"
-const val ADD_PERSON_INTRO = "Their account is made now and they are let in at the role you choose."
+const val ADD_PERSON_INTRO = "Creates their account now with the role you choose."
 const val ADD_PERSON_SIGN_IN_QUESTION = "How will they sign in?"
 const val ADD_PERSON_MODE_SET = "Set a password now"
 const val ADD_PERSON_MODE_GENERATE = "Make a temporary password for me"
 const val ADD_PERSON_MODE_NONE = "Google, Microsoft or Yahoo only"
-const val ADD_PERSON_MUST_CHANGE = "Ask them to choose a new one at first sign-in"
+const val ADD_PERSON_MUST_CHANGE = "Require a new password at first sign-in"
 const val ADD_PERSON_SEND_LINK = "Email them a link to set a password too"
-const val ADD_PERSON_TEMPORARY_NOTE = "Copy it now and send it to them yourself — it is shown once. " +
-    "They must change it when they first sign in."
+const val ADD_PERSON_TEMPORARY_NOTE = "Shown once — copy and send it yourself. They must change it at first sign-in."
 const val OPEN_THEIR_ACCOUNT = "Open their account"
 
 /** Why the form cannot be sent yet, or null. */
@@ -87,8 +86,8 @@ fun addPersonDoneLine(name: String, mode: String, linkEmailed: Boolean, linkErro
     return when {
         mode == PasswordMode.GENERATE -> "$base Their temporary password is below."
         mode == PasswordMode.SET -> "$base Send them the password you set."
-        linkEmailed -> "$base A link to set a password is on its way to them. They can also sign in with Google, Microsoft or Yahoo."
+        linkEmailed -> "$base A password link is on its way."
         linkError != null -> "$base $linkError"
-        else -> "$base They sign in with Google, Microsoft or Yahoo using that address."
+        else -> "$base They sign in with Google, Microsoft or Yahoo."
     }
 }

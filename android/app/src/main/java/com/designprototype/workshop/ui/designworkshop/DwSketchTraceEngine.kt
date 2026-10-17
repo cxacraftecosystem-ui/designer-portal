@@ -592,5 +592,4 @@ interface DwTraceRuntime {
  * whatever the cause: the photograph is untouched, and trying again is free.
  */
 const val DW_TRACE_ENGINE_SILENT_SENTENCE: String =
-    "The tracing controls did not come back this time, and nothing has said why. Close this and open " +
-        "it again — the photograph and the straightened plate are untouched either way."
+    "Tracing controls didn't load. Close and reopen."

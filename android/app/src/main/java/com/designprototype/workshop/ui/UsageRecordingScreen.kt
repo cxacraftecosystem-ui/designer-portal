@@ -216,7 +216,9 @@ fun UsageRecordingScreen(
                         Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
                     }
                     if (consentRead is UsageReadState.Failed) {
-                        Button(onClick = { scope.launch { loadConsent() } }) { Text("Try again") }
+                        ActionRow {
+                            Button(onClick = { scope.launch { loadConsent() } }) { Text("Try again") }
+                        }
                     }
                 }
             }
@@ -270,7 +272,7 @@ fun UsageRecordingScreen(
                                 // and a reassurance they only meet after pressing is a reassurance
                                 // they never meet.
                                 record.notice?.withdrawal?.costsNothing.orEmpty().ifBlank {
-                                    "Withdrawing does not sign you out and takes nothing away."
+                                    "You stay signed in and lose nothing."
                                 },
                                 color = MaterialTheme.field.muted,
                                 fontSize = 12.sp,
@@ -312,9 +314,7 @@ fun UsageRecordingScreen(
                             ) { Text(USAGE_REGRANT_LABEL) }
                             if (record.consent.state == USAGE_CONSENT_REFUSED) {
                                 Text(
-                                    "Nothing is being recorded while this stands, and nothing was " +
-                                        "kept from before. Agreeing again starts a new record from " +
-                                        "that moment — it does not bring anything back.",
+                                    "Nothing is recorded while declined. Agreeing again starts fresh.",
                                     color = MaterialTheme.field.muted,
                                     fontSize = 12.sp,
                                     lineHeight = 17.sp
@@ -349,7 +349,7 @@ fun UsageRecordingScreen(
                         fontSize = 16.sp
                     )
                     Text(
-                        "The last $RECORD_WINDOW_DAYS days, newest first, up to $TRAIL_PAGE requests.",
+                        "Last $RECORD_WINDOW_DAYS days, newest first (up to $TRAIL_PAGE).",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )
@@ -362,9 +362,7 @@ fun UsageRecordingScreen(
                         // truthful reading of an empty trail depends on the ANSWER, and the answer is
                         // on screen a card above; this sentence names the two causes rather than
                         // implying the person did nothing.
-                        emptyLine = "Nothing was recorded about you in this window. That can mean " +
-                            "you made no requests in it, or that nothing of yours is being recorded " +
-                            "at all — your answer above says which."
+                        emptyLine = "Nothing recorded in this period."
                     )?.let {
                         Text(it, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 18.sp)
                     }
@@ -383,7 +381,9 @@ fun UsageRecordingScreen(
                         Text("• $it", color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
                     }
                     if (recordRead is UsageReadState.Failed) {
-                        Button(onClick = { scope.launch { loadRecord() } }) { Text("Try again") }
+                        ActionRow {
+                            Button(onClick = { scope.launch { loadRecord() } }) { Text("Try again") }
+                        }
                     }
                     if (recordRead is UsageReadState.Loading) {
                         Row(
@@ -416,8 +416,7 @@ fun UsageRecordingScreen(
                             // The cap is STATED rather than left to be discovered. A list that
                             // quietly stops is indistinguishable from a short list, and here the
                             // short reading would be "this is everything the platform holds".
-                            "This is the newest $TRAIL_PAGE of your recorded requests, not all of " +
-                                "them. At most ${log.maxRows} can be shown at once.",
+                            "Newest $TRAIL_PAGE requests only (max ${log.maxRows}).",
                             color = MaterialTheme.field.muted,
                             fontSize = 12.sp,
                             lineHeight = 17.sp
@@ -553,10 +552,9 @@ private fun TrailRow(event: UsageEventDto) {
  */
 private fun Throwable.usageWriteFailureLine(online: Boolean): String = apiErrorMessage(
     if (online) {
-        "Your answer could not be sent, so nothing has been changed. Try again."
+        "Couldn't send your answer. Nothing changed."
     } else {
-        "This phone has no connection, so your answer was not sent and nothing has been changed. " +
-            "Try again where there is a signal."
+        "Offline — nothing changed. Try again when connected."
     }
 )
 

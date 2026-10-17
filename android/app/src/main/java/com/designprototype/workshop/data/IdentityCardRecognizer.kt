@@ -98,7 +98,7 @@ object MlKitIdentityCardRecognizer : IdentityCardRecognizer {
         source: Uri,
     ): List<IdentityCardText.RecognisedLine> = withContext(Dispatchers.IO) {
         val bitmap = decodeBounded(context, source)
-            ?: throw IllegalStateException("That photograph could not be opened on this device.")
+            ?: throw IllegalStateException("Couldn't open that photo.")
         // The rotation is handed to ML Kit rather than applied to the bitmap: rotating it here would
         // allocate a second full-size bitmap for no gain, and ML Kit rotates in its own pipeline.
         val image = InputImage.fromBitmap(bitmap, rotationDegrees(context, source))

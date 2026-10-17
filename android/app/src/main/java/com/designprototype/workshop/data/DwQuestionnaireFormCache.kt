@@ -258,7 +258,5 @@ fun cachedQuestionnaireNotice(cachedAt: String?, version: Int): String {
     // and the stored stamp is a UTC instant. Printed raw it was both unreadable and, in the field,
     // five and a half hours wrong.
     val whenPart = readableStamp(cachedAt)?.let { " on $it" }.orEmpty()
-    return "You are reading the copy this phone downloaded$whenPart (version $version). You can read " +
-        "it and check what has already been recorded. ANSWERS CANNOT BE SAVED without a connection, " +
-        "so that every answer is recorded against the latest wording of its question."
+    return "You're reading the copy this phone downloaded$whenPart (version $version). Read-only offline — ANSWERS CANNOT BE SAVED without a connection."
 }

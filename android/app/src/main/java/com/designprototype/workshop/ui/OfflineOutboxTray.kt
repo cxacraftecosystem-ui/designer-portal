@@ -194,8 +194,7 @@ fun OfflineOutboxTray(
                 reviewing = null
                 act {
                     repository.keepMyCorrection(appContext, row.entryId, currentUpdatedAt)
-                    "Your changes to “${row.label}” will be sent over the newer version. Only the " +
-                        "fields you changed are sent; everything else stays as the other person left it."
+                    "Your changes to “${row.label}” will be sent over the newer version (changed fields only)."
                 }
             },
             onKeepTheirs = {
@@ -205,10 +204,10 @@ fun OfflineOutboxTray(
                     // never uploaded, and choosing the other person's text must not delete them.
                     repository.keepTheirVersion(appContext, row.entryId)
                     if (row.mediaCount > 0) {
-                        "Kept the version on the server. Your ${filesPhrase(row.mediaCount)} from “${row.label}” " +
-                            "will still be added to it."
+                        "Kept the server version. Your ${filesPhrase(row.mediaCount)} from “${row.label}” " +
+                            "will still be added."
                     } else {
-                        "Kept the version on the server. Your copy of “${row.label}” was deleted from this device."
+                        "Kept the server version. Your copy of “${row.label}” was deleted."
                     }
                 }
             },
@@ -256,7 +255,7 @@ fun OfflineOutboxTray(
                         confirmDiscard = null
                         act {
                             repository.discardOutboxEntry(appContext, doomed.entryId)
-                            "“${doomed.label}” was deleted from this device."
+                            "“${doomed.label}” deleted from this phone."
                         }
                     }
                 ) { Text("Delete it", color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
@@ -309,8 +308,7 @@ fun OfflineOutboxTray(
             ) {
                 if (rows.isNotEmpty()) {
                     Text(
-                        "These could not be saved, so waiting for a signal will not send them. Nothing " +
-                            "has been deleted — the record and its photographs are still on this phone.",
+                        "These couldn't be saved and won't send by waiting. Nothing was deleted.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
@@ -454,7 +452,7 @@ private fun OutboxFailureCard(
             // somewhere to go. It NAMES the field, because the sentence's value and this row's whole
             // remedy are the same fact: which box to change.
             Text(
-                "POINTS AT ${row.danglingNouns.joinToString(" OR ") { it.uppercase() }} THAT COULD NOT BE FOUND",
+                "Links to a missing ${row.danglingNouns.joinToString(" or ")}",
                 color = MaterialTheme.field.warning,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -503,8 +501,7 @@ private fun OutboxFailureCard(
             // next app run; saying so stops a designer deleting a good record to make a message go
             // away. Same sentence-shape as `skewSentence` on the sync path.
             Text(
-                "This one is not your fault and not something you can fix here: the app needs an " +
-                    "update. It will be tried again by itself after the app is updated. Do not delete it.",
+                "Needs an app update; it'll retry after updating. Don't delete it.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -518,9 +515,7 @@ private fun OutboxFailureCard(
             // end wearing the costume of a remedy, which is the exact shape this whole outcome was
             // added to remove.
             Text(
-                "There is no list on this screen to re-point it with. Open the record where it was " +
-                    "made, fix the link there, and this entry will send. Nothing here is deleted in " +
-                    "the meantime.",
+                "Fix the link in the original record and this will send.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -536,7 +531,7 @@ private fun OutboxFailureCard(
         // [OutboxCounts.otherAccount]'s reason: work that silently disappears is work people conclude
         // was lost. The remedy is on the line above and it is the only one there is.
         if (!row.otherAccount) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionRow {
                 if (row.stale) {
                     // FIRST, for the reason Re-pick is first below: it is the one that can resolve
                     // this row. A bare Try again would fetch the identical refusal.
@@ -556,7 +551,7 @@ private fun OutboxFailureCard(
                 // The shared tonal media button — icon and word, 48dp — so Try again reads the same on
                 // every queued row as Retry and Download do on every media card.
                 MediaActionButton(label = "Try again", icon = Icons.Filled.Refresh, onClick = onRetry, enabled = !busy)
-                OutlinedButton(onClick = onDiscard, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                OutlinedButton(onClick = onDiscard, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).destructiveAction()) {
                     // "this copy" on a clash, for the reason the confirmation dialog gives at length:
                     // the row a designer is reading names a record on the SERVER, and an unqualified
                     // "Throw away" beside it invites the reading that this button deletes that one.
@@ -640,8 +635,7 @@ private fun RepickDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    "“${row.label}” is safe on this phone. Choose a $noun it can be filed under and " +
-                        "it will send; nothing else about the record changes.",
+                    "“${row.label}” is safe. Choose a $noun to file it under and it will send.",
                     color = MaterialTheme.field.body,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
@@ -723,8 +717,7 @@ private fun StaleCorrectionDialog(
             .onSuccess { review = it; if (it == null) problem = "This entry can no longer be compared." }
             .onFailure { error ->
                 if (error is CancellationException) throw error
-                problem = "The current version could not be read. Review it again when you have a signal — " +
-                    "nothing has been sent or deleted."
+                problem = "Couldn't load the current version. Review again online — nothing changed."
             }
     }
     AlertDialog(
@@ -740,7 +733,7 @@ private fun StaleCorrectionDialog(
                     problem != null -> Text(problem.orEmpty(), color = MaterialTheme.field.warning, fontSize = 12.sp)
                     loaded == null -> FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                     loaded.fields.isEmpty() -> Text(
-                        "Everything you changed is already on the record. Send mine to finish saving it.",
+                        "Your change is already on the record. Send mine to finish saving it.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                     )

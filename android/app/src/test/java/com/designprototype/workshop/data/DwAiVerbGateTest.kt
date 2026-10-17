@@ -96,11 +96,15 @@ class DwAiVerbGateTest {
         val refused = sentence(dwVerbGate(conditions(consent = DwTier3Consent.REFUSED)))
         assertTrue(unasked != refused)
 
-        // The unasked one names the act that fixes it, which is a person answering a question.
-        assertTrue(unasked.contains("record the artisan's answer"))
-        // The refused one says the answer is already on record, and does not ask for it again.
-        assertTrue(refused.contains("that is the answer on record"))
-        assertTrue(!refused.contains("record the artisan's answer"))
+        // Web's words exactly (lib/aiVerbs.ts), so the two clients never disagree about the same gate.
+        assertEquals("Needs the artisan's sharing consent first.", unasked)
+        assertEquals("The artisan declined sharing, so AI tools are off.", refused)
+        // The unasked one says consent is still needed; the refused one says the answer was given and
+        // does not ask for it again. The fix itself is the "Record consent" control beside both.
+        assertTrue(unasked.contains("consent first"))
+        assertTrue(refused.contains("declined"))
+        assertTrue(!refused.contains("first"))
+        assertEquals("Record consent", DW_VERB_CONSENT_LINK_LABEL)
     }
 
     /**
@@ -109,10 +113,13 @@ class DwAiVerbGateTest {
      * WORKSHOP, and the designer reading this is the person who can put it right.
      */
     @Test
-    fun `a consent refusal names the workshop screen and not an administrator`() {
+    fun `a consent refusal points at recording consent and not at an administrator`() {
+        // The fix is the "Record consent" control drawn beside the sentence, which opens the
+        // workshop's own consent card — the designer reading this is the one who can record it.
+        assertTrue(DW_VERB_CONSENT_LINK_LABEL.startsWith("Record"))
         for (consent in listOf(DwTier3Consent.NOT_RECORDED, DwTier3Consent.REFUSED)) {
             val words = sentence(dwVerbGate(conditions(consent = consent)))
-            assertTrue(words.contains("workshop's own screen"))
+            assertTrue(words.contains("consent") || words.contains("sharing"))
             assertTrue(!words.contains("administrator"))
             assertTrue(!words.contains("try again"))
         }

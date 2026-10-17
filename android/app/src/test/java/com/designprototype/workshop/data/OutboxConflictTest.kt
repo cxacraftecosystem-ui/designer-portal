@@ -347,7 +347,7 @@ class OutboxConflictTest {
     fun `the confirmation for an ordinary refusal is unchanged and says nothing about a clash`() {
         val warning = outboxDiscardConfirmation("Kutch mirror work", files = 1, isConflict = false)
         assertEquals(
-            "“Kutch mirror work” and the 1 file saved with it will be deleted from this device. " +
+            "“Kutch mirror work” and the 1 file saved with it will be deleted from this phone. " +
                 "This cannot be undone, and none of it has been uploaded.",
             warning,
         )
@@ -371,10 +371,9 @@ class OutboxConflictTest {
             warning.contains("none of it has been uploaded"),
         )
         assertEquals(
-            "“Giriraj Prasad” and the 2 files saved with it will be deleted from this device. This " +
-                "cannot be undone. The record is already saved online and stays there — entering it " +
-                "again would leave two of it. The 2 files were not uploaded — attach them to the " +
-                "record again instead, if you still can.",
+            "“Giriraj Prasad” and the 2 files saved with it will be deleted from this phone. This " +
+                "cannot be undone. The record is already online; re-entering it would duplicate it. " +
+                "The 2 files weren't uploaded — re-attach them if you can.",
             warning,
         )
     }
@@ -391,7 +390,7 @@ class OutboxConflictTest {
     @Test
     fun `an entry with no files is not offered a count of them`() {
         assertEquals(
-            "“Rabari embroidery” will be deleted from this device. This cannot be undone, and " +
+            "“Rabari embroidery” will be deleted from this phone. This cannot be undone, and " +
                 "none of it has been uploaded.",
             outboxDiscardConfirmation("Rabari embroidery", files = 0, isConflict = false),
         )

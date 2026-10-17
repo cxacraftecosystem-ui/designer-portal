@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -276,14 +277,16 @@ internal fun DwMediaAiVerbsRow(
                 )
             }
         } else {
-            TextButton(onClick = { open = !open }, enabled = enabled) {
-                Icon(
-                    Icons.Filled.AutoAwesome,
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(if (open) "Close" else "Ask AI about this file", fontSize = 12.sp)
+            ActionRow {
+                TextButton(onClick = { open = !open }, enabled = enabled) {
+                    Icon(
+                        Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (open) "Close" else "Ask AI about this file", fontSize = 12.sp)
+                }
             }
         }
 
@@ -297,7 +300,10 @@ internal fun DwMediaAiVerbsRow(
             // `DwVerbGate.StillReading` exists.
             currentGate is DwVerbGate.StillReading -> Unit
 
-            currentGate is DwVerbGate.Refused -> DwMediaVerbNote(currentGate.sentence)
+            currentGate is DwVerbGate.Refused -> {
+                DwMediaVerbNote(currentGate.sentence)
+                DwRecordConsentLink(surface.consent)
+            }
 
             serverMediaId == null -> DwMediaVerbNote(DW_VERBS_MEDIA_NOT_UPLOADED)
 
@@ -320,9 +326,7 @@ internal fun DwMediaAiVerbsRow(
                 if (MEDIA_VERB_SUBTITLES in verbs) {
                     if (subtitled?.contains(serverMediaId) == true) {
                         DwMediaVerbNote(
-                            "This recording already has AI subtitles on this workshop, so making " +
-                                "them again would send the audio up a second time and spend another " +
-                                "run for a cue list that already exists."
+                            "Subtitles already exist for this recording."
                         )
                     } else {
                         OutlinedButton(
@@ -356,8 +360,7 @@ internal fun DwMediaAiVerbsRow(
                         // admitting the app could not check.
                         if (subtitled == null) {
                             Text(
-                                "This phone could not check whether these subtitles already exist, " +
-                                    "so it cannot tell you either way.",
+                                "Couldn't check for existing subtitles.",
                                 color = MaterialTheme.field.muted,
                                 fontSize = 11.sp,
                                 lineHeight = 16.sp,

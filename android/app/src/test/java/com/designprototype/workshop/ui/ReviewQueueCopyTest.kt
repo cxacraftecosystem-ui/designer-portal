@@ -26,7 +26,7 @@ class ReviewQueueCopyTest {
     @Test
     fun `a partly loaded queue is a count, newest first`() {
         assertEquals(
-            "Showing 50 of 340 waiting, newest first.",
+            "50 of 340 waiting, newest first.",
             reviewQueueCutNotice(truncated = true, shown = 50, total = 340, cap = 50),
         )
     }

@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -315,7 +316,7 @@ internal fun DwSketchChooserUploadTab(
                         problem = if (imported.isEmpty()) {
                             "That file could not be attached."
                         } else {
-                            "$failures of ${uris.size} files could not be attached."
+                            "$failures of ${uris.size} files couldn't be attached."
                         }
                     }
                 }
@@ -548,7 +549,7 @@ internal fun DwSketchChooserUploadTab(
                 ) {
                     FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
                     Text(
-                        "Reading this workshop's sketches and prototypes…",
+                        "Loading sketches and prototypes…",
                         color = MaterialTheme.field.muted,
                         fontSize = 13.sp,
                     )
@@ -760,17 +761,15 @@ private fun DwChooserUploadHalf(
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        ActionRow {
             OutlinedButton(
                 onClick = { onAdd(half) },
-                modifier = Modifier.weight(1f),
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                 Text(half.addLabel, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
             }
             OutlinedButton(
                 onClick = { onOpenStage(workshopId, stageKey) },
-                modifier = Modifier.weight(1f),
             ) {
                 Icon(
                     Icons.Filled.OpenInFull,
@@ -1203,29 +1202,23 @@ private fun dwChooserStageForField(
  * genuinely still elsewhere is TYPING a dimension in, because the card only proposes one it measured.
  */
 internal const val DW_SKETCH_CHOOSER_NO_SKETCHES_YET: String =
-    "This workshop has no sketches yet. \"Add a sketch\" makes the row here; naming it, its caption " +
-        "and typing a dimension in by hand are on the stage form."
+    "No sketches yet. Tap “Add a sketch”."
 
 /** NO PROTOTYPES ON THIS WORKSHOP YET. Never carried the stale claim — see [DwChooserHalf.emptyNote]. */
 internal const val DW_SKETCH_CHOOSER_NO_PROTOTYPES_YET: String =
-    "This workshop has no prototypes yet. \"Add a prototype\" makes the row here; naming it, its " +
-        "materials and its stage log are on the stage form."
+    "No prototypes yet. Tap “Add a prototype”."
 
 /** WHERE THE SKETCH HALF'S REMAINING WORK IS. The full argument is at [DwChooserHalf.stageNote]. */
 internal const val DW_SKETCH_CHOOSER_SKETCH_ELSEWHERE: String =
-    "A workshop can hold as many sketches as it documented, and each one is a row on the sketch " +
-        "stage. Everything this tab does not offer — the name, the caption, the category, typing a " +
-        "dimension in by hand — is on that form."
+    "Name, caption, category and manual dimensions are on the stage form."
 
 /** WHERE THE PROTOTYPE HALF'S REMAINING WORK IS. Needed no correction; see [DwChooserHalf.stageNote]. */
 internal const val DW_SKETCH_CHOOSER_PROTOTYPE_ELSEWHERE: String =
-    "A workshop can hold as many prototypes as it made, and each one is a row on the prototype " +
-        "stage. Everything this tab does not offer — the name, the materials, the stage log, the " +
-        "costing — is on that form."
+    "Name, materials, stage log and costing are on the stage form."
 
 /** COULD NOT READ THE STAGE, with no signal. The offline half of the split. */
 internal const val DW_SKETCH_CHOOSER_STAGE_OFFLINE: String =
-    "No connection, so this stage couldn't be loaded. Try again."
+    "No connection — couldn't load this stage. Try again."
 
 /** COULD NOT READ THE STAGE, and the repository said why. The fallback for when it did not. */
 internal const val DW_SKETCH_CHOOSER_STAGE_REFUSED: String =
@@ -1240,30 +1233,23 @@ internal const val DW_SKETCH_CHOOSER_STAGE_REFUSED: String =
  * a file to a row it has not read would be writing over a collection it cannot vouch for.
  */
 internal const val DW_SKETCH_CHOOSER_STALE: String =
-    "Adding is off until this stage has loaded, because other sketches in this workshop may not " +
-        "be on this phone yet. Nothing has been lost — the rows below are what this phone holds, " +
-        "and the stage form opens with what it has."
+    "Adding is paused until this stage loads. Nothing has been lost."
 
 /** The registry does not declare this entity at all. A schema mismatch and not a permission. */
 internal const val DW_SKETCH_CHOOSER_NO_STAGE: String =
-    "Nothing can be added or attached here yet. Open the workshop once with a connection; if " +
-        "this stays, update the app."
+    "Nothing can be added yet. Open the workshop online; if this persists, update the app."
 
 /** The stage exists but the four media fields do not. The web's sentence, in the handset's words. */
 internal const val DW_SKETCH_CHOOSER_NO_MEDIA_FIELDS: String =
-    "Files cannot be added from this tab for this workshop. Open the stage form to add them."
+    "Add files from the stage form."
 
 /** The row write failed on the device. Said in place, beside the button that asked for it. */
 internal const val DW_SKETCH_CHOOSER_ROW_NOT_ADDED: String =
-    "That row has NOT been added: this phone could not write to its own draft. Nothing has changed. " +
-        "Storage being full is the usual cause, and the stage form writes through the same store, " +
-        "so it will refuse in the same way until there is room."
+    "Row has NOT been added — couldn't save on this phone (storage full?). Nothing has changed."
 
 /** The media write failed on the device. The bytes are kept; see the sentence. */
 internal const val DW_SKETCH_CHOOSER_FILE_NOT_ATTACHED: String =
-    "That file has NOT been attached to the row: this phone could not write to its own draft. The " +
-        "file itself was copied into this workshop and is not lost — attach it from the stage form, " +
-        "which writes through the same store."
+    "File has NOT been attached — couldn't save on this phone. The file is not lost; attach it from the stage form."
 
 /**
  * The dimension write failed on the device.
@@ -1276,7 +1262,4 @@ internal const val DW_SKETCH_CHOOSER_FILE_NOT_ATTACHED: String =
  * from a number they think is filed.
  */
 internal const val DW_SKETCH_CHOOSER_MEASUREMENT_NOT_SAVED: String =
-    "That measurement has NOT been written to the row: this phone could not write to its own draft. " +
-        "Nothing has changed, and the figure is not kept anywhere — write it down before you leave " +
-        "this screen. Storage being full is the usual cause, and the stage form writes through the " +
-        "same store, so it will refuse in the same way until there is room."
+    "Measurement NOT saved — couldn't save on this phone (storage full?). Note it down before leaving."

@@ -119,7 +119,9 @@ fun MyAiKeysScreen(
             loadError != null -> Column(Modifier.padding(padding).padding(16.dp)) {
                 Text(loadError!!, color = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.height(12.dp))
-                Button(onClick = { scope.launch { reload() } }) { Text("Try again") }
+                ActionRow {
+                    Button(onClick = { scope.launch { reload() } }) { Text("Try again") }
+                }
             }
 
             else -> LazyColumn(
@@ -135,18 +137,12 @@ fun MyAiKeysScreen(
                             // Naming a job here that a designer then goes hunting for and cannot
                             // find is the same lie as printing it on a model's row, told earlier
                             // and to somebody who has not yet decided whether to hand over a key.
-                            "Bring your own key and the AI work you ask for — proofreading, " +
-                                "expanding, translating, transcribing and photo descriptions — " +
-                                "runs on your account with your provider, at your choice of " +
-                                "model, and is billed to you.",
+                            "Use your own AI key for proofreading, translating, transcribing and photo descriptions — billed to you.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Leave this empty and everything works exactly as it does now, on the " +
-                                "organisation's own keys. Your key is stored encrypted, is " +
-                                "used only for work you personally ask for, and is never shown to " +
-                                "anyone — including administrators.",
+                            "Optional. Without it, the organisation's keys are used. Your key is encrypted and never shown to anyone.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -302,8 +298,7 @@ private fun ProviderKeyCard(
             if (state.unreadable) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "This key can no longer be read. Paste it again to fix it. Nothing is using it " +
-                        "meanwhile.",
+                    "Key unreadable — paste it again.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -318,8 +313,7 @@ private fun ProviderKeyCard(
             if (!state.modelKnown) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "The model saved here is not one this app offers any more. Pick another below " +
-                        "— until you do, your key runs whichever current model fits each job.",
+                    "Saved model no longer offered. Pick another.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -413,7 +407,7 @@ private fun ProviderKeyCard(
                 if (input != null && output != null) {
                     // The date travels with the figure, every time. See AiCatalogueDto.
                     Text(
-                        "About \$$input in / \$$output out per million words-ish, checked $pricesCheckedOn",
+                        "≈ \$$input in / \$$output out per million words (checked $pricesCheckedOn)",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -423,16 +417,14 @@ private fun ProviderKeyCard(
             if (!transcribes) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "${provider.label} cannot transcribe audio — none of its models accepts a " +
-                        "sound file — so recordings keep using the organisation's own transcription, " +
-                        "whatever you save here.",
+                    "${provider.label} can't transcribe audio, so recordings use the organisation's service.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            ActionRow {
                 Button(
                     onClick = {
                         onSave(typedKey.takeIf { it.isNotBlank() }, chosenModel)
@@ -442,7 +434,7 @@ private fun ProviderKeyCard(
                 ) { Text("Save") }
                 OutlinedButton(onClick = onTest, enabled = state.configured) { Text("Test") }
                 if (state.configured || state.unreadable) {
-                    TextButton(onClick = onRemove) { Text("Remove") }
+                    TextButton(onClick = onRemove, modifier = Modifier.destructiveAction()) { Text("Remove") }
                 }
             }
 

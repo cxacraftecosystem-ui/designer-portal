@@ -188,9 +188,7 @@ data class DwStageRefusal(
                 append(" and is still in the box above.")
             } else {
                 append(
-                    ", but this copy of the app has no box for that question, so it is not shown in " +
-                        "the form above — it was answered elsewhere, or the question has been " +
-                        "changed since this phone last read this workshop."
+                    ", but this app version has no box for that question."
                 )
             }
         }
@@ -236,8 +234,7 @@ data class DwHeld(val state: DwHeldState, val text: String) {
      */
     val sentence: String
         get() = when (state) {
-            DwHeldState.UNRECORDED -> "The earlier answer to this question was kept online, but " +
-                "it is not shown here."
+            DwHeldState.UNRECORDED -> "The earlier answer was kept online, but it is not shown here."
             DwHeldState.NOTHING -> "There is no earlier answer to this question online."
             DwHeldState.HOLDS -> "The answer saved online is still: “$text”."
         }
@@ -344,7 +341,7 @@ data class DwStageRefusalReport(
             val nothing = refusals.count { it.held.state == DwHeldState.NOTHING }
             val them = if (count == 1) "it" else "them"
             if (count > 0) {
-                append("$count of your answer${if (count == 1) " was" else "s were"} not accepted")
+                append("$count answer${if (count == 1) " was" else "s were"} not accepted")
                 when {
                     holds > 0 -> append(", and the earlier answer${if (count == 1) " was" else "s were"} kept")
                     // Measured, and what it measured was an empty box. Said, because a designer who
@@ -359,21 +356,14 @@ data class DwStageRefusalReport(
             } else {
                 val keys = droppedCustomKeys.size
                 append(
-                    "Everything else in this stage was saved except " +
-                        "$keys of this workshop's own question${if (keys == 1) "" else "s"}, " +
-                        "which the sections no " +
-                        "longer ask — so the answer${if (keys == 1) "" else "s"} this phone holds " +
-                        "for ${if (keys == 1) "it" else "them"} " +
-                        "${if (keys == 1) "was" else "were"} not stored. The sections have been " +
-                        "edited since this phone last read them — open this workshop once with a " +
-                        "connection. "
+                    "$keys custom answer${if (keys == 1) " wasn't" else "s weren't"} saved, which the sections no longer ask — open this workshop once with a connection to refresh. "
                 )
             }
             if (count > 0) {
-                append("Nothing you typed has been thrown away — it is still on this phone, and in ")
+                append("Nothing you typed has been thrown away — it's still on this phone, and in ")
                 append("the boxes below.")
             } else {
-                append("Nothing you typed has been thrown away — it is still on this phone.")
+                append("Nothing you typed has been thrown away.")
             }
             // DATED ONLY WHEN IT IS NOT THIS COMPOSITION'S OWN. A designer who has just pressed save
             // does not need to be told when; a designer who left the stage and came back on the app's

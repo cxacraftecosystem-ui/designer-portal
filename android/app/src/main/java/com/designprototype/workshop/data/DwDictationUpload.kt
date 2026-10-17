@@ -774,7 +774,7 @@ class DwDictationRecorder {
         // app in the privacy dashboard; the no-arg one is deprecated there and gone eventually.
         val created = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else @Suppress("DEPRECATION") MediaRecorder()
-        }.getOrNull() ?: return "This phone would not open its microphone for recording."
+        }.getOrNull() ?: return "Couldn't open the microphone."
 
         val configured = runCatching {
             /*
@@ -800,8 +800,7 @@ class DwDictationRecorder {
             // The two ordinary causes are a microphone another app is holding and a permission that
             // was revoked between the check and this call. Both are named, because the next move is
             // different for each and the designer can see which applies.
-            return "The microphone could not be opened for recording. Close anything else that may " +
-                "be using it, check that this app still has microphone permission, and try again."
+            return "Couldn't open the microphone. Close other apps using it, check permission, and retry."
         }
 
         created.setOnInfoListener { _, what, _ ->
@@ -820,8 +819,7 @@ class DwDictationRecorder {
         }.getOrElse {
             runCatching { created.release() }
             runCatching { file.delete() }
-            "This phone would not start recording. Close anything else that may be using the " +
-                "microphone and try again."
+            "Couldn't start recording. Close other apps using the mic and retry."
         }
     }
 

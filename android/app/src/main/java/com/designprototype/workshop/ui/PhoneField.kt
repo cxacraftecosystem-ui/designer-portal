@@ -341,8 +341,7 @@ fun ArtisanPhoneField(
         // thing.
         if (value.isNotBlank() && !isPhoneNumberShaped(value)) {
             Text(
-                "What is saved for this field is “$value”, which this box cannot show — it holds a " +
-                    "dial code and digits only. Type the number to replace it.",
+                "Saved value “$value” can't be shown here. Type the number to replace it.",
                 color = Muted,
                 fontSize = 11.sp
             )
@@ -366,7 +365,7 @@ fun ArtisanPhoneField(
         AlertDialog(
             onDismissRequest = { pendingForeign = null },
             title = { Text("Foreign resident?") },
-            text = { Text("This marks the artisan as a foreign resident. Continue?") },
+            text = { Text("Mark the artisan as a foreign resident?") },
             confirmButton = {
                 TextButton(onClick = {
                     dialCode = code

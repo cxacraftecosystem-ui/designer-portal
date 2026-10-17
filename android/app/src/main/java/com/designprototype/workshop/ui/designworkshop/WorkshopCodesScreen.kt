@@ -236,11 +236,9 @@ fun WorkshopCodesScreen(
             // missing tag means "nobody entered that prototype" or "this device has not seen it".
             val note = when {
                 remoteId == null ->
-                    "This workshop has not been uploaded yet, so these are the prototypes and " +
-                        "artisans saved on this device. Printing works exactly the same."
+                    "Not uploaded — showing items on this phone. Printing still works."
                 remote == null ->
-                    "There is no connection, so these are the prototypes and artisans saved on this device. " +
-                        "Printing works exactly the same; anything recorded elsewhere is not here yet."
+                    "Offline — showing items on this phone. Printing still works."
                 else -> null
             }
             Triple(loadedSchema, local, remote?.stages.orEmpty()) to note
@@ -250,7 +248,7 @@ fun WorkshopCodesScreen(
             remoteStages = loaded.third
             deviceOnlyNote = note
         }.onFailure {
-            onError(it.userMessage("Unable to read this workshop's prototypes and roster."))
+            onError(it.userMessage("Couldn't load prototypes and roster."))
         }
         loading = false
     }
@@ -313,9 +311,7 @@ fun WorkshopCodesScreen(
     ) {
         Text("Cards & tags", display = true, color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp)
         Text(
-            "Printable codes for the artisans on this workshop's roster and for every prototype in it, and " +
-                "a lookup that reads one back. A scan is what stops two days of work being attached to the " +
-                "wrong prototype.",
+            "Print codes for artisans and prototypes, and scan one to look it up.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp,
             lineHeight = 17.sp
@@ -388,8 +384,7 @@ fun WorkshopCodesScreen(
                     // screen never managed to read, and send the designer to look for a row that is
                     // probably there.
                     currentSchema == null -> DwLookupOutcome.Refused(
-                        "That code is well formed, but this workshop could not be read on this device, so " +
-                            "there is nothing to match it against yet. Open it again when there is a connection."
+                        "Valid code, but this workshop isn't loaded here. Retry online."
                     )
 
                     local != null -> DwLookupOutcome.Found(local)
@@ -471,8 +466,7 @@ fun WorkshopCodesScreen(
             // looking for rows they never entered instead of reporting a build that is out of date.
             DwWorkshopNotice(
                 (if (kind == DwWorkshopRecordType.PROTOTYPE) "Prototype tags" else "Artisan cards") +
-                    " cannot be printed because the form layout on this phone is out of date. " +
-                    "Nothing is missing from your workshop — update the app."
+                    " need an app update to print."
             )
             return@Column
         }
@@ -480,11 +474,9 @@ fun WorkshopCodesScreen(
         if (cards.isEmpty()) {
             Text(
                 if (kind == DwWorkshopRecordType.PROTOTYPE) {
-                    "No prototypes have been recorded in this workshop yet. Add them at the prototype " +
-                        "development stage and the tags appear here."
+                    "No prototypes yet. Add them at the prototype stage."
                 } else {
-                    "No artisans are on this workshop's roster yet. Enrol them on the participants stage " +
-                        "and their cards appear here."
+                    "No artisans yet. Enrol them on the participants stage."
                 },
                 color = MaterialTheme.field.body,
                 fontSize = 13.sp,
@@ -545,8 +537,7 @@ fun WorkshopCodesScreen(
             // Said beside the file rather than left to be discovered at the printer. A sheet printed
             // "fit to page" comes out a few per cent small, and a QR module under half a millimetre is
             // at the resolution limit of the camera that has to read it in a courtyard.
-            "Print it at 100% — not \"fit to page\". The cards are drawn at the size they are cut to, and a " +
-                "sheet scaled down produces symbols that scan on this phone and on no other.",
+            "Print at 100%, not “fit to page”.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp
@@ -871,8 +862,7 @@ private fun DwCodeLookupPanel(resolve: suspend (DwWorkshopCodeRef) -> DwLookupOu
                 if (busy) FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
             }
             Text(
-                "Spaces and capitals do not matter. The four characters at the end are a check — if they do " +
-                    "not match, the app says so rather than opening the wrong record.",
+                "Spaces and capitals don't matter. The last four characters are a check.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp
@@ -931,8 +921,7 @@ private suspend fun lookUpArtisan(repository: WorkshopRepository, id: String): D
         DwLookupOutcome.Refused(unresolvedWorkshopCodeMessage(DwWorkshopRecordType.ARTISAN))
     } catch (e: Exception) {
         DwLookupOutcome.Refused(
-            "That card is not on this workshop's roster on this device, and there is no connection to " +
-                "look it up. Try again when there is signal — the card itself is fine."
+            "Not on this roster here, and you're offline. Retry online."
         )
     }
 
@@ -1029,7 +1018,7 @@ private fun DwSheetSavedCard(sheet: SheetExport) {
             // can already open it from there, so there is no Uri to grant and nothing to share FROM
             // this app. Saying where it is beats offering a button that would have to re-copy the file.
             Text(
-                "Open it from the Downloads folder, or attach it from any app's file picker.",
+                "Find it in Downloads.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )
@@ -1217,9 +1206,7 @@ private fun DwDesignWorkshopCodeCard(workshopId: String) {
                 lineHeight = 16.sp,
             )
             Text(
-                "The screen is at full brightness while this is open so another phone can read it. " +
-                    "If the camera will not read it, the line above can be typed into “Open a record " +
-                    "from its code” on the other phone instead — it is the same code.",
+                "Brightness is at full so another phone can scan. Or type the code shown above.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -1282,8 +1269,7 @@ private fun DwJoinCardsPanel(workshopId: String) {
     // wrong sentence for a workshop that simply has not synced yet.
     if (isLocalOnlyWorkshop(workshopId)) {
         DwWorkshopNotice(
-            "This workshop has not been uploaded yet, so a join card cannot be printed for it. Sync " +
-                "this workshop first, then print the card."
+            "Sync this workshop before printing a join card."
         )
         return
     }
@@ -1357,9 +1343,7 @@ private fun DwJoinCardsPanel(workshopId: String) {
                 )
             }
             Text(
-                "A join card puts one person on this workshop the moment they scan it — no " +
-                    "administrator, no waiting. Print one for the person in front of you, hand it " +
-                    "over, and it stops working once they have used it.",
+                "A join card lets one person onto this workshop instantly. Single use.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -1410,8 +1394,7 @@ private fun DwJoinCardsPanel(workshopId: String) {
                     // card they cannot revoke". Silently showing the first two hundred would leave
                     // somebody certain they had cancelled everything.
                     DwWorkshopNotice(
-                        "There are more cards than this list can show, so some are not here. Ask an " +
-                            "administrator if you need to cancel one you cannot see."
+                        "Some cards aren't shown. Ask an admin to cancel one you can't see."
                     )
                 }
                 cards.forEach { card ->
@@ -1457,8 +1440,7 @@ private fun DwFreshJoinCard(card: DwJoinCardDto) {
     }
     if (render == null) {
         DwWorkshopNotice(
-            "The card was made but this device could not draw its symbol. The line of characters " +
-                "below is the whole card and can be typed in instead."
+            "Couldn't draw the QR. Type the characters below instead."
         )
     }
 
@@ -1499,10 +1481,7 @@ private fun DwFreshJoinCard(card: DwJoinCardDto) {
                 lineHeight = 16.sp,
             )
             Text(
-                "This is the only time this card will be shown. No copy of it is kept — only " +
-                    "the last four characters, so a card in somebody's hand can be matched against " +
-                    "the list. Print it, photograph it for the person it is for, or write it down " +
-                    "now; if you lose it, cancel it below and print another.",
+                "Shown only once. Print, photograph or write it down now — if lost, cancel it and print another.",
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -1582,12 +1561,11 @@ internal fun dwJoinCardState(card: DwJoinCardDto, nowMs: Long): String {
     val by = if (issuer == null) "" else " Printed by $issuer."
     val label = card.label?.takeIf { it.isNotBlank() }?.let { " $it." } ?: ""
     if (card.revokedAt != null) {
-        return "Cancelled. It will not let anybody else in — anybody it already admitted is still " +
-            "on the workshop, and taking that away is the viewers screen.$by$label"
+        return "Cancelled. Anyone it already admitted is still on the workshop (remove them on the viewers screen).$by$label"
     }
     val ceiling = card.maxUses
     if (ceiling != null && card.usesConsumed >= ceiling) {
-        return "Used up. Somebody has already joined with it, so it will not let anybody else in.$by$label"
+        return "Used up — it won't admit anyone else.$by$label"
     }
     // AN UNREADABLE OR ABSENT DATE IS NOT TREATED AS EXPIRED. The column is NOT NULL on the server, so
     // a null here means this build could not read what it was sent — and reporting a perfectly good
@@ -1598,8 +1576,7 @@ internal fun dwJoinCardState(card: DwJoinCardDto, nowMs: Long): String {
         // expired card outright: a genuine scan that syncs within the 30-day grace window still gets
         // the person a provisional foothold and a place in the admin's queue. Saying "it will not
         // work" would be wrong in the direction that makes somebody throw a card away.
-        return "Out of date. Somebody scanning it now will not be let straight in, though a scan " +
-            "taken before it lapsed can still reach an administrator.$by$label"
+        return "Out of date. New scans won't get in directly, but can still reach an administrator.$by$label"
     }
     val remaining = if (ceiling == null) "any number of people" else "${ceiling - card.usesConsumed} more person"
     return "Still good for $remaining.$by$label"

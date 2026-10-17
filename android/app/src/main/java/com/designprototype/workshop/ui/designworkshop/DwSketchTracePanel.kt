@@ -3,6 +3,7 @@ package com.designprototype.workshop.ui.designworkshop
 // The panel holds the three display plates as platform bitmaps, because that is what the runtime
 // hands back and what `DwSketchTracePlates` takes. Nothing here reads a pixel.
 import com.designprototype.workshop.ui.AppToggle
+import com.designprototype.workshop.ui.ActionRow
 import android.graphics.Bitmap
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -527,10 +528,7 @@ internal fun DwSketchTracePanel(
                     // second is a claim about the ministry document and it is false. See
                     // DW_TRACE_ATTACH_REPORT_SENTENCE, which is the corrected version and is printed
                     // under the Attach button where a designer is deciding.
-                    "Turns the pencil in one of the photographs on this record into vector line work — the " +
-                        "same drawing, as lines that print at any size without going blocky. The result " +
-                        "is attached here as ${field.label}; the photograph itself is never changed. It " +
-                        "runs on this device and needs no connection.",
+                    "Turns the pencil in a photo into vector line art, attached as ${field.label}. Works offline.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
@@ -551,9 +549,7 @@ internal fun DwSketchTracePanel(
                     // drawing, because a drawing here is two 1024 px plates. A designer who reopened
                     // expecting the comparator they left would have been told something specific and
                     // false by a card that said nothing.
-                    "The drawing itself is not kept while this is closed — it is two full-size " +
-                        "pictures, and holding them would cost this phone the memory the trace needs. " +
-                        "Opening this again traces afresh; anything already attached stays attached.",
+                    "The trace isn't kept when closed; reopening traces again. Attachments stay.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
@@ -569,17 +565,19 @@ internal fun DwSketchTracePanel(
             //
             // KEPT RATHER THAN REPLACED BY THE HEADER, for the measuring card's stated reason: a row
             // that happens to be tappable is not a button anybody can SEE.
-            OutlinedButton(
-                onClick = { open = true },
-                enabled = enabled,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Filled.Gesture, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (summary == null) "Trace a sketch" else "Open the tracing card again",
-                    fontSize = 13.sp,
-                )
+            ActionRow {
+                OutlinedButton(
+                    onClick = { open = true },
+                    enabled = enabled,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Filled.Gesture, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (summary == null) "Trace a sketch" else "Open the tracing card again",
+                        fontSize = 13.sp,
+                    )
+                }
             }
         }
         return
@@ -763,7 +761,7 @@ private fun DwSketchTraceOpen(
             // compiled into this APK and every phone has it, so a failure here is this load and not
             // this device, and those are different sentences with different remedies. The portal
             // makes the same distinction at `SketchTraceField.tsx:410`.
-            failure = "The tracing tool did not start. Close this panel and open it again." + traceLog(t)
+            failure = "Tracing didn't start. Close and reopen this panel." + traceLog(t)
         }
         loading = false
     }
@@ -847,9 +845,7 @@ private fun DwSketchTraceOpen(
                         ) {
                             // Measured on THIS phone, said with the number in it. See the constant.
                             autoPreview = false
-                            notice = "That preview took ${dwTraceSeconds(traced.totalMillis)} on this " +
-                                "phone, so the panel has stopped re-tracing by itself. Change what you " +
-                                "like and press “Update the preview” when you are ready."
+                            notice = "That took ${dwTraceSeconds(traced.totalMillis)}, so auto-preview is off. Tap “Update the preview” when ready."
                         }
                     }
                 }
@@ -865,7 +861,7 @@ private fun DwSketchTraceOpen(
                 if (token != runToken) return@launch
                 result = null
                 resultWire = null
-                failure = "The trace could not be completed. Try again, or try a clearer photo." + traceLog(t)
+                failure = "Trace failed. Try again or use a clearer photo." + traceLog(t)
             } finally {
                 running = null
                 stopping = false
@@ -999,7 +995,7 @@ private fun DwSketchTraceOpen(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (t: Throwable) {
-                    failure = "That setting could not be applied. Try again." + traceLog(t)
+                    failure = "Couldn't apply that setting. Try again." + traceLog(t)
                     return@withLock
                 }
                 params = next
@@ -1044,7 +1040,7 @@ private fun DwSketchTraceOpen(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (t: Throwable) {
-                    failure = "That adjustment could not be applied. Try again." + traceLog(t)
+                    failure = "Couldn't apply that change. Try again." + traceLog(t)
                     return@withLock
                 }
                 notice = dwTraceOverwriteNotice("The “$name” adjustment", base, next)
@@ -1074,7 +1070,7 @@ private fun DwSketchTraceOpen(
             attaching = false
             if (!written) {
                 runCatching { file.delete() }
-                onError("The line art could not be written to this device.")
+                onError("Couldn't save the line art.")
                 return@launch
             }
             // Not gated on the import completing, exactly as [DwSketchRectifyPanel]'s attach is not:
@@ -1088,7 +1084,7 @@ private fun DwSketchTraceOpen(
                     // Recorded so the COLLAPSED card can say a file went onto the record from here.
                     // An attachment outlives a change of photograph, unlike the drawing that made it.
                     memory.recordAttachment(field.label)
-                    onMessage("The line art is attached as ${field.label}. The photograph is unchanged.")
+                    onMessage("Attached as ${field.label}. Original photo unchanged.")
                 }
                 // Only after the callback: the import made its own durable copy, so deleting earlier
                 // would be deleting the only copy if the import had failed.
@@ -1160,10 +1156,8 @@ private fun DwSketchTraceOpen(
                 // the card above needs its NAME to find it rather than a direction. Through the
                 // constant, so a rename of that card moves this sentence with it.
                 hosted.source?.let {
-                    "Tracing “${it.item.displayName}” — chosen in “$DW_SHARED_PHOTOGRAPH_LABEL” " +
-                        "above. Every other panel here works from the same one."
-                } ?: ("No photograph has been chosen yet. Choose one in “$DW_SHARED_PHOTOGRAPH_LABEL” " +
-                    "above — it is the photograph this card traces and the cards beside it work from."),
+                    "Tracing “${it.item.displayName}”."
+                } ?: ("Choose a photo in “$DW_SHARED_PHOTOGRAPH_LABEL” above."),
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -1264,24 +1258,21 @@ private fun DwSketchTraceOpen(
                     warning = false,
                     // Property five of the portal's own panel. The numbers are in the sentence because
                     // "this is a preview" without them does not tell a designer how much coarser.
-                    text = "This is a preview at ${traced.workingWidth}×${traced.workingHeight}, not " +
-                        "the full ${traced.width}×${traced.height}. Press “Trace the sketch” for the " +
-                        "drawing that gets attached.",
+                    text = "Preview at ${traced.workingWidth}×${traced.workingHeight}. Tap “Trace the sketch” for full size.",
                     polite = true,
                 )
             }
             if (stale) {
                 DwPanelNote(
                     warning = false,
-                    text = "The settings have changed since this drawing was made.",
+                    text = "Settings changed since this trace.",
                     polite = true,
                 )
             }
             if (traced.autoSubjectId.isNotBlank()) {
                 DwPanelNote(
                     warning = false,
-                    text = "The engine applied the “${dwTracePresetName(tables.subjects, traced.autoSubjectId)}” " +
-                        "subject adjustment on its own.",
+                    text = "Auto-adjusted for “${dwTracePresetName(tables.subjects, traced.autoSubjectId)}”.",
                 )
             }
             DwTraceNotes(traced.notes)
@@ -1313,8 +1304,7 @@ private fun DwSketchTraceOpen(
         if (missing.isNotEmpty()) {
             DwPanelNote(
                 warning = true,
-                text = "${missing.size} of the ${DW_TRACE_PARAM_COUNT} tracing settings are not shown " +
-                    "on this phone. The trace still runs; update the app to see them.",
+                text = "${missing.size} of ${DW_TRACE_PARAM_COUNT} settings hidden on this version. Update to see them.",
             )
         }
 
@@ -1336,15 +1326,17 @@ private fun DwSketchTraceOpen(
         if (subjectSeeded) {
             // The seed is a PRE-SELECTION and nothing has been applied yet, which has to be said or
             // the control is claiming a state the tree is not in. One press applies it.
-            OutlinedButton(
-                onClick = { pickSubject(subjectId) },
-                enabled = enabled && running == null,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Text(
-                    "Adjust for ${dwTracePresetName(tables.subjects, subjectId).lowercase(Locale.ROOT)}",
-                    fontSize = 13.sp,
-                )
+            ActionRow {
+                OutlinedButton(
+                    onClick = { pickSubject(subjectId) },
+                    enabled = enabled && running == null,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text(
+                        "Adjust for ${dwTracePresetName(tables.subjects, subjectId).lowercase(Locale.ROOT)}",
+                        fontSize = 13.sp,
+                    )
+                }
             }
         }
         traced?.let {
@@ -1424,19 +1416,21 @@ private fun DwSketchTraceOpen(
             onCheckedChange = { autoPreview = it },
             enabled = enabled,
             description = if (resumed) {
-                "A small, fast trace after each pause. Turn it off to save battery."
+                "Quick preview after each change. Turn off to save battery."
             } else {
-                "Paused while this screen is in the background."
+                "Paused in the background."
             },
         )
-        OutlinedButton(
-            onClick = { startRun(DwTraceRunKind.PREVIEW, 0L) },
-            enabled = enabled && running == null,
-            modifier = Modifier.heightIn(min = 48.dp),
-        ) {
-            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Update the preview", fontSize = 13.sp)
+        ActionRow {
+            OutlinedButton(
+                onClick = { startRun(DwTraceRunKind.PREVIEW, 0L) },
+                enabled = enabled && running == null,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Update the preview", fontSize = 13.sp)
+            }
         }
 
         /* ── The two full-resolution buttons ────────────────────────────────────────────────── */
@@ -1447,17 +1441,14 @@ private fun DwSketchTraceOpen(
             // AN UNMEASURED CEILING IS A GUESS, AND IT SAYS SO. docs/DEVICE-TIER-MEASUREMENT.md's rule:
             // what has and has not been weighed is written down where it is used.
             Text(
-                "The limits above are cautious estimates for this model of phone.",
+                "Limits are conservative for this phone.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
         }
 
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
+        ActionRow {
             Button(
                 onClick = { startRun(DwTraceRunKind.ATTACH, 0L) },
                 enabled = enabled && running == null && bar == null,
@@ -1623,8 +1614,7 @@ internal fun dwTraceCostRefusal(
     // function refuses is about HOW BIG, which is the only thing that ceiling was ever about.
     val longEdge = values.number("preprocess.workingLongEdge")?.toInt() ?: return null
     if (longEdge > availability.maxWorkingLongEdge) {
-        return "This phone has been measured up to ${availability.maxWorkingLongEdge} px and the trace " +
-            "resolution is set to $longEdge px. Choose a lower resolution."
+        return "This phone is tested up to ${availability.maxWorkingLongEdge} px (set to $longEdge). Choose a lower resolution."
     }
     if (values.choice("edge.engine") == "FDOG" && longEdge > availability.fdogMaxWorkingLongEdge) {
         // THE REMEDY NAMES THE PRESS BY ITS CURRENT NAME, and takes that name from the constant both
@@ -1633,11 +1623,7 @@ internal fun dwTraceCostRefusal(
         // agreed on one — a refusal that sends a designer to a control the screen does not have is
         // worse than one that names no control at all, because it reads as the application describing
         // a different version of itself. `DwSketchTraceParamsTest` fails if the old name comes back.
-        return "The Flow edge engine at $longEdge px is far slower than this phone can finish in a " +
-            "reasonable time — it has been measured up to ${availability.fdogMaxWorkingLongEdge} px. " +
-            "Either lower the trace resolution, or choose a different edge engine under " +
-            "“$DW_TRACE_DISCLOSURE_ACTION”. The portal will produce the same drawing from whichever " +
-            "you choose."
+        return "Flow edge at $longEdge px is too slow here (tested to ${availability.fdogMaxWorkingLongEdge} px). Lower the trace resolution or choose a different edge engine under “$DW_TRACE_DISCLOSURE_ACTION”. The portal agrees with either choice."
     }
     return null
 }
@@ -1707,7 +1693,7 @@ private fun DwTraceProgressRow(
                 // The bar is a STAGE COUNT until this device has finished one trace, and a stage count
                 // will visibly stall. Saying so costs one line and stops it reading as a hang.
                 Text(
-                    "The bar counts stages, not time, until this phone has finished one trace.",
+                    "Progress counts stages until the first trace finishes.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
@@ -1715,16 +1701,18 @@ private fun DwTraceProgressRow(
             }
         }
 
-        TextButton(
-            onClick = onCancel,
-            enabled = enabled && !stopping,
-            modifier = Modifier.heightIn(min = 48.dp),
-        ) {
-            // "Stopping…" and not a button that vanishes. The engine checks cancellation between
-            // stages and nowhere else (`pipeline.ts:238-246`), so the worst case is the length of the
-            // longest single stage — seconds at full resolution. A control that promised instant would
-            // be wrong, and a control that appeared to do nothing for four seconds is worse.
-            Text(if (stopping) "Stopping…" else "Stop", fontSize = 12.sp)
+        ActionRow {
+            TextButton(
+                onClick = onCancel,
+                enabled = enabled && !stopping,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                // "Stopping…" and not a button that vanishes. The engine checks cancellation between
+                // stages and nowhere else (`pipeline.ts:238-246`), so the worst case is the length of the
+                // longest single stage — seconds at full resolution. A control that promised instant would
+                // be wrong, and a control that appeared to do nothing for four seconds is worse.
+                Text(if (stopping) "Stopping…" else "Stop", fontSize = 12.sp)
+            }
         }
     }
 }
@@ -1878,8 +1866,7 @@ private fun DwTraceAdvancedSection(
             */
             DwPanelLabel("The other settings")
             Text(
-                "The other $DW_TRACE_ADVANCED_COUNT settings are not shown on this phone. The trace " +
-                    "still runs on the settings above; update the app to see them.",
+                "$DW_TRACE_ADVANCED_COUNT more settings hidden on this version. Update to see them.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,

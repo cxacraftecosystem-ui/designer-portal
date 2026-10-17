@@ -665,16 +665,13 @@ fun offlineSavedMessage(
         // send a designer with four bars looking for a fifth.
         "Saved on this phone; it will upload when the server is reachable."
     } else if (isCorrection) {
-        "Correction saved on this device. It will be sent when you have a signal; until then " +
-            "the office still sees the earlier version."
+        "Correction saved on this phone; the office still sees the earlier version. It will be sent when you have a signal."
     } else {
-        "Saved on this device. It will be sent when you have a signal."
+        "Saved on this phone. It sends when you're online."
     }
     if (result.allFilesQueued) return head
     val names = result.unreadableFiles.joinToString(", ")
-    return "$head " +
-        "${result.unreadableFiles.size} file(s) could NOT be read and are not in it ($names) — " +
-        "the record is safe, those captures are not. Take them again if you still can."
+    return "$head ${result.unreadableFiles.size} file(s) couldn't be read and weren't kept ($names) — the record is safe. Take them again if you still can."
 }
 
 /**
@@ -776,14 +773,9 @@ fun outboxConflictSentence(said: String, files: Int, isCorrection: Boolean): Str
     // reasoning that belongs there rather than on a tray row somebody reads standing up.
     val standing = "Retrying alone gets the same answer."
     return if (isCorrection) {
-        "Not applied — it clashes with a record that already exists.$server Nothing was " +
-            "deleted: the correction$carrying $isAre still here, and the office still reads the " +
-            "earlier version. $standing Open the clashing record, make the change there, then " +
-            "discard this entry."
+        "Not applied — it clashes with an existing record.$server Nothing was deleted: your correction$carrying $isAre still here, and the office still reads the earlier version. $standing Open the clashing record, make the change there, then discard this entry."
     } else {
-        "Not saved — a matching record already exists.$server Nothing was deleted: " +
-            "this entry$carrying $isAre still here. $standing Open the clashing record, copy " +
-            "anything missing, then discard this entry."
+        "Not saved — a matching record exists.$server Nothing was deleted: this entry$carrying $isAre still here. $standing Open the clashing record, copy anything missing, then discard this entry."
     }
 }
 
@@ -985,9 +977,7 @@ fun outboxDanglingSentence(
     // act, reassure, in one line. What went (2026-09-03) is everything after it that argued its case:
     // "because what is missing is missing on the server" is why a retry cannot work, and that belongs
     // in the KDoc above rather than on a row read standing up beside a delete button.
-    return "$head Nothing is lost — open it, choose another, and it will send.$server This " +
-        "entry$carrying $isAre still here; nothing was deleted. Retrying unchanged gets the same " +
-        "answer."
+    return "$head Nothing is lost — open it, choose another, and it will send.$server This entry$carrying $isAre still here; nothing was deleted. Retrying unchanged gets the same answer."
 }
 
 /**
@@ -1024,8 +1014,7 @@ fun outboxSentUnfiledMessage(label: String, nouns: List<String>): String {
         1 -> nouns.single()
         else -> nouns.dropLast(1).joinToString(", ") + " or " + nouns.last()
     }
-    return "“$label” was sent, filed under nothing: there was no $list to choose from on this " +
-        "device. Open the record and file it now."
+    return "“$label” was sent, filed under nothing: there was no $list to choose from on this device. Open the record and file it now."
 }
 
 /**
@@ -1067,12 +1056,9 @@ data class RepickChoices(val options: List<RepickOption>, val listed: Boolean)
  * PURE, and pinned by `OutboxDanglingReferenceTest`.
  */
 fun repickEmptyLine(noun: String, listed: Boolean): String = if (!listed) {
-    "The $noun list could not be read just now, so this is not showing what exists. Nothing has been " +
-        "lost — the record and anything saved with it stay on this phone, and this will work when the " +
-        "list can be read."
+    "The $noun list could not be read just now. The record and its files stay on this phone; try again later."
 } else {
-    "No $noun is open to this account, so there is nothing to point this at. An administrator can " +
-        "give you access to one. Until then the record stays here — nothing is deleted."
+    "No $noun is open to this account. An administrator can give you access to one. The record stays here; nothing is deleted."
 }
 
 /**
@@ -1138,29 +1124,24 @@ fun outboxDiscardConfirmation(
     isDangling: Boolean = false,
 ): String {
     val carrying = if (files > 0) " and the ${stagedFiles(files)} saved with it" else ""
-    val opening = "“$label”$carrying will be deleted from this device. This cannot be undone"
+    val opening = "“$label”$carrying will be deleted from this phone. This cannot be undone"
     if (savedOnServer) {
         // The files are named again, after the record's fate rather than before it, because on this
         // one row they are the whole of what is actually lost — and the remedy for them is on a
         // different screen, so it has to be said before the delete rather than after it.
         val orphaned = if (files > 0) {
-            " The ${stagedFiles(files)} were not uploaded — attach them to the record again " +
-                "instead, if you still can."
+            " The ${stagedFiles(files)} weren't uploaded — re-attach them if you can."
         } else {
             ""
         }
-        return "$opening. The record is already saved online and stays there — entering it again " +
-            "would leave two of it.$orphaned"
+        return "$opening. The record is already online; re-entering it would duplicate it.$orphaned"
     }
     val head = "$opening, and none of it has been uploaded."
     if (isDangling) {
-        return "$head Only one thing about it is wrong — the workshop or record it points at is not " +
-            "there — and Re-pick it fixes that without losing anything. Deleting is for a record you " +
-            "no longer want at all."
+        return "$head Only its link is broken — Re-pick it fixes that without losing anything."
     }
     if (!isConflict) return head
-    return "$head The record it clashes with is not touched. What goes is this phone's copy — " +
-        "anything in it the other record does not have goes too. Check that first."
+    return "$head The record it clashes with is not touched. What goes is this phone's copy — anything in it the other record does not have goes too. Check that first."
 }
 
 /** Live connectivity check (validated internet, not just an attached interface). */
@@ -1231,11 +1212,9 @@ object OfflineOutbox {
         val moved = runCatching { file.renameTo(kept) }.getOrDefault(false)
         alert.set(
             if (moved) {
-                "The list of records saved on this device $reason. Nothing has been deleted — a copy is " +
-                    "kept on this phone. Ask your administrator for help before uninstalling the app."
+                "Saved records on this phone $reason. A copy is kept. Ask your admin before uninstalling."
             } else {
-                "The list of records saved on this device $reason, and could not be set aside. Ask your " +
-                    "administrator for help before uninstalling the app."
+                "Saved records on this phone $reason and couldn't be set aside. Ask your admin before uninstalling."
             }
         )
     }

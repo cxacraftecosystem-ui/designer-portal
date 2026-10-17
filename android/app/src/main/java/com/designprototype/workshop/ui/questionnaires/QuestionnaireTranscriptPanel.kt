@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -221,7 +222,7 @@ fun QuestionnaireQuickTranscript(
                     fontSize = 13.sp,
                     lineHeight = 19.sp
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ActionRow {
                     OutlinedButton(onClick = onAccept) {
                         Text(QUESTIONNAIRE_OFFER_ACCEPT, fontSize = 12.sp, maxLines = 1, softWrap = false)
                     }

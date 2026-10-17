@@ -329,9 +329,7 @@ fun RecordCodeSection(
                 )
             }
             Text(
-                "Scan this to open this ${recordType.label.lowercase()} from any device running the app. It holds a " +
-                    "reference and a check digit and nothing about the record itself — no name, no place, no identity " +
-                    "number. It is drawn fresh every time this screen opens and is not stored anywhere.",
+                "Scan to open this ${recordType.label.lowercase()} on any device. Contains no personal details.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -376,8 +374,7 @@ fun RecordCodeSection(
                                 fontFamily = FontFamily.Monospace,
                             )
                             Text(
-                                "The last four characters are a check. Typed into a lookup, they are what stops one " +
-                                    "wrong character opening a different record.",
+                                "The last four characters are a check.",
                                 color = MaterialTheme.field.muted,
                                 fontSize = 11.sp,
                                 lineHeight = 14.sp,
@@ -385,12 +382,12 @@ fun RecordCodeSection(
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    ActionRow {
                         OutlinedButton(
                             onClick = { expanded = true },
                             // The 48dp floor this app applies wherever a control was thought about —
                             // see ISLAND_TOUCH_TARGET in ui/AppNavigation.kt.
-                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                            modifier = Modifier.heightIn(min = 48.dp),
                         ) {
                             Icon(Icons.Filled.OpenInFull, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
@@ -399,7 +396,7 @@ fun RecordCodeSection(
                         OutlinedButton(
                             onClick = { share() },
                             enabled = !sharing,
-                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                            modifier = Modifier.heightIn(min = 48.dp),
                         ) {
                             Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
@@ -461,7 +458,7 @@ fun RecordCodeSection(
                         fontFamily = FontFamily.Monospace,
                     )
                     Text(
-                        "Hold a camera over it, or type the characters into a lookup. Spaces and capitals do not matter.",
+                        "Scan it, or type the characters. Spaces and capitals don't matter.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
@@ -512,7 +509,7 @@ private fun SavedCodeCard(file: SavedCode) {
             }
         } else {
             Text(
-                "Open it from the Downloads folder, or attach it from any app's file picker.",
+                "Find it in Downloads.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
             )

@@ -143,7 +143,7 @@ internal fun DwGeoField(
             // to serve them. Saying so beats drawing a card whose two most important controls are
             // permanently empty and look broken.
             Text(
-                "The location controls need this workshop to be open for editing.",
+                "Location opens once you can edit this workshop.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -232,7 +232,7 @@ internal fun DwRecordingPlaceCard(
                 )
                 Text(
                     current?.let { describePlace(it) }
-                        ?: "Not recorded — where were you when this stage was filled in?",
+                        ?: "Not recorded yet",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
                 )
@@ -246,8 +246,7 @@ internal fun DwRecordingPlaceCard(
         if (expanded) {
             if (repository == null) {
                 Text(
-                    "The location controls need a connection at least once, to load the state and " +
-                        "district lists.",
+                    "Needs a connection once to load states and districts.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
                 )

@@ -183,11 +183,9 @@ import java.util.concurrent.atomic.AtomicReference
  *   about the device and reads completely differently from "try again in a moment".
  */
 fun dwQrCameraUnavailable(rearLensMissing: Boolean): String = if (rearLensMissing) {
-    "This device has no rear camera, so a code cannot be scanned live. Everything else still " +
-        "works: " + DwCameraUse.QR_CODE.alternatives
+    "This device has no rear camera, so live scanning is unavailable. Instead: " + DwCameraUse.QR_CODE.alternatives
 } else {
-    "The camera could not be opened — another app may be using it. Close that app and try again, " +
-        "or carry on without the camera: " + DwCameraUse.QR_CODE.alternatives
+    "Couldn't open the camera (another app may be using it). Instead: " + DwCameraUse.QR_CODE.alternatives
 }
 
 /**
@@ -206,7 +204,7 @@ const val DW_QR_LIVE_AIMING = "Hold the code inside the box. It reads on its own
  * from what they can see and the wrong one about the app.
  */
 const val DW_QR_LIVE_FRONT_LENS =
-    "This device has no rear camera, so the front one is being used — hold the code facing the screen."
+    "This device has no rear camera, so the front one is in use — hold the code facing the screen."
 
 /**
  * The sentence offered after a long look with nothing read.
@@ -221,13 +219,11 @@ const val DW_QR_LIVE_FRONT_LENS =
  * the same blur on a small, dim or distant code. It is a different tool, not a retry.
  */
 const val DW_QR_LIVE_STILL_TRYING =
-    "Still not reading? Close this and press “Scan a code” to take a photograph instead — a " +
-        "photograph is decoded at full resolution, which often reads a small or dim code the live " +
-        "view cannot. “Use a picture” reads a screenshot or a photograph you were sent."
+    "Not reading? Close and tap “Scan a code” — a photo is read at full resolution — or “Use a picture”."
 
 /** Said when frames have stopped arriving, so a stalled pipeline does not read as a bad card. */
 const val DW_QR_LIVE_STALLED =
-    "The camera has stopped sending pictures. Close this and open it again."
+    "The camera stopped sending pictures. Close this and open it again."
 
 /**
  * Said when a code WAS read and was then refused for sitting outside the box.
@@ -245,7 +241,7 @@ const val DW_QR_LIVE_STALLED =
  * sentence does not know and a designer holding the phone can see.
  */
 const val DW_QR_LIVE_OUTSIDE_BOX =
-    "A code was seen, but outside the box — line it up inside the brackets to read it."
+    "Line the code up inside the box."
 
 /**
  * Said when this device could not start the better reader and the simpler one is carrying the scan.
@@ -263,9 +259,7 @@ const val DW_QR_LIVE_OUTSIDE_BOX =
  * different tool rather than a retry.
  */
 const val DW_QR_LIVE_REFERENCE_READER =
-    "This device could not start the better code reader, so a simpler one is being used — it needs " +
-        "the code flatter, steadier and better lit. If it will not read, close this and press " +
-        "“Scan a code” to take a photograph instead."
+    "Using a basic reader — hold the code flat, steady and well lit. Or close and tap “Scan a code”."
 
 /** How long a refused sighting stays on screen after the last one, so it does not flicker. */
 private const val DW_QR_LIVE_OUTSIDE_BOX_MS = 1_500L
@@ -360,10 +354,7 @@ fun DwQrLiveScanControl(
     }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        ActionRow {
             OutlinedButton(
                 onClick = {
                     if (hasPermission(context, Manifest.permission.CAMERA)) {
@@ -401,9 +392,7 @@ fun DwQrLiveScanControl(
             }
         }
         Text(
-            "The rear camera, with a box to line the code up in — it reads as soon as it lines up. " +
-                "The buttons below still take a photograph or read a picture you were sent, and " +
-                "none of the three needs a connection.",
+            "Line the code up in the box; it reads automatically. Works offline.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -903,6 +892,7 @@ fun DwQrLiveScannerDialog(
             }
 
             // Close and torch, at the top, clear of the reticle.
+            // Not an ActionRow: an overlay toolbar (Close left, torch right).
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

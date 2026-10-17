@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.data.userMessage
 
 import android.content.Context
@@ -844,8 +845,7 @@ fun ReportScreen(
         // workshop has, on the one screen a designer reads to decide whether the file is fit to hand
         // over. `StageIndexScreen` already words it from `stages.size`; this now matches it.
         Text(
-            "$percent% of the required fields across the ${schema?.stages?.size ?: 0} stages are " +
-                "filled in.",
+            "$percent% of required fields filled across ${schema?.stages?.size ?: 0} stages.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -880,7 +880,7 @@ fun ReportScreen(
                     // measurements is still the document the officer standing in the room is asking
                     // for, and a client that refused to produce it would simply be worked around.
                     Text(
-                        "The report can still be generated. These fields will print as blanks.",
+                        "You can still generate; missing fields print blank.",
                         color = MaterialTheme.field.onWarningContainer,
                         fontSize = 11.sp
                     )
@@ -1003,8 +1003,7 @@ fun ReportScreen(
                   where the number it qualifies is, rather than here.
                 */
                 Text(
-                    "Built on this phone from what is saved here — exactly the document the " +
-                        "export writes, shown both ways below.",
+                    "Built on this phone — exactly what the export writes.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 15.sp,
@@ -1108,19 +1107,18 @@ fun ReportScreen(
 
         if (transcriptsAsked) {
             Text(
-                "Interview transcripts are added when the report is generated online. A file exported " +
-                    "here carries the photographs and the completeness annexure.",
+                "Transcripts are added when generated online. Local exports include photos and the completeness annexure.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(onClick = { export("DOCX") }, enabled = !busy, modifier = Modifier.weight(1f)) {
+        ActionRow {
+            Button(onClick = { export("DOCX") }, enabled = !busy) {
                 Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Export .docx")
             }
-            Button(onClick = { export("PDF") }, enabled = !busy, modifier = Modifier.weight(1f)) {
+            Button(onClick = { export("PDF") }, enabled = !busy) {
                 Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Export .pdf")
@@ -1172,7 +1170,7 @@ fun ReportScreen(
                     // Reported, not thrown. A report missing one photograph is still worth having;
                     // an export that aborted after twenty minutes of rendering is not.
                     Text(
-                        "${exported.droppedImages.size} photograph(s) could not be embedded and were left out.",
+                        "${exported.droppedImages.size} photo(s) couldn't be embedded.",
                         color = MaterialTheme.field.warning,
                         fontSize = 11.sp
                     )
@@ -1215,7 +1213,7 @@ fun ReportScreen(
                     // grant and nothing to share FROM this app. Saying where it is beats offering a
                     // share button that would have to re-copy the file to work.
                     Text(
-                        "Open it from the Downloads folder, or attach it from any app's file picker.",
+                        "Find it in Downloads.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -1263,9 +1261,7 @@ private fun ReportAccentPicker(accent: String, onAccent: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         Text("Report colour", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         Text(
-            "One accent colour. The headings, the table headers, the rules and the figures are all " +
-                "derived from it. These twelve stay apart when the report is printed on a " +
-                "black-and-white printer.",
+            "One accent colour drives headings, tables and figures. These twelve stay distinct in black and white.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -1323,8 +1319,7 @@ private fun ReportAccentPicker(accent: String, onAccent: (String) -> Unit) {
 
         if (normalised != null && derived != null && derived != normalised) {
             Text(
-                "That colour is too pale to read as a heading on white paper, so the report uses " +
-                    "#$derived — the same colour, darkened just enough to be legible.",
+                "Too pale for headings — using #$derived instead.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )
@@ -1333,9 +1328,9 @@ private fun ReportAccentPicker(accent: String, onAccent: (String) -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 if (normalised == null) {
-                    "No colour chosen — the report is written in the standard indigo."
+                    "No colour chosen — using the standard indigo."
                 } else {
-                    "This export only. Stage 20's saved colour is unchanged."
+                    "This export only."
                 },
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,

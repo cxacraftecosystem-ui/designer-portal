@@ -49,13 +49,11 @@ fun taskPickerCutNotice(
     if (!truncated) return null
     val typed = term.trim()
     if (typed.isNotEmpty()) {
-        return "More $noun match “$typed” than this list can hold, so some are not shown — " +
-            "narrow the search above."
+        return "Too many matches for “$typed” — narrow the search."
     }
-    val head = "There are more $noun than this list can hold, so some are not shown — " +
-        "search for a name in the box above to reach them."
+    val head = "Too many $noun to list — search for a name above."
     return if (localFilter) {
-        "$head The box inside this picker only filters what is already listed."
+        "$head The box here only filters what is already listed."
     } else {
         head
     }

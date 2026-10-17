@@ -1,7 +1,15 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import android.content.Context
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DW_VERB_CONSENT_LINK_LABEL
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -133,6 +141,29 @@ class DwAiVerbSurface(
  *   more runs is the shape of the browser's own cap defect, arrived at from the other direction —
  *   there by computing it in three places, here by never re-reading it.
  */
+/**
+ * How a verb control on a stage opens the workshop's consent card — web's `#consent` link.
+ *
+ * Provided by [StageScreen], which is the only host that has a route to the card; the panels sit
+ * several layers below it inside fields, so threading a callback through every field would touch the
+ * whole registry. Null everywhere else, and then no "Record consent" control is drawn: a button that
+ * dead-ends is worse than none.
+ */
+internal val LocalDwOpenConsent = staticCompositionLocalOf<(() -> Unit)?> { null }
+
+/**
+ * The "Record consent" control drawn under a consent refusal. Draws nothing once consent is granted
+ * (the refusal is then about something else) or where no host offers the route.
+ */
+@Composable
+internal fun DwRecordConsentLink(consent: DwTier3Consent) {
+    if (consent == DwTier3Consent.GRANTED) return
+    val open = LocalDwOpenConsent.current ?: return
+    TextButton(onClick = open, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
+        Text(DW_VERB_CONSENT_LINK_LABEL, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
 @Composable
 internal fun dwVerbSurface(runs: Int = 0): DwAiVerbSurface {
     val context = LocalContext.current

@@ -1004,10 +1004,7 @@ data class LocationSubject(
 /** The six field-record forms. The default, so no existing call site changes a word. */
 val ARTISAN_LOCATION_SUBJECT: LocationSubject = LocationSubject(
     heading = "Artisan location",
-    subtitle = "Where the artisan actually works — what the map, the exports and the dataset use. " +
-        "Pinning the artisan's place on the map fills in the state, district and pincode, and says " +
-        "so, so you can put it back. A GPS fix fills in only what is still blank, because the " +
-        "device is very often at a desk in another state from the artisan.",
+    subtitle = "Where the artisan works — used for the map and exports. A pin fills state, district and pincode; GPS fills only blanks.",
     label = "the artisan",
     possessive = "the artisan's",
     pinLabel = "Artisan pin"
@@ -1027,10 +1024,7 @@ val ARTISAN_LOCATION_SUBJECT: LocationSubject = LocationSubject(
  */
 val DESIGNER_LOCATION_SUBJECT: LocationSubject = LocationSubject(
     heading = "Where you are based",
-    subtitle = "The district and the map point for your own practice — where you WORK, not where " +
-        "this phone happens to be while you fill the form in. Nothing is captured automatically " +
-        "here: a profile is edited at a desk, on a train, or at somebody else's institution, and a " +
-        "fix taken because a screen opened would file you wherever you happened to be sitting.",
+    subtitle = "Where you work. Not captured automatically.",
     label = "the designer",
     possessive = "the designer's",
     pinLabel = "Designer pin"
@@ -1059,8 +1053,8 @@ val DESIGNER_LOCATION_SUBJECT: LocationSubject = LocationSubject(
  */
 fun artisanLocationRequirementError(value: LocationRequest?): String? {
     val place = value?.statedPlace() ?: return LOCATION_REQUIRED_MESSAGE
-    if (place.state.isBlank()) return "Choose the artisan's state under 'Artisan location' before saving."
-    if (place.district.isBlank()) return "Choose the artisan's district under 'Artisan location' before saving."
+    if (place.state.isBlank()) return "Choose the artisan's state under 'Artisan location'."
+    if (place.district.isBlank()) return "Choose the artisan's district under 'Artisan location'."
     return null
 }
 
@@ -1309,15 +1303,13 @@ fun LocationFieldsSection(
          * for a signal they do not need.
          */
         reference.statesAndUnionTerritories.isNotEmpty() || reference.states.isNotEmpty() ->
-            "The district list for ${place.state} has not been downloaded to this phone. Connect " +
-                "once and it is kept on the phone, after which this list works with no signal." +
+            "Districts for ${place.state} aren't downloaded. Connect once to save them offline." +
                 // GATED ON "THIS IS A CREATE", NOT ON [districtRequired] — which is false right
                 // here, because it ends in `listIsAnswerable` and this branch is the one where the
                 // list is empty. Written the other way the sentence could never appear on the one
                 // form it is about.
                 if (required && !isEdit) {
-                    " Until then a new record cannot be started, because every new record needs a " +
-                        "district; an existing one can still be corrected and saved."
+                    " New records need a district; existing ones can still be saved."
                 } else {
                     ""
                 }
@@ -1570,7 +1562,7 @@ fun LocationFieldsSection(
                 if (intent == PlaceIntent.Explicit) {
                     // The researcher asked a direct question by tapping the map and is owed an
                     // answer even when the answer is "the map does not know".
-                    onMessage("The map has no address for that pin — set the state and district yourself.")
+                    onMessage("No address for that pin — set state and district yourself.")
                 }
                 return@launch
             }
@@ -1679,8 +1671,7 @@ fun LocationFieldsSection(
             // pin read back to them, the other is a machine that found some boxes empty.
             val source = when (written.intent) {
                 PlaceIntent.Explicit -> "Filled in from the place you pointed at: "
-                PlaceIntent.Passive -> "Filled in from this device's location (only the boxes that " +
-                    "were empty): "
+                PlaceIntent.Passive -> "Filled from this device's location (empty boxes only): "
             }
             Column(
                 modifier = Modifier
@@ -1690,15 +1681,16 @@ fun LocationFieldsSection(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    source + fieldNames(written.fields) + ". Check it, and change anything that is " +
-                        "wrong — you know this place and the geocoder does not.",
+                    source + fieldNames(written.fields) + ". Check and correct if needed.",
                     color = MaterialTheme.field.body,
                     fontSize = 12.sp
                 )
-                OutlinedButton(
-                    onClick = { undoAutofill() },
-                    modifier = Modifier.heightIn(min = 48.dp)
-                ) { Text("Undo") }
+                ActionRow {
+                    OutlinedButton(
+                        onClick = { undoAutofill() },
+                        modifier = Modifier.heightIn(min = 48.dp)
+                    ) { Text("Undo") }
+                }
             }
         }
 
@@ -1728,19 +1720,16 @@ fun LocationFieldsSection(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    "This device is at ${trimCoordinate(pendingPoint.first)}, " +
-                        "${trimCoordinate(pendingPoint.second)}" +
+                    "This device is at ${trimCoordinate(pendingPoint.first)}, ${trimCoordinate(pendingPoint.second)}" +
                         (value?.accuracy?.let { " (${radiusLabel(it)})" } ?: "") +
-                        ", and the map calls that $named. Use it as ${subject.possessive} location?",
+                        " ($named). Use as ${subject.possessive} location?",
                     color = MaterialTheme.field.body,
                     fontSize = 12.sp
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                ActionRow {
                     OutlinedButton(
                         onClick = { acceptOffer(pending) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
+                        modifier = Modifier.heightIn(min = 48.dp)
                     ) { Text("Use $named") }
                     TextButton(
                         onClick = { offer = null; offerPoint = null },
@@ -1759,17 +1748,16 @@ fun LocationFieldsSection(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    "The location moved, and the map has no place name for the new point, which is " +
-                        "common in rural areas. The state, " +
-                        "district and pincode below still describe the PREVIOUS point. Check them, " +
-                        "or clear the ones that were copied in.",
+                    "No place name for the new point. State, district and pincode still describe the previous one — check them.",
                     color = MaterialTheme.field.onWarningContainer,
                     fontSize = 12.sp
                 )
-                OutlinedButton(
-                    onClick = { clearApplied() },
-                    modifier = Modifier.heightIn(min = 48.dp)
-                ) { Text("Clear the copied answers") }
+                ActionRow {
+                    OutlinedButton(
+                        onClick = { clearApplied() },
+                        modifier = Modifier.destructiveAction().heightIn(min = 48.dp)
+                    ) { Text("Clear the copied answers") }
+                }
             }
         }
 
@@ -1789,12 +1777,7 @@ fun LocationFieldsSection(
         if (coarse != null && (place.state.isBlank() || place.district.isBlank())) {
             GroupNotice(
                 warn = true,
-                text = "No address was read from this device's location: the fix is only accurate to " +
-                    "${radiusLabel(coarse)}, which is its network estimate of where it is rather " +
-                    "than a satellite reading, and a circle that wide covers more than one district. " +
-                    "The coordinates have been kept with their radius, so nothing is lost. Choose the " +
-                    "state and district below, or pin ${subject.possessive} place on the map — a pin " +
-                    "has no radius to be wrong about."
+                text = "Fix too imprecise (${radiusLabel(coarse)}) to read an address. Choose state and district, or drop a pin."
             )
         }
 
@@ -1876,8 +1859,7 @@ fun LocationFieldsSection(
                 label = { Text("Village / place") },
                 supportingText = {
                     Text(
-                        "The settlement itself — just its name. The state and district go in the " +
-                            "two boxes above rather than into this one.",
+                        "Just the village or town name.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )
@@ -1902,9 +1884,7 @@ fun LocationFieldsSection(
                 supportingText = {
                     val shown = pincodeProblem?.takeIf { showPincodeProblem }
                     Text(
-                        shown ?: "Six digits, if you know it. Most rural places have no postcode " +
-                            "the map can find, which is why the district above is the one " +
-                            "that is required.",
+                        shown ?: "Six digits, if known.",
                         color = if (shown != null) MaterialTheme.colorScheme.error else MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )
@@ -1963,9 +1943,7 @@ fun LocationFieldsSection(
             // somebody presses Save.
             GroupNotice(
                 warn = true,
-                text = "Add a captured location below — a GPS fix, a map pin or typed coordinates. " +
-                    "The state, district, village and pincode are saved together with the " +
-                    "coordinates, so without a location they are not saved."
+                text = "Add a location below (GPS, pin or coordinates) — the address saves with it."
             )
         }
 
@@ -1985,20 +1963,12 @@ fun LocationFieldsSection(
         ) {
             GroupNotice(
                 warn = true,
-                text = "The coordinates saved on this record are in $coordinateState, but its " +
-                    "stated location says ${place.state}. That is normal if the record was written " +
-                    "up away from the workshop — the coordinates say where the device was, not " +
-                    "where ${subject.label} is. Nothing has been changed. Correct whichever of the " +
-                    "two is wrong."
+                text = "Coordinates are in $coordinateState but the location says ${place.state}. Fine if written up elsewhere; correct whichever is wrong."
             )
         } else if (coordinateState.isNotBlank() && place.state.isBlank()) {
             GroupNotice(
                 warn = true,
-                text = "This record has coordinates in $coordinateState and no stated location. " +
-                    "Until this form existed the coordinates were the only location a record had, " +
-                    "and they say where the device was — often a desk a long way from the workshop. " +
-                    "Please say where ${subject.label} is above. Nothing has been changed or " +
-                    "guessed."
+                text = "Coordinates are in $coordinateState but no location is stated. Add where ${subject.label} is above."
             )
         }
 
@@ -2022,8 +1992,7 @@ fun LocationFieldsSection(
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 .semantics(mergeDescendants = true) {
-                    contentDescription = "Captured at. $summary. Provenance only, not " +
-                        "${subject.possessive} location."
+                    contentDescription = "Captured at. $summary. Device location, not ${subject.possessive}."
                     stateDescription = if (expanded) "Expanded" else "Collapsed"
                     heading()
                 },
@@ -2057,17 +2026,14 @@ fun LocationFieldsSection(
 
         AnimatedVisibility(visible = expanded) {
             Text(
-                "Where this device was when the record was written, and how sure it is. " +
-                    "Provenance — it is not ${subject.possessive} location and nothing reads it " +
-                    "as one. " +
-                    "Filled in automatically; correct it only if the device got it wrong." +
+                "Where this device was when the record was written. Filled automatically." +
                     when {
                         value == null -> ""
                         stamp.isNotEmpty() -> " Taken $stamp."
                         // Every coordinate stored before this change is undated, and saying so is
                         // the point: an undated reading cannot be told apart from one taken a month
                         // later in another state.
-                        else -> " This reading carries no timestamp — it predates the field."
+                        else -> " No timestamp."
                     },
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
@@ -2103,8 +2069,7 @@ fun LocationFieldsSection(
             isEdit = isEdit,
             showRequirementError = showRequirementError,
             title = if (required) "Captured coordinates *" else "Captured coordinates",
-            description = "The device's own reading. A pin or two typed numbers satisfy this " +
-                "exactly as a satellite fix does.",
+            description = "A GPS fix, pin or typed coordinates.",
             collapsed = !expanded,
             // A permission prompt, a dead location switch or a minute with no fix all need the
             // researcher, and none of them can be read through a shut panel.

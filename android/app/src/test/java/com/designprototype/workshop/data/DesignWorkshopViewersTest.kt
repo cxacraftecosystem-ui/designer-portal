@@ -267,14 +267,14 @@ class DesignWorkshopViewersTest {
 
         // Cut, and nothing typed: there are people past the ceiling and typing reaches them.
         assertEquals(
-            "Too many accounts to show them all — search a name or email to reach the rest.",
+            "Too many to list — search by name or email.",
             dwViewerOfferNotice(
                 DwEligibleViewers(users = listOf(eligible("u-a")), truncated = true, search = null)
             )
         )
         // Cut under a term: the term is too broad, and narrowing it is advice that works.
         assertEquals(
-            "Too many matches to show them all — narrow the search.",
+            "Too many matches — narrow the search.",
             dwViewerOfferNotice(
                 DwEligibleViewers(users = listOf(eligible("u-a")), truncated = true, search = "a")
             )
@@ -294,12 +294,12 @@ class DesignWorkshopViewersTest {
         // `truncated` covers two different cuts and only one of them can be narrowed by typing: when
         // the ACTIVE-ROSTER read is what was cut, eligible designers are missing from every possible
         // search and the answer can come back truncated with no users in it at all. The three-state
-        // spelling answered that with "Too many matches to show them all — narrow the search." over an
+        // spelling answered that with "Too many matches — narrow the search." over an
         // empty picker — advice that cannot work — and it also shadowed "No eligible account matches
         // that search.", so "hidden from you" and "nobody matched" became one sentence again, which is
         // the defect this whole screen was fixed for.
         val expected =
-            "Some eligible accounts could not be listed, and searching will not bring them up. Try again later."
+            "Some accounts couldn't be listed. Try again later."
 
         val searched = dwViewerOfferNotice(
             DwEligibleViewers(users = emptyList(), truncated = true, search = "Meher")
@@ -577,10 +577,10 @@ class DesignWorkshopViewersTest {
 
         // `require_admin` raises its detail with no final stop; every message in
         // `services/design_workshop_viewers` ends in one. Both have to read as prose.
-        assertTrue(message, message.startsWith("Admin access required. Deciding who may open"))
+        assertTrue(message, message.startsWith("Admin access required. Only admins can change access"))
         assertTrue(
             "the refusal has to name who may act, or the designer it turns away has no next step",
-            message.contains("admins and the master admin only")
+            message.contains("Only admins can change access")
         )
         // The one thing a 403 IS safe to promise: the server refused before writing anything.
         assertTrue(message.contains("Nothing was changed."))
@@ -598,7 +598,7 @@ class DesignWorkshopViewersTest {
         val message = dwViewerFailureMessage(403, holder, DwViewerAttempt.SAVE, readerIsAdmin = true)
 
         assertEquals("$holder Nothing was changed.", message)
-        assertFalse(message.contains("admins and the master admin only"))
+        assertFalse(message.contains("Only admins can change access"))
 
         // And with no sentence from the server at all, it still says it was a refusal.
         assertEquals(

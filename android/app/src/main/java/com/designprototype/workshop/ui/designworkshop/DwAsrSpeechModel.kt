@@ -413,8 +413,7 @@ internal class DwAsrPcmRecorder {
             AudioFormat.ENCODING_PCM_16BIT,
         )
         if (minBuffer <= 0) {
-            return "This phone would not open its microphone at the quality this app's own speech " +
-                "model needs (16 kHz). Nothing was recorded."
+            return "Couldn't open the microphone at 16 kHz."
         }
         val built = runCatching {
             AudioRecord(
@@ -430,7 +429,7 @@ internal class DwAsrPcmRecorder {
         }.getOrNull()
         if (built == null || built.state != AudioRecord.STATE_INITIALIZED) {
             runCatching { built?.release() }
-            return "This phone would not start its microphone. Nothing was recorded."
+            return "Couldn't start the microphone."
         }
         return runCatching {
             built.startRecording()
@@ -438,7 +437,7 @@ internal class DwAsrPcmRecorder {
             null
         }.getOrElse {
             runCatching { built.release() }
-            "This phone would not start its microphone. Nothing was recorded."
+            "Couldn't start the microphone."
         }
     }
 

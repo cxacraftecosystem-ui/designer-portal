@@ -146,7 +146,7 @@ class WorkshopAccessQueueCopyTest {
         assertTrue("PENDING was read and found clear", pending.answered)
         assertTrue("HISTORY was read and found empty", history.answered)
         assertEquals("Nothing waiting", pending.heading)
-        assertEquals("Every workshop-access request has been answered.", pending.body)
+        assertEquals("All requests answered.", pending.body)
         assertEquals("No requests yet", history.heading)
         assertEquals("Nobody has asked for access to a workshop.", history.body)
     }

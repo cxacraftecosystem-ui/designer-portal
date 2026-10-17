@@ -104,8 +104,7 @@ import com.offlinetracer.pipeline.TraceParams
  * whole tree and discards what was there, so re-picking the style is a genuine reset to the preset.
  */
 internal const val DW_TRACE_SUBJECT_COMPOUNDS_NOTE: String =
-    "Tapping this again adjusts the settings that are on screen now, so it compounds; pick the " +
-        "style again to start from the preset."
+    "Tapping again compounds; re-pick the style to reset."
 
 /**
  * The subjects this engine carries that the portal's register has no row for, in [Subjects.ALL] order.
@@ -135,7 +134,7 @@ internal val DW_TRACE_SUBJECT_DIVERGENCE_NOTES: Map<String, String> = linkedMapO
 
 /** Shared by the two halves of the portal's single `carving` row. Declared once so it reads once. */
 private const val DW_TRACE_SPLIT_CARVING_NOTE: String =
-    "Wood carving and stone carving each have their own settings."
+    "Wood and stone carving have separate settings."
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The tables

@@ -1,6 +1,8 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.CalendarField
+import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1174,8 +1176,10 @@ internal fun dwWorkshopNameOfferLine(
         // offered the one they were typing. That kept the control from lying and it did not make the
         // box work. The box now asks the server, so the two facts are separated and both are said.
         append(
-            if (searching) " All of them searched. Type a new one if it is not here."
-            else " Type to search all of them, or type a new one."
+            // "All searched." is the completeness marker (rule 10): the rows are the server's whole
+            // answer, not a page of it.
+            if (searching) " All searched. Type a new one if it isn't here."
+            else " Type to search, or add a new one."
         )
         // BOTH NUMBERS OR NEITHER. "Showing 80" alone leaves a reader guessing whether that is most
         // of their workshops or a sixth of them, which is the difference between trusting the offer
@@ -1232,7 +1236,7 @@ internal fun dwWorkshopNameNotice(
  */
 internal fun dwWorkshopNamesWithheldLine(withheld: Int, maxLength: Int): String? =
     if (withheld <= 0) null
-    else "$withheld name${if (withheld == 1) "" else "s"} not offered: over $maxLength characters."
+    else "$withheld name${if (withheld == 1) "" else "s"} over $maxLength characters hidden."
 
 /**
  * "Name of workshop" — the creatable combo, and the handset's half of a control the web already has.
@@ -2316,14 +2320,14 @@ private fun GeoField(
             modifier = Modifier.weight(1f)
         )
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        OutlinedButton(onClick = { showMap = true }, enabled = enabled, modifier = Modifier.weight(1f)) {
+    ActionRow {
+        OutlinedButton(onClick = { showMap = true }, enabled = enabled) {
             Icon(Icons.Filled.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
             Text("Pick on map")
         }
         if (point != null) {
-            TextButton(onClick = { latText = ""; lonText = ""; onChange(null) }, enabled = enabled) {
+            TextButton(modifier = Modifier.destructiveAction(), onClick = { latText = ""; lonText = ""; onChange(null) }, enabled = enabled) {
                 Text("Clear")
             }
         }
@@ -2398,7 +2402,7 @@ private fun MediaField(
         // The bridge is absent only where a stage is being previewed rather than edited. Say so
         // rather than drawing a dead button: a capture control that silently does nothing is
         // indistinguishable, to the person holding the phone, from a broken camera.
-        Text("Attachments can be added once this workshop is open for editing.",
+        Text("Attachments open once you can edit this workshop.",
             color = MaterialTheme.field.muted, fontSize = 12.sp)
         return
     }

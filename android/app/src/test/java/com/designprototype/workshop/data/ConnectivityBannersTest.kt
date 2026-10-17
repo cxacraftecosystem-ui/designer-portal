@@ -28,7 +28,7 @@ class ConnectivityBannersTest {
     fun `a queue on a phone with signal and no server is not told to find a signal`() {
         val banner = outboxDeviceBanner(OutboxCounts(waiting = 1, refused = 0), online = true, serverReachable = false)!!
         val line = banner.lines.single().text
-        assertEquals("1 entry saved on this device — will be sent when the server is reachable.", line)
+        assertEquals("1 entry saved on this phone — will be sent when the server is reachable.", line)
         assertFalse(line, line.contains("signal"))
         assertFalse(line, line.contains("sending now"))
     }

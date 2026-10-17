@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import com.designprototype.workshop.data.userMessage
 
 import android.content.Intent
@@ -147,10 +149,7 @@ internal fun QuestionnaireHandoffCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "Makes one small file on this phone — no internet needed to make it, and none to send " +
-                    "it. The phone's own share sheet opens, so you can use nearby share, Bluetooth, a " +
-                    "cable or a shared folder. The other designer opens it under “A questionnaire from " +
-                    "another phone” on their questionnaires screen.",
+                "Makes a small file to share offline (Nearby Share, Bluetooth, cable). They open it under “A questionnaire from another phone”.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -162,7 +161,7 @@ internal fun QuestionnaireHandoffCard(
                 lineHeight = 16.sp,
             )
 
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionRow {
                 OutlinedButton(
                     onClick = {
                         if (busy) return@OutlinedButton
@@ -178,7 +177,7 @@ internal fun QuestionnaireHandoffCard(
                                     if (error !is CancellationException) {
                                         onError(
                                             error.apiErrorMessage(
-                                                "That questionnaire could not be made into a file."
+                                                "Couldn't make the file."
                                             )
                                         )
                                     }
@@ -253,10 +252,7 @@ internal fun QuestionnaireHandoffCard(
                             Text("Send it")
                         }
                         Text(
-                            "Pick nearby share, Bluetooth or a cable if you have no signal. A chat app " +
-                                "will look like it worked and then send nothing until you are back " +
-                                "online — the share sheet does not tell this app which one you chose, " +
-                                "so it cannot warn you afterwards.",
+                            "Offline? Use Nearby Share, Bluetooth or a cable — chat apps wait until you're online.",
                             color = MaterialTheme.field.muted,
                             fontSize = 11.sp,
                             lineHeight = 16.sp,
@@ -266,8 +262,7 @@ internal fun QuestionnaireHandoffCard(
                         // file is in the public Downloads folder and any file manager or share sheet
                         // can pick it up from there.
                         Text(
-                            "Open it from the Downloads folder to send it — any app's file picker or " +
-                                "share sheet will find it there.",
+                            "Find it in Downloads to send it.",
                             color = MaterialTheme.field.muted,
                             fontSize = 11.sp,
                             lineHeight = 16.sp,
@@ -302,10 +297,7 @@ private fun HandoffCodePanel(code: String) {
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            "Show this to whoever you sent the file to. It is NOT the questionnaire — a QR code cannot " +
-                "carry one — it is a fingerprint of the file, and all it answers is whether what " +
-                "arrived is whole. Nearby share and Bluetooth cannot resume a half-sent file, and a " +
-                "half-sent file looks fine until somebody reads it.",
+            "A fingerprint, not the questionnaire. Have the receiver compare it to confirm the file arrived whole.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -410,9 +402,7 @@ internal fun ReceivedQuestionnairesCard(
                 .onSuccess { row ->
                     reload++
                     onMessage(
-                        "“${row.title.ifBlank { row.filename }}” arrived — " +
-                            "${row.questionCount} question(s). Nothing has been added to your " +
-                            "questionnaires yet."
+                        "“${row.title.ifBlank { row.filename }}” received — ${row.questionCount} question(s). Not added yet."
                     )
                 }
                 // The refusals are written to be shown: damaged, not ours, from a newer build, or
@@ -462,16 +452,13 @@ internal fun ReceivedQuestionnairesCard(
                 // for. The app's intent filters cannot be offered as a handler for a Quick Share or a
                 // Bluetooth push — see `isQuestionnaireBundleDelivery` — so a designer told "it will
                 // appear here" would sit waiting for a notification that never comes.
-                "Takes the .$QUESTIONNAIRE_BUNDLE_EXTENSION file a colleague sent by nearby share, " +
-                    "Bluetooth, a cable or a shared folder. Nearby share and Bluetooth leave it in " +
-                    "your Downloads folder without telling this app, so open it here — it will not " +
-                    "appear on its own.",
+                "Open a .$QUESTIONNAIRE_BUNDLE_EXTENSION file a colleague sent you (usually in Downloads).",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
 
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionRow {
                 OutlinedButton(
                     onClick = pickBundle,
                     enabled = !busy,
@@ -529,9 +516,7 @@ internal fun ReceivedQuestionnairesCard(
                             )
                                 .onSuccess {
                                     onMessage(
-                                        "“${row.title.ifBlank { row.filename }}” was added to your " +
-                                            "questionnaires. It is yours: it is recorded as uploaded " +
-                                            "by you."
+                                        "“${row.title.ifBlank { row.filename }}” added to your questionnaires."
                                     )
                                     onAdopted()
                                 }
@@ -616,7 +601,7 @@ private fun ReceivedQuestionnaireRow(
         }
 
         if (!row.adopted) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionRow {
                 OutlinedButton(onClick = onAdopt, enabled = !busy, modifier = Modifier.heightIn48()) {
                     if (adopting) {
                         FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -639,13 +624,15 @@ private fun ReceivedQuestionnaireRow(
                 }
             }
             Text(
-                "Adding needs a signal — it writes to your account. The file itself keeps until then.",
+                "Adding needs a connection. The file is kept until then.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
             )
         } else {
-            TextButton(onClick = onDiscard, enabled = !busy) {
-                Text("Remove this file", fontSize = 13.sp)
+            ActionRow {
+                TextButton(modifier = Modifier.destructiveAction(), onClick = onDiscard, enabled = !busy) {
+                    Text("Remove this file", fontSize = 13.sp)
+                }
             }
         }
 

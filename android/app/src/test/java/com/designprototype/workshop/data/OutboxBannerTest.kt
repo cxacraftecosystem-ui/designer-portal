@@ -73,7 +73,7 @@ class OutboxBannerTest {
         // Tappable since 2026-10-17: the tray lists waiting entries too, with Download and Send now.
         assertTrue("a waiting entry has a tray row behind it", offline.actionable)
         assertEquals(
-            "3 entries saved on this device — will be sent when you have a signal.",
+            "3 entries saved on this phone — will be sent when you have a signal.",
             offline.lines.single().text,
         )
 
@@ -81,7 +81,7 @@ class OutboxBannerTest {
         // with the same sentence as no signal at all.
         val online = outboxDeviceBanner(OutboxCounts(waiting = 3, refused = 0), online = true)!!
         assertEquals(
-            "3 entries saved on this device — sending now.",
+            "3 entries saved on this phone — sending now.",
             online.lines.single().text,
         )
         assertFalse(

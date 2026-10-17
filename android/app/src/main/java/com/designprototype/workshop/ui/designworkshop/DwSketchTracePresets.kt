@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -137,7 +138,7 @@ fun DwTraceStylePicker(
         ) { picked -> if (picked.isNotBlank()) onPick(picked) }
         Text(
             styles.firstOrNull { it.id == selectedId }?.description
-                ?: "A style sets every control at once. Pick one, then adjust.",
+                ?: "A style sets all controls. Pick one, then adjust.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -181,13 +182,13 @@ fun DwTraceSubjectPicker(
             buildString {
                 append(
                     subjects.firstOrNull { it.id == selectedId }?.description
-                        ?: "Adjusts the settings for the material, and leaves the style's look alone.",
+                        ?: "Tunes settings for the material, keeping the style.",
                 )
                 if (seededFromRecord) {
                     // NAMED, not hidden. `params.ts:70` calls this affordance "a named suggestion with
                     // a one-tap override", and a pre-selection nobody is told about is not a
                     // suggestion — it is a decision somebody else made in the designer's name.
-                    append(" Chosen from this sketch's category on the record; change it if it is wrong.")
+                    append(" Chosen from this sketch's category; change it if wrong.")
                 }
             },
             color = MaterialTheme.field.muted,
@@ -250,16 +251,13 @@ fun DwTraceStyleSuggestion(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            "Looking at this photograph, the engine suggests the “${suggested.name}” style. " +
+            "Suggested style: “${suggested.name}”. " +
                 suggested.description,
             color = MaterialTheme.field.body,
             fontSize = 11.sp,
             lineHeight = 16.sp,
         )
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
+        ActionRow {
             OutlinedButton(
                 onClick = { onApply(suggested.id) },
                 enabled = enabled,

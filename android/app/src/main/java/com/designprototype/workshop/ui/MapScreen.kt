@@ -196,9 +196,9 @@ private fun levelLabel(level: String): String = when (level) {
  * that nothing in the app knows to be true.
  */
 private fun levelHint(level: String): String? = when (level) {
-    "NATION" -> "Every placed record as one point, inside the international border."
-    "STATE" -> "One point per state. Districts inside a state fold together."
-    "DISTRICT" -> "One point per district — the finest unit an address can name."
+    "NATION" -> "All records, nationwide."
+    "STATE" -> "One point per state."
+    "DISTRICT" -> "One point per district."
     else -> null
 }
 
@@ -583,9 +583,7 @@ fun MapScreen(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
         MapCard(title = "Where the work comes from", icon = Icons.Filled.Place) {
             Text(
-                "Every documented record placed on the map twice over: where the craft is from, and " +
-                    "where the recording was actually made. The two are not the same place, and the " +
-                    "map says which is which.",
+                "Each record shown twice: where the craft is from, and where it was recorded.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -617,7 +615,7 @@ fun MapScreen(
 
             current == null -> MapCard(title = "Placing the records…") {
                 Text(
-                    "Reading every record's address and every recorded fix.",
+                    "Loading locations…",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp
                 )
@@ -629,8 +627,7 @@ fun MapScreen(
                     when {
                         points.isEmpty() -> Text(
                             if (!workshopScope.isAllRecords) {
-                                "No records with a mapped address in the chosen workshops. Widen " +
-                                    "the workshop scope, or choose All records."
+                                "No mapped records in these workshops. Widen the scope or choose All records."
                             } else {
                                 "No records have a mapped address yet."
                             },
@@ -639,9 +636,7 @@ fun MapScreen(
                         )
 
                         geometryFailed -> Text(
-                            "The national outline could not be read from the app, so the picture is " +
-                                "not drawn. Every place is listed below with its counts and its " +
-                                "precision.",
+                            "Couldn't draw the map. All places are listed below.",
                             color = MaterialTheme.field.body,
                             fontSize = 13.sp
                         )
@@ -665,7 +660,7 @@ fun MapScreen(
                     }
                     if (points.isNotEmpty()) {
                         Text(
-                            "Tap a pin to read its number and bring its entry in the list below into view.",
+                            "Tap a pin to find it in the list.",
                             color = MaterialTheme.field.muted,
                             fontSize = 11.sp
                         )
@@ -781,7 +776,7 @@ private fun DetailLevelControl(
         // One line (UX audit 2026-10-16, DA-27). It was a nine-line paragraph about boundary data,
         // ending in a count of districts the data does not draw — a gap admission, not a map key.
         Text(
-            "Pins show how many records are in each place. The outline follows India's official border.",
+            "Pin numbers are record counts. Outline follows India's official border.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -805,8 +800,10 @@ private fun FocusBanner(title: String, place: String?, onClear: () -> Unit) {
             color = MaterialTheme.colorScheme.onPrimaryContainer,
             fontSize = 13.sp
         )
-        TextButton(onClick = onClear, contentPadding = PaddingValues(0.dp)) {
-            Text("Clear", fontSize = 12.sp)
+        ActionRow {
+            TextButton(onClick = onClear, contentPadding = PaddingValues(0.dp)) {
+                Text("Clear", fontSize = 12.sp)
+            }
         }
     }
 }
@@ -1185,7 +1182,7 @@ private fun IndiaMapCanvas(
                 .semantics {
                     contentDescription = "Map of India showing where the documented records come " +
                         "from, with ${points.size} " + (if (points.size == 1) "point" else "points") +
-                        ". Every place is listed below with its counts and how precisely it is known."
+                        ". All places are listed below."
                 }
                 .pointerInput(pins, slopPx) {
                     detectTapGestures { tap ->
@@ -1568,8 +1565,7 @@ private fun MapSummaryCard(
             Text(
                 buildString {
                     append(
-                        "The two counts overlap and do not add up: one record can be both from " +
-                            "Bagru and recorded at a workshop in Kharagpur."
+                        "Counts overlap: a record can be from one place and recorded in another."
                     )
                     if (summary.originExcludes.isNotEmpty()) {
                         // The bucket names arrive lower-case from the API and this is the start of a
@@ -1581,15 +1577,14 @@ private fun MapSummaryCard(
                             }
                         )
                         append(
-                            " have no address of their own, so they are placed by the location " +
-                                "they were captured at."
+                            " have no address, so they're placed by capture location."
                         )
                     }
                     if (summary.captureTruncated) {
-                        append(" There are too many GPS points to show them all; the busiest are shown.")
+                        append(" Too many GPS points; showing the busiest.")
                     }
                     if (summary.clusterKilometres > 0) {
-                        append(" GPS fixes within ${summary.clusterKilometres} km are drawn as one pin.")
+                        append(" Fixes within ${summary.clusterKilometres} km are merged.")
                     }
                 },
                 color = MaterialTheme.field.muted,
@@ -1624,8 +1619,7 @@ private fun MapSummaryCard(
                 )
                 if (address.withDistrict < address.locations) {
                     Text(
-                        "Records with no district are drawn at their state’s seat and say so. " +
-                            "Filling in the district on the record moves the pin.",
+                        "No district? Shown at the state's seat. Add one to move the pin.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -1726,9 +1720,8 @@ private fun MapPlaceListCard(
 ) {
     MapCard(title = "Every place, as a list") {
         Text(
-            "The same information as the map, at the same detail level, numbered to match the pins. " +
-                "Choose a place to see the records there" +
-                (childLevel?.let { ", or open a row for the ${it.lowercase(Locale.ROOT)}s inside it" } ?: "") +
+            "Same data as the map, numbered to match. Choose a place to see its records" +
+                (childLevel?.let { ", or open a row for its ${it.lowercase(Locale.ROOT)}s" } ?: "") +
                 ".",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
@@ -1971,7 +1964,7 @@ private fun PlaceRow(
                     if (point.fromPlaceText > 0) {
                         append(" · ${point.fromPlaceText} ")
                         append(if (point.fromPlaceText == 1) "record placed" else "records placed")
-                        append(" from a typed place name rather than a stated address")
+                        append(" from a typed place name")
                     }
                 },
                 color = MaterialTheme.field.muted,
@@ -2128,10 +2121,7 @@ private fun UnplacedBlock(unplaced: List<MapUnplacedDto>) {
             fontWeight = FontWeight.SemiBold
         )
         Text(
-            "These records carry no state on their location and no place name the atlas can " +
-                "resolve, so there is nothing to place them by. They are counted in the totals but " +
-                "have no pin. Adding a state — and ideally a district — to the record puts it on " +
-                "the map.",
+            "No state or place name, so these can't be mapped. Add a state (and district) to place them.",
             color = MaterialTheme.field.onWarningContainer,
             fontSize = 11.sp
         )
@@ -2225,13 +2215,11 @@ private fun MapPointPanel(
             Text(
                 when {
                     point.pinnedRecords == point.total ->
-                        "Every record here carries a pin on the subject's own place."
+                        "All pinned at the subject's place."
                     point.pinnedRecords == 0 ->
-                        "No record here carries a pin on the subject's place — this point comes " +
-                            "from the stated address."
+                        "None pinned — placed by stated address."
                     else ->
-                        "${point.pinnedRecords} of ${point.total} records here carry a pin on the " +
-                            "subject's place."
+                        "${point.pinnedRecords} of ${point.total} pinned at the subject's place."
                 },
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
@@ -2262,7 +2250,7 @@ private fun MapPointPanel(
                 rows.forEach { row -> PointRecordRow(row, onOpenRecord) }
                 if (truncated) {
                     Text(
-                        "Showing the most recent of each type. Open Browse records for the full list.",
+                        "Latest of each type. See Browse records for all.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )

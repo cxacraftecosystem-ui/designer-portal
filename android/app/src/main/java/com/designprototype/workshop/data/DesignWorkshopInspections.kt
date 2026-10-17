@@ -254,8 +254,8 @@ data class DwEligibleInspectors(
  */
 fun dwInspectorOfferNotice(offer: DwEligibleInspectors): String? = when {
     offer.truncated && offer.search == null ->
-        "Too many accounts to show them all — search a name or email to reach the rest."
-    offer.truncated -> "Too many matches to show them all — narrow the search."
+        "Too many to list — search by name or email."
+    offer.truncated -> "Too many matches — narrow the search."
     offer.search != null && offer.users.isEmpty() ->
         "No account that may inspect matches that search."
     else -> null
@@ -536,28 +536,23 @@ fun dwInspectionFailureMessage(
         status == null ->
             "Could not connect. " +
                 if (unknownOutcome) {
-                    "Your change may already have been saved — open this screen again with a " +
-                        "connection to check who is inspecting this workshop before you change anything else."
+                    "Your change may already have been saved. Reopen online to check before changing more."
                 } else {
                     "Nothing has been changed."
                 }
 
         status == 401 ->
-            "This phone is no longer signed in, so nothing was sent and nothing has changed. Sign " +
-                "in again and try once more."
+            "Signed out — nothing was sent. Sign in and try again."
 
         // The server's own words FIRST, because they name which of the two doors was refused and
         // where the other one is; the clause after says that this is a rule rather than a fault.
         status == 403 ->
             said.asInspectionSentence() +
-                "A workshop under inspection is read by the accounts appointed to inspect it, and a " +
-                "Ministry Admin, an admin or the master admin decides who inspects what. " +
-                "Nothing was changed."
+                "A workshop under inspection is read by the accounts appointed to inspect it; a Ministry Admin, an admin or the master admin decides who inspects what. Nothing was changed."
 
         status == 404 ->
             said.asInspectionSentence() +
-                "This workshop is not open to you. Either it is not assigned to you to inspect, or " +
-                "it has been deleted since this screen was opened. Nothing was changed."
+                "This workshop isn't open to you. Nothing changed."
 
         // The server's own 422 already names the offending account and already ends with "Nothing
         // was changed." — see `_assert_every_id_may_inspect`, whose refusals STACK, so this may be
@@ -565,14 +560,13 @@ fun dwInspectionFailureMessage(
         // talking over the one message written for exactly this moment.
         status == 422 ->
             "This could not be saved. " +
-                (said ?: "One of the accounts named cannot be assigned this inspection. Nothing was changed.")
+                (said ?: "One account can't be assigned. Nothing changed.")
 
         status >= 500 ->
             (said ?: "Something went wrong.") +
                 " This is not a connection problem. " +
                 if (unknownOutcome) {
-                    "Part of the change may have been saved — open this screen again to see who is " +
-                        "inspecting this workshop."
+                    "Part of the change may have been saved — reopen to check."
                 } else {
                     "Nothing was changed. Try again in a moment."
                 }

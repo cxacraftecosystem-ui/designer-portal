@@ -151,8 +151,7 @@ internal fun dwVerbPassagePreview(passage: String): String {
  * not a second opinion about the rule.
  */
 internal const val DW_NO_PARAGRAPH_TO_WORK_ON: String =
-    "Put the cursor in the paragraph you want worked on, or select part of one. Only that passage " +
-        "is sent, and it is kept with the result as its source."
+    "Place the cursor in a paragraph, or select text."
 
 // -------------------------------------------------------------------------------------------------
 // Which verb a file admits
@@ -226,8 +225,7 @@ internal fun dwAiVerbCountdownLine(remaining: Int?, day: String?): String? {
     val runs = if (remaining == 1) "1 run" else "$remaining runs"
     val on = day?.trim().orEmpty()
     val where = if (on.isEmpty()) "left today" else "left for $on"
-    return "$runs of the writing and captioning models $where. Dictation has its own separate " +
-        "allowance and is unaffected."
+    return "$runs AI runs $where. Dictation has its own separate allowance."
 }
 
 /**
@@ -266,7 +264,7 @@ internal fun dwAiVerbAllowanceNote(cap: DwAiVerbCapView): String? = when {
         // TOLD, AND TOLD THERE IS NO CEILING. A statement about the DEPLOYMENT rather than about this
         // designer's afternoon, which is why it does not decay: it is read off a row this phone
         // accepted for today, and `dwAiVerbCapView` answers "not told" for any other day.
-        "There is no daily limit on these runs. Dictation has its own separate allowance."
+        "There is no daily limit on these runs. Dictation is separate."
 
     // A number is known. The countdown says it where it is worth saying — see [dwAiVerbCountdownLine],
     // which stays silent well above the ceiling rather than nagging from run one.
@@ -302,12 +300,11 @@ internal fun dwAiVerbProblem(error: Throwable): String = when (error) {
     is DwAiVerbNotConfigured -> error.detail
     is DwAiVerbCapRefused -> error.detail ?: DW_AI_VERBS_SPENT
     is DwAiVerbRefused -> error.detail
-        ?: "This could not be done. Nothing was written to this workshop and your draft is " +
-        "unchanged. Try again, and ask an administrator if it keeps happening."
+        ?: "Couldn't do that. Nothing was written. Try again or ask an admin."
     is IOException -> DW_VERBS_NEED_A_CONNECTION
     // NOT `error.message`: anything that reaches this arm is a fault nobody wrote a sentence for — a
     // decoding error, or `dwVerbWorkshopId`'s `require`, whose message is for whoever reads a crash.
-    else -> "Something went wrong. Nothing was written to this workshop. Try again."
+    else -> "Something went wrong. Nothing changed. Try again."
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -373,28 +370,19 @@ internal fun dwLayerKindNoun(kind: String?): String =
  */
 internal fun dwLayerKindNote(kind: String?): String? = when (kind) {
     "PROOFREAD" ->
-        "Spelling, grammar and punctuation only. The model was refused permission to translate, to " +
-            "restructure or to shorten, and it was given the craft vocabulary as a do-not-touch " +
-            "list so that “dabu” is not “corrected” to “double”. The original is untouched and " +
-            "stays where it is."
+        "Fixes spelling, grammar and punctuation only. Craft words are kept. The original stays."
 
     "EXPANDED" ->
-        "A machine wrote these sentences from a short note. It is the only kind here that INVENTS, " +
-            "and nothing may be derived from an expansion."
+        "Machine-written from a short note — the one kind that INVENTS details."
 
     "TRANSLATION" ->
-        "A translation that stands BESIDE the original rather than replacing it, so a reader who " +
-            "wants the artisan's own words can still have them. The row records which language it " +
-            "came from as well as which it went into, because a translated passage nobody can " +
-            "trace back is a passage nobody can check."
+        "Shown beside the original, with both languages recorded."
 
     "CAPTION" ->
-        "One sentence a model wrote about the photograph or video — for the media annexure, and " +
-            "for a screen reader. Check it against the picture, which is the evidence it stands on."
+        "A one-line description of the photo or video. Check it against the original."
 
     "SUBTITLES" ->
-        "Timed captions: a cue list with a start and an end for every line. The timings are the " +
-            "whole verb — a subtitle without them is a transcript."
+        "Timed captions for each line."
 
     else -> null
 }
@@ -417,20 +405,17 @@ internal fun dwTierLabel(tier: String?): String = when (tier) {
 
 internal fun dwTierSentence(tier: String?): String = when (tier) {
     "TIER_1" ->
-        "Produced by a model running on the device itself. It works with no signal, and the " +
-            "material never left the handset."
+        "Made on this device; nothing left it."
 
     "TIER_2" ->
-        "Produced by a small language model running on the handset. Nothing left the device, and " +
-            "what a given handset can run depends on the handset."
+        "Made by an on-device model; nothing left it."
 
     "TIER_3" ->
-        "Produced by a provider in the cloud, using the craft vocabulary — the list that stops " +
-            "“dabu” being written as “double”. The material left the device to reach it."
+        "Made by a cloud service using the craft word list."
 
-    null, "" -> "Where the model ran was not recorded with this result."
+    null, "" -> "Source not recorded."
 
-    else -> "Update the app to see where this was produced."
+    else -> "Update the app to see the source."
 }
 
 /**

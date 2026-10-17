@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -370,27 +371,26 @@ internal fun DwSketchRectifyPanel(
                 onToggle = { open = true },
             )
             Text(
-                "Mark the four corners of the sheet in one of the photographs on this record and the " +
-                    "paper is squared to the page, with the pencil brought out as black line on white. " +
-                    "The result is attached here as ${field.label}; the photograph itself is never " +
-                    "changed. It runs on this device and needs no connection.",
+                "Mark the sheet's corners to square it up as black-on-white line art, attached as ${field.label}. Works offline.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
-            OutlinedButton(
-                onClick = { open = true },
-                enabled = enabled,
-                // THE 48dp FLOOR, WHICH THIS ONE BUTTON DID NOT HAVE. Every other way into every
-                // other derivation card carries it — the measuring card's, the tracing panel's, both
-                // header rows — and this was the single control in the three that a designer with
-                // large fingers, on a bus, could miss. `ISLAND_TOUCH_TARGET` in ui/AppNavigation.kt
-                // is the app-wide figure and it is not a preference.
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Straighten a sketch", fontSize = 13.sp)
+            ActionRow {
+                OutlinedButton(
+                    onClick = { open = true },
+                    enabled = enabled,
+                    // THE 48dp FLOOR, WHICH THIS ONE BUTTON DID NOT HAVE. Every other way into every
+                    // other derivation card carries it — the measuring card's, the tracing panel's, both
+                    // header rows — and this was the single control in the three that a designer with
+                    // large fingers, on a bus, could miss. `ISLAND_TOUCH_TARGET` in ui/AppNavigation.kt
+                    // is the app-wide figure and it is not a preference.
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Straighten a sketch", fontSize = 13.sp)
+                }
             }
         }
         return
@@ -667,17 +667,14 @@ private fun DwSketchRectifyOpen(
                 // Silent in the module, said out loud here — the designer pressed a button and is
                 // owed an answer, and "I could not tell" is an answer. What it must never do is
                 // propose a quadrilateral it does not believe in. See dwGuessSheetCorners.
-                guessNote = "The edges of the sheet could not be made out in this photograph — " +
-                    "the four handles are yours to place, as they were."
+                guessNote = "Couldn't find the sheet's edges — place the handles yourself."
                 return@launch
             }
             guess = found
             // `roundToInt` rather than `DwPhotoMeasure.jsRound`: the two are the same function for
             // a positive value, and this is a percentage on a label rather than a pixel count that
             // has to land on the same integer as the browser's.
-            guessNote = "A sheet filling ${(found.frameShare * 100).roundToInt()}% of the frame is " +
-                "outlined on the photograph. Nothing has moved — the handles are still where you " +
-                "left them."
+            guessNote = "Found a sheet (${(found.frameShare * 100).roundToInt()}% of the frame). Handles unchanged."
         }
     }
 
@@ -695,9 +692,7 @@ private fun DwSketchRectifyOpen(
         for (index in 0 until 4) setCorner(index, found.corners[index])
         active = 0
         guess = null
-        guessNote = "The four handles are on the sheet the search found. Check each one and drag or " +
-            "nudge any that is off — the search works on a shrunken copy, so it is right to a few " +
-            "pixels rather than to the pixel."
+        guessNote = "Handles moved to the detected sheet. Check and adjust each one."
     }
 
     fun build() {
@@ -731,7 +726,7 @@ private fun DwSketchRectifyOpen(
             val ordered = DwSketchRectify.orderCorners(marked)
             if (ordered == null) {
                 working = false
-                refusal = "Those four handles do not enclose a sheet. Drag them to the corners of the paper."
+                refusal = "Handles don't enclose a sheet. Drag them to the paper's corners."
                 return@launch
             }
             val outcome = withContext(Dispatchers.Default) {
@@ -761,14 +756,12 @@ private fun DwSketchRectifyOpen(
                     // switch is a bitmap of the previous photograph.
                     if (builtFrom != currentSourceId) return@launch
                     if (rendered == null) {
-                        refusal = "There was not enough memory on this device to build the plate. " +
-                            "Close the other photographs on this stage and try again."
+                        refusal = "Not enough memory. Close other photos and retry."
                         return@launch
                     }
                     plateBitmap = rendered
                     plate = rendered.asImageBitmap()
-                    plateNote = "${outcome.plane.width}×${outcome.plane.height} pixels, " +
-                        "made in ${outcome.elapsedMs} ms on this device."
+                    plateNote = "${outcome.plane.width}×${outcome.plane.height} px in ${outcome.elapsedMs} ms."
                 }
             }
         }
@@ -804,7 +797,7 @@ private fun DwSketchRectifyOpen(
             working = false
             if (!ok) {
                 runCatching { file.delete() }
-                onError("The straightened image could not be written to this device.")
+                onError("Couldn't save the straightened image.")
                 return@launch
             }
             // Not gated on the import completing, exactly as [DwMediaCaptureCard]'s `adopt` is not:
@@ -815,7 +808,7 @@ private fun DwSketchRectifyOpen(
                 val id = ids.firstOrNull()
                 if (id != null) {
                     onAttached(id)
-                    onMessage("The plate is attached as ${field.label}. The photograph is unchanged.")
+                    onMessage("Attached as ${field.label}. Original photo unchanged.")
                 }
                 // Only after the callback: the import made its own durable copy, so deleting earlier
                 // would be deleting the only copy if the import had failed.
@@ -852,10 +845,8 @@ private fun DwSketchRectifyOpen(
                 // The tracing panel's sentence in this panel's verb — see [DwSketchTracePanel] for
                 // why the shared card is NAMED here rather than pointed at.
                 hosted.source?.let {
-                    "Straightening “${it.item.displayName}” — chosen in “$DW_SHARED_PHOTOGRAPH_LABEL” " +
-                        "above. Every other panel here works from the same one."
-                } ?: ("No photograph has been chosen yet. Choose one in “$DW_SHARED_PHOTOGRAPH_LABEL” " +
-                    "above — it is the photograph this card straightens and the cards beside it use."),
+                    "Straightening “${it.item.displayName}”."
+                } ?: ("Choose a photo in “$DW_SHARED_PHOTOGRAPH_LABEL” above."),
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -891,7 +882,7 @@ private fun DwSketchRectifyOpen(
         // quadrilateral, and [DwSketchRectify.orderCorners] silently untwists it when the plate is
         // made. Somebody who does not know that hesitates over which handle is which — and the
         // handles cannot answer, because they are never re-ordered. See CORNER_NAME.
-        DwPanelLabel("Corners — tap the photograph to place the selected handle, or drag one. In any order.")
+        DwPanelLabel("Corners — tap to place the selected handle, or drag. Any order.")
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -918,8 +909,7 @@ private fun DwSketchRectifyOpen(
                 .onSizeChanged { boxSize = it }
                 .semantics {
                     contentDescription =
-                        "The photograph of the sheet. Tap it to place the corner selected above; " +
-                            "drag a handle to move it; pinch to zoom."
+                        "Sheet photo. Tap to place the selected corner; drag to move; pinch to zoom."
                 }
                 // `pan` and `active` are deliberately NOT keys: both are read live through their state
                 // delegates when the tap arrives, so listing them would tear this detector down and
@@ -952,8 +942,7 @@ private fun DwSketchRectifyOpen(
                 )
 
                 bitmap == null -> Text(
-                    "This photograph could not be opened on this device. Nothing has happened to it — " +
-                        "a line-art file can still be attached with the file picker above.",
+                    "Couldn't open this photo. You can still attach line art above.",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
@@ -1077,18 +1066,20 @@ private fun DwSketchRectifyOpen(
             // because the thing being decided is a shape drawn a few dp higher up. A designer asked
             // to accept or reject an outline has to be able to see the outline and the two buttons
             // without scrolling between them.
-            OutlinedButton(
-                onClick = { findTheSheet() },
-                enabled = enabled && !working && sourcePlane != null,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                // The label does not change while the pass runs. `working` is shared with the
-                // plate build and the attach, so a "Looking…" here would be a lie during either of
-                // those — and the search itself is tens of milliseconds, which is a flash nobody
-                // reads. The note below is what actually reports back.
-                Text("Find the sheet", fontSize = 13.sp)
+            ActionRow {
+                OutlinedButton(
+                    onClick = { findTheSheet() },
+                    enabled = enabled && !working && sourcePlane != null,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    // The label does not change while the pass runs. `working` is shared with the
+                    // plate build and the attach, so a "Looking…" here would be a lie during either of
+                    // those — and the search itself is tens of milliseconds, which is a flash nobody
+                    // reads. The note below is what actually reports back.
+                    Text("Find the sheet", fontSize = 13.sp)
+                }
             }
 
             guessNote?.let { note ->
@@ -1113,10 +1104,7 @@ private fun DwSketchRectifyOpen(
                 // FlowRow and not Row, for the reason every other pair of controls in this panel is
                 // one: "Leave the handles alone" is a long label, and at a 200% font scale on a
                 // 320dp screen a Row puts half of it off the edge where it cannot be pressed.
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
+                ActionRow {
                     Button(
                         onClick = { acceptGuess() },
                         enabled = enabled && !working,
@@ -1177,10 +1165,7 @@ private fun DwSketchRectifyOpen(
             }
         }
         Text(
-            "Four marked points do not say what proportion the sheet really is — recovering that needs " +
-                "the camera's focal length, which these photographs do not carry. “As marked” takes each " +
-                "pair of opposite edges at the length they appear, which is the honest estimate. If you " +
-                "know the sheet was A4, saying so here is knowledge the pixels do not have.",
+            "“As marked” uses the sides as they appear. Choose a paper size if you know it.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -1208,22 +1193,22 @@ private fun DwSketchRectifyOpen(
                 }
         }
         Text(
-            "A pencil sketch with soft shading, or a very faint construction line, is a drawing whose " +
-                "information is in the greys — thresholding it to black and white throws that away. Make " +
-                "it both ways and look: you are the only one who can tell.",
+            "Soft shading may be lost in black-and-white. Try both and compare.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
         )
 
-        Button(
-            onClick = { build() },
-            enabled = enabled && !working && sourcePlane != null,
-            modifier = Modifier.heightIn(min = 48.dp),
-        ) {
-            Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(if (working) "Working…" else "Make the plate", fontSize = 13.sp)
+        ActionRow {
+            Button(
+                onClick = { build() },
+                enabled = enabled && !working && sourcePlane != null,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (working) "Working…" else "Make the plate", fontSize = 13.sp)
+            }
         }
 
         refusal?.let { reason ->
@@ -1277,33 +1262,33 @@ private fun DwSketchRectifyOpen(
                     Text(note, color = MaterialTheme.field.muted, fontSize = 11.sp)
                 }
                 Text(
-                    "Look at it before you attach it. A threshold that lost the faint construction " +
-                        "lines, or that filled a shaded area in solid, is obvious here and invisible " +
-                        "everywhere downstream — and you are standing next to the original sheet.",
+                    "Check it against the original sheet before attaching.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
                 )
-                Button(
-                    onClick = { attach() },
-                    enabled = enabled && !working,
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) {
-                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    // NAMES THE ARTEFACT AND NOT ONLY THE DESTINATION, which is the whole point: the
-                    // tracing panel below writes into this same FILE field from a button that read
-                    // the same four words, and a single-valued field keeps no history of the id it
-                    // replaces. The grammar is `SketchTraceField.tsx`'s "Add the line art to “…”";
-                    // the noun is this panel's own, because a browser has no straightening panel to
-                    // copy a string from. See that button for the long form.
-                    //
-                    // "PLATE" AND NOT "STRAIGHTENED SKETCH", because it is the word this panel already
-                    // uses for what it makes — `plate`, `plateBitmap`, `plateNote` — and the word the
-                    // registry's own field is the home of. It covers both outputs of the toggle above:
-                    // "Line art — black on white" and "Straightened only — keep the tones" are two
-                    // renderings of one rectified plate, not two different things to attach.
-                    Text("Add the straightened plate to “${field.label}”", fontSize = 13.sp)
+                ActionRow {
+                    Button(
+                        onClick = { attach() },
+                        enabled = enabled && !working,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        // NAMES THE ARTEFACT AND NOT ONLY THE DESTINATION, which is the whole point: the
+                        // tracing panel below writes into this same FILE field from a button that read
+                        // the same four words, and a single-valued field keeps no history of the id it
+                        // replaces. The grammar is `SketchTraceField.tsx`'s "Add the line art to “…”";
+                        // the noun is this panel's own, because a browser has no straightening panel to
+                        // copy a string from. See that button for the long form.
+                        //
+                        // "PLATE" AND NOT "STRAIGHTENED SKETCH", because it is the word this panel already
+                        // uses for what it makes — `plate`, `plateBitmap`, `plateNote` — and the word the
+                        // registry's own field is the home of. It covers both outputs of the toggle above:
+                        // "Line art — black on white" and "Straightened only — keep the tones" are two
+                        // renderings of one rectified plate, not two different things to attach.
+                        Text("Add to “${field.label}”", fontSize = 13.sp)
+                    }
                 }
                 // THE SAME WARNING THE TRACING PANEL PRINTS, IN THE SAME BOX, FROM THE SAME FUNCTION.
                 // This was a bare coloured line while the tracing panel's was a bordered note with a
@@ -1315,8 +1300,7 @@ private fun DwSketchRectifyOpen(
                     DwPanelNote(warning = true, text = it)
                 }
                 Text(
-                    "The photograph in ${source.fieldLabel} is not read again after this, not " +
-                        "re-encoded and not replaced. The plate is a second file that cites it.",
+                    "The original photo is kept unchanged.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
@@ -1329,9 +1313,7 @@ private fun DwSketchRectifyOpen(
                 Text(
                     // Said outright, because it is why a plate made here can be smaller than one made
                     // in a browser from the same photograph. See [DwSketchPlate]'s header.
-                    "Marked on a ${decoded.bitmap.width}×${decoded.bitmap.height} working copy of a " +
-                        "${decoded.sourceWidth}×${decoded.sourceHeight} photograph — the full frame is too " +
-                        "large to hold in memory on a field handset. The plate is made from what you can see.",
+                    "Marked on a ${decoded.bitmap.width}×${decoded.bitmap.height} working copy of a ${decoded.sourceWidth}×${decoded.sourceHeight} photo.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,

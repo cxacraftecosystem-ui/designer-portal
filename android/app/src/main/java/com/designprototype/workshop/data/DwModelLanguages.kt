@@ -446,7 +446,7 @@ fun dwSpeechSummaryLine(
         // button.
         else -> ""
     }
-    if (!canAsk) return "This Android version cannot be asked which packs it has$modelClause"
+    if (!canAsk) return "Can't list installed packs on this Android version$modelClause"
     val total = packStates.size
     if (total == 0) return "No dictation languages configured"
     /*

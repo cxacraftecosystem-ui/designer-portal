@@ -301,7 +301,7 @@ private suspend fun renderFirstPage(file: File, widthPx: Int): DocState = withCo
           instead, so on the encrypted-PDF-with-no-signal path the card told the reader to do the one
           thing it had just made impossible.
         */
-        DocState.NotDrawn("This device could not render the document. Open it to read it.", onDevice = file)
+        DocState.NotDrawn("Can't preview here. Open it to read.", onDevice = file)
     }
 }
 
@@ -644,7 +644,7 @@ internal fun DwDocumentPreview(
                         // failed download: there is nothing to retry. See [dwWithheldFileNote] — the
                         // non-PDF arm below now says this in the same words, for the same reason.
                         DocState.NotDrawn(dwWithheldFileNote(noun))
-                    else -> DocState.NotDrawn("No connection, so the $noun could not be fetched to show here.")
+                    else -> DocState.NotDrawn("Offline — can't load the $noun.")
                 }
             }
 
@@ -818,8 +818,7 @@ internal fun DwDocumentPreview(
             ) {
                 if (openFailed) {
                     Text(
-                        "No app on this phone can open this file. Install a document viewer, " +
-                            "then try again.",
+                        "No app can open this file. Install a document viewer.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp,
                         lineHeight = 15.sp

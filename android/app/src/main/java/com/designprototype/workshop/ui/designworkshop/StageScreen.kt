@@ -42,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
@@ -339,6 +340,34 @@ fun StageScreen(
     repository: WorkshopRepository,
     workshopId: String,
     stageKey: String,
+    focus: DwStageFocus? = null,
+    onMessage: (String) -> Unit,
+    onError: (String) -> Unit,
+    inlineRecords: DwInlineRecordHost? = null,
+    /**
+     * Opens the workshop's consent card — what every "Record consent" control under an AI-tool
+     * refusal on this stage does. Null draws no such control. See [LocalDwOpenConsent].
+     */
+    onOpenConsent: (() -> Unit)? = null,
+) {
+    CompositionLocalProvider(LocalDwOpenConsent provides onOpenConsent) {
+        StageScreenBody(
+            repository = repository,
+            workshopId = workshopId,
+            stageKey = stageKey,
+            focus = focus,
+            onMessage = onMessage,
+            onError = onError,
+            inlineRecords = inlineRecords,
+        )
+    }
+}
+
+@Composable
+private fun StageScreenBody(
+    repository: WorkshopRepository,
+    workshopId: String,
+    stageKey: String,
     /**
      * One box on this stage to arrive at, or null for the ordinary "open the stage".
      *
@@ -494,7 +523,7 @@ fun StageScreen(
             val schema = repository.designWorkshopSchema(appContext)
             previewSchema = schema
             val spec = schema.stages.firstOrNull { it.key == stageKey }
-                ?: error("This stage is not in the form layout on this phone. Update the app to open it.")
+                ?: error("Update the app to open this stage.")
 
             val draft = WorkshopDraftStore.load(appContext, workshopId)
             mediaIndex = draft?.media.orEmpty().associateBy { it.id }
@@ -778,19 +807,13 @@ fun StageScreen(
                 !loaded.downloadFailed -> null
                 // The frightening case: a blank screen that is not an empty stage.
                 !loaded.heldWorkAlready ->
-                    "This stage could not be downloaded — there is no connection, or the request " +
-                        "failed. What you type here will be saved and sent, but anything already saved " +
-                        "online for this stage is not shown below and will not be replaced by it."
+                    "Offline — saved answers for this stage aren't shown. What you type will still be sent."
                 // The duller case, and it needs its own words rather than the ones above: the work on
                 // screen IS this designer's, nothing is hidden from them, and the single consequence
                 // is the one they would otherwise discover from an officer — that emptying a box here
                 // does not empty it there until this stage has been read once with a connection.
                 else ->
-                    "This stage has not been downloaded on this device — there is no connection, " +
-                        "or the request failed. Everything you have typed is here and will be sent. " +
-                        "Until it has been downloaded once, clearing an answer or deleting an entry " +
-                        "here does not clear or delete it online. The deletion is remembered and is " +
-                        "sent on the first save after the stage has been downloaded."
+                    "Not downloaded yet. Your answers will be sent; deletions sync once the stage downloads."
             }
             // Whatever the draft last recorded the designer emptying, carried forward so a deletion
             // made offline yesterday still reaches the server today.
@@ -898,7 +921,7 @@ fun StageScreen(
                 // not the other, which is how the two disagreed.
                 if (error is CancellationException) throw error
                 saveState = SaveState.PENDING
-                onError(error.userMessage("Could not write this stage to the device."))
+                onError(error.userMessage("Couldn't save this stage on the phone."))
                 return
             }
         // Discharged only if the edit this write was built from is still the newest one. A designer
@@ -991,8 +1014,7 @@ fun StageScreen(
                     // The server did not recognise these keys and threw them away. Said out loud
                     // because a field that vanishes on every sync, silently, is a data loss nobody
                     // notices until the report is short a column.
-                    "${push.result.droppedKeys.size} field(s) in this stage could not be saved, " +
-                        "because the form has changed. Nothing you typed is lost."
+                    "${push.result.droppedKeys.size} field(s) weren't saved because the form changed. Nothing you typed is lost."
                 }
                 /*
                   THE ANSWERS THE REPOSITORY REFUSED, DECODED AGAINST THE PAYLOAD THAT PRODUCED THEM.
@@ -1074,9 +1096,7 @@ fun StageScreen(
                 // looks broken; a stage that says which photographs it is waiting for is a stage the
                 // designer knows will finish itself the next time there is signal.
                 saveState = SaveState.ON_DEVICE
-                syncNote = "Saved on this device. ${push.files} attached file(s) have not been " +
-                    "uploaded yet, so this stage waits for them — it sends itself as soon as they " +
-                    "upload, and nothing has been lost."
+                syncNote = "Saved. Waiting for ${push.files} file(s) to upload."
             }
             StagePush.NoRemoteYet, StagePush.NothingToSend, StagePush.NotSent -> {
                 saveState = SaveState.ON_DEVICE
@@ -1254,7 +1274,7 @@ fun StageScreen(
                     if (failures > 0) {
                         onError(
                             if (imported.isEmpty()) "That file could not be attached."
-                            else "$failures of ${uris.size} files could not be attached."
+                            else "$failures of ${uris.size} files couldn't be attached."
                         )
                     }
                 }
@@ -1516,8 +1536,7 @@ fun StageScreen(
                           the line now says what is actually true and who can act on it.
                         */
                         Text(
-                            "• $line — this answer could not be matched to a box on this stage. " +
-                                "Nothing you typed has been lost. Show this line to an administrator.",
+                            "• $line — couldn't be matched to this stage. Nothing was lost; show this to an admin.",
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             fontSize = 11.sp
                         )
@@ -1730,16 +1749,15 @@ private fun StageHeader(
         )
         Text(
             when (saveState) {
-                SaveState.CLEAN -> "$percent% of the required fields are filled in."
+                SaveState.CLEAN -> "$percent% of required fields done."
                 SaveState.PENDING -> "$percent% complete · unsaved changes"
                 SaveState.SAVING -> "$percent% complete · saving…"
                 // Named precisely. "Saved" alone would let a designer believe the work had left the
                 // handset, and this app's whole premise is that for most of a fortnight it has not.
                 SaveState.ON_DEVICE -> if (localOnly) {
-                    "$percent% complete · saved on this device. This workshop has not been uploaded " +
-                        "yet — upload it from the workshop list once you have a connection."
+                    "$percent% · saved on this phone. Upload the workshop from the list when online."
                 } else {
-                    "$percent% complete · saved on this device, not yet synced"
+                    "$percent% · saved, not yet synced"
                 }
                 /*
                   "SAVED AND SYNCED" IS FALSE OF A SAVE THE REPOSITORY PARTLY REFUSED, and it was
@@ -1754,25 +1772,25 @@ private fun StageHeader(
                   either.
                 */
                 SaveState.SYNCED -> when {
-                    refused > 0 -> "$percent% complete · saved, and $refused answer" +
+                    refused > 0 -> "$percent% · saved; $refused answer" +
                         (if (refused == 1) " was" else "s were") +
-                        " not accepted — see below. Everything else is saved online." +
+                        " not accepted — see below." +
                         // Both at once, and the second gets its own words because its remedy is a
                         // refresh of the sections rather than a correction of the answer.
                         if (notStored > 0) {
                             " $notStored more " + (if (notStored == 1) "was" else "were") +
-                                " not stored — the sections no longer ask " +
+                                " not stored — the form no longer asks for " +
                                 (if (notStored == 1) "it" else "them") + "."
                         } else ""
                     // NOBODY OBJECTED TO ANYTHING, AND THE SAVE IS STILL NOT CLEAN. Reached by a
                     // response with an empty `errors` map and a non-empty `droppedCustomKeys` — HTTP
                     // 200, measured on the running API — which used to print "saved and synced" over a
                     // card saying two of this workshop's own answers had not been stored.
-                    notStored > 0 -> "$percent% complete · saved, and $notStored answer" +
+                    notStored > 0 -> "$percent% · saved; $notStored answer" +
                         (if (notStored == 1) " was" else "s were") +
-                        " not stored because the sections no longer ask " +
+                        " not stored — the form no longer asks for " +
                         (if (notStored == 1) "it" else "them") +
-                        " — see below. Everything else is saved online."
+                        ". See below."
                     else -> "$percent% complete · saved and synced"
                 }
             },
@@ -1978,7 +1996,7 @@ private fun EntitySection(
         }
         if (advanced.isNotEmpty()) {
             DisclosureHeader(
-                label = "More detail (${advanced.size} advanced field${if (advanced.size == 1) "" else "s"})",
+                label = "More (${advanced.size})",
                 expanded = showAdvanced,
                 onToggle = onToggleAdvanced
             )
@@ -2399,11 +2417,9 @@ private fun CollectionSection(
                               somebody who cannot drag would be an instruction they cannot carry out.
                             */
                             contentDescription = if (reorderable) {
-                                "Reorder $rowTitle. Drag this handle, or use the move up and move " +
-                                    "down buttons beside it."
+                                "Reorder $rowTitle. Drag, or use the move buttons."
                             } else {
-                                "Reorder $rowTitle. There is nothing to reorder while this list has " +
-                                    "one entry."
+                                "Only one entry — nothing to reorder."
                             }
                         }
                         .pointerInput(rowId, reorderable) {
@@ -2861,7 +2877,7 @@ internal fun dwRowMovedSentence(label: String, landed: Int, total: Int): String 
  * it keeps half a stale measurement and stamps the result, in a report, with this designer's name.
  */
 internal fun dwRowDragAbandonedSentence(label: String): String =
-    "$label was not moved: the list changed while it was being dragged. Try again."
+    "$label was not moved — the list changed. Try again."
 
 /**
  * One drag in flight — and, deliberately, the ARRANGEMENT IT STARTED ON.

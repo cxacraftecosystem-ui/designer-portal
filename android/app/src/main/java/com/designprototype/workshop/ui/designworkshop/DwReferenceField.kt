@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -378,13 +379,11 @@ private val INLINE_CREATABLE: Map<String, String> = mapOf(
  */
 private fun dwCraftRegisterNote(field: FieldDto, writableFields: Map<String, FieldDto>): String {
     val nameBox = field.refHydration["craftName"]?.let { writableFields[it]?.label }
-    val fallback = "Linking one is optional — the stage still saves without it."
+    val fallback = "Optional — the stage saves without it."
     val typeItIn = nameBox?.let {
-        "Linking one is optional: type the craft into “$it” above and the stage still saves."
+        "Optional — type the craft into “$it” above instead."
     } ?: fallback
-    return "Craft not listed, or listed under a different spelling? Crafts are added on the crafts " +
-        "register — “Add craft” in this app's menu, which is open to a Professor and above — and " +
-        "never from this picker. $typeItIn"
+    return "Craft missing? Add it from “Add craft” in the menu (Professor and above). $typeItIn"
 }
 
 /** Everything the picker needs that the renderer cannot work out from the field alone. */
@@ -761,8 +760,7 @@ internal fun DwReferenceSelectField(
             // Named, not hinted. "Choose an artisan first" with no artisan named is a sentence a
             // designer reads three times looking for the control it means.
             Text(
-                "Choose ${parentField?.label ?: "the field above"} first — this list narrows to that " +
-                    "record, and picking from an unfiltered list is how the wrong one gets linked.",
+                "Choose ${parentField?.label ?: "the field above"} first.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -852,19 +850,21 @@ internal fun DwReferenceSelectField(
          * cached on the row from another handset is exactly the record a designer wants to look at.
          */
         if (noun != null && inlineHost != null && selectedId.isNotBlank()) {
-            TextButton(
-                onClick = { openInlineRecord(selectedId) },
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                modifier = Modifier.heightIn(min = 40.dp)
-            ) {
-                Icon(
-                    Icons.Filled.Edit,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.size(6.dp))
-                Text("${RecordOpen.UPDATE_LABEL} this $noun", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+            ActionRow {
+                TextButton(
+                    onClick = { openInlineRecord(selectedId) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                    modifier = Modifier.heightIn(min = 40.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Edit,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    Text("${RecordOpen.UPDATE_LABEL} this $noun", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                }
             }
         }
 
@@ -1019,9 +1019,9 @@ internal fun DwReferenceMultiSelectField(
             selected = selected,
             enabled = enabled && !needsParent && bridge != null,
             emptyMessage = if (bridge == null) {
-                "This list is available once the workshop is open for editing."
+                "Available once you can edit this workshop."
             } else {
-                "No records for this on the device yet. Connect once and reopen this stage."
+                "Nothing here yet. Connect once and reopen this stage."
             },
             /*
              * THE SAME ESCAPE THE SINGLE PICKER HAS, and this is the likeliest place of all to need
@@ -1090,7 +1090,7 @@ private fun ReferenceProvenance(
     if (!visible) return
     if (bridge == null) {
         Text(
-            "Records can be linked once this workshop is open for editing.",
+            "Linking opens once you can edit this workshop.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
@@ -1098,8 +1098,7 @@ private fun ReferenceProvenance(
     }
     if (list == null) {
         Text(
-            "This device has not downloaded this list yet. Connect once and reopen the stage; " +
-                "until then the link cannot be made here.",
+            "Not downloaded yet. Connect once and reopen the stage.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
@@ -1112,7 +1111,7 @@ private fun ReferenceProvenance(
             if (age != null) append(", last refreshed $age")
             append(".")
             if (bridge.workshopId == null) {
-                append(" This workshop has not been uploaded, so the list cannot refresh.")
+                append(" Upload the workshop to refresh.")
             }
         },
         color = MaterialTheme.field.muted,
@@ -1120,9 +1119,7 @@ private fun ReferenceProvenance(
     )
     if (truncated) {
         Text(
-            "Only part of this list has been loaded. Search narrows what you can see here, not what " +
-                "was loaded — if the record you want is missing, refresh with a connection before " +
-                "concluding it does not exist.",
+            "Partly loaded. Refresh online if a record is missing.",
             color = MaterialTheme.colorScheme.error,
             fontSize = 11.sp
         )
@@ -1250,13 +1247,10 @@ internal fun dwWrongRecordTypeMessage(field: FieldDto, ref: DwWorkshopCodeRef): 
     if (wanted == ref.recordType) return null
     val scanned = ref.recordType.label.lowercase()
     if (wanted == null) {
-        return "That code names ${article(scanned)} $scanned. “${field.label}” holds a row recorded in " +
-            "this design workshop, and rows of that kind carry no printed code — choose one from the " +
-            "list instead."
+        return "That code is ${article(scanned)} $scanned; rows in “${field.label}” carry no printed code. Choose from the list."
     }
     val noun = dwPickerNoun(field)
-    return "That code names ${article(scanned)} $scanned, and “${field.label}” takes " +
-        "${article(noun)} $noun. Read the $noun’s own card or tag, or search for it in the list."
+    return "That code is ${article(scanned)} $scanned, but “${field.label}” needs ${article(noun)} $noun."
 }
 
 /**
@@ -1280,10 +1274,7 @@ internal fun dwWrongRecordTypeMessage(field: FieldDto, ref: DwWorkshopCodeRef): 
  * different situations.
  */
 internal fun dwReferenceOutOfScopeMessage(option: DwReferenceOption): String =
-    "That code names “${option.label}”, which is documented under a different workshop — and this " +
-        "box offers only records linked to this design workshop’s workshop. Nothing on this row has " +
-        "been changed. Link that record to this workshop and read the code again, or choose one of " +
-        "the records that already belong to it."
+    "“${option.label}” belongs to another workshop. Nothing on this row has been changed. Link that record to this workshop, or choose another."
 
 /**
  * REFUSAL (c): ONE SENTENCE FOR "NO SUCH RECORD" AND FOR "NOT YOURS", AND IT MUST STAY ONE.
@@ -1316,8 +1307,7 @@ internal fun dwUnresolvedScanMessage(field: FieldDto, cascadeLabel: String): Str
         "it may belong to work this account cannot open",
         cascadeLabel.takeIf { it.isNotBlank() }?.let { "it may not belong to the ${it.lowercase()} chosen on this row" },
     )
-    return "No $noun this box can offer matches that code — ${reasons.joinToString(", or ")}. Nothing on " +
-        "this row has been changed; search for it by name in the list instead."
+    return "No $noun this box can offer matches — ${reasons.joinToString(", or ")}. Nothing on this row has been changed; search by name instead."
 }
 
 /**
@@ -1331,9 +1321,7 @@ internal fun dwUnresolvedScanMessage(field: FieldDto, cascadeLabel: String): Str
  * whether something was quietly linked anyway.
  */
 internal const val DW_SCAN_OFFLINE_MESSAGE =
-    "There is no connection, so that code could not be looked up. The " +
-        "code itself checked out, so the card is fine and nothing on this row has been changed — read " +
-        "it again when there is signal, or search for the record by name in the list."
+    "There's no connection, so the code couldn't be looked up (it's valid). Nothing on this row has been changed."
 
 /**
  * The server answered, and not with an answer. Says what did NOT happen, which is the useful half.
@@ -1344,8 +1332,7 @@ internal const val DW_SCAN_OFFLINE_MESSAGE =
  * `RecordCodeLookup.lookUpRecordCode` and as the browser's `isUnreachable`.
  */
 internal const val DW_SCAN_LOOKUP_FAILED_MESSAGE =
-    "That code could not be looked up just now. Nothing on this row has been changed — try reading it " +
-        "again, or search for the record by name in the list."
+    "Couldn't look up the code. Nothing on this row has been changed — try again or search by name."
 
 /**
  * The same situation, for a workshop the server has never heard of and so cannot be asked about.
@@ -1356,9 +1343,7 @@ internal const val DW_SCAN_LOOKUP_FAILED_MESSAGE =
  * connection" would send a designer looking for a tower for a condition a tower cannot fix.
  */
 internal const val DW_SCAN_UNSENT_WORKSHOP_MESSAGE =
-    "That code checked out, but this workshop has not been uploaded, so a code can only be matched " +
-        "against the records already on this device — and this is not one of them. Nothing on this " +
-        "row has been changed. Upload the workshop when there is signal, then read it again."
+    "Workshop not uploaded, so only local records can match — this isn't one. Nothing on this row has been changed."
 
 /**
  * THE PARENT MOVED AND THE CHILD IT NARROWED IS NO LONGER OFFERABLE, so it is dropped and said.
@@ -1412,9 +1397,7 @@ internal fun dwCascadeClearedMessage(cascadeLabel: String): String {
     val moved = cascadeLabel.takeIf { it.isNotBlank() }
         ?.let { "The ${it.lowercase()} on this row" }
         ?: "The record this list narrows to"
-    return "$moved changed, so the choice made under the previous one was cleared — this list now " +
-        "holds only records filed under the new one. Pick from it; what the old choice filled in is " +
-        "cleared when the row is saved."
+    return "$moved changed, so the previous choice is cleared when the row is saved. Pick again."
 }
 
 /**
@@ -1442,9 +1425,7 @@ internal fun dwScanCascadeMovedMessage(cascadeLabel: String): String {
     val moved = cascadeLabel.takeIf { it.isNotBlank() }
         ?.let { "The ${it.lowercase()} on this row" }
         ?: "The record this list narrows to"
-    return "$moved changed while that code was being looked up, so the answer that came back was " +
-        "about the record chosen before it. Nothing on this row has been changed — read the code " +
-        "again now that the row is settled."
+    return "$moved changed during the lookup. Nothing on this row has been changed — read the code again."
 }
 
 /**
@@ -1585,7 +1566,7 @@ internal fun dwScanServerAnswer(
 /** What to say when a scan worked, for the designer who needs to see WHICH record it chose. */
 private fun dwScanConfirmation(option: DwReferenceOption, wanted: DwWorkshopRecordType): String {
     val name = option.label.trim().takeIf { it.isNotEmpty() }
-        ?: return "That code was read, and this row now links the ${wanted.label.lowercase()} it names."
+        ?: return "Linked the ${wanted.label.lowercase()} from the code."
     return "Linked from the code you read: “$name”."
 }
 
@@ -1738,39 +1719,39 @@ private fun DwReferenceScanPanel(
     }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        TextButton(
-            onClick = {
-                expanded = !expanded
-                // Folding it away clears what it said. A refusal about a card read a minute ago,
-                // reappearing when the panel is opened for a different one, is a sentence about
-                // nothing the designer is currently holding.
-                if (!expanded) {
-                    refusal = null
-                    confirmed = null
-                }
-            },
-            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-            modifier = Modifier.heightIn(min = 40.dp),
-        ) {
-            Icon(
-                Icons.Filled.QrCodeScanner,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(16.dp),
-            )
-            Spacer(Modifier.size(6.dp))
-            Text(
-                if (expanded) "Hide the code reader" else "Scan a card or tag",
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 12.sp,
-            )
+        ActionRow {
+            TextButton(
+                onClick = {
+                    expanded = !expanded
+                    // Folding it away clears what it said. A refusal about a card read a minute ago,
+                    // reappearing when the panel is opened for a different one, is a sentence about
+                    // nothing the designer is currently holding.
+                    if (!expanded) {
+                        refusal = null
+                        confirmed = null
+                    }
+                },
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                modifier = Modifier.heightIn(min = 40.dp),
+            ) {
+                Icon(
+                    Icons.Filled.QrCodeScanner,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    if (expanded) "Hide the code reader" else "Scan a card or tag",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 12.sp,
+                )
+            }
         }
 
         if (expanded) {
             Text(
-                "Read the code on the ${wanted.label.lowercase()}'s own card or tag to link that " +
-                    "record here. Nothing about the record is inside the code: it holds a reference " +
-                    "and a check digit, and nothing else.",
+                "Scan the ${wanted.label.lowercase()}'s card or tag to link it.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -1848,8 +1829,7 @@ private fun DwReferenceScanPanel(
                 if (busy) FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
             }
             Text(
-                "Spaces and capitals do not matter. The four characters at the end are a check — if " +
-                    "they do not match, the app says so rather than linking the wrong record.",
+                "Spaces and capitals don't matter. The last four characters are a check.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,

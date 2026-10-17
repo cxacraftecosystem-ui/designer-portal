@@ -254,8 +254,7 @@ fun receivedQuestionnaireStatus(row: ReceivedQuestionnaire): String = when {
     row.failure != null ->
         "Stopped: ${row.failure}"
     row.remoteId != null ->
-        "Partly added — ${row.sectionsDone} of ${row.sectionCount} sections are on your account " +
-            "already. Carry on where it stopped; do not start again, or you will have two copies."
+        "Partly added — ${row.sectionsDone} of ${row.sectionCount} sections are on your account. Continue — do not start again, or you'll get two copies."
     else ->
         "Not added yet. ${row.questionCount} question(s) in ${row.sectionCount} section(s)."
 }

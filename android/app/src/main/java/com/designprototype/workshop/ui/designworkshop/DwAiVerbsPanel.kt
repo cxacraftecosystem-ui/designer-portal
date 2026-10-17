@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -415,8 +416,10 @@ internal fun DwAiVerbsPanel(
                             val model = deviceModel
                             if (model == null || !dwTier2CanRecord(context, surface.serverWorkshopId)) {
                                 DwVerbRefusal(gate.sentence)
+                                DwRecordConsentLink(surface.consent)
                             } else if (passageChars == 0 || passageChars > DW_TIER2_MAX_PASSAGE_CHARS) {
                                 DwVerbRefusal(gate.sentence)
+                                DwRecordConsentLink(surface.consent)
                             } else {
                                 Text(
                                     "“$passagePreview”",
@@ -468,8 +471,7 @@ internal fun DwAiVerbsPanel(
                                 DwVerbRefusal(passageRefusal)
                             } else {
                                 Text(
-                                    "This paragraph is what will be sent, and it is what the layer " +
-                                        "records as its source:",
+                                    "This text will be sent:",
                                     color = MaterialTheme.field.muted,
                                     fontSize = 11.sp,
                                     lineHeight = 16.sp,
@@ -640,8 +642,7 @@ private fun DwVerbTranslateStep(
         // this fleet works in nineteen languages and several of them have no code at all, so a list
         // would refuse the exact languages this system exists to record.
         Text(
-            "Type a language name or code — “Odia”, “or”, “English”. The original stays exactly " +
-                "where it is; the translation stands beside it.",
+            "Language name or code, e.g. “Odia” or “or”. The original stays.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -652,11 +653,12 @@ private fun DwVerbTranslateStep(
         if (refusal != null && value.isNotBlank()) {
             Text(refusal, color = MaterialTheme.field.warning, fontSize = 11.sp, lineHeight = 16.sp)
         }
-        Button(
-            onClick = { onTranslate(value.trim()) },
-            enabled = refusal == null,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Translate this passage") }
-        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+        ActionRow {
+            Button(
+                onClick = { onTranslate(value.trim()) },
+                enabled = refusal == null,
+            ) { Text("Translate this passage") }
+            OutlinedButton(onClick = onCancel) { Text("Cancel") }
+        }
     }
 }

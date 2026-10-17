@@ -294,7 +294,7 @@ fun dwTier2ActionLabel(offer: DwTier2InstallOffer): String? = when (offer) {
 /** One short line under a row for the states that are not a button. Null when there is nothing. */
 fun dwTier2StateLine(offer: DwTier2InstallOffer, status: DwTier2ModelStatus): String? = when (offer) {
     DwTier2InstallOffer.INSTALLED ->
-        "On this phone. Proofreading and translation run here, without an outside AI service."
+        "On this phone. Proofreading and translation run locally."
     DwTier2InstallOffer.NO_CONNECTION -> "Connect to download it."
     DwTier2InstallOffer.RESUME -> dwPausedSentence(status.partialBytes)
     DwTier2InstallOffer.RETRY -> status.failure
@@ -303,15 +303,14 @@ fun dwTier2StateLine(offer: DwTier2InstallOffer, status: DwTier2ModelStatus): St
 
 /** Said when a downloaded file does not match the pinned fingerprint. It has been deleted. */
 const val DW_TIER2_MISMATCH_SENTENCE: String =
-    "The download did not match the expected file, so it was deleted and nothing was opened. Try again."
+    "Download didn't verify, so it was deleted. Try again."
 
 /** The heading on the AI verbs card while a passage is being worked on, on the phone. */
 const val DW_TIER2_WORKING_SENTENCE: String = "Working on the passage on this phone…"
 
 /** The note under the verb choices when they will run on the phone. */
 fun dwTier2VerbNote(model: DwModelPlan): String =
-    "Runs on this phone with ${model.modelId}. The passage does not go to an outside AI service, " +
-        "and nothing counts against the daily allowance."
+    "Runs on this phone with ${model.modelId}. Nothing leaves the phone; no allowance used."
 
 /**
  * The Tier 2 line on the "AI on this phone" card, or null for no line at all.
@@ -323,8 +322,7 @@ fun dwTier2VerbNote(model: DwModelPlan): String =
 fun dwTier2TierLine(offer: DwTierOffer, installed: Set<String>, catalogue: List<DwModelPlan> = DW_TIER2_PLANS): String? {
     val running = catalogue.filter { it.modelId in installed }.minByOrNull { it.peakRssBytes }
     if (running != null) {
-        return "On-device AI: ${running.modelId} runs on this phone, for proofreading and " +
-            "translating what is already written."
+        return "On-device AI: ${running.modelId}."
     }
     return if (offer is DwTierOffer.Available) dwTierOfferSentence(DwAiTier.TIER_2, offer) else null
 }

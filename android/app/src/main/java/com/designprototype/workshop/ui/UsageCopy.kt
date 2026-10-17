@@ -105,8 +105,7 @@ sealed interface UsageReadState {
  * file's header for why that promise is false here.
  */
 internal fun usageOfflineLine(noun: String): String =
-    "This device has no connection, so the $noun could not be read. They are not kept on this " +
-        "phone, so there is nothing to show until it connects. Try again where there is a signal."
+    "Offline — the $noun aren't kept on this phone, so there's nothing to show until it connects."
 
 /**
  * ONLINE AND THE READ FAILED — the server answered with something other than the figures.
@@ -118,9 +117,7 @@ internal fun usageOfflineLine(noun: String): String =
  * to stop sending people on.
  */
 internal fun usageCouldNotReadLine(noun: String): String =
-    "The $noun could not be read, so this is not showing what was recorded. This phone has a " +
-        "connection, so trying again may work; if it keeps failing, the figures are still saved " +
-        "online and nothing has been lost."
+    "Couldn't load the $noun. Try again; nothing is lost."
 
 /**
  * The sentence for the state a usage read is actually in, or null when it has nothing to say.
@@ -218,8 +215,7 @@ internal const val USAGE_TICK_TO_CONTINUE: String = "Tick the box to continue."
  * same question one screen later, and concluding the app asked them twice.
  */
 internal const val USAGE_NOTICE_NOT_FILED_LINE: String =
-    "The recording notice could not be read, so this answer is not filed yet. You will be asked " +
-        "again after signing in."
+    "Notice unavailable, so this answer is not filed yet. You'll be asked again after signing in."
 
 /**
  * The one line under the tick, or null when there is nothing to say.
@@ -257,7 +253,7 @@ internal const val USAGE_NOTICE_EXPANDER: String = "What is recorded, and what i
  */
 internal fun usageConsentHeading(state: String): String = when (state) {
     USAGE_CONSENT_GRANTED -> "You have agreed to this being recorded"
-    USAGE_CONSENT_REFUSED -> "You have declined, and nothing is being recorded"
+    USAGE_CONSENT_REFUSED -> "You declined; nothing is recorded"
     // Every unknown token lands here WITH NOT_RECORDED, deliberately: an answer this build cannot
     // read is not evidence that one was given. `resolve_consent` fails the same way on the server —
     // never to GRANTED — and a client that guessed the other way would tell somebody they had agreed
@@ -278,7 +274,7 @@ internal fun usageConsentDetail(record: UsageConsentRecordDto): String? {
     val moment = usageMoment(record.at) ?: return null
     val circumstance = when (record.basis) {
         USAGE_BASIS_REQUIRED_AT_SIGN_IN ->
-            " — at sign-in, where agreeing was a condition of using the platform"
+            " — at sign-in, as a condition of using the platform"
         USAGE_BASIS_OFFERED_IN_SETTINGS -> " — freely, from this settings screen"
         else -> ""
     }
@@ -329,8 +325,7 @@ internal fun usageDecisionLine(row: UsageConsentDecisionDto): String {
  * fact NOT_RECORDED carries, said in the place a reader is looking for a history.
  */
 internal const val USAGE_NO_DECISIONS_LINE: String =
-    "There is nothing here yet because you have not been asked. The first time you answer, the " +
-        "answer and its date are kept here — including if you later change it."
+    "Nothing yet — you have not been asked. Your answers and their dates appear here."
 
 /** The withdrawal control. Says what it does AND what it does not cost, because the second half is
  *  what makes it a real choice rather than a button nobody dares press. */
@@ -346,10 +341,7 @@ internal const val USAGE_WITHDRAW_LABEL: String = "Withdraw and delete what is s
  * conclude the withdrawal did not work.
  */
 internal const val USAGE_WITHDRAW_CONFIRM: String =
-    "This stops the recording immediately and deletes the requests already stored for your account. " +
-        "It does not sign you out and it takes nothing away — everything in the app keeps working " +
-        "exactly as it does now. The dated record that you had agreed stays in your own log below, " +
-        "because a withdrawal must not rewrite the answer the earlier recording was made under."
+    "Stops recording now and deletes what's stored. It does not sign you out and nothing else changes. Your earlier agreement stays in your own log."
 
 /** Re-granting after a withdrawal. Offered because a refusal that cannot be changed is a state, not
  *  a choice — and the server records it as OFFERED_IN_SETTINGS, which is the free half of the

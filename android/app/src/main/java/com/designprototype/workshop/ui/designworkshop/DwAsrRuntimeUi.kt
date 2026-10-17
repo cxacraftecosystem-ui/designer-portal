@@ -474,10 +474,7 @@ internal class DwAsrRuntimeController(
                     // leak makes harder to follow.
                     ?: return@withContext failedAfterCleanUp(
                         artifact, container, target,
-                        "The download could not be read back from this phone's storage after it " +
-                            "finished, so nothing has been installed and what arrived has been " +
-                            "deleted. That usually means the storage filled up while it was arriving. " +
-                            "Free some space and try again.",
+                        "Download couldn't be read back (storage full?). Free space and retry.",
                     )
                 if (dwAsrVerify(artifact.sha256, containerDigest) != DwAsrVerification.VERIFIED) {
                     cleanUp(container, target)
@@ -495,10 +492,7 @@ internal class DwAsrRuntimeController(
                         val entry = zip.getEntry(library.fileName)
                             ?: return@withContext failedAfterCleanUp(
                                 artifact, container, target,
-                                "What arrived does not contain ${library.fileName}, which this app " +
-                                    "needs, so nothing has been installed. The file being served is " +
-                                    "not the file this app expects — tell whoever administers this " +
-                                    "deployment.",
+                                "Download is missing ${library.fileName}. Tell your admin.",
                             )
                         val out = File(target, library.fileName)
                         zip.getInputStream(entry).use { input ->
@@ -517,9 +511,7 @@ internal class DwAsrRuntimeController(
                     cleanUp(container, target)
                     failed(
                         artifact,
-                        installed.failure ?: "The speech pack was downloaded but the files written to this " +
-                            "phone did not match what this app expects, so they have been deleted " +
-                            "and nothing was installed. Try again on a better connection.",
+                        installed.failure ?: "Files didn't verify, so nothing was installed. Retry on a better connection.",
                     )
                 }
             }
@@ -541,9 +533,7 @@ internal class DwAsrRuntimeController(
             runCatching { cleanUp(container, target) }
             failed(
                 artifact,
-                "The speech pack could not be downloaded: ${(error as? IllegalStateException)?.message ?: "the connection dropped"}. " +
-                    "Nothing has been installed and nothing has been kept. Check the connection and " +
-                    "try again.",
+                "Couldn't download: ${(error as? IllegalStateException)?.message ?: "the connection dropped"}. Try again.",
             )
         }
     }

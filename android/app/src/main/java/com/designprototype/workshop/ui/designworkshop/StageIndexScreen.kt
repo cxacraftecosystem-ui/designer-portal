@@ -1,11 +1,15 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.data.userMessage
 
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -46,6 +50,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -155,6 +160,11 @@ import retrofit2.HttpException
 fun StageIndexScreen(
     repository: WorkshopRepository,
     workshopId: String,
+    /**
+     * Arrived from a "Record consent" control on a stage: scroll the consent card into view once.
+     * Web's `#consent` anchor.
+     */
+    focusConsent: Boolean = false,
     /** [DwStageFocus] is null for "just open it" — the row itself, and any label with no address. */
     onOpenStage: (stageKey: String, focus: DwStageFocus?) -> Unit,
     onOpenReport: () -> Unit,
@@ -354,8 +364,8 @@ fun StageIndexScreen(
                 }
             }
             serverNote = when {
-                remoteId == null -> "This workshop has not been uploaded. These figures are from this device."
-                remote == null -> "Could not connect. These figures are from this device."
+                remoteId == null -> "Not uploaded yet — figures from this phone."
+                remote == null -> "Offline — figures from this phone."
                 else -> null
             }
 
@@ -401,9 +411,7 @@ fun StageIndexScreen(
             val heldDigest = definition?.takeIf { it.isHeld }?.customSchemaVersion.orEmpty()
             val serverScoreUsable = remote != null && remote.customSchemaVersion == heldDigest
             if (remote != null && !serverScoreUsable && serverNote == null) {
-                serverNote = "These figures are from this device. This workshop's own questions have " +
-                    "changed since this phone last loaded them. Open this screen again with a " +
-                    "connection to bring them up to date."
+                serverNote = "Figures from this phone. Reopen online to refresh this workshop's questions."
             }
             val merged = local.map { stage ->
                 // `custom` counted with the other two: a stage whose only answers are the designer's
@@ -421,7 +429,7 @@ fun StageIndexScreen(
         }.onSuccess { (name, merged) ->
             title = name
             stages = merged
-        }.onFailure { onError(it.userMessage("Unable to read this workshop's progress.")) }
+        }.onFailure { onError(it.userMessage("Couldn't load progress.")) }
         loading = false
     }
 
@@ -458,182 +466,76 @@ fun StageIndexScreen(
         serverNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
         frozenNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 13.sp) }
 
-        Button(onClick = onOpenReport, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Generate the report")
-        }
-
         /*
-         * THE FILES ALREADY GENERATED — and what changed in the record between any two of them.
-         *
-         * OUTLINED, directly under the filled report button, for the reason the two controls below it
-         * are outlined: the report is what the workshop is FOR, and this is a record OF the reports.
-         *
-         * NOT HIDDEN FOR A LOCAL-ONLY WORKSHOP, unlike the provenance row further down. That row is
-         * hidden because it has nothing to say until the server has the workshop; this screen has
-         * something to say precisely then — `DW_REPORT_HISTORY_LOCAL_ONLY` explains that a file
-         * generated before the workshop reaches the server is never logged at all — and that is a
-         * live problem, which silence would leave a designer to discover from a ministry.
-         *
-         * The label is [DW_REPORT_HISTORY_TITLE] and not a literal, the rule the provenance row
-         * already follows, so the control and the heading it opens cannot drift apart.
-         */
-        onOpenReportHistory?.let { openHistory ->
-            OutlinedButton(onClick = openHistory, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(DW_REPORT_HISTORY_TITLE)
-            }
-        }
-
-        // OUTLINED, under the filled report button, because the report is what the workshop is FOR and
-        // the cards are a tool used along the way — two filled buttons of equal weight would make a
-        // designer choose between them at the moment they are looking for the report.
-        OutlinedButton(onClick = onOpenCodes, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.QrCode2, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Cards & tags")
-        }
-
-        // Outlined for the same reason as the cards button above: the report is what the workshop is
-        // FOR, and both of these are tools used along the way to it.
-        OutlinedButton(onClick = onOpenPhotos, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Import photographs")
-        }
-
-        /*
-         * WHO CAN OPEN THIS WORKSHOP — and, for everyone who may not decide that, the answer in
-         * words instead.
-         *
-         * The gate is `require_admin` on all three routes in `api/routes/design_workshop_viewers.py`
-         * — `deps.is_admin`, so ADMIN and MASTER_ADMIN only. Deliberately NOT the creator and NOT
-         * `can_run_design_workshops`: a designer may not hand out access to their own workshop,
-         * because access that is in its owner's gift freezes the day the owner leaves.
-         *
-         * THE NON-ADMIN ARM IS A SENTENCE AND NOT A DISABLED BUTTON, and that is the decision worth
-         * defending. A greyed control refuses a tap without saying why, which is how somebody
-         * concludes the app is broken; an absent one leaves the second designer's own question —
-         * "how do I get my colleague into this record" — with no answer anywhere on the phone, and
-         * the workshop they cannot open still telling them it does not exist. So the row is always
-         * here: a button for the account that can act, and the name of who to ask for the account
-         * that cannot. Nothing is offered that the API would refuse.
+         * THE WORKSHOP'S ACTIONS, through the one button-row primitive: stacked full width on a
+         * phone, a row of pills on a tablet. The gates are unchanged — the viewer roster and the
+         * inspector roster are `require_admin`, the provenance view is `is_admin`, and all three only
+         * mean anything for a workshop the server has. A non-admin is told in words who to ask about
+         * access (below the row) rather than shown a control the API would refuse.
          */
         val mayAdminister = mayAdministerViewers(viewer)
+        ActionRow {
+            Button(onClick = onOpenReport) {
+                Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Generate report")
+            }
+            onOpenReportHistory?.let { openHistory ->
+                OutlinedButton(onClick = openHistory) {
+                    Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(DW_REPORT_HISTORY_TITLE)
+                }
+            }
+            OutlinedButton(onClick = onOpenCodes) {
+                Icon(Icons.Filled.QrCode2, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Cards & tags")
+            }
+            OutlinedButton(onClick = onOpenPhotos) {
+                Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Import photos")
+            }
+            if (mayAdminister && onServer) {
+                OutlinedButton(onClick = onOpenViewers) {
+                    Icon(Icons.Filled.Group, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Who can open")
+                }
+                OutlinedButton(onClick = onOpenInspectors) {
+                    Icon(Icons.Filled.FindInPage, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Inspectors")
+                }
+            }
+            if (mayReadWorkshopProvenance(viewer) && onServer) {
+                OutlinedButton(onClick = onOpenProvenance) {
+                    Icon(Icons.AutoMirrored.Filled.CompareArrows, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(DW_PROVENANCE_TITLE)
+                }
+            }
+        }
         when {
-            mayAdminister && onServer -> OutlinedButton(
-                onClick = onOpenViewers,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Filled.Group, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Who can open this workshop")
-            }
-
+            mayAdminister && onServer -> Unit
             mayAdminister -> Text(
-                "This workshop has not been uploaded yet. Upload it from the workshop list first — " +
-                    "until then nobody else can open it.",
+                "Upload this workshop from the list so others can open it.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
-
             else -> Text(
-                "Only you, the designers an administrator has added to this workshop, and admins " +
-                    "can open it. Deciding who else may is administration — ask an administrator " +
-                    "to add your co-designer.",
+                "Only you, its designers and admins can open this. Ask an admin to add a co-designer.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
-        }
-
-        /*
-         * WHO INSPECTS THIS WORKSHOP - the fifth scope, and a DIFFERENT question from the row above.
-         *
-         * The gate is `require_admin` again, on both routes in
-         * `api/routes/design_workshop_inspections.py` - but the ARGUMENT for it is stronger here than
-         * the handover argument that makes the viewers screen admin-only:
-         *
-         *     THE INSPECTED MUST NOT CHOOSE THE INSPECTOR.
-         *
-         * If a designer could put somebody on their own workshop as its inspector, or take somebody
-         * off it, the inspection is worth nothing. There is deliberately no "suggest an inspector"
-         * route either, because a suggestion an admin rubber-stamps is the same thing wearing a queue.
-         *
-         * HIDDEN FROM A NON-ADMIN RATHER THAN EXPLAINED, which is the OPPOSITE treatment from the
-         * viewer row directly above and the same treatment as the provenance row directly below. The
-         * split follows the position the refusal leaves a designer in, not the rule. A designer
-         * refused the viewer roster still HAS the question it answers - their co-designer is standing
-         * next to them unable to open the record - so silence there leaves a live problem with no
-         * answer anywhere on the phone. A designer refused THIS has no question at all, and the
-         * honest reason is uncomfortable enough to be worth writing down: whether their work is being
-         * examined, and by whom, is not their business to arrange. An explained-but-refused control
-         * would invite exactly the conversation the tier exists to prevent.
-         *
-         * AND ONLY FOR A WORKSHOP THE SERVER HAS. There is nothing to inspect in a workshop that has
-         * never left this phone, and no row for an assignment to point at.
-         */
-        if (mayAdminister && onServer) {
-            OutlinedButton(onClick = onOpenInspectors, modifier = Modifier.fillMaxWidth()) {
-                // `FindInPage` is the same glyph the menu row for the inspector's own list carries,
-                // which is the point: an admin appointing an inspector and the inspector reading the
-                // result are two halves of one feature, and one glyph is what says so.
-                Icon(Icons.Filled.FindInPage, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Who inspects this workshop")
-            }
-        }
-
-        /*
-         * THE ADMIN AUTHORSHIP & DIVERGENCE VIEW — and, for everyone else, NOTHING AT ALL.
-         *
-         * The gate is `is_admin` again: `workshop_provenance` refuses anyone below ADMIN, because the
-         * comparison crosses OUT of this workshop into the shared record tables and reports one
-         * account's data beside another's.
-         *
-         * SO WHY IS THIS ROW HIDDEN WHEN THE ONE ABOVE IT IS A SENTENCE? Because the two refusals
-         * leave a designer in completely different positions, and the treatment follows the position
-         * rather than the rule. A designer refused the viewer roster still HAS the question it
-         * answers — their co-designer is standing next to them unable to open the record — so silence
-         * there leaves a live problem with no answer anywhere on the phone. A designer refused this
-         * has no question at all: they have lost nothing. Every per-field stamp is already under
-         * their own boxes on every one of the 22 stages, off the ordinary stage read, and what this
-         * adds is only the canonical column. A greyed or explained control would advertise a
-         * capability they cannot get and do not need — which is exactly how the create control is
-         * handled, and for the same reason.
-         *
-         * AND ONLY FOR A WORKSHOP THE SERVER HAS. A workshop that has never left this phone has
-         * hydrated nothing through the server, so there is no comparison to make; unlike the viewer
-         * row there is no pending question for silence to leave unanswered, so it says nothing rather
-         * than explaining an absence nobody is waiting on. ([DwProvenanceScreen] still renders that
-         * state in words, for an arrival by any other route.)
-         *
-         * NOT GATED ON `canViewProvenance`. That column is a real grant on this handset and it opens
-         * a DIFFERENT feature — the per-field edit history on the View Data screen, for the record
-         * tables. `workshop_provenance` does not consult it, so ORing it in would put this control in
-         * front of a grantee the API refuses.
-         */
-        if (mayReadWorkshopProvenance(viewer) && onServer) {
-            OutlinedButton(onClick = onOpenProvenance, modifier = Modifier.fillMaxWidth()) {
-                // AutoMirrored: the glyph is two arrows pointing at each other across a divide, and
-                // in an RTL layout it has to flip with the text or it points the wrong way at the
-                // wrong column. The plain `Icons.Filled` variant is deprecated for exactly this.
-                Icon(Icons.AutoMirrored.Filled.CompareArrows, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                // The web's own name for the page, and THE SAME CONSTANT THE SCREEN TITLES ITSELF
-                // WITH — a control whose label drifts from the heading it opens sends a reader
-                // looking for a second feature. NOT "Check for problems" or anything else that would
-                // tell an admin, before they have read a word of it, that what they are about to
-                // look at is a fault list. Divergence is not an error.
-                Text(DW_PROVENANCE_TITLE)
-            }
         }
 
         HorizontalDivider()
 
         DwDictationConsentRow(
             consent = consent,
+            focus = focusConsent,
             // `can_run_design_workshops` — {DESIGNER, ADMIN, MASTER_ADMIN}, the set the server's own
             // consent route is gated on. NOT the rank ladder: a PROFESSOR outranks a designer and may
             // not run a workshop, so a threshold would put these two buttons in front of a 403.
@@ -721,16 +623,29 @@ fun StageIndexScreen(
  * state sentence above already says which answer is on record. The only disabling here is while a
  * write is in flight, which is the same reason the microphone disables while a clip is uploading.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DwDictationConsentRow(
     consent: DraftConsent,
+    focus: Boolean,
     mayRecord: Boolean,
     busy: Boolean,
     note: String?,
     onRecord: (DwTier3Consent) -> Unit,
 ) {
     val state = dwTier3ConsentOf(consent.decision)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val requester = remember { BringIntoViewRequester() }
+    // Once, on arrival: the route is a fresh screen each time, so `focus` never re-fires here.
+    LaunchedEffect(focus) {
+        if (focus) {
+            withFrameNanos { }
+            requester.bringIntoView()
+        }
+    }
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.bringIntoViewRequester(requester),
+    ) {
         Text(
             DW_CONSENT_ROW_TITLE,
             color = MaterialTheme.colorScheme.onSurface,
@@ -899,8 +814,7 @@ private fun dwConsentPushRefusal(failure: Throwable): String? {
     val code = http.code()
     if (code !in 400..499 || code == 401 || code == 429) return null
     return http.apiErrorMessage(
-        "That answer could not be saved. Ask an administrator before dictating anything from this " +
-            "workshop."
+        "Couldn't save that answer. Check with an admin before dictating here."
     )
 }
 
@@ -1095,7 +1009,7 @@ private fun WorkshopSearchPanel(
         label = { Text("Search this workshop") },
         placeholder = {
             Text(
-                "A word, a name, a product code — in any script",
+                "A word, name or code — any script",
                 color = MaterialTheme.field.placeholder,
                 fontSize = 13.sp,
             )
@@ -1140,23 +1054,20 @@ private fun WorkshopSearchPanel(
     Text(
         when {
             result.status == DwSearchStatus.IDLE ->
-                "Searches every written answer on this device — ${index.fieldCount} across " +
-                    "${index.stageCount} stage${if (index.stageCount == 1) "" else "s"}. " +
-                    "No connection needed."
+                "Searches ${index.fieldCount} answers across ${index.stageCount} stage${if (index.stageCount == 1) "" else "s"}. Works offline."
 
             result.status == DwSearchStatus.TOO_SHORT -> "Type at least $DW_MIN_QUERY_CHARS characters."
 
             result.status == DwSearchStatus.NO_TERMS ->
-                "There are no words or numbers in that to search for."
+                "Nothing to search for."
 
             result.total == 0 ->
                 "Nothing in this workshop holds " +
                     (if (result.terms.size == 1) "that word" else "all of those words") +
-                    ". Every answer saved on this device was searched — ${index.fieldCount} of them."
+                    "."
 
             result.truncated ->
-                "Showing the $DW_MAX_HITS closest of ${result.total} matching answers. " +
-                    "Add another word to narrow it."
+                "Top $DW_MAX_HITS of ${result.total}. Add a word to narrow it."
 
             else -> "${result.total} matching answer${if (result.total == 1) "" else "s"}."
         },
@@ -1341,7 +1252,7 @@ private fun StageIndexRow(
                                         // twelve rows that all announce the same verb are twelve
                                         // rows a screen-reader user has to open to tell apart.
                                         onClickLabel = if (focus != null) {
-                                            "Open this field in stage ${stage.number}"
+                                            "Open in stage ${stage.number}"
                                         } else {
                                             "Open stage ${stage.number}"
                                         },

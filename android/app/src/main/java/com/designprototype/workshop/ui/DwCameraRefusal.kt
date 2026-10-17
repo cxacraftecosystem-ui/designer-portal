@@ -79,16 +79,14 @@ enum class DwCameraUse(
     QR_CODE(
         subject = "a code",
         button = "Scan a code",
-        alternatives = "choose a picture of the code that is already on this phone, or type the " +
-            "code printed under the QR.",
+        alternatives = "pick a picture of the code already on this phone, or type the code printed under the QR.",
     ),
 
     /** `DwIdentityCardControl` — an Aadhaar or Pehchan card held under the lens. */
     IDENTITY_CARD(
         subject = "the card",
         button = "Photograph the card",
-        alternatives = "choose a photograph of the card that is already on this phone, or type the " +
-            "number in.",
+        alternatives = "pick a photo of the card already on this phone, or type the number in.",
     ),
 }
 
@@ -122,14 +120,9 @@ fun dwCameraRefusal(use: DwCameraUse, blocked: Boolean): String = if (blocked) {
     // surface, which on a stage form is nowhere near the control. A sentence that points at a
     // position is a sentence that goes wrong the first time a caller lays its own screen out; the
     // label is the same on every surface, so the label is what it names.
-    "The camera is blocked for this app, so Android will not ask again and pressing " +
-        "“${use.button}” will do nothing. Turn it back on in this app's permission " +
-        "settings — the “$DW_CAMERA_SETTINGS_BUTTON” button opens them — or carry on " +
-        "without the camera: " + use.alternatives
+    "Camera blocked, so Android will not ask again and “${use.button}” will do nothing. Turn it on in this app's permission settings — the “$DW_CAMERA_SETTINGS_BUTTON” button opens them — or: " + use.alternatives
 } else {
-    "The camera permission was refused, so ${use.subject} cannot be photographed. Press " +
-        "“${use.button}” again to be asked once more — or, without the camera at " +
-        "all, ${use.alternatives}"
+    "Camera denied. Tap “${use.button}” to be asked once more, or ${use.alternatives}"
 }
 
 /**

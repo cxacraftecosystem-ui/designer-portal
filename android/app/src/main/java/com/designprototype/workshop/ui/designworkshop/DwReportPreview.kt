@@ -277,7 +277,7 @@ internal fun DwReportBlock(
         is TocBlock -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(block.title, display = true, color = ink, fontSize = 15.sp)
             Text(
-                "Built with page numbers when the file is written.",
+                "Page numbers are added on export.",
                 color = muted,
                 fontSize = 11.sp
             )
@@ -620,8 +620,7 @@ private fun MissingFigure(name: String) {
             .background(MaterialTheme.field.surface100, RoundedCornerShape(8.dp))
     ) {
         Text(
-            "$name could not be opened on this phone, so it is not shown here or included in the " +
-                "exported report.",
+            "Couldn't open $name, so it's left out of the report.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 15.sp,

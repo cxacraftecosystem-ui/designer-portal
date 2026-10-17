@@ -78,7 +78,7 @@ fun CarryContextBanner(
     val implied = remember(context, origin) { CarryContextStore.describeCarryImplied(context, origin) }
     val originLabel = origin?.label ?: "record"
     val provenance = when (source) {
-        CarryOfferSource.HANDOFF -> "Carried from the $originLabel you just saved."
+        CarryOfferSource.HANDOFF -> "From the $originLabel you just saved."
         // Recomputed per composition on purpose: the phrase ages while the form is open.
         CarryOfferSource.RESUMED -> "From the $originLabel you documented ${CarryContextStore.describeCarryAge(savedAt)}."
     }

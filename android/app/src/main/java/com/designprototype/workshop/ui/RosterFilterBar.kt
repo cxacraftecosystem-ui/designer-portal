@@ -160,7 +160,7 @@ fun RosterFilterButton(kind: RosterKind, filters: RosterFilters, onOpen: () -> U
         // and the action instead.
         modifier = Modifier.semantics {
             contentDescription = if (hidden > 0) {
-                "Filters, $hidden set. Opens the filter and order sheet."
+                "Filters, $hidden set. Opens filters."
             } else {
                 "Filters. Opens the filter and order sheet."
             }
@@ -190,9 +190,9 @@ fun RosterSortButton(kind: RosterKind, filters: RosterFilters, onOpen: () -> Uni
         },
         modifier = Modifier.semantics {
             contentDescription = if (phrase != null) {
-                "${RosterLabels.SORT}: $label, $phrase. Opens the filter and order sheet."
+                "${RosterLabels.SORT}: $label, $phrase. Opens filters."
             } else {
-                "${RosterLabels.SORT}: $label. Opens the filter and order sheet."
+                "${RosterLabels.SORT}: $label. Opens filters."
             }
         }
     )
@@ -291,8 +291,7 @@ fun RosterFilterSheet(
             )
             RosterHint(
                 if (access) {
-                    "Nothing ticked is every tier, including the ones admitted at the default. " +
-                        "The last row is that default — it is the absence of a tier, not one of them."
+                    "None ticked means every tier. The last row is the default tier."
                 } else {
                     DESIGNER_ROLE_HINT
                 }
@@ -392,8 +391,7 @@ fun RosterFilterSheet(
                     )
                 }
                 RosterHint(
-                    "Both boxes may be left empty — a range with no bound narrows nothing and is not " +
-                        "sent."
+                    "Either box can be left empty."
                 )
             }
 
@@ -409,8 +407,7 @@ fun RosterFilterSheet(
                 onSelect = { picked -> onChange(nextRosterSort(kind, filters, picked)) }
             )
             RosterHint(
-                "Choosing the order it is already in reverses it. Each row says what choosing it " +
-                    "will do."
+                "Choosing the current order reverses it."
             )
 
             OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
@@ -452,9 +449,9 @@ fun AccessStatusChips(selected: Set<String>, onSelect: (Set<String>) -> Unit) {
             label = { Text("Everyone") },
             modifier = Modifier.semantics {
                 contentDescription = if (selected.isEmpty()) {
-                    "Everyone, chosen. Every standing is listed, refused and suspended included."
+                    "Everyone, selected. All standings shown."
                 } else {
-                    "Everyone. Lists every standing again, refused and suspended included."
+                    "Everyone. Shows all standings."
                 }
             }
         )
@@ -605,6 +602,7 @@ fun RosterPageBar(
     busy: Boolean,
     onPage: (Int) -> Unit,
 ) {
+    // Not an ActionRow: a pager (Previous · page count · Next).
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

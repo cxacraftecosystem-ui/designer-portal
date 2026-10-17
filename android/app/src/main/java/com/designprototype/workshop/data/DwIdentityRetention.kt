@@ -185,16 +185,13 @@ data class DwRetentionResultDto(
  */
 fun retentionOutcomeSentence(result: DwRetentionResultDto): String {
     if (result.deleted) {
-        return "That photograph has been deleted — the file and the record of it are both gone. " +
-            "The number you confirmed is unaffected."
+        return "Photo deleted — the file and its record are both gone. The confirmed number is unaffected."
     }
     val who = result.retention?.decidedByName?.trim()?.takeIf { it.isNotEmpty() }
     return if (who != null) {
-        "That photograph is kept on this record, in $who's name. It is a photograph of an identity " +
-            "document, so it is stored unmasked and anyone who can open this record can see it."
+        "Photo kept on this record (by $who). It's unmasked — anyone who can open the record can see it."
     } else {
-        "That photograph is kept on this record. It is a photograph of an identity document, so it " +
-            "is stored unmasked and anyone who can open this record can see it."
+        "Photo kept on this record. It's unmasked — anyone who can open the record can see it."
     }
 }
 
@@ -207,10 +204,7 @@ fun retentionOutcomeSentence(result: DwRetentionResultDto): String {
  * and it is the only place where not taking the photograph is still an option.
  */
 fun retentionChoiceBlurb(keep: Boolean): String = if (keep) {
-    "You have asked for this photograph to be KEPT on the record. It is a photograph of an identity " +
-        "document, so it is stored unmasked — unlike the number itself, which is masked everywhere " +
-        "it is shown. Your name is recorded against the decision."
+    "This ID photo will be KEPT on the record, unmasked, under your name."
 } else {
-    "The photograph is not kept — not on this phone and not online. Only the number you " +
-        "confirm is saved."
+    "The photo is not kept. Only the confirmed number is saved."
 }

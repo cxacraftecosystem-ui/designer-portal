@@ -248,373 +248,160 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         title = "Workshop · Record workshop",
         icon = Icons.Filled.Groups,
         destination = NavDestination.RECORD_WORKSHOP,
-        body = "Open the workshop you are documenting under — or create it — before you " +
-            "record anything else. Every record belongs to a workshop: products, tools and " +
-            "interviews all carry one, and View Data files every record under the workshop it " +
-            "was made in. The form asks for the title, the craft, where and when, and who was " +
-            "there. Watch out: create it before you leave for the field, so every record you make " +
-            "has a workshop to go into. And this form, like every capture screen after it, asks " +
-            "WHERE in two ways. \"Captured coordinates\" fills itself with where this phone was " +
-            "when the record was typed, while the village, district and pincode you type are " +
-            "where the workshop or the artisan actually is. Always type the place yourself: it is " +
-            "the one research reads, and a reading taken at a desk is not an artisan's address.",
+        body = "Open or create the workshop you are documenting under — every record belongs to one. The form asks for the title, craft, place, dates and who was there. Watch out: create it before you leave for the field, and always type the place yourself — captured coordinates only show where the phone was.",
     ),
     WalkStep(
         id = "craft",
         title = "Craft · Add craft",
         icon = Icons.Filled.Brush,
         destination = NavDestination.ADD_CRAFT,
-        body = "Add the craft being documented so artisans, products and tools have something to " +
-            "link to. Craft names are shared by every record — artisans link to one, products " +
-            "and tools take the name from it, and View Data groups a workshop's contents by it — " +
-            "so adding it once keeps the spelling the same across everybody's records. Watch out: " +
-            "search the list before you add. A near-duplicate spelling quietly splits one craft " +
-            "into two, and nothing later can tell them apart. If \"Add craft\" is not in your " +
-            "menu, your account does not manage crafts; ask somebody who does to add it.",
+        body = "Add the craft so artisans, products and tools have something to link to. One shared name keeps the spelling the same on everybody's records. Watch out: search the list first — a near-duplicate splits one craft into two.",
     ),
     WalkStep(
         id = "artisan",
         title = "Artisan · Record artisan",
         icon = Icons.Filled.Person,
         destination = NavDestination.RECORD_ARTISAN,
-        body = "Record the person: who they are, where they work, how to reach them, and what they " +
-            "have learnt. The artisan is the anchor of the dataset — products, processes, " +
-            "tools and interviews all link back to one — and the Do's and Don'ts are the " +
-            "artisan's own hard-won knowledge, the part of the archive that cannot be reconstructed " +
-            "later from anything else. Every narrative box on this form has a microphone, so you " +
-            "can speak an answer while your hands are busy. Watch out: Do's and Don'ts are " +
-            "required, one lesson per line — press Enter for each new point rather than " +
-            "running them together in a paragraph.",
+        body = "Record who the artisan is, where they work and what they have learnt. Every narrative box has a microphone. Watch out: Do's and Don'ts are required — one point per line.",
     ),
     WalkStep(
         id = "product",
         title = "Product · Record product",
         icon = Icons.Filled.Inventory2,
         destination = NavDestination.RECORD_PRODUCT,
-        body = "Record one thing this artisan makes, with its measurements, its economics and its " +
-            "photographs. This is where the craft becomes comparable across regions: dimensions, " +
-            "cost of making, selling price and demand are the figures a researcher can actually put " +
-            "side by side. Once there is a photograph on the record, two controls will take a " +
-            "dimension off it instead of off a tape, in the order you should reach for them: " +
-            "\"Measure from a photograph\" has you mark the object against something of a known " +
-            "length in the same frame — a grid square will do — and works the answer out on " +
-            "this phone, with no signal needed, from marks you can check later. \"Document using " +
-            "grid\" below it ESTIMATES the number online instead, so it needs a connection. " +
-            "Either way the photograph stays as evidence and the form records beside each number " +
-            "how it was arrived at. Watch out: pick the linked craft first. The artisan dropdown " +
-            "stays disabled until you do, and then lists only that craft's artisans.",
+        body = "Record one product with its measurements, costs and photographs. Two controls read dimensions off a photo: “Measure from a photograph” works offline; “Document using grid” estimates online. Watch out: pick the craft first — the artisan list waits for it.",
     ),
     WalkStep(
         id = "process",
         title = "Process · Document process",
         icon = Icons.Filled.AccountTree,
         destination = NavDestination.DOCUMENT_PROCESS,
-        body = "Walk through how that product is made, one step at a time, filming each step as it " +
-            "happens. The process is the craft itself: a product photograph shows the result, but " +
-            "the ordered steps with their own video show the knowledge — the sequence, the " +
-            "hand movements, the judgement calls a written description always loses. Add each step " +
-            "with \"Add Another Step\" and mark it Sequential for an ordered stage or Group of " +
-            "activities for things done together. Watch out: film the step while it is happening. " +
-            "A step described from memory that evening is the one that turns out to be missing the " +
-            "thing that made it work.",
+        body = "Record how the product is made, one step at a time, with video of each step. Mark each step Sequential or Group of activities. Watch out: film the step as it happens, not from memory that evening.",
     ),
     WalkStep(
         id = "tool",
         title = "Tool · Record tool",
         icon = Icons.Filled.Build,
         destination = NavDestination.RECORD_TOOL,
-        body = "Record the toolkit: what each tool is made of, how big it is, who made it and what " +
-            "it costs to replace. Tools are the most quietly endangered part of a craft — the " +
-            "person who makes the tool often disappears before the craft does — so maker, " +
-            "tradition type and replacement cost are the fields that record whether the chain " +
-            "behind the work is still alive. Both of the measuring controls from the Product step " +
-            "are on this form too, in the same order — \"Measure from a photograph\" first, " +
-            "then \"Document using grid\" — for a tool you can photograph against a reference " +
-            "rather than measure by hand. Watch out: fill only the dimensions that mean something " +
-            "for this tool. A blade has a length and a thickness; a wheel has a radius; a number " +
-            "entered to fill a box is a number somebody will later average.",
+        body = "Record each tool's material, size, maker and replacement cost. Both photo-measuring controls from the product form are here too. Watch out: fill only the dimensions that mean something for this tool.",
     ),
     WalkStep(
         id = "questionnaire",
         title = "Questionnaire · Take interview",
         icon = Icons.Filled.Quiz,
         destination = NavDestination.TAKE_INTERVIEW,
-        body = "Sit down with the artisan and work through the interview sections, recording each " +
-            "answer as audio. This is the artisan speaking in their own voice and their own " +
-            "language; the recording is transcribed once it is uploaded, so you get both the tape " +
-            "and searchable text without typing through the conversation. The language box is a " +
-            "dropdown from a fixed list, which stops the same language reaching the dataset under " +
-            "three spellings. Watch out: there is one interview per exact set of artisans. If an " +
-            "entry already exists for that set, saving ADDS your answers to it instead of creating " +
-            "a second one — nothing has been lost.",
+        body = "Work through the interview sections, recording each answer as audio. Recordings are transcribed after upload. Watch out: there is one interview per set of artisans — saving adds to an existing one.",
     ),
     WalkStep(
         id = "media",
         title = "Miscellaneous Media · Upload media",
         icon = Icons.Filled.PermMedia,
         destination = NavDestination.UPLOAD_MEDIA,
-        body = "Upload the photographs, video, audio and files that belong to no single record. " +
-            "Field work produces context no form has a slot for — the road into the village, " +
-            "the market, an unplanned conversation — and this keeps that material with the " +
-            "workshop's records instead of on a phone that gets wiped or handed on. The caption " +
-            "box has a microphone. Watch out: upload stays disabled until you pick a linked record " +
-            "type. If the file belongs to nothing in particular, pick \"Miscellaneous Media\" and " +
-            "leave the entry blank.",
+        body = "Upload photos, video, audio and files that belong to no single record. The caption box has a microphone. Watch out: pick a linked record type first, or “Miscellaneous Media”.",
     ),
     WalkStep(
         id = "review",
         title = "Review · Track your submissions",
         icon = Icons.Filled.Visibility,
         destination = NavDestination.REVIEW,
-        body = "Everything you submit goes for review and comes back Approved, Rejected or Sent for " +
-            "revision. Review is what turns a pile of field notes into a dataset somebody can cite, " +
-            "and it means you are never the last check on your own work. If you review other " +
-            "people's records, Review opens the queue of submissions waiting on a decision. Watch " +
-            "out: below Professor the status is locked and everything you create is submitted as " +
-            "Pending. That is normal. A record sent back for revision always carries comments " +
-            "explaining why — read them, fix the record, and saving resubmits it.",
+        body = "Everything you submit is reviewed: Approved, Rejected or Sent for revision. Reviewers see records from roles below theirs. Watch out: below Professor, new records start as Pending — a revision comes with comments; fix and save to resubmit.",
     ),
     WalkStep(
         id = "view-data",
         title = "View Data · Browse records",
         icon = Icons.Filled.Storage,
         destination = NavDestination.VIEW_DATA,
-        body = "Browse every record as a folder tree and download any folder as a spreadsheet. " +
-            "This is where documentation stops being data entry and starts being research " +
-            "material: the same records filed three ways — by workshop, by whoever uploaded them, " +
-            "and by kind of file — with a preview in place. Pick a folder and use the breadcrumb " +
-            "to climb back out; the tree loads as you open it. Watch out: downloading the dataset " +
-            "is a permission an administrator grants, so if \"View Data\" is not in your menu, " +
-            "that is the reason. Every signed-in account can read the records themselves through " +
-            "Browse records.",
+        body = "Browse every record as a folder tree and download any folder. Records are filed by workshop, uploader and file type. Watch out: dataset download is a permission an admin grants.",
     ),
     WalkStep(
         id = "scan",
         title = "Scan a code · Open what a card names",
         icon = Icons.Filled.QrCodeScanner,
         destination = NavDestination.SCAN_CODE,
-        body = "Point the camera at a printed card or a tag and open the record it names, or read " +
-            "the code out of a picture somebody sent you, or type it. It sits in the menu on its " +
-            "own because a scan is the quickest way to a record in the field. Watch out: this " +
-            "screen looks across every workshop and does not know which one you are standing in. " +
-            "To read a prototype tag with no signal, use that workshop's own Cards & tags screen, " +
-            "which reads its codes from this phone; and inside a stage form, the reference picker " +
-            "uses a scan to LINK a record to what you are filling in rather than to open it.",
+        body = "Scan a card or tag, read a code from a picture, or type it to open its record. Everything but the lookup works offline. Watch out: for prototype tags with no signal, use the workshop's own Cards & tags.",
     ),
     WalkStep(
         id = "designer-profile",
         title = "My designer profile · Type your details once",
         icon = Icons.Filled.Badge,
         destination = NavDestination.DESIGNER_PROFILE,
-        body = "Your own standing details in one place — name, institution, qualification, " +
-            "empanelment, photograph, signature and CV — so you do not type them into a stage " +
-            "form every time. A new design workshop's stage 1 and stage 3 START PRE-FILLED FROM " +
-            "THIS PAGE, and what they receive is a COPY: a report records who ran a workshop at " +
-            "the time, so moving institution next year does not rewrite a report already " +
-            "submitted. Four of the twenty-one fields are required — name, qualification, phone " +
-            "and email — because they are what a report is submitted under and how the person who " +
-            "signed it is reached. Watch out: a workshop already under way keeps what it was " +
-            "created with. Correcting something here does not change it; edit that workshop's own " +
-            "copy in its stage 1 and stage 3. Send your CV file along with the report, which lists " +
-            "it by name. This step and the eight after it are for designers, admins and the master " +
-            "admin. If those menu rows are not shown to you, read on to learn the process, and ask " +
-            "an administrator to empanel you as a designer.",
+        body = "Your name, institution, empanelment, photo, signature and CV in one place. New workshops copy them into stages 1 and 3. Watch out: name, qualification, phone and email are required, and a workshop already under way keeps its own copy.",
     ),
     WalkStep(
         id = "design-workshop",
         title = "Design workshops · Open the fortnight",
         icon = Icons.Filled.DesignServices,
         destination = NavDestination.DESIGN_WORKSHOPS,
-        body = "This is the design & prototype development workshop itself: twenty-two stages of " +
-            "capture that end in a report submitted to a Development Commissioner's office. It is a " +
-            "DIFFERENT RECORD from the Workshop in the first step — that one is the event an " +
-            "artisan attended; this one is the design document — and the \"Design & prototype " +
-            "workshop\" box you have been seeing on every record form is what files a record under " +
-            "one so it appears in that workshop's lists. That box changes where a record is filed " +
-            "and never who may read it. A designer does not start a workshop: an admin creates it " +
-            "and adds you, so an empty list is the ordinary state for a newly empanelled designer " +
-            "and the screen says who to ask. It opens and fills with no signal, and every stage " +
-            "saves itself into a draft on this phone as you go, so a fortnight of fieldwork is " +
-            "safe between connections. Watch out: link it to a recorded Workshop early. The " +
-            "reference pickers inside the stages are narrowed to that workshop's artisans, products " +
-            "and tools; an unlinked workshop offers you every record in the portal instead, which " +
-            "is where the wrong artisan gets picked.",
+        body = "The 22-stage design & prototype workshop that ends in a submitted report. An admin creates it and adds you; it works offline. Watch out: link it to a recorded Workshop early so the pickers show the right records.",
     ),
     WalkStep(
         id = "design-workshop-codes",
         title = "Cards & tags · Print the codes",
         icon = Icons.Filled.QrCode2,
         destination = NavDestination.DESIGN_WORKSHOPS,
-        body = "Open a workshop and press \"Cards & tags\" on its index. Three kinds of code come " +
-            "off it: a tag for every prototype, a card for every artisan on the roster, and the " +
-            "workshop's own code. Stages 14, 15 and 16 each begin by choosing a prototype from a " +
-            "list as long as the fortnight made it, and scanning a tag removes the choosing — " +
-            "choosing wrong is how two days of measurements end up attached to somebody else's " +
-            "work with nothing downstream able to tell. The sheet is drawn on this device and saved " +
-            "as a .pdf, and codes are decoded on the device too, so both halves work with no " +
-            "signal. THE WORKSHOP'S OWN CODE IS A JOIN CARD AND DOES A DIFFERENT JOB: one person " +
-            "creates the workshop and everybody else scans that card to join THE SAME ONE, which is " +
-            "what stops a team of four ending the fortnight with four parallel workshops. A card is " +
-            "good for one person unless an admin makes it good for more, and a late-comer whose " +
-            "card was already spent is not turned away — the ask is filed for an admin to " +
-            "decide, so their work is not orphaned while they wait. Watch out: print at 100%, not " +
-            "\"fit to page\" — the cards are drawn at the size they are cut to — and " +
-            "print them at the START of the fortnight. A tag tied on afterwards is a tag tied on " +
-            "from memory.",
+        body = "Print prototype tags, artisan cards and the workshop's join card from Cards & tags. Scanning a tag picks the right prototype for you. Watch out: print at 100%, not “fit to page”, at the start of the fortnight.",
     ),
     WalkStep(
         id = "design-workshop-questionnaires",
         title = "Questionnaires · Your own forms",
         icon = Icons.AutoMirrored.Filled.ListAlt,
         destination = NavDestination.CUSTOM_QUESTIONNAIRES,
-        body = "The standard interview above is one form everybody answers and nobody may add a " +
-            "question to. This is the other kind: a form you built yourself for this workshop, in " +
-            "the .xlsx pro-forma, whose wording you may change. \"Use this questionnaire again\" " +
-            "copies the form to another workshop — its sections and its live questions, never " +
-            "anybody's answers — so next season starts from last season's instrument instead " +
-            "of from a blank " +
-            "page. You can also hand a form straight to a colleague's phone as a bundle, over a " +
-            "QR code, the share sheet or Bluetooth. Watch out: a form OPENS with no signal, and a " +
-            "new one waits on this phone until it can upload, but ANSWERING one needs a " +
-            "connection. With no signal, take those answers on the standard interview, or wait " +
-            "until you have a connection.",
+        body = "Build your own questionnaire in the .xlsx pro-forma for this workshop. Reuse it on another workshop, or send it to a colleague's phone. Watch out: a form opens offline, but answering one needs a connection.",
     ),
     WalkStep(
         id = "design-workshop-stages",
         title = "Stages · Fill the twenty-two",
         icon = Icons.Filled.Layers,
         destination = NavDestination.DESIGN_WORKSHOPS,
-        body = "Work down the stage index. Every section of the printed report is one of these " +
-            "stages, and the phone and the laptop show the same boxes in the same order, so a " +
-            "stage half-filled in the village is the stage you finish on a laptop that evening. " +
-            "Each stage takes its basic " +
-            "fields, its deeper ones, its photographs and its own sections if you added any, and " +
-            "every narrative box has a microphone. A reference picker is how you point a stage at " +
-            "the artisan, product, tool or process you recorded in the earlier steps. WATCH OUT, " +
-            "AND THIS IS THE ONE TO REMEMBER: choosing a record COPIES its values onto this stage, " +
-            "and the report prints that copy. Editing the artisan next week does not rewrite a " +
-            "report already handed over — come back and re-pick the record here if you want " +
-            "the newer values. Point a row at a DIFFERENT record and whatever the previous one put " +
-            "there leaves with it, so the old artisan's phone number can never end up sitting under " +
-            "the new artisan's name; anything you typed yourself is left alone, because a pick only " +
-            "ever writes into a box that is empty or still holds exactly what the last pick wrote. " +
-            "A photograph gallery is only ever seeded and never replaced, so re-picking cannot " +
-            "destroy the pictures you took in the room.",
+        body = "Work down the stage index; phone and laptop show the same boxes in the same order. Each stage has basic fields, deeper ones, photos and a microphone on every narrative box. Watch out: picking a record copies its values into the stage — re-pick it to update them.",
     ),
     WalkStep(
         id = "design-workshop-sketches",
         title = "Sketches & prototypes · Upload, trace and rank",
         icon = Icons.Filled.Gesture,
         destination = NavDestination.SKETCHES_AND_PROTOTYPES,
-        body = "Pick a workshop, then work on its sketches and its prototypes from one screen " +
-            "instead of walking into each stage form to find them. It asks WHICH WORKSHOP first, " +
-            "which is the thing you actually know while standing there with the drawing in your " +
-            "hand. Two tabs: Upload adds the piece and its photographs, Review is the first of the " +
-            "two rating rounds — this workshop's own designers on each other's work. Photograph " +
-            "a drawing and the tracer turns it into line art on this device, and you can save the " +
-            "result as SVG, PNG, PDF, EPS or DXF for a print shop or a cutting machine. Watch out: " +
-            "the crop and the sharpening shape the TRACE only — your photograph is kept exactly " +
-            "as you took it. Record set-aside sketches too: designs that were never prototyped " +
-            "can be rated in both rounds, and a wider pool may pick one up later. This screen is " +
-            "for designers, admins and the master admin; any other account is told so when it " +
-            "opens, and an administrator can give designer access.",
+        body = "Pick a workshop, then add and photograph its sketches and prototypes. Review is the first rating round; the tracer turns a drawing into line art offline. Watch out: tracing shapes the line art only — your photo is kept as taken.",
     ),
     WalkStep(
         id = "design-review",
         title = "Design review · Rate a colleague's work",
         icon = Icons.Filled.Star,
         destination = NavDestination.DESIGN_REVIEW,
-        body = "Score a colleague's sketches and prototypes out of five, say what you think of each " +
-            "piece, say what you would change, and put them in an order. This is the SECOND round: " +
-            "a workshop's own designers rate each other on the Review tab of the step above, and " +
-            "then the wider pool ranks the pieces a finished workshop has produced — including " +
-            "workshops the reviewer was never added to, which is the whole difference between the " +
-            "two levels. There are two ways in: the dropdown lists workshops you can open yourself, " +
-            "and the box beside it takes any workshop's link or id, because the pool round is " +
-            "about work you were not part of. Watch out: a piece reaches the pool only once its " +
-            "peer round has been closed on it, so an empty round usually means the peer round is " +
-            "still open, and the screen says which. Keep the comment and the suggestion in their " +
-            "own boxes — what you would change is the part a maker acts on, and it is easy to " +
-            "miss inside a paragraph of assessment. This screen opens for designers, admins and " +
-            "the master admin; without that access you can still learn the process here, and the " +
-            "screen will tell you designer access is required.",
+        body = "Rate colleagues' sketches and prototypes out of five, suggest changes, and set the order. Pieces reach the wider pool once their peer round closes. Watch out: keep the suggestion in its own box — it is what the maker acts on.",
     ),
     WalkStep(
         id = "design-workshop-readiness",
         title = "Readiness · What is still outstanding",
         icon = Icons.AutoMirrored.Filled.Assignment,
         destination = NavDestination.DESIGN_WORKSHOPS,
-        body = "See what is still outstanding before the last afternoon, instead of opening all " +
-            "twenty-two stages to find the four empty required fields you meant to come back to. " +
-            "On this phone, readiness is shown on the stage index itself. Each row carries a bar, " +
-            "a percentage, and either how many of its required fields are filled or the words " +
-            "\"nothing required here\", so a stage that needs nothing cannot be mistaken for one " +
-            "you finished. A stage with gaps expands into the list of exactly what is missing, by " +
-            "field name, and every line taps straight through to that box; the stage form's own " +
-            "header repeats the figure while you are inside it. Watch out: an empty required field " +
-            "never stops a stage saving or syncing, so a half-finished stage keeps everything you " +
-            "have typed. The figure is a plan: it is there so that a thin stage is a decision you " +
-            "made and not something you missed. Use the index on the first afternoon as well as " +
-            "the last.",
+        body = "Each stage on the index shows a bar and how many required fields are filled. Expand a stage to see exactly what is missing. Watch out: empty fields never block saving — the figure is a plan, not a gate.",
     ),
     WalkStep(
         id = "design-workshop-report",
         title = "Report · Generate the deliverable",
         icon = Icons.Filled.Description,
         destination = NavDestination.DESIGN_WORKSHOPS,
-        body = "Open a workshop and press \"Generate the report\". Choose the template and the " +
-            "accent colour, read the document back as real pages or as continuous reading, and " +
-            "export the .docx or the .pdf. The report is built on this phone from what is saved " +
-            "here, so it can be produced in a courtyard with no signal at all, and what you read " +
-            "in the preview is exactly what is exported. Questionnaire answers are included once " +
-            "this phone has opened that workshop's questionnaire list with a connection. Watch " +
-            "out: read the notes on the export screen before you send the file; they never stop a " +
-            "file being produced and they are never printed inside it. To correct something the " +
-            "preview shows, open the stage it came from — the report prints what that stage " +
-            "saved.",
+        body = "Tap “Generate report”, choose a template and colour, then preview and export .docx or .pdf. It works offline, from what is saved on this phone. Watch out: to fix something, edit the stage it came from.",
     ),
     WalkStep(
         id = "design-workshop-history",
         title = "Report history · What you have produced",
         icon = Icons.Filled.History,
         destination = NavDestination.DESIGN_WORKSHOPS,
-        body = "Every file ever generated for this workshop — including ones a phone produced " +
-            "with no signal — with its checksum, its size, its page count, its template, when " +
-            "it was made and by whom, and a comparison between any two of them. A report submitted " +
-            "to a ministry comes back for revision three or four times, and \"did you update the " +
-            "cost sheet before you resubmitted?\" needs an answer that is evidence and not " +
-            "memory. Watch out: entries here cannot be edited or deleted — the checksum is what " +
-            "makes each one evidence. The comparison is between two generated FILES; for who " +
-            "changed a particular value and when, open the workshop's Authorship & divergence " +
-            "screen instead. This screen needs a connection, because it lists files made on other " +
-            "phones by other people, and a workshop shows its history once it has been uploaded.",
+        body = "Every generated file with its checksum, size and pages, and a comparison between any two. It lists files from every phone. Watch out: entries cannot be edited or deleted, and the screen needs a connection.",
     ),
     WalkStep(
         id = "design-workshop-inspection",
         title = "Workshops to inspect · The other side of it",
         icon = Icons.Filled.FindInPage,
         destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
-        body = "If your account is an Inspector / Reviewer, this is your screen: the design " +
-            "& prototype workshops an admin has assigned you, read-only, with who captured each " +
-            "field, and when, beside it, and a box for correction suggestions. An inspector reads " +
-            "a workshop without being a member of it, so none of its stages can be changed from " +
-            "here. Watch out: this row is for Inspector / Reviewer accounts. Admins appoint " +
-            "inspectors from a workshop's own index instead, one workshop at a time. Without " +
-            "signal the screen shows the copy last read on this phone, with the day it was saved.",
+        body = "For Inspector / Reviewer accounts: the workshops assigned to you, read-only. Each field shows who captured it, with a box for corrections. Watch out: admins appoint inspectors from a workshop's own index.",
     ),
     WalkStep(
         id = "offline",
         title = "No signal · What still works",
         icon = Icons.Filled.CloudOff,
-        body = "Most of a fortnight happens where there is no bar of signal, and the app keeps " +
-            "working there. A design workshop opens and fills with no connection, and every stage " +
-            "saves into a draft on this phone as you go. Records you create wait on this phone and " +
-            "upload when a connection returns — the strip at the top of the app says how many " +
-            "are waiting, and tapping it opens the tray, which lists anything that could not be " +
-            "saved, with the reason, and lets you retry one or all of them. Code cards print, tags " +
-            "decode and the report generates, all on the phone. Watch out: correct an existing " +
-            "record while you have a connection where you can, and when a colleague is working on " +
-            "the same record, agree between you who edits it.",
+        body = "The app keeps working where there is no signal at all. Workshops and records save on the phone and upload later; the strip at the top shows what is waiting. Watch out: correct shared records online where you can, and agree who edits what.",
     ),
 )
 
@@ -635,13 +422,7 @@ private val walkthroughIntro = WalkStep(
     id = "intro",
     title = "The order the work happens in",
     icon = Icons.Filled.Explore,
-    body = "${walkthroughJourney.size} steps, in this order — the field records first, then " +
-        "the design & prototype workshop those records feed. The web portal teaches the same " +
-        "journey, so a colleague working on a laptop is reading what you are reading. The order " +
-        "is the thing worth learning: the pickers inside the later screens offer what you " +
-        "recorded in the earlier ones, so following it saves a return trip. Work down it once and " +
-        "you should not need this again. You can leave at any point, and you can reopen this from " +
-        "the menu without losing whatever form you are in the middle of.",
+    body = "${walkthroughJourney.size} steps — field records first, then the design workshop they feed. Leave any time; reopen it from the menu.",
 )
 
 /**
@@ -656,13 +437,7 @@ private val walkthroughOutro = WalkStep(
     id = "before-you-leave",
     title = "Before you leave the field",
     icon = Icons.Filled.CheckCircle,
-    body = "A missing field is a phone call; a missing recording is another trip. Every artisan you " +
-        "spoke to has a record, with their Do's and Don'ts in it. Every product you photographed " +
-        "has its dimensions and its costs. Every process has its steps in order and the steps have " +
-        "video. Every tool has a material, a maker and a replacement cost. The interview has no " +
-        "unexplained gaps. Anything you shot that has no home is in Miscellaneous Media. Every " +
-        "prototype is tagged. And before the signal goes for good: open the strip at the top and " +
-        "check that nothing is still waiting to upload.",
+    body = "Before you leave: every artisan has Do's and Don'ts, every product has dimensions and costs, every process has video, every tool has a maker and cost, every prototype is tagged. Then check nothing is waiting to upload.",
 )
 
 /**
@@ -849,83 +624,28 @@ internal val walkthroughInspectorJourney: List<WalkStep> = listOf(
         title = "Workshops to inspect · Open your assigned workshops",
         icon = Icons.Filled.FindInPage,
         destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
-        body = "Open the design & prototype workshops an admin has assigned you, and work down " +
-            "them one at a time. Each assignment covers one workshop and is made by an admin, so " +
-            "you see exactly the workshops you are asked to inspect. The screen is a search box " +
-            "over your own assignments and then a card per workshop carrying its title, craft, " +
-            "cluster, place, code, status and dates, with the word \"Read-only\" printed on every " +
-            "one of them; the count above the list is the full total, and the pager moves twenty " +
-            "at a time. Watch out: this screen is for Inspector / Reviewer accounts only, and an " +
-            "assignment comes from an admin — they make one from that workshop's own stage index. " +
-            "Without signal the screen shows the list this phone last saw, with the day it was " +
-            "saved above it; an assignment that has ended drops off the next time the list loads " +
-            "with signal. An empty list is a real answer: the page says \"No workshop is " +
-            "assigned to you\", a search that matched nothing says so differently, and a load that " +
-            "failed keeps whatever rows were already on screen and shows the problem above them.",
+        body = "Open the workshops an admin has assigned you, one at a time. The search covers your assignments only. Watch out: offline, the screen shows the list this phone last saw.",
     ),
     WalkStep(
         id = "inspection-read",
         title = "Workshop under inspection · Read every stage",
         icon = Icons.Filled.Layers,
         destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
-        body = "Tap a card in that list and read the workshop back, stage by stage, as the " +
-            "designers recorded it. A report that reaches a Development Commissioner's office is " +
-            "read by somebody who did not run the fortnight, and \"who wrote this field, and " +
-            "when\" is most of what that reading is for — so this screen shows the same " +
-            "authorship note under every value that the designer's own stage form shows under " +
-            "every box, and an inspector and the designer being inspected always read the same " +
-            "account of who did what. All twenty-two stages are listed, including the ones nobody " +
-            "has started, so an empty stage shows up as a finding; a stage the report allows to be " +
-            "skipped says so beside its own count. Each stage shows \"n of m required fields " +
-            "answered\", each record card lists the values that exist, and the fields nobody " +
-            "answered are counted underneath instead of drawn as forty empty rows. Without signal " +
-            "the screen opens the copy of the workshop kept on this phone and shows the day it was " +
-            "saved. Watch out: this screen is read-only — an inspector reads a workshop and the " +
-            "designers change it. A completeness figure is arithmetic and not a verdict: a stage " +
-            "can answer every required field and still be wrong. A value that came from an " +
-            "artisan, product or tool record is a COPY taken when the stage was saved, so the " +
-            "record may have been corrected since without this stage changing.",
+        body = "Read the workshop back stage by stage, with who wrote each field and when. Empty stages are listed too — an empty stage is a finding. Watch out: values copied from a record may since have changed there.",
     ),
     WalkStep(
         id = "inspection-feedback",
-        title = "Correction suggestions · File a suggestion, or send the report back",
+        title = "Correction suggestions · File or send back",
         icon = Icons.Filled.RateReview,
         destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
-        body = "Say what should be corrected, in the panel above the stages of the workshop you " +
-            "are reading. Your note is recorded against this submission round under your name. The " +
-            "panel lists every suggestion already on the record, round by round, with who filed it " +
-            "and which stage it is about, so you can read what colleagues asked for before asking " +
-            "again. Then \"What should be corrected?\", \"Which stage is it about?\" — the report " +
-            "as a whole, or one named stage — and the two buttons. Watch out: the two buttons do " +
-            "different things. \"File a suggestion\" records your note and leaves the report where " +
-            "it is; \"Send the report back\" records it and moves the report to Needs revision, " +
-            "which puts it on its designers' desks, and it asks you to confirm first. Neither can " +
-            "be edited or withdrawn once it is on the record, and the box opens only once the " +
-            "report has been handed in. Without signal your note is kept on this phone and listed " +
-            "as waiting. When you are back online the report is checked again first, and the note " +
-            "goes only if the report is still the round you read. If the report has moved on — " +
-            "handed in again, withdrawn or approved — the note waits with the reason under it and " +
-            "nothing is lost: file it against the current round, put it back in the box, or " +
-            "discard it yourself.",
+        body = "Say what should be corrected and which stage it is about. The buttons differ: “Suggest” keeps the report as is; “Send back” moves it to Needs revision. Watch out: neither can be undone, and offline notes send only if the round hasn't changed.",
     ),
     WalkStep(
         id = "inspection-review-queue",
         title = "Review · Work the queue",
         icon = Icons.Filled.Visibility,
         destination = NavDestination.REVIEW,
-        body = "Start with the workshops waiting for your decision: the reports you were " +
-            "appointed to inspect that have been handed in, with the ones sent back to their " +
-            "designers listed under them, and a line on any note of yours still waiting on this " +
-            "phone. Below that is the queue of records waiting on a decision, the other half of " +
-            "the Inspector / Reviewer role — artisans, products, processes, tools and interviews " +
-            "submitted by people in the roles below yours, Designers among them, waiting to be " +
-            "approved, rejected or sent back for revision. Watch out: Review is open to Field " +
-            "Contributor and above, so the people working the queue beside you are not all " +
-            "inspectors; what your role decides is WHOSE records you see. You review records from " +
-            "roles below yours and never across: a record from another Inspector / Reviewer is not " +
-            "yours to decide, and neither is one from a Professor or a directorate post. Changing " +
-            "somebody else's record is for Professor and above, so send it back with what to fix " +
-            "and let the person who recorded it correct it.",
+        body = "Start with the reports waiting for your decision, then the record queue. You decide records from roles below yours. Watch out: send a record back with what to fix rather than changing it yourself.",
     ),
 )
 
@@ -943,15 +663,7 @@ private val walkthroughInspectorIntro = WalkStep(
     id = "inspector-intro",
     title = "What an inspection is, in order",
     icon = Icons.Filled.Explore,
-    body = "${walkthroughInspectorJourney.size} steps, in the order an inspection happens — the " +
-        "list you were given, the workshop you read, what you say about it, and the review " +
-        "queue your role opens. " +
-        "Every inspection starts with an assignment an admin makes, one workshop at a time. " +
-        "Inspectors read design & prototype workshops and do not fill them in, so nobody ever " +
-        "inspects their own work. This is the walkthrough that opens for an Inspector / Reviewer " +
-        "account; the designer's walkthrough is here in full too, and the button under this card " +
-        "switches to it. You can leave at any point, and you can reopen this from the menu " +
-        "without losing whatever form you are in the middle of.",
+    body = "${walkthroughInspectorJourney.size} steps: your assignments, reading a workshop, suggestions, and the review queue. Inspectors read workshops but never fill them in.",
 )
 
 /**
@@ -965,16 +677,7 @@ private val walkthroughInspectorOutro = WalkStep(
     id = "before-you-send-it-back",
     title = "Before you finish an inspection",
     icon = Icons.Filled.CheckCircle,
-    body = "You read every stage, including the ones nobody started — an empty stage is a " +
-        "finding too. Your note says what is wrong AND what it should say, because the designers " +
-        "act on a correction exactly as it is written. You picked the right stage, or chose the " +
-        "report as a whole on purpose. You read the suggestions already on the record, so you are " +
-        "not asking again for something a colleague already asked for. You pressed the button you " +
-        "meant — filing a suggestion leaves the report where it is, and only sending it back puts " +
-        "it on the designers' desks. You checked whether a value that looks wrong is a copy taken " +
-        "when the stage was saved, because the record it came from may have been corrected since " +
-        "without the stage changing. And if you wrote without signal, look at the panel once you " +
-        "are back online: a note the report has moved on from waits there with the reason, unsent.",
+    body = "Read every stage, including empty ones. Say what's wrong and what it should say. Pick the right stage. Check existing suggestions first. Choose the right button.",
 )
 
 /**

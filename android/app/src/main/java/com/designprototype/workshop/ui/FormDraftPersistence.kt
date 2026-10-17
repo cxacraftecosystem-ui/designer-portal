@@ -231,8 +231,7 @@ fun FormDraftRestoredNote(handle: FormDraftHandle) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            "Restored what you entered before the app closed (${readableDraftStamp(at)}). It has not been " +
-                "saved yet.",
+            "Restored your unsaved entry (${readableDraftStamp(at)}).",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 12.sp,
             modifier = Modifier.weight(1f),

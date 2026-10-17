@@ -338,7 +338,7 @@ class DwAsrModelTest {
          */
         val hindiInstalled = DwRecognitionSupport(installedOnDevice = listOf("hi-IN", "en-IN", "en-GB"))
         assertEquals(
-            "Adds nothing on this phone: Hindi already works offline through Android's own pack.",
+            "Adds nothing: Hindi already works offline.",
             dwAsrModelWhatItBuysSentence(labels, hindiInstalled, plans = listOf(hindiOnly)),
         )
     }
@@ -350,7 +350,7 @@ class DwAsrModelTest {
         val bothInstalled = DwRecognitionSupport(installedOnDevice = listOf("hi-IN", "bn-IN"))
         val twoLanguages = hindiOnly.copy(languages = listOf("hi-IN", "bn-IN"))
         assertEquals(
-            "Adds nothing on this phone: Hindi, Bengali already work offline through Android's own packs.",
+            "Adds nothing: Hindi, Bengali already work offline.",
             dwAsrModelWhatItBuysSentence(labels, bothInstalled, plans = listOf(twoLanguages)),
         )
     }
@@ -391,7 +391,7 @@ class DwAsrModelTest {
             plans = listOf(servesNothingOfOurs),
         )
         assertEquals(
-            "Serves none of this app's dictation languages, so it would add nothing here.",
+            "Adds no languages this app uses.",
             sentence,
         )
         // AND AN EMPTY CATALOGUE IS A DIFFERENT FACT FROM A MODEL THAT COVERS NOTHING. Collapsing them

@@ -477,8 +477,7 @@ fun SketchesAndPrototypesScreen(
             // workshops never reads a sentence about a ceiling they cannot reach.
             Text(
                 // A pointer to where the rest are, not a sentence about a ceiling (UX audit DA-39).
-                "$truncated more workshop${if (truncated == 1) " is" else "s are"} in Design workshops; " +
-                    "open one there to reach its sketch and prototype stages.",
+                "$truncated more in Design workshops.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp
@@ -580,7 +579,7 @@ private fun SketchesAccessRefusal(roleLabel: String) {
             lineHeight = 18.sp,
         )
         Text(
-            "You are signed in as $roleLabel. An administrator can give you designer access.",
+            "You're signed in as $roleLabel. Ask an admin for designer access.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
         )
@@ -589,8 +588,7 @@ private fun SketchesAccessRefusal(roleLabel: String) {
 
 /** Who this screen is for, said in place of the picker to every other account. */
 internal const val DW_SKETCH_CHOOSER_DESIGNERS_ONLY: String =
-    "Sketches and prototypes are added and rated by a workshop's designers, so this screen is open " +
-        "to designers, admins and the master admin."
+    "For designers and admins."
 
 /**
  * **WHAT THIS SCREEN IS FOR, IN THE FIRST PARAGRAPH A DESIGNER READS — and it named the wrong place.**
@@ -629,11 +627,7 @@ internal const val DW_SKETCH_CHOOSER_DESIGNERS_ONLY: String =
  * screen may put an act this tab mounts a panel for somewhere else.
  */
 internal const val DW_SKETCH_CHOOSER_SUBTITLE: String =
-    "Pick a workshop, then add its sketches and prototypes under Upload, or see how its peer " +
-        "round has ranked them under Review. Upload is also where a photograph is traced into line " +
-        "art, straightened into a plate or measured against. Naming a piece, its caption, its stage " +
-        "log and typing a dimension in by hand are on the workshop's own sketch and prototype " +
-        "stages, which both tabs open."
+    "Pick a workshop, then add pieces under Upload — trace, straighten or measure photos there — or see rankings under Review."
 
 /*
   ══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -659,8 +653,7 @@ internal const val DW_SKETCH_CHOOSER_SUBTITLE: String =
  * any other route it is an errand invented out of a failed request.
  */
 internal const val DW_SKETCH_CHOOSER_NO_WORKSHOPS: String =
-    "You are not on any design workshop yet. Once an administrator adds you to one, its sketch and " +
-        "prototype stages open from here."
+    "You're not on a workshop yet. Ask an administrator to add you."
 
 /**
  * COULD NOT ASK, with no signal — `isConnectionFailure`'s half of the split.
@@ -670,11 +663,11 @@ internal const val DW_SKETCH_CHOOSER_NO_WORKSHOPS: String =
  * workshops" and "I could not find out" call for completely different next moves.
  */
 internal const val DW_SKETCH_CHOOSER_OFFLINE: String =
-    "No connection, so your design workshops couldn't be loaded. Try again."
+    "No connection — couldn't load your workshops. Try again."
 
 /** COULD NOT ASK, and the repository said why. The fallback for when it did not. */
 internal const val DW_SKETCH_CHOOSER_REFUSED: String =
-    "Your design workshops could not be listed. Try again in a moment."
+    "Couldn't list your workshops. Try again."
 
 /**
  * WHAT A FAILED LIST COSTS, which is nothing, said under both failure sentences.
@@ -704,9 +697,7 @@ internal const val DW_SKETCH_CHOOSER_REFUSED: String =
  * there — which is how sketch work was reached before this screen existed at all.
  */
 internal const val DW_SKETCH_CHOOSER_NOTHING_LOST: String =
-    "Nothing is lost: a workshop has to be chosen before anything here can be added or attached, " +
-        "so nothing on this phone has changed. Design workshops still lists what is stored on this " +
-        "phone, and the sketch and prototype stages open from a workshop opened there."
+    "Nothing is lost: a workshop has to be chosen before anything changes. Design workshops still lists what's on this phone."
 
 /**
  * WHY THE PICKER FILLED ITSELF IN WHEN THE SERVER HAD NO ANSWER.
@@ -719,8 +710,7 @@ internal const val DW_SKETCH_CHOOSER_NOTHING_LOST: String =
  * they were recently added to a workshop on the strength of a request that never answered.
  */
 internal const val DW_SKETCH_CHOOSER_FALLBACK_PREFILL: String =
-    "Filled in with your most recently created design workshop, because the one you last worked " +
-        "on could not be looked up. Change it if this is not the one."
+    "Filled with your latest workshop, because your last one couldn't be found. Change it if needed."
 
 /**
  * WHY THE TABS ARE OFF WHILE NO WORKSHOP IS CHOSEN.
@@ -731,8 +721,7 @@ internal const val DW_SKETCH_CHOOSER_FALLBACK_PREFILL: String =
  * parameter is a sentence rather than a boolean.
  */
 internal const val DW_SKETCH_CHOOSER_PICK_FIRST: String =
-    "Choose a workshop above and its Upload and Review tabs open here. Both are about one workshop " +
-        "at a time, because a sketch belongs to the workshop that made it."
+    "Choose a workshop above."
 
 /*
   ══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -834,11 +823,7 @@ internal const val DW_SKETCH_CHOOSER_PICK_FIRST: String =
  * piece.
  */
 internal const val DW_PROTOTYPE_3D_IN_THE_REPORT: String =
-    "On stage 13 a prototype takes a “3D model” file and a “360° capture”. The 3D model can be " +
-        "turned on its stage, here and on the web. The report places the 360° capture's photographs " +
-        "on the page and lists the 3D model as “1 3D model attached”, and the file stays with the " +
-        "record for anyone to download. The photographs are what an officer sees of the piece in the " +
-        "report, so photograph the piece as well."
+    "Stage 13 takes a 3D model and a 360° capture. The report shows the capture's photos and lists “1 3D model attached”, so photograph the piece as well."
 
 /**
  * HOW TO SHOOT A TURN THAT IS WORTH PRINTING. `PrototypeModelField.tsx`'s second paragraph, verbatim.
@@ -855,9 +840,7 @@ internal const val DW_PROTOTYPE_3D_IN_THE_REPORT: String =
  * the fact, and a test that pins the fact must not be pinning the advice.
  */
 internal const val DW_TURNTABLE_CAPTURE_ADVICE: String =
-    "Stand the piece still and move around it, one photograph every 30° for 12 frames, or every 15° " +
-        "for 24 — enough that a reviewer can read the form rather than guess it. Keep the light and " +
-        "the background the same for all of them."
+    "Walk around the piece: a photo every 30° (12) or 15° (24), same light and background."
 
 /**
  * WHICH MODEL FILES TRAVEL — the one accept list a prototype has and a sketch does not.
@@ -891,9 +874,7 @@ internal const val DW_TURNTABLE_CAPTURE_ADVICE: String =
  * the first, and it is here.
  */
 internal const val DW_PROTOTYPE_MODEL_FORMATS: String =
-    "The “3D model” box takes GLB, glTF, STL, OBJ, PLY, 3MF, FBX or USDZ. GLB travels best: it is " +
-        "one self-contained file, while an OBJ comes as a mesh, a separate .mtl and a folder of " +
-        "textures, and this box holds one file."
+    "GLB, glTF, STL, OBJ, PLY, 3MF, FBX or USDZ. GLB works best (one file)."
 
 /**
  * How many workshops this screen asks for.

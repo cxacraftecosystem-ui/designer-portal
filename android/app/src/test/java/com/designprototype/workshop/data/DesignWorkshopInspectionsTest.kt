@@ -246,11 +246,11 @@ class DesignWorkshopInspectionsTest {
         // Silence is a real answer and the common one: a complete list has nothing to explain.
         assertNull(dwInspectorOfferNotice(DwEligibleInspectors(users = listOf(eligible("u-a")))))
         assertEquals(
-            "Too many accounts to show them all — search a name or email to reach the rest.",
+            "Too many to list — search by name or email.",
             dwInspectorOfferNotice(DwEligibleInspectors(truncated = true))
         )
         assertEquals(
-            "Too many matches to show them all — narrow the search.",
+            "Too many matches — narrow the search.",
             dwInspectorOfferNotice(DwEligibleInspectors(truncated = true, search = "sharma"))
         )
         // NOT "No Inspector / Reviewer account …" since 2026-10-09: the server offers admin accounts
@@ -273,7 +273,7 @@ class DesignWorkshopInspectionsTest {
         val cutAndEmpty = DwEligibleInspectors(truncated = true)
         assertEquals(
             "an unsearched cut must advise searching, not report an unreachable cut",
-            "Too many accounts to show them all — search a name or email to reach the rest.",
+            "Too many to list — search by name or email.",
             dwInspectorOfferNotice(cutAndEmpty)
         )
         assertTrue(

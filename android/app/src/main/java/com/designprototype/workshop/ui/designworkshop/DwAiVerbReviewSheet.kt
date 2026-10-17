@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.AppToggle
+import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -159,8 +160,7 @@ internal fun DwAiVerbReviewSheet(
                 */
                 Text(
                     if (result.acceptanceRequired && !result.accepted) {
-                        "Nothing has been put in any document yet. Read it, then decide whether it " +
-                            "stands in your name."
+                        "Nothing has been put in any document yet. Read it, then decide."
                     } else {
                         // Unreachable through these five routes today; drawn from the flags rather
                         // than from a constant so that a server which one day answers differently is
@@ -183,12 +183,7 @@ internal fun DwAiVerbReviewSheet(
                       exactly what this feature exists to prevent.
                     */
                     DwVerbCaution(
-                        "This passage was written by a machine from your short note, which is " +
-                            "quoted below as its source. Anything in it that is not in that note — " +
-                            "a detail, a reason, a connection between two things — was supplied by " +
-                            "the model and was not recorded in the field. Treat the note as the " +
-                            "record and this as a reading of it, and check any specific claim " +
-                            "against the workshop's own material before quoting it."
+                        "Machine-written from your note (quoted below). Anything not in the note was supplied by the model — check it before quoting."
                     )
                 }
 
@@ -206,9 +201,7 @@ internal fun DwAiVerbReviewSheet(
                     DwVerbSection("What was sent") { DwVerbPassage(evidence) }
                 } else if (layer.source?.kind == "MEDIA") {
                     Text(
-                        "Made from a file attached to this workshop. Check the sentence against the " +
-                            "photograph or the recording itself, which is the evidence it stands on " +
-                            "— it is on the stage this file is attached to.",
+                        "Generated from an attached file. Check it against the original.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
@@ -233,11 +226,7 @@ internal fun DwAiVerbReviewSheet(
                           colleague with a viewer grant.
                         */
                         layer.textWithheld -> Text(
-                            "You cannot read the recording this layer was made from, so its words " +
-                                "are not shown here and you cannot accept it: an acceptance says a " +
-                                "person read this text and stands behind it, and the report prints " +
-                                "their name beside it. Ask whoever uploaded the recording for " +
-                                "access to their media, or ask them to accept it themselves.",
+                            "You can't access the source recording, so you can't view or accept this. Ask its uploader.",
                             color = MaterialTheme.field.warning,
                             fontSize = 12.sp,
                             lineHeight = 17.sp,
@@ -246,8 +235,7 @@ internal fun DwAiVerbReviewSheet(
                         body.isNotEmpty() -> DwVerbPassage(body)
 
                         else -> Text(
-                            "This layer carries no prose of its own — its content is the cue list " +
-                                "below.",
+                            "No text — see the cues below.",
                             color = MaterialTheme.field.muted,
                             fontSize = 12.sp,
                         )
@@ -298,8 +286,7 @@ internal fun DwAiVerbReviewSheet(
                         // not a guess: on a pre-Q handset that refused the storage permission it is
                         // app-private storage rather than Downloads, and a sentence that named
                         // Downloads either way would send a designer looking in the wrong folder.
-                        "Saved to $it. Play it against the recording before deciding — saving " +
-                            "changes nothing and accepts nothing.",
+                        "Saved to $it. Saving doesn't accept it.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
@@ -353,30 +340,34 @@ internal fun DwAiVerbReviewSheet(
         },
         dismissButton = {
             Column(horizontalAlignment = Alignment.End) {
-                TextButton(enabled = busy == null, onClick = onClose) {
-                    // THE HONEST THIRD ANSWER. The layer stays on the server, listed and inert, and
-                    // no report reads it — so leaving is not the same as declining and must not be
-                    // worded as though it were.
-                    Text("Leave it for now")
+                ActionRow {
+                    TextButton(enabled = busy == null, onClick = onClose) {
+                        // THE HONEST THIRD ANSWER. The layer stays on the server, listed and inert, and
+                        // no report reads it — so leaving is not the same as declining and must not be
+                        // worded as though it were.
+                        Text("Leave it for now")
+                    }
                 }
-                TextButton(
-                    enabled = busy == null,
-                    onClick = {
-                        busy = "DECLINE"
-                        problem = null
-                        scope.launch {
-                            runCatching {
-                                repository.declineDesignWorkshopAiLayer(serverWorkshopId, layer.id)
-                            }.onSuccess { onDeclined() }
-                                .onFailure { problem = dwAiVerbProblem(it) }
-                            busy = null
-                        }
-                    },
-                ) {
-                    Text(
-                        if (busy == "DECLINE") "Declining…" else "Decline it",
-                        color = MaterialTheme.field.warning,
-                    )
+                ActionRow {
+                    TextButton(
+                        enabled = busy == null,
+                        onClick = {
+                            busy = "DECLINE"
+                            problem = null
+                            scope.launch {
+                                runCatching {
+                                    repository.declineDesignWorkshopAiLayer(serverWorkshopId, layer.id)
+                                }.onSuccess { onDeclined() }
+                                    .onFailure { problem = dwAiVerbProblem(it) }
+                                busy = null
+                            }
+                        },
+                    ) {
+                        Text(
+                            if (busy == "DECLINE") "Declining…" else "Decline it",
+                            color = MaterialTheme.field.warning,
+                        )
+                    }
                 }
             }
         },
@@ -470,8 +461,7 @@ private fun DwVerbCueList(
             // for a payload that is not a cue list at all, which is a different fact from a cue list
             // with nothing in it, and only one of the two is something a designer can act on.
             Text(
-                "Update the app to see these cues here. You can still save the subtitle file " +
-                    "below.",
+                "Update the app to see cues. You can still save the file below.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp,
                 lineHeight = 17.sp,
@@ -529,8 +519,7 @@ private fun DwVerbCueList(
             */
             if (cues.cues.size > DW_CUE_PREVIEW_LIMIT) {
                 Text(
-                    "The first $DW_CUE_PREVIEW_LIMIT cues are shown. The file below carries all " +
-                        "${cues.count}.",
+                    "First $DW_CUE_PREVIEW_LIMIT of ${cues.count} cues shown; the file has all.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
@@ -540,13 +529,11 @@ private fun DwVerbCueList(
 
         if (cues.hasSpeakers) {
             AppToggle(
-                label = "Put the speaker label in front of each line",
+                label = "Label speakers on each line",
                 checked = speakers,
                 onCheckedChange = onSpeakers,
                 enabled = !busy,
-                description = "The labels are the engine's own guess — it can merge two quiet voices or " +
-                    "split one person who moved away from the microphone. A .vtt file carries that " +
-                    "caution inside it; a .srt file carries the labels alone.",
+                description = "Labels are a best guess.",
             )
         }
 
@@ -572,7 +559,7 @@ private fun DwVerbCueList(
           video.
         */
         Text(
-            "You can save these and watch them against the recording before deciding.",
+            "Save and check against the recording before deciding.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -636,9 +623,7 @@ private fun DwVerbProvenance(layer: DwAiLayerDto) {
                 )
             }
             Text(
-                "Accepting records your name and the moment against this " +
-                    "${dwLayerKindNoun(layer.kind)}. Until somebody does, it stays with this " +
-                    "workshop and no report will print it.",
+                "Accepting records your name. Until then, no report prints this ${dwLayerKindNoun(layer.kind)}.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
