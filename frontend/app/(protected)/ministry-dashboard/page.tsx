@@ -64,6 +64,7 @@ import { Check, Download, LayoutDashboard, Lock, RefreshCw, ShieldCheck, UserCog
 import { useAuth } from "@/components/AuthProvider";
 import { MegaCard } from "@/components/dashboard/MegaCard";
 import { useMegaCards } from "@/components/dashboard/useMegaCards";
+import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
@@ -99,7 +100,8 @@ import {
   type RegisterSummary
 } from "@/lib/ministryDashboard";
 import { isUnreachable } from "@/lib/offline";
-import { canSeeMinistryDashboard, roleLabel } from "@/lib/permissions";
+import { canApproveDesignWorkshops, canSeeMinistryDashboard, roleLabel } from "@/lib/permissions";
+import { registerRowHref } from "@/lib/reviewAids";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 20;
@@ -851,9 +853,12 @@ export default function MinistryDashboardPage() {
           // visible at the element it governs.
           <div className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-purple-700" tabIndex={0} role="region" aria-label="Ministry dashboard table" aria-live="off">
             {dataKind === "design" ? (
-              <DesignTable rows={(data as DesignRegisterPage).items} />
+              <DesignTable
+                rows={(data as DesignRegisterPage).items}
+                hrefFor={(id) => registerRowHref("design", id, { approves: canApproveDesignWorkshops(user) })}
+              />
             ) : (
-              <OtherTable rows={(data as OtherRegisterPage).items} />
+              <OtherTable rows={(data as OtherRegisterPage).items} hrefFor={(id) => registerRowHref("other", id, { approves: false })} />
             )}
           </div>
         )}
@@ -1095,7 +1100,8 @@ function PersonRow({ kind, person }: { kind: PeopleKind; person: RegisterPerson 
  * The two tables
  * ──────────────────────────────────────────────────────────────────────────── */
 
-function DesignTable({ rows }: { rows: DesignRegisterPage["items"] }) {
+/** A17: a click anywhere on a row opens the read-only view this reader may see. */
+function DesignTable({ rows, hrefFor }: { rows: DesignRegisterPage["items"]; hrefFor: (id: string) => string }) {
   return (
     <table className="w-full min-w-[1100px] text-left text-sm">
       <thead className="bg-surface-50 text-xs uppercase text-ink-500">
@@ -1112,9 +1118,11 @@ function DesignTable({ rows }: { rows: DesignRegisterPage["items"] }) {
       </thead>
       <tbody className="divide-y divide-line-200">
         {rows.map((row) => (
-          <tr key={row.id} className="hover:bg-surface-50">
+          <OpenableRow key={row.id} href={hrefFor(row.id)}>
             <td className="px-4 py-3">
-              <span className="block font-medium text-ink-900">{row.title?.trim() || "Untitled design workshop"}</span>
+              <OpenableRowLink className="block" href={hrefFor(row.id)}>
+                {row.title?.trim() || "Untitled design workshop"}
+              </OpenableRowLink>
               {/* The code is denormalised from stage 1 and is null until that stage has been saved —
                   so its absence means "stage 1 is not done", not "missing". An officer reads that as
                   a finding rather than as a gap in this screen; `/officers/monitored` says the same. */}
@@ -1161,14 +1169,14 @@ function DesignTable({ rows }: { rows: DesignRegisterPage["items"] }) {
               <ProgressCell progress={row.progress} />
             </td>
             <td className="px-4 py-3 text-ink-700">{row.updatedAt ? formatDateTime(row.updatedAt) : "—"}</td>
-          </tr>
+          </OpenableRow>
         ))}
       </tbody>
     </table>
   );
 }
 
-function OtherTable({ rows }: { rows: OtherRegisterPage["items"] }) {
+function OtherTable({ rows, hrefFor }: { rows: OtherRegisterPage["items"]; hrefFor: (id: string) => string }) {
   return (
     <table className="w-full min-w-[840px] text-left text-sm">
       <thead className="bg-surface-50 text-xs uppercase text-ink-500">
@@ -1184,8 +1192,10 @@ function OtherTable({ rows }: { rows: OtherRegisterPage["items"] }) {
       </thead>
       <tbody className="divide-y divide-line-200">
         {rows.map((row) => (
-          <tr key={row.id} className="hover:bg-surface-50">
-            <td className="px-4 py-3 font-medium text-ink-900">{row.title?.trim() || "Untitled workshop"}</td>
+          <OpenableRow key={row.id} href={hrefFor(row.id)}>
+            <td className="px-4 py-3">
+              <OpenableRowLink href={hrefFor(row.id)}>{row.title?.trim() || "Untitled workshop"}</OpenableRowLink>
+            </td>
             <td className="px-4 py-3 text-ink-700">
               {row.workshopType === "DESIGN_PROTOTYPE" ? "Design & prototype" : "Other"}
             </td>
@@ -1199,7 +1209,7 @@ function OtherTable({ rows }: { rows: OtherRegisterPage["items"] }) {
               <StatusBadge status={row.status} />
             </td>
             <td className="px-4 py-3 text-ink-700">{row.createdAt ? formatDateTime(row.createdAt) : "—"}</td>
-          </tr>
+          </OpenableRow>
         ))}
       </tbody>
     </table>

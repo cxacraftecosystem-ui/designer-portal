@@ -54,6 +54,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FileSearch, Lock } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { QUEUE_SORT_OPTIONS, QueueReadiness } from "@/components/designworkshop/review/QueueReadiness";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
@@ -63,25 +64,27 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { ApiError, apiFetch } from "@/lib/api";
 import {
   ELIGIBLE_INSPECTOR_SEARCH_MAX,
+  INSPECTION_GROUPS,
   INSPECTION_ROUND_OPTIONS,
   INSPECTION_STATUS_OPTIONS,
   inspectableFilterCount,
   inspectionEmptyState,
   inspectionRefusalMeansNoPosts,
   listInspectableDesignWorkshops,
-  type DwInspectableListParams
+  type DwInspectableListParams,
+  type DwInspectablePage,
+  type DwInspectionGroup
 } from "@/lib/designWorkshopInspections";
 import {
   fetchStageRegistry,
   peekStageRegistry,
   workshopKindOptions,
-  type DwRegistry,
-  type DwSummary
+  type DwRegistry
 } from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
-import type { AddressReference, PageResult } from "@/lib/types";
+import type { AddressReference } from "@/lib/types";
 import { CalendarField } from "@/components/ui/CalendarField";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
@@ -118,7 +121,10 @@ export default function DesignWorkshopInspectionsPage() {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
-  const [data, setData] = useState<PageResult<DwSummary> | null>(null);
+  const [data, setData] = useState<DwInspectablePage | null>(null);
+  /** B4: Android's three groups, and the order. "Waiting for you" first, as on the handset. */
+  const [group, setGroup] = useState<DwInspectionGroup | "">("awaiting");
+  const [sort, setSort] = useState("");
   const [error, setError] = useState<string | null>(null);
   /* THE FILTERS. Empty string means "any", by absence — nothing is sent for it. */
   const [status, setStatus] = useState("");
@@ -137,9 +143,11 @@ export default function DesignWorkshopInspectionsPage() {
       state: stateName || null,
       workshopKind: kind || null,
       dateFrom: dateFrom || null,
-      dateTo: dateTo || null
+      dateTo: dateTo || null,
+      group: group || null,
+      sort: sort || null
     }),
-    [status, round, stateName, kind, dateFrom, dateTo]
+    [status, round, stateName, kind, dateFrom, dateTo, group, sort]
   );
   const activeFilters = inspectableFilterCount(filters);
   const kindChoices = useMemo(() => workshopKindOptions(registry), [registry]);
@@ -283,7 +291,40 @@ export default function DesignWorkshopInspectionsPage() {
         />
       </div>
 
+      {/* Segmented group buttons — a choice between named lists, not an action row. */}
+      <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label="Which workshops to list">
+        {INSPECTION_GROUPS.map((candidate) => {
+          const count = candidate.value ? data?.groupCounts?.[candidate.value] : undefined;
+          return (
+            <button
+              key={candidate.value || "all"}
+              type="button"
+              aria-pressed={candidate.value === group}
+              className={candidate.value === group ? "field-button" : "field-button-secondary"}
+              onClick={() => {
+                if (candidate.value === group) return;
+                setGroup(candidate.value);
+                setPage(1);
+              }}
+            >
+              {candidate.label}
+              {typeof count === "number" ? ` · ${count}` : ""}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3" role="group" aria-label="Filter the workshops to inspect">
+        <Dropdown
+          value={sort}
+          onChange={(next) => {
+            setSort(next);
+            setPage(1);
+          }}
+          options={[...QUEUE_SORT_OPTIONS]}
+          ariaLabel="Order"
+          advanceOnSelect={false}
+        />
         <Dropdown
           value={status}
           onChange={(next) => {
@@ -378,7 +419,11 @@ export default function DesignWorkshopInspectionsPage() {
           <div className="p-4 text-sm text-ink-700">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="p-4">
-            <EmptyState {...inspectionEmptyState(Boolean(applied) || activeFilters > 0)} />
+            {group && !applied && activeFilters === 0 && (data.groupCounts?.awaiting ?? 0) + (data.groupCounts?.withDesigners ?? 0) + (data.groupCounts?.other ?? 0) > 0 ? (
+              <EmptyState title="Nothing here" body="Try another list above." />
+            ) : (
+              <EmptyState {...inspectionEmptyState(Boolean(applied) || activeFilters > 0)} />
+            )}
           </div>
         ) : (
           <ul className="divide-y divide-line-200">
@@ -388,7 +433,7 @@ export default function DesignWorkshopInspectionsPage() {
                   className="flex flex-col gap-2 px-4 py-3 transition hover:bg-surface-50 sm:flex-row sm:items-center sm:gap-4"
                   href={`/design-workshop-inspections/${workshop.id}`}
                 >
-                  <span className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-ink-900">
                       {workshop.title?.trim() || "Untitled design workshop"}
                     </span>
@@ -400,7 +445,8 @@ export default function DesignWorkshopInspectionsPage() {
                       {workshop.craftName ? ` · ${workshop.craftName}` : ""}
                       {workshop.clusterName ? ` · ${workshop.clusterName}` : ""}
                     </span>
-                  </span>
+                    <QueueReadiness readiness={workshop.readiness} row={workshop} />
+                  </div>
                   <span className="shrink-0 text-xs text-ink-500">
                     {formatDate(workshop.startDate)}
                     {workshop.endDate ? ` – ${formatDate(workshop.endDate)}` : ""}

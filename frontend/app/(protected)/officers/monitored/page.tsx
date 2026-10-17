@@ -37,13 +37,16 @@ import { useEffect, useRef, useState } from "react";
 import { Binoculars, Lock } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { QUEUE_SORT_OPTIONS, QueueReadiness } from "@/components/designworkshop/review/QueueReadiness";
 import { EmptyState } from "@/components/EmptyState";
+import { Dropdown } from "@/components/ui/Dropdown";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ApiError } from "@/lib/api";
 import type { DwSummary } from "@/lib/designWorkshops";
+import type { DwReadiness } from "@/lib/reviewAids";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canReadWorkshopOversight, roleLabel } from "@/lib/permissions";
@@ -77,7 +80,8 @@ export default function WorkshopsIMonitorPage() {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
-  const [data, setData] = useState<PageResult<DwSummary> | null>(null);
+  const [data, setData] = useState<PageResult<DwSummary & { readiness?: DwReadiness | null }> | null>(null);
+  const [sort, setSort] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   /** A generation counter rather than an abort: `apiFetch` takes no `AbortSignal`. */
@@ -101,7 +105,7 @@ export default function WorkshopsIMonitorPage() {
     if (loading || !canReadWorkshopOversight(user)) return;
     const current = generation.current + 1;
     generation.current = current;
-    listOverseenWorkshops({ page, pageSize: PAGE_SIZE, search: applied || undefined })
+    listOverseenWorkshops({ page, pageSize: PAGE_SIZE, search: applied || undefined, sort: sort || undefined })
       .then((result) => {
         if (generation.current !== current) return;
         setData(result);
@@ -120,7 +124,7 @@ export default function WorkshopsIMonitorPage() {
         // assigned to me", which is the one thing this screen must never say by accident.
         setError(describeFailure(err));
       });
-  }, [applied, page, loading, user]);
+  }, [applied, page, loading, user, sort]);
 
   if (!loading && !canReadWorkshopOversight(user)) {
     return (
@@ -167,7 +171,7 @@ export default function WorkshopsIMonitorPage() {
     <div>
       <PageHeader
         title="Workshops I monitor"
-        description="The design & prototype workshops you have been named on as Assistant Director or Regional Director. You can read every stage of one and change none of it."
+        description="Workshops you're named on as Assistant or Regional Director. Read-only; you can file notes."
         icon={<Binoculars className="h-5 w-5" aria-hidden />}
       />
 
@@ -189,6 +193,18 @@ export default function WorkshopsIMonitorPage() {
           value={query}
         />
       </div>
+      <div className="mb-4 max-w-sm">
+        <Dropdown
+          value={sort}
+          onChange={(next) => {
+            setSort(next);
+            setPage(1);
+          }}
+          options={[...QUEUE_SORT_OPTIONS]}
+          ariaLabel="Order"
+          advanceOnSelect={false}
+        />
+      </div>
 
       <section className="panel overflow-hidden">
         {data === null ? (
@@ -205,7 +221,7 @@ export default function WorkshopsIMonitorPage() {
                   className="flex flex-col gap-2 px-4 py-3 transition hover:bg-surface-50 sm:flex-row sm:items-center sm:gap-4"
                   href={`/officers/monitored/${workshop.id}`}
                 >
-                  <span className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-ink-900">
                       {workshop.title?.trim() || "Untitled design workshop"}
                     </span>
@@ -217,7 +233,8 @@ export default function WorkshopsIMonitorPage() {
                       {workshop.craftName ? ` · ${workshop.craftName}` : ""}
                       {workshop.clusterName ? ` · ${workshop.clusterName}` : ""}
                     </span>
-                  </span>
+                    <QueueReadiness readiness={workshop.readiness} row={workshop} />
+                  </div>
                   <span className="shrink-0 text-xs text-ink-500">
                     {formatDate(workshop.startDate)}
                     {workshop.endDate ? ` – ${formatDate(workshop.endDate)}` : ""}

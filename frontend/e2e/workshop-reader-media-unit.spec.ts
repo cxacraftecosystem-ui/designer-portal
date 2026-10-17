@@ -170,13 +170,20 @@ test.describe("F5 — a workshop's files, read-only", () => {
     const source = read("components/designworkshop/ReaderWorkshopMedia.tsx");
     expect(source).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/);
     expect(source).not.toMatch(/<input[^>]*type=["']file/);
+    // Since 2026-10-17 the three review screens draw their stages through ONE shared reader, which
+    // holds the media and custom-answer components; the approval screen shows photographs too (A23).
+    const reader = read("components/designworkshop/review/ReviewReadStage.tsx");
+    expect(reader).toContain("ReaderMediaValue");
+    expect(reader).toContain("ReaderCustomAnswers");
+    expect(reader).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/);
     for (const page of [
       "app/(protected)/design-workshop-inspections/[id]/page.tsx",
-      "app/(protected)/officers/monitored/[id]/page.tsx"
+      "app/(protected)/officers/monitored/[id]/page.tsx",
+      "app/(protected)/design-workshop-approvals/[id]/page.tsx"
     ]) {
       const text = read(page);
-      expect(text, page).toContain("ReaderMediaValue");
-      expect(text, page).toContain("ReaderCustomAnswers");
+      expect(text, page).toContain("<ReviewReadStage");
+      expect(text, page).toContain("ReaderMediaProvider");
       expect(text, page).not.toMatch(/read does not carry\s+photographs/);
       expect(text, page).not.toMatch(/route an (inspection|oversight read) does not reach/);
     }

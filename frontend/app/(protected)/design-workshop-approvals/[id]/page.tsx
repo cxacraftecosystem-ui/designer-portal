@@ -1,43 +1,53 @@
 "use client";
 
 /**
- * ONE REPORT, READ FOR A SIGN-OFF — every stage as its designers recorded it, what the inspecting
- * officers asked for, every decision taken on it, and the Ministry Admin's own: approve, send back
- * or withdraw an approval, hand on to the office.
+ * ONE REPORT, READ FOR A SIGN-OFF — every stage as its designers recorded it, with its photographs,
+ * what the officers asked for, every decision taken on it, and the approving authority's own:
+ * approve, send back or withdraw an approval, hand on to the office.
  *
  * ── THE BUTTONS ARE THE SERVER'S ANSWER, DRAWN ──────────────────────────────────────────────────
  *
  * Which decisions this report offers, whether THIS reader may take each, and the sentence a refused
  * one shows all come from `approvalActions` (`lib/designWorkshopApprovals.ts`) over the read's
- * `mayDecide`, `decisionRefusal` and `refusals` — because who may decide turns on rows no client
- * can see (designer access, written stages, an inspection post). A refused decision is drawn
- * DISABLED WITH ITS SENTENCE rather than hidden, so a Ministry Admin who worked on a workshop is told
- * why its report is not theirs to sign off instead of looking for a button that is not there.
+ * `mayDecide`, `decisionRefusal` and `refusals` — who may decide turns on rows no client can see. A
+ * refused decision is drawn DISABLED WITH ITS SENTENCE rather than hidden.
  *
- * ── EVERY DECISION IS CONFIRMED, AND THE TEXT IT CARRIES IS TYPED FIRST ─────────────────────────
+ * ── THE REVIEW LAYOUT (A18, B2, C13, 2026-10-17) ────────────────────────────────────────────────
  *
- * Pressing a decision opens its own short form under the buttons — the optional approval note, the
- * mandatory reason for sending a report back, the office and the file for a hand-on — and the form's
- * own button opens the confirmation. What is typed survives a refusal: the box is cleared only when
- * the server has recorded the decision.
+ * A fixed stage menu with completeness dots, a fixed decision bar that preselects the stage in view,
+ * a Flag on every field that drafts a note into a tray, one "Send back with N notes", each note
+ * marked "Edited since" or "Untouched" (A19), each inspector's "Checked, no corrections" (C5), and a
+ * "Changed since round N" comparison against the copy kept at each hand-in. See
+ * `components/designworkshop/review/`.
  *
  * ── AN APPROVAL IS OF THE REPORT AS IT WAS READ ─────────────────────────────────────────────────
  *
  * Approve sends the read's `submissionRound` and `updatedAt` back. If the designers saved a stage
- * after this page read the report, the server refuses the approval with a sentence asking for a
- * reload — and this page offers the reload — rather than approving content nobody here looked at.
+ * after this page read the report, the server refuses with a sentence asking for a reload — and this
+ * page offers the reload — rather than approving content nobody here looked at.
  */
 
-import { Toggle } from "@/components/ui/Toggle";
 import { use, useEffect, useMemo, useState } from "react";
-import { Download, Loader2, Send, Stamp, Undo2 } from "lucide-react";
+import { CheckCircle2, Download, Loader2, MessageSquarePlus, Send, Stamp, Undo2 } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
-import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
+import { ReaderFilesPanel, ReaderMediaProvider, useReaderMedia } from "@/components/designworkshop/ReaderWorkshopMedia";
+import { NoteComposer, NoteRegister, NoteTray, useReviewTray } from "@/components/designworkshop/review/ReviewNotes";
+import { ReviewChip, ReviewReadStage, type FlagTarget } from "@/components/designworkshop/review/ReviewReadStage";
+import {
+  ReviewDecisionBar,
+  ReviewLayout,
+  RoundCompareControls,
+  useActiveStage,
+  useRoundCompare
+} from "@/components/designworkshop/review/ReviewWorkspace";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
+import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { refreshAwaitingApprovalCount } from "@/components/hooks/useAwaitingApprovalCount";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ActionGroup } from "@/components/ui/ActionGroup";
+import { Toggle } from "@/components/ui/Toggle";
 import { ApiError } from "@/lib/api";
 import {
   approvalActions,
@@ -58,30 +68,12 @@ import {
   type DwApprovalDetail,
   type DwApprovalVerb
 } from "@/lib/designWorkshopApprovals";
-import { inspectionFieldReading } from "@/lib/designWorkshopInspections";
-import {
-  dwFeedbackRounds,
-  fetchStageRegistry,
-  formFields,
-  isFilled,
-  overallPercent,
-  rowTitle,
-  saveBlobToDisk,
-  type DwEntity,
-  type DwEntryData,
-  type DwField,
-  type DwFieldStamp,
-  type DwRegistry,
-  type DwRow,
-  type DwStage,
-  type DwStageCompleteness,
-  type DwStageData
-} from "@/lib/designWorkshops";
+import { fetchStageRegistry, overallPercent, saveBlobToDisk, type DwRegistry, type DwStage } from "@/lib/designWorkshops";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canApproveDesignWorkshops } from "@/lib/permissions";
+import { reviseBody, sendBackLabel, type DwNoteDraft, type DwReviewNote } from "@/lib/reviewAids";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
-import { ActionGroup } from "@/components/ui/ActionGroup";
 
 function describeFailure(error: unknown): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
@@ -93,186 +85,32 @@ function describeFailure(error: unknown): string {
   return error.message;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The read: one field, one record, one stage
- * ──────────────────────────────────────────────────────────────────────────── */
-
-function ReadField({
-  registry,
-  entity,
-  field,
-  row,
-  stamp
-}: {
-  registry: DwRegistry;
-  entity: DwEntity;
-  field: DwField;
-  row: DwEntryData;
-  stamp?: DwFieldStamp | null;
-}) {
-  const reading = inspectionFieldReading(registry, entity, field, row);
-  if (reading.kind === "empty") return null;
-  return (
-    <div className="grid gap-0.5 py-2">
-      <span className="field-label">{field.label}</span>
-      {reading.kind === "media" ? (
-        <span className="text-sm text-ink-500">
-          {reading.count} file{reading.count === 1 ? "" : "s"}. Photos print in the report file below.
-        </span>
-      ) : (
-        <span className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{reading.text}</span>
-      )}
-      <FieldProvenance stamp={stamp} />
-    </div>
-  );
-}
-
-function ReadRecord({
-  registry,
-  entity,
-  row,
-  stamps
-}: {
-  registry: DwRegistry;
-  entity: DwEntity;
-  row: DwEntryData;
-  stamps: Record<string, DwFieldStamp> | undefined;
-}) {
-  const fields = formFields(entity);
-  const answered = fields.filter((field) => inspectionFieldReading(registry, entity, field, row).kind !== "empty");
-  const unanswered = fields.length - answered.length;
-  return (
-    <div className="grid divide-y divide-line-200">
-      {answered.map((field) => (
-        <ReadField
-          entity={entity}
-          field={field}
-          key={field.key}
-          registry={registry}
-          row={row}
-          stamp={stamps?.[field.key]}
-        />
-      ))}
-      {/* WHAT WAS LEFT OUT IS COUNTED: a read that drops empty boxes silently and a record that was
-          fully answered look identical, and before an approval the difference is the finding. */}
-      {unanswered > 0 ? (
-        <p className="pt-2 text-xs leading-5 text-ink-500">
-          {unanswered} of {fields.length} field{fields.length === 1 ? "" : "s"} here {unanswered === 1 ? "is" : "are"}{" "}
-          unanswered and {unanswered === 1 ? "is" : "are"} not listed above.
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-function ReadStage({
-  registry,
-  stage,
-  data,
-  score
-}: {
-  registry: DwRegistry;
-  stage: DwStage;
-  data: DwStageData | undefined;
-  /** The workshop-level score for this stage — `DwStageData.completeness` is empty on this read. */
-  score: DwStageCompleteness | undefined;
-}) {
-  const singleton: DwEntryData = data?.singleton ?? {};
-  const provenance = data?.provenance;
-  const customAnswers = Object.entries(data?.custom ?? {}).filter(([, value]) => isFilled(value)).length;
-  const collections = stage.entities.filter((entity) => entity.cardinality === "COLLECTION");
-  const singletons = stage.entities.filter((entity) => entity.cardinality !== "COLLECTION");
-  const nothingRecorded =
-    !data ||
-    (Object.keys(singleton).length === 0 &&
-      collections.every((entity) => (data.collections?.[entity.key] ?? []).length === 0) &&
-      customAnswers === 0);
-
-  return (
-    <section className="panel p-4" id={`stage-${stage.key}`}>
-      <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line-200 pb-3">
-        <h2 className="font-display text-lg font-bold text-ink-900">
-          {stage.number}. {stage.title}
-        </h2>
-        <span className="text-xs text-ink-500">
-          {score
-            ? score.isComplete
-              ? "Every required field answered"
-              : `${score.requiredFilled} of ${score.requiredTotal} required fields answered`
-            : "Nothing recorded"}
-          {stage.optionalStage ? " · this stage may be dropped" : ""}
-        </span>
-      </header>
-      {nothingRecorded ? (
-        <p className="pt-3 text-sm text-ink-500">
-          Nothing has been recorded on this stage.
-          {stage.optionalStage ? " (Optional stage.)" : ""}
-        </p>
-      ) : (
-        <div className="grid gap-4 pt-3">
-          {singletons.map((entity) => (
-            <div key={entity.key}>
-              {singletons.length > 1 || collections.length > 0 ? (
-                <h3 className="mb-1 text-sm font-medium text-ink-700">{entity.title}</h3>
-              ) : null}
-              <ReadRecord entity={entity} registry={registry} row={singleton} stamps={provenance?.singleton} />
-            </div>
-          ))}
-          {collections.map((entity) => {
-            const rows: DwRow[] = data?.collections?.[entity.key] ?? [];
-            if (rows.length === 0) return null;
-            return (
-              <div key={entity.key}>
-                <h3 className="mb-1 text-sm font-medium text-ink-700">
-                  {entity.title} · {rows.length} {rows.length === 1 ? "row" : "rows"}
-                </h3>
-                <div className="grid gap-3">
-                  {rows.map((row, index) => (
-                    <div
-                      className="rounded-md border border-line-200 bg-surface-50 p-3"
-                      key={row._entryId ?? row._clientKey ?? index}
-                    >
-                      <p className="mb-1 text-sm font-medium text-ink-900">{rowTitle(entity, row, index)}</p>
-                      <ReadRecord
-                        entity={entity}
-                        registry={registry}
-                        row={row}
-                        stamps={row._entryId ? provenance?.collections?.[entity.key]?.[row._entryId] : undefined}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {customAnswers > 0 ? (
-            <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-              {customAnswers} answer{customAnswers === 1 ? "" : "s"} to question{customAnswers === 1 ? "" : "s"} this
-              workshop&apos;s designer added to this stage {customAnswers === 1 ? "is" : "are"} recorded and printed in
-              the report file.
-            </p>
-          ) : null}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The decision
- * ──────────────────────────────────────────────────────────────────────────── */
-
 /** The forms a decision opens, and the one that is open. */
 type OpenForm = DwApprovalVerb | null;
+
+const DECISION_ICON = { approve: Stamp, handOn: Send, revise: Undo2 } as const;
 
 function DecisionPanel({
   detail,
   stages,
+  open,
+  setOpen,
+  reasonStage,
+  setReasonStage,
+  drafts,
+  onSent,
   onAnswer,
   onReload
 }: {
   detail: DwApprovalDetail;
   stages: DwStage[];
+  open: OpenForm;
+  setOpen: (next: OpenForm) => void;
+  reasonStage: string;
+  setReasonStage: (next: string) => void;
+  /** The tray: a send-back carries every drafted note. */
+  drafts: DwNoteDraft[];
+  onSent: () => void;
   onAnswer: (next: DwApprovalDetail) => void;
   onReload: () => void;
 }) {
@@ -281,7 +119,6 @@ function DecisionPanel({
   const reviseKind = reviseKindOf(detail);
   const pinnable = pinnableExport(detail);
 
-  const [open, setOpen] = useState<OpenForm>(null);
   const [busy, setBusy] = useState<DwApprovalVerb | "download" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   /** True when the refusal means the report moved since it was read — the reload is offered. */
@@ -290,11 +127,10 @@ function DecisionPanel({
 
   const [approveNote, setApproveNote] = useState("");
   const [reason, setReason] = useState("");
-  const [reasonStage, setReasonStage] = useState("");
   const [office, setOffice] = useState(detail.handOnDefaultTo?.trim() || DEFAULT_HANDED_ON_TO);
   const [handOnNote, setHandOnNote] = useState("");
   const [pinExport, setPinExport] = useState(true);
-  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [download, setDownload] = useState<{ text: string; reused: "DOCX" | "PDF" | null } | null>(null);
 
   function fail(err: unknown, what: string) {
     if (isUnreachable(err)) {
@@ -302,9 +138,8 @@ function DecisionPanel({
       setStale(false);
       return;
     }
-    const message = err instanceof Error && err.message.trim() ? err.message : "The repository did not say why.";
+    const message = err instanceof Error && err.message.trim() ? err.message : "Try again.";
     setProblem(`Nothing was ${what}: ${message}`);
-    // A 409 is the report having moved since this page read it — another decision, or its designers.
     setStale(err instanceof ApiError && err.status === 409);
   }
 
@@ -315,12 +150,8 @@ function DecisionPanel({
       confirmLabel: "Approve",
       body: (
         <>
-          <span className="block">
-            Approves round {detail.submissionRound ?? 0} as you read it. It is then locked unless withdrawn.
-          </span>
-          <span className="mt-2 block">
-            Handing it on to the office is a separate step.
-          </span>
+          <span className="block">Approves round {detail.submissionRound ?? 0} as you read it.</span>
+          <span className="mt-2 block">Handing it on to the office is a separate step.</span>
         </>
       ),
       note: "Recorded under your name. You can withdraw it later with a reason."
@@ -339,11 +170,7 @@ function DecisionPanel({
       onAnswer(answer);
       setApproveNote("");
       setOpen(null);
-      setOutcome(
-        answer.alreadyApproved
-          ? `Already approved. ${signOffLines(answer).join(" ")}`
-          : "Approved. Ready to hand on to the office."
-      );
+      setOutcome(answer.alreadyApproved ? `Already approved. ${signOffLines(answer).join(" ")}` : "Approved. Ready to hand on.");
       void refreshAwaitingApprovalCount();
     } catch (err) {
       fail(err, "approved");
@@ -355,12 +182,12 @@ function DecisionPanel({
   async function revise() {
     if (!reviseKind) return;
     const text = reason.trim();
-    if (!text) return;
+    if (!text && drafts.length === 0) return;
     const copy = REVISE_COPY[reviseKind];
     const agreed = await confirm({
       title: copy.title,
       tone: "warning",
-      confirmLabel: copy.confirm,
+      confirmLabel: drafts.length ? sendBackLabel(drafts.length) : copy.confirm,
       body: copy.body,
       note: "Recorded under your name. It can't be edited afterwards."
     });
@@ -370,11 +197,12 @@ function DecisionPanel({
     setStale(false);
     setOutcome(null);
     try {
-      const answer = await reviseReport(detail.id, { note: text, stageKey: reasonStage || null });
+      const answer = await reviseReport(detail.id, reviseBody(drafts, text, reasonStage || null));
       onAnswer(answer);
       setReason("");
       setReasonStage("");
       setOpen(null);
+      onSent();
       setOutcome(copy.done);
       void refreshAwaitingApprovalCount();
     } catch (err) {
@@ -394,12 +222,10 @@ function DecisionPanel({
       body: (
         <>
           <span className="block">
-            The approved report is recorded as handed on to {to}
-            {exportId ? ", as the file named below" : ""}. Nothing is sent from here — send the file yourself.
+            Recorded as handed on to {to}
+            {exportId ? ", as the file named below" : ""}. Send the file yourself.
           </span>
-          <span className="mt-2 block">
-            If the office sends it back, you can return it to its designers.
-          </span>
+          <span className="mt-2 block">If the office sends it back, you can return it to its designers.</span>
         </>
       ),
       note: "Recorded under your name."
@@ -423,22 +249,21 @@ function DecisionPanel({
     }
   }
 
-  async function download(format: "DOCX" | "PDF") {
+  async function downloadFile(format: "DOCX" | "PDF", fresh = false) {
     setBusy("download");
     setProblem(null);
-    setDownloadNotice(null);
+    setDownload(null);
     try {
-      // `record: true` writes the export to the report's ledger, which is what a hand-on can then
-      // name as the file the office received.
-      const file = await downloadReportForApproval(detail.id, { formats: [format], record: true });
+      // `record: true` writes the export to the report's ledger, which a hand-on can then name.
+      const file = await downloadReportForApproval(detail.id, { formats: [format], record: true, fresh });
       saveBlobToDisk(file.blob, file.fileName);
-      // WARNINGS TRAVEL BESIDE THE DOWNLOAD, NEVER INSIDE THE DOCUMENT — the report page's rule.
-      setDownloadNotice(
-        file.warningCount > 0
-          ? `Downloaded ${file.fileName}. Notes: ${file.warnings.join("; ")}`
-          : `Downloaded ${file.fileName}.`
+      const notes = file.warningCount > 0 ? ` Notes: ${file.warnings.join("; ")}` : "";
+      // A22: an unchanged report comes back from its stored file — said, with a way to rebuild.
+      setDownload(
+        file.reusedFrom
+          ? { text: `Same as the file from ${formatDateTime(file.reusedFrom)} — nothing has changed.${notes}`, reused: format }
+          : { text: `Downloaded ${file.fileName}.${notes}`, reused: null }
       );
-      // The new export is what a hand-on names, so the read is taken again to see it.
       onReload();
     } catch (err) {
       fail(err, "downloaded");
@@ -451,7 +276,7 @@ function DecisionPanel({
   const lines = signOffLines(detail);
 
   return (
-    <section className="panel mb-4 grid gap-3 p-4" aria-labelledby="decision-heading">
+    <section className="panel mb-4 grid scroll-mt-28 gap-3 p-4" id="decision-panel" aria-labelledby="decision-heading">
       <div className="flex flex-wrap items-center gap-3">
         <h2 id="decision-heading" className="font-display text-base font-bold tracking-tight text-ink-900">
           Your decision
@@ -477,9 +302,9 @@ function DecisionPanel({
         noneSentence ? <p className="text-sm leading-6 text-ink-700">{noneSentence}</p> : null
       ) : (
         <div className="grid gap-2">
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup align="start">
             {actions.map((action) => {
-              const Icon = action.verb === "approve" ? Stamp : action.verb === "handOn" ? Send : Undo2;
+              const Icon = DECISION_ICON[action.verb];
               return (
                 <button
                   key={action.verb}
@@ -489,19 +314,17 @@ function DecisionPanel({
                   aria-expanded={action.allowed ? open === action.verb : undefined}
                   aria-describedby={action.allowed ? undefined : `decision-reason-${action.verb}`}
                   onClick={() => {
-                    setOpen((current) => (current === action.verb ? null : action.verb));
+                    setOpen(open === action.verb ? null : action.verb);
                     setProblem(null);
                     setOutcome(null);
                   }}
                 >
                   <Icon className="h-4 w-4" aria-hidden />
-                  {action.label}
+                  {action.verb === "revise" && drafts.length ? sendBackLabel(drafts.length) : action.label}
                 </button>
               );
             })}
-          </div>
-          {/* WHY A DECISION IS SWITCHED OFF, IN THE SERVER'S WORDS. The rule-7 sentence is said once,
-              above; a status sentence belongs to its button. */}
+          </ActionGroup>
           {actions
             .filter((action) => !action.allowed && action.reason && action.reason !== detail.decisionRefusal)
             .map((action) => (
@@ -523,7 +346,7 @@ function DecisionPanel({
       {open === "approve" ? (
         <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
           <label className="field-label" htmlFor="approve-note">
-            A note with the approval (optional)
+            Note with the approval (optional)
           </label>
           <textarea
             className="field-input min-h-20"
@@ -547,8 +370,11 @@ function DecisionPanel({
 
       {open === "revise" && reviseKind ? (
         <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
+          {drafts.length ? (
+            <p className="text-sm text-ink-700">Your {drafts.length === 1 ? "note goes" : `${drafts.length} notes go`} with it.</p>
+          ) : null}
           <label className="field-label" htmlFor="revise-reason">
-            What needs correcting (required)
+            {drafts.length ? "Covering note (optional)" : "What needs correcting (required)"}
           </label>
           <textarea
             className="field-input min-h-24"
@@ -558,24 +384,28 @@ function DecisionPanel({
             placeholder={REVISE_COPY[reviseKind].placeholder}
             value={reason}
           />
-          <span className="field-label">Which stage is it about?</span>
-          <SearchableSelect
-            ariaLabel="Which stage is it about?"
-            value={reasonStage}
-            onChange={setReasonStage}
-            noneLabel="The report as a whole"
-            options={stages.map((stage) => ({ value: stage.key, label: stage.title }))}
-            advanceOnSelect={false}
-          />
+          {drafts.length ? null : (
+            <>
+              <span className="field-label">Which stage is it about?</span>
+              <SearchableSelect
+                ariaLabel="Which stage is it about?"
+                value={reasonStage}
+                onChange={setReasonStage}
+                noneLabel="The report as a whole"
+                options={stages.map((stage) => ({ value: stage.key, label: `${stage.number}. ${stage.title}` }))}
+                advanceOnSelect={false}
+              />
+            </>
+          )}
           <ActionGroup>
             <button
               className="field-button"
-              disabled={busy !== null || reason.trim().length === 0}
+              disabled={busy !== null || (reason.trim().length === 0 && drafts.length === 0)}
               onClick={() => void revise()}
               type="button"
             >
               {busy === "revise" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-              {REVISE_COPY[reviseKind].confirm}
+              {drafts.length ? sendBackLabel(drafts.length) : REVISE_COPY[reviseKind].confirm}
             </button>
             <button className="field-button-secondary" disabled={busy !== null} onClick={() => setOpen(null)} type="button">
               Cancel
@@ -597,7 +427,7 @@ function DecisionPanel({
             value={office}
           />
           <label className="field-label" htmlFor="hand-on-note">
-            A note (optional)
+            Note (optional)
           </label>
           <textarea
             className="field-input min-h-20"
@@ -619,9 +449,7 @@ function DecisionPanel({
                 onChange={setPinExport}
               />
             ) : (
-              <p>
-                No file since the approval. Download one below to name it.
-              </p>
+              <p>No file since the approval. Download one below to name it.</p>
             )}
           </div>
           <ActionGroup>
@@ -638,16 +466,32 @@ function DecisionPanel({
 
       <div className="flex flex-wrap items-center gap-2 border-t border-line-200 pt-3">
         <span className="text-sm text-ink-700">Download the report:</span>
-        <ActionGroup className="max-sm:w-full"><button className="field-button-secondary" disabled={busy !== null} onClick={() => void download("DOCX")} type="button">
-          {busy === "download" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Download className="h-4 w-4" aria-hidden />}
-          .docx
-        </button>
-        <button className="field-button-secondary" disabled={busy !== null} onClick={() => void download("PDF")} type="button">
-          <Download className="h-4 w-4" aria-hidden />
-          .pdf
-        </button></ActionGroup>
+        <ActionGroup className="max-sm:w-full">
+          <button className="field-button-secondary" disabled={busy !== null} onClick={() => void downloadFile("DOCX")} type="button">
+            {busy === "download" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Download className="h-4 w-4" aria-hidden />}
+            .docx
+          </button>
+          <button className="field-button-secondary" disabled={busy !== null} onClick={() => void downloadFile("PDF")} type="button">
+            <Download className="h-4 w-4" aria-hidden />
+            .pdf
+          </button>
+        </ActionGroup>
       </div>
-      {downloadNotice ? <p className="text-xs leading-5 text-ink-500">{downloadNotice}</p> : null}
+      {download ? (
+        <p className="flex flex-wrap items-center gap-2 text-xs leading-5 text-ink-500">
+          {download.text}
+          {download.reused ? (
+            <button
+              type="button"
+              className="font-medium text-purple-700 underline-offset-2 hover:underline dark:text-purple-300"
+              disabled={busy !== null}
+              onClick={() => void downloadFile(download.reused as "DOCX" | "PDF", true)}
+            >
+              Rebuild it
+            </button>
+          ) : null}
+        </p>
+      ) : null}
 
       {/* BOTH REGIONS ARE MOUNTED FROM FIRST PAINT, so the first message in each is announced. */}
       <div
@@ -666,9 +510,7 @@ function DecisionPanel({
         role="status"
         aria-live="polite"
         className={
-          outcome
-            ? "rounded-md border border-success-600/25 bg-success-100 px-3 py-2 text-sm leading-6 text-success-600"
-            : "sr-only"
+          outcome ? "rounded-md border border-success-600/25 bg-success-100 px-3 py-2 text-sm leading-6 text-success-600" : "sr-only"
         }
       >
         {outcome}
@@ -677,13 +519,10 @@ function DecisionPanel({
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The page
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export default function ReportForApprovalPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user, loading } = useAuth();
+  const reduce = useAppReducedMotion();
 
   const [detail, setDetail] = useState<DwApprovalDetail | null>(null);
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
@@ -691,9 +530,16 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
   const [registryError, setRegistryError] = useState<string | null>(null);
   /** Bumped to read the report again — after a download, or when a decision found it moved. */
   const [readCount, setReadCount] = useState(0);
+  const [open, setOpen] = useState<OpenForm>(null);
+  const [reasonStage, setReasonStage] = useState("");
+  const [composing, setComposing] = useState<FlagTarget | null>(null);
+
+  const allowed = !loading && canApproveDesignWorkshops(user);
+  const media = useReaderMedia("approval", id, detail !== null);
+  const tray = useReviewTray(user?.id, id);
 
   useEffect(() => {
-    if (loading || !canApproveDesignWorkshops(user)) return;
+    if (!allowed) return;
     let cancelled = false;
     getReportForApproval(id)
       .then((result) => {
@@ -709,10 +555,10 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
     return () => {
       cancelled = true;
     };
-  }, [id, loading, user, readCount]);
+  }, [id, allowed, readCount]);
 
   useEffect(() => {
-    if (loading || !canApproveDesignWorkshops(user)) return;
+    if (!allowed) return;
     let cancelled = false;
     fetchStageRegistry()
       .then((result) => {
@@ -721,21 +567,32 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
         setRegistryError(null);
       })
       .catch(() => {
-        if (cancelled) return;
-        setRegistryError(
-          "Couldn't load field names. Try again."
-        );
+        if (!cancelled) setRegistryError("Couldn't load field names. Try again.");
       });
     return () => {
       cancelled = true;
     };
-  }, [loading, user]);
+  }, [allowed]);
 
+  const stages: DwStage[] = useMemo(() => registry?.stages ?? [], [registry]);
   const overall = useMemo(() => overallPercent(detail?.completeness), [detail]);
-  const stages: DwStage[] = registry?.stages ?? [];
-  const rounds = dwFeedbackRounds(detail?.inspectionFeedback ?? []);
+  const active = useActiveStage(
+    stages.map((stage) => stage.key),
+    detail !== null && registry !== null
+  );
+  const activeStage = stages.find((stage) => stage.key === active) ?? null;
+  const compare = useRoundCompare("approval", id, stages, detail?.stages, detail?.roundSnapshots, detail?.submissionRound);
+  const notes = (detail?.inspectionFeedback ?? []) as DwReviewNote[];
   const decisions = detail?.decisions ?? [];
   const inspectors = detail?.inspectors ?? [];
+  const actions = detail ? approvalActions(detail) : [];
+  const cleared = inspectors.filter((person) => person.clearedAt).length;
+
+  function openDecision(verb: DwApprovalVerb) {
+    setOpen(verb);
+    if (verb === "revise" && active) setReasonStage(active);
+    document.getElementById("decision-panel")?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }
 
   return (
     <div>
@@ -743,35 +600,54 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
         title={detail?.title?.trim() || "Report to approve"}
         description={
           detail
-            ? [detail.workshopCode, detail.craftName, detail.clusterName, detail.district, detail.state]
-                .filter(Boolean)
-                .join(" · ") || "No workshop code yet"
+            ? [detail.workshopCode, detail.craftName, detail.clusterName, detail.district, detail.state].filter(Boolean).join(" · ") ||
+              "No workshop code yet"
             : undefined
         }
         icon={<Stamp className="h-5 w-5" aria-hidden />}
         actions={detail ? <StatusBadge status={detail.status} /> : undefined}
       />
 
-      {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-      ) : null}
+      {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
       {registryError ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
           {registryError}
         </div>
       ) : null}
 
-      {detail === null && !error ? (
-        <section className="panel p-4 text-sm text-ink-700">Loading the report…</section>
-      ) : null}
+      {detail === null && !error ? <section className="panel p-4 text-sm text-ink-700">Loading the report…</section> : null}
 
       {detail ? (
         <>
           <DecisionPanel
             detail={detail}
+            drafts={tray.drafts}
             key={`${detail.id}:${detail.status}:${detail.updatedAt ?? ""}`}
             onAnswer={setDetail}
             onReload={() => setReadCount((count) => count + 1)}
+            onSent={tray.clear}
+            open={open}
+            reasonStage={reasonStage}
+            setOpen={setOpen}
+            setReasonStage={setReasonStage}
+            stages={stages}
+          />
+
+          <NoteTray
+            actions={
+              <button
+                type="button"
+                className="field-button"
+                disabled={!actions.some((action) => action.verb === "revise" && action.allowed)}
+                onClick={() => openDecision("revise")}
+              >
+                <Undo2 className="h-4 w-4" aria-hidden />
+                {sendBackLabel(tray.drafts.length)}
+              </button>
+            }
+            drafts={tray.drafts}
+            footnote="Notes go out when you send the report back."
+            onRemove={tray.remove}
             stages={stages}
           />
 
@@ -797,12 +673,27 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
                   }`
                 : "Not yet"}
             </p>
-            <p className="text-sm text-ink-700 sm:col-span-2">
-              <span className="field-label block">Inspected by</span>
-              {inspectors.length
-                ? inspectors.map((person) => person.name?.trim() || person.email || "An officer no longer named").join(", ")
-                : "Nobody has been assigned to inspect this report."}
-            </p>
+            <div className="text-sm text-ink-700 sm:col-span-2">
+              <span className="field-label block">
+                Inspected by{inspectors.length ? ` · ${cleared} of ${inspectors.length} checked, no corrections` : ""}
+              </span>
+              {inspectors.length ? (
+                <ul className="mt-1 flex flex-wrap gap-2">
+                  {inspectors.map((person) => (
+                    <li className="flex items-center gap-2 rounded-md border border-line-200 bg-surface-50 px-2.5 py-1" key={person.userId}>
+                      <span>{person.name?.trim() || person.email || "An officer no longer named"}</span>
+                      {person.clearedAt ? (
+                        <ReviewChip tone="fresh">{`Checked, no corrections · ${formatDate(person.clearedAt)}`}</ReviewChip>
+                      ) : (
+                        <ReviewChip tone="neutral">No verdict yet</ReviewChip>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                "Nobody is assigned to inspect this report."
+              )}
+            </div>
             {detail.oversight?.length ? (
               <p className="text-sm text-ink-700 sm:col-span-2">
                 <span className="field-label block">Supervised by</span>
@@ -825,9 +716,7 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
                 {decisions.map((decision) => (
                   <li className="rounded-md border border-line-200 bg-field-50 px-3 py-2" key={decision.id}>
                     <p className="text-sm font-medium text-ink-900">{decisionKindLabel(decision.kind)}</p>
-                    {decision.note?.trim() ? (
-                      <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-700">{decision.note}</p>
-                    ) : null}
+                    {decision.note?.trim() ? <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-700">{decision.note}</p> : null}
                     <p className="mt-1 text-xs leading-5 text-ink-500">
                       {decision.actorName?.trim() || "Somebody no longer on record"}
                       {decision.at ? ` · ${formatDateTime(decision.at)}` : ""}
@@ -840,54 +729,68 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
             )}
           </section>
 
-          <section className="panel mb-4 grid gap-3 p-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="font-display text-base font-bold tracking-tight text-ink-900">What the officers asked for</h2>
-              <span className="text-xs text-ink-500">
-                {(detail.inspectionFeedback ?? []).length} on record
-                {detail.inspectionFeedbackTruncated ? " (older ones not shown)" : ""}
-              </span>
-            </div>
-            {rounds.length ? (
-              rounds.map((group) => (
-                <div className="grid gap-2" key={group.round}>
-                  <h3 className="field-label">Round {group.round}</h3>
-                  <ul className="grid gap-2">
-                    {group.rows.map((row) => (
-                      <li className="rounded-md border border-line-200 bg-field-50 px-3 py-2" key={row.id}>
-                        <p className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{row.note}</p>
-                        <p className="mt-1 text-xs leading-5 text-ink-500">
-                          {row.actorName?.trim() || "An officer no longer named"}
-                          {row.byApprovingAuthority ? " · the approving authority" : ""}
-                          {row.stageKey ? ` · about ${row.stageKey}` : " · about the report as a whole"}
-                          {row.sentBack ? " · sent the report back" : ""}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-ink-700">No corrections requested.</p>
-            )}
-          </section>
+          <NoteRegister notes={notes} stages={stages} title="What the officers asked for" truncated={detail.inspectionFeedbackTruncated} />
+
+          <ReaderFilesPanel failure={media.failure} list={media.list} onRetry={media.retry} state={media.state} />
+
+          <RoundCompareControls compare={compare} />
 
           {registry === null ? (
             registryError ? null : <section className="panel p-4 text-sm text-ink-700">Loading the field list…</section>
           ) : (
-            <div className="grid gap-4">
-              {stages.map((stage) => (
-                <ReadStage
-                  data={detail.stages?.[stage.key]}
-                  key={stage.key}
-                  registry={registry}
-                  score={detail.completeness?.[stage.key]}
-                  stage={stage}
-                />
-              ))}
-            </div>
+            <ReaderMediaProvider list={media.list} state={media.state}>
+              <ReviewLayout active={active} changes={compare.changes} completeness={detail.completeness} stages={stages}>
+                {stages.map((stage) => (
+                  <ReviewReadStage
+                    changes={compare.changes?.[stage.key]}
+                    data={detail.stages?.[stage.key]}
+                    key={stage.key}
+                    notes={notes.filter((note) => note.stageKey === stage.key)}
+                    onFlag={setComposing}
+                    onlyChanges={compare.onlyChanges && compare.changes !== null}
+                    registry={registry}
+                    score={detail.completeness?.[stage.key]}
+                    stage={stage}
+                  />
+                ))}
+              </ReviewLayout>
+            </ReaderMediaProvider>
           )}
 
+          <NoteComposer
+            onAdd={tray.add}
+            onClose={() => setComposing(null)}
+            stages={stages}
+            target={composing}
+          />
+
+          <ReviewDecisionBar stage={activeStage}>
+            {actions
+              .filter((action) => action.verb !== "handOn" || action.allowed)
+              .map((action) => {
+                const Icon = action.verb === "approve" ? CheckCircle2 : DECISION_ICON[action.verb];
+                return (
+                  <button
+                    key={action.verb}
+                    type="button"
+                    className={action.primary ? "field-button" : "field-button-secondary"}
+                    disabled={!action.allowed}
+                    onClick={() => openDecision(action.verb)}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden />
+                    {action.verb === "revise" && tray.drafts.length ? sendBackLabel(tray.drafts.length) : action.label}
+                  </button>
+                );
+              })}
+            <button
+              type="button"
+              className="field-button-secondary"
+              onClick={() => setComposing({ stageKey: active ?? "", fieldKey: null })}
+            >
+              <MessageSquarePlus className="h-4 w-4" aria-hidden />
+              Note
+            </button>
+          </ReviewDecisionBar>
         </>
       ) : null}
     </div>
