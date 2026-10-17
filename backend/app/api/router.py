@@ -4,6 +4,7 @@ from app.api.routes import (
     aadhaar,
     access,
     ai_keys,
+    answer_drafts,
     analytics,
     annual_plan,
     app_release,
@@ -104,6 +105,8 @@ api_router.include_router(products.router)
 api_router.include_router(processes.router)
 api_router.include_router(tools.router)
 api_router.include_router(media.router)
+# Before ``questionnaire`` so its fixed paths are matched first (C28; nothing collides today).
+api_router.include_router(answer_drafts.router)
 api_router.include_router(questionnaire.router)
 # Custom questionnaires — /api/questionnaires (PLURAL), a form a designer authored themselves, as
 # distinct from the one global artisan questionnaire on the singular prefix above. Mounted after it

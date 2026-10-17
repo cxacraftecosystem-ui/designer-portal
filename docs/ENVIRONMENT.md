@@ -462,6 +462,9 @@ it. The raw Aadhaar number never leaves either server: the designer portal sends
 `HMAC-SHA256(CROSS_PORTAL_AADHAAR_HMAC_KEY, digits)`. Each server proves itself to the other with
 `CROSS_PORTAL_TOKEN` (a bearer on the request, an HMAC of the body on the answer). The documentation
 portal answers only for an artisan whose "Share with the Designer Portal" consent is recorded.
+Every answer is signed over the request it answers (method, path and a fresh nonce), every lookup,
+link, refresh and unlink is written to `CrossPortalAccessLog` on both servers (who asked and which
+record, never a number), and one account may make 60 lookups an hour.
 
 **Nothing works until all of it is set on BOTH servers** — the flag, both secrets (32 characters or
 more, the same values on the two servers), and `FIELD_REPOSITORY_API_URL` on the designer portal. Anything missing and every `/api/cross-portal/*`
@@ -474,6 +477,12 @@ box `.env`; none is created by this repository.
 | `CROSS_PORTAL_TOKEN` | With the flag on | — | **Yes** | Shared by both servers. Authenticates requests and signs answers. 32+ characters. |
 | `CROSS_PORTAL_AADHAAR_HMAC_KEY` | With the flag on | — | **Yes** | Shared by both servers. Turns an Aadhaar number into a comparable code. 32+ characters. Rotating it needs both servers changed together; nothing stored depends on it. |
 | `FIELD_REPOSITORY_API_URL` | With the flag on | — | No | The documentation portal's API base up to `/api`, e.g. `https://<docs-api-host>/api`. The designer portal calls it; it never calls back. |
+
+### AI-drafted interview answers (C28) — shipped OFF
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `AI_ANSWER_DRAFTS_ENABLED` | No | **`false`** | No | Lets a researcher draft a section's unanswered questions from the interview's transcript. Drafts are inert until a person accepts or edits the section; accepted answers carry `answerOrigin` `MACHINE_SUGGESTED` / `MACHINE_SUGGESTED_EDITED`, are labelled "Machine-suggested" on screen and in every export. Runs on the researcher's own AI key or the deployment's (the keys above). Off: every `/api/questionnaire/*/drafts` route answers 404. |
 
 ### Not read by `config.py`
 

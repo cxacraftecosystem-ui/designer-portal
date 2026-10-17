@@ -652,6 +652,12 @@ class Settings(BaseSettings):
     aadhaar_otp_limit_per_uid: int = Field(default=3, alias="AADHAAR_OTP_LIMIT_PER_UID")
     aadhaar_otp_window_minutes: int = Field(default=60, alias="AADHAAR_OTP_WINDOW_MINUTES")
 
+    # ── AI-DRAFTED ANSWERS FROM A TRANSCRIPT (C28; docs/ENVIRONMENT.md) ───────────────────────────
+    # OFF BY DEFAULT. On, a researcher may ask a model to draft a section's unanswered questions from
+    # the interview's transcript; drafts are accepted or edited by a person and every accepted answer
+    # is labelled machine-suggested. Runs on the researcher's own AI key or the deployment's.
+    ai_answer_drafts_enabled: bool = Field(default=False, alias="AI_ANSWER_DRAFTS_ENABLED")
+
     # ── CROSS-PORTAL ARTISAN IDENTITY (C27; docs/ENVIRONMENT.md) ────────────────────────────────
     #
     # OFF BY DEFAULT, AND OFF UNTIL BOTH PORTALS HAVE IT. The lookup works only when the flag is on

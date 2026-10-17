@@ -635,6 +635,8 @@ import com.designprototype.workshop.data.ArtisanAnswerDto
 import com.designprototype.workshop.data.ArtisanDetailDto
 import com.designprototype.workshop.data.ArtisanQuestionnaireDto
 import com.designprototype.workshop.data.CraftDto
+import com.designprototype.workshop.data.AnswerDrafts
+import com.designprototype.workshop.ui.AnswerDraftsCard
 import com.designprototype.workshop.data.CrossPortalClient
 import com.designprototype.workshop.data.CrossPortalCopy
 import com.designprototype.workshop.data.CrossPortalMatchDto
@@ -19285,6 +19287,8 @@ private fun QuestionnaireForm(
             q.id to mutableStateOf(editing?.responses?.firstOrNull { it.questionId == q.id }?.answerText ?: "")
         }
     }
+    // C28: answers accepted from a transcript draft on this screen, by question id.
+    val acceptedMachine = remember(editing) { mutableStateListOf<String>() }
     // Attach-media batch (photos/videos/audio/files) with eager upload + progress, exactly like the
     // other record forms — so questionnaire interviews can carry general media, with the array,
     // progress bar and previews visible while filling the form.
@@ -20119,8 +20123,24 @@ private fun QuestionnaireForm(
                                 )
                                 HorizontalDivider()
                             }
+                            // C28: draft this section's open questions from a transcript (behind its flag).
+                            editing?.let { interview ->
+                                AnswerDraftsCard(
+                                    interviewId = interview.id,
+                                    sectionId = section.id,
+                                    questions = activeQuestions.map { it.id to "${it.sortOrder}. ${it.prompt}" },
+                                ) { kept ->
+                                    kept.forEach { (id, text) -> answers[id]?.let { state -> state.value = text } }
+                                    acceptedMachine.addAll(kept.keys)
+                                }
+                            }
                             activeQuestions.forEach { question ->
                                 Text("${question.sortOrder}. ${question.prompt}", color = Muted, fontSize = 12.sp)
+                                val origin = editing?.responses?.firstOrNull { it.questionId == question.id }?.answerOrigin
+                                    ?: if (question.id in acceptedMachine) AnswerDrafts.ORIGIN_MACHINE else null
+                                AnswerDrafts.badge(origin)?.let { badge ->
+                                    Text(badge, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
                                 if (recordMode == "INDIVIDUAL") {
                                     AudioClipRecorder(
                                         clips = questionAudio[question.id] ?: emptyList(),
