@@ -3,7 +3,17 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { matchSummary, prefillFromMatch, type CrossPortalMatch } from "@/lib/crossPortal";
+import { statedPrefillValues } from "@/components/forms/statedPrefill";
+import {
+  consentLabel,
+  keepTypedPehchan,
+  matchSummary,
+  prefillFromMatch,
+  prefillFromRefreshedArtisan,
+  SHARED_FIELDS_FALLBACK,
+  type CrossPortalMatch
+} from "@/lib/crossPortal";
+import type { Artisan } from "@/lib/types";
 
 /**
  * C27 on the web: a Field Repository match fills the artisan form's own fields, says who was found
@@ -51,4 +61,43 @@ test("the form mounts the lookup only through the server-gated components", () =
   // The lookup body sends the agreement; the server refuses one without it.
   const lib = readFileSync(join(__dirname, "../lib/crossPortal.ts"), "utf8");
   expect(lib).toContain("consent: true");
+});
+
+test("the consent tick names everything a lookup sends", () => {
+  for (const item of ["phone number", "address", "place", "craft", "date of birth", "Pehchan card"]) {
+    expect(SHARED_FIELDS_FALLBACK).toContain(item);
+  }
+  expect(consentLabel("name and phone number")).toBe(
+    "The artisan agrees to share their name and phone number between the two portals"
+  );
+  const panel = readFileSync(join(__dirname, "../components/forms/CrossPortalLookup.tsx"), "utf8");
+  expect(panel).not.toContain("their details between the two portals");
+  expect(panel.match(/\{consentText\}/g)?.length).toBe(2);
+});
+
+test("a typed Pehchan number survives a match that has none", () => {
+  const aadhaarOnly = prefillFromMatch({ ...MATCH, fields: { ...MATCH.fields, pehchanCardNumber: null, pehchanCardAvailable: false } });
+  expect(keepTypedPehchan(aadhaarOnly, "PEH777")).toMatchObject({ pehchanCardAvailable: true, pehchanCardNumber: "PEH777" });
+  expect(keepTypedPehchan(prefillFromMatch(MATCH), "PEH777").pehchanCardNumber).toBe("PEH12345");
+  expect(keepTypedPehchan(aadhaarOnly, null)).toEqual(aadhaarOnly);
+});
+
+test("a refresh hands the form the identity values the server now holds", () => {
+  const refreshed = { id: "a1", name: "Meena Devi Bai", gender: "Female", dateOfBirth: "1981-01-02T00:00:00", phone: "1" } as unknown as Artisan;
+  expect(prefillFromRefreshedArtisan(refreshed, ["name", "dateOfBirth"])).toEqual({ name: "Meena Devi Bai", dateOfBirth: "1981-01-02" });
+  const form = readFileSync(join(__dirname, "../components/forms/ArtisanForm.tsx"), "utf8");
+  expect(form).toContain("<CrossPortalLinkPanel artisanId={initial.id} onRefreshed={takeRefreshedArtisan} />");
+  const panel = readFileSync(join(__dirname, "../components/forms/CrossPortalLookup.tsx"), "utf8");
+  expect(panel).toContain("onRefreshed(answer.artisan ?? null, answer.changed)");
+  // Unlink asks first.
+  expect(panel).toContain("if (!(await confirm(UNLINK_CONFIRM))) return;");
+});
+
+test("the stated address prefill writes a district only under its state", () => {
+  expect(statedPrefillValues({ key: 1, state: "Gujarat", district: "Kachchh", village: " Nirona ", source: "x" })).toEqual({
+    state: "Gujarat",
+    district: "Kachchh",
+    village: "Nirona"
+  });
+  expect(statedPrefillValues({ key: 1, state: null, district: "Kachchh", village: null, source: "x" })).toEqual({});
 });

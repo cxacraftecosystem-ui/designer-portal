@@ -7,14 +7,19 @@
  * the Aadhaar or Pehchan number already typed above, ask the designer to confirm the artisan agreed
  * to share, look them up, and offer one "Fill the form" press. Saved artisan: show the link, and
  * offer Refresh (the Field Repository is the source of truth for the identity fields) and Unlink.
- * The consent tick is an AGREEMENT, not a setting, so it is a checkbox (§11.11).
+ * The consent tick is an AGREEMENT, not a setting, so it is a checkbox (§11.11), and it names every
+ * item the lookup shares, from the server's list (`consentLabel`). Unlink asks first.
  */
 import { useEffect, useId, useState } from "react";
 
+import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { ApiError } from "@/lib/api";
+import type { Artisan } from "@/lib/types";
 import {
-  crossPortalEnabled,
+  consentLabel,
+  crossPortalStatus,
+  SHARED_FIELDS_FALLBACK,
   getCrossPortalLink,
   linkToFieldRepository,
   lookupInFieldRepository,
@@ -33,21 +38,31 @@ function message(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export function useCrossPortalEnabled(): boolean {
-  const [enabled, setEnabled] = useState(false);
+/** Whether the server has the feature on, and the consent tick's words. */
+export function useCrossPortal(): { enabled: boolean; consent: string } {
+  const [status, setStatus] = useState({ enabled: false, consent: consentLabel(SHARED_FIELDS_FALLBACK) });
   useEffect(() => {
     let cancelled = false;
-    void crossPortalEnabled().then((on) => {
-      if (!cancelled) setEnabled(on);
+    void crossPortalStatus().then((answer) => {
+      if (!cancelled) setStatus({ enabled: answer.enabled, consent: consentLabel(answer.sharedFields) });
     });
     return () => {
       cancelled = true;
     };
   }, []);
-  return enabled;
+  return status;
 }
 
-const CONSENT_LABEL = "The artisan agrees to share their details between the two portals";
+export function useCrossPortalEnabled(): boolean {
+  return useCrossPortal().enabled;
+}
+
+export const UNLINK_CONFIRM = {
+  title: "Unlink from the Field Repository?",
+  body: "Refresh stops. What is already filled in stays.",
+  confirmLabel: "Unlink",
+  tone: "danger" as const
+};
 
 /** The new-artisan half: find, then fill. */
 export function CrossPortalFind({
@@ -61,7 +76,7 @@ export function CrossPortalFind({
   /** The match already filled in, if any — the form then says where its values came from. */
   filled: CrossPortalMatch | null;
 }) {
-  const enabled = useCrossPortalEnabled();
+  const { enabled, consent: consentText } = useCrossPortal();
   const consentId = useId();
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -109,7 +124,7 @@ export function CrossPortalFind({
           checked={consent}
           onChange={(event) => setConsent(event.target.checked)}
         />
-        <span>{CONSENT_LABEL}</span>
+        <span>{consentText}</span>
       </label>
       {match ? (
         <div className="grid gap-2">
@@ -150,10 +165,14 @@ export function CrossPortalLinkPanel({
   onRefreshed
 }: {
   artisanId: string;
-  /** After a refresh changed fields: the page should re-read the artisan. */
-  onRefreshed?: () => void;
+  /**
+   * After a refresh changed fields: the artisan as the server now holds it, and which identity
+   * fields moved. The form MUST take these values, or its next Save writes the old ones back.
+   */
+  onRefreshed: (artisan: Artisan | null, changed: string[]) => void;
 }) {
-  const enabled = useCrossPortalEnabled();
+  const { enabled, consent: consentText } = useCrossPortal();
+  const confirm = useConfirm();
   const consentId = useId();
   const [link, setLink] = useState<CrossPortalLink | null>(null);
   const [consent, setConsent] = useState(false);
@@ -201,7 +220,7 @@ export function CrossPortalLinkPanel({
             checked={consent}
             onChange={(event) => setConsent(event.target.checked)}
           />
-          <span>{CONSENT_LABEL}</span>
+          <span>{consentText}</span>
         </label>
         <ActionGroup align="start">
           <button
@@ -239,7 +258,7 @@ export function CrossPortalLinkPanel({
               const answer = await refreshFromFieldRepository(artisanId);
               setLink(answer.link);
               setNote(answer.changed.length ? "Updated from the Field Repository." : "Already up to date.");
-              if (answer.changed.length) onRefreshed?.();
+              if (answer.changed.length) onRefreshed(answer.artisan ?? null, answer.changed);
             }, "Couldn't refresh. Try again.")
           }
         >
@@ -251,7 +270,10 @@ export function CrossPortalLinkPanel({
           className="field-danger inline-flex min-h-10 items-center justify-center rounded-md px-4 py-2 text-sm font-medium"
           disabled={busy}
           onClick={() =>
-            void run(async () => setLink(await unlinkFromFieldRepository(artisanId)), "Couldn't unlink. Try again.")
+            void (async () => {
+              if (!(await confirm(UNLINK_CONFIRM))) return;
+              await run(async () => setLink(await unlinkFromFieldRepository(artisanId)), "Couldn't unlink. Try again.");
+            })()
           }
         >
           Unlink

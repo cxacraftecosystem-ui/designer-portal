@@ -21,7 +21,11 @@ import retrofit2.http.Path
  * `WorkshopRepositoryApi`.
  */
 @Serializable
-data class CrossPortalStatusDto(val enabled: Boolean = false)
+data class CrossPortalStatusDto(
+    val enabled: Boolean = false,
+    /** Every item a lookup shares, in words, from the server's one list. Older servers omit it. */
+    val sharedFields: String? = null,
+)
 
 @Serializable
 data class CrossPortalLookupRequest(
@@ -85,8 +89,16 @@ data class CrossPortalLinkDto(
     val lastRefreshedAt: String? = null,
 )
 
+/**
+ * The refresh answer. [artisan] is the record as the server now holds it, read through the same
+ * field names a match carries (the identity fields are the ones that matter; the rest is ignored).
+ */
 @Serializable
-data class CrossPortalRefreshDto(val link: CrossPortalLinkDto = CrossPortalLinkDto(), val changed: List<String> = emptyList())
+data class CrossPortalRefreshDto(
+    val link: CrossPortalLinkDto = CrossPortalLinkDto(),
+    val changed: List<String> = emptyList(),
+    val artisan: CrossPortalFieldsDto? = null,
+)
 
 interface CrossPortalApi {
     @GET("cross-portal/status")
@@ -110,7 +122,10 @@ interface CrossPortalApi {
 
 class CrossPortalClient(private val api: CrossPortalApi) {
     /** Off on any failure: an older server, no signal, a refusal. */
-    suspend fun enabled(): Boolean = runCatching { api.status().enabled }.getOrDefault(false)
+    suspend fun enabled(): Boolean = status().enabled
+
+    /** The status, or "off" on any failure. */
+    suspend fun status(): CrossPortalStatusDto = runCatching { api.status() }.getOrDefault(CrossPortalStatusDto())
 
     suspend fun lookup(aadhaar: String?, pehchan: String?): CrossPortalMatchDto? =
         api.lookup(
@@ -173,6 +188,42 @@ data class CrossPortalPrefill(
             )
         }
 
+        /**
+         * The match's Pehchan pair, unless the match has no number and the designer typed one: the
+         * typed number then stands, with the card marked held, rather than being wiped by the fill.
+         */
+        fun keepTypedPehchan(values: CrossPortalPrefill, typed: String?): CrossPortalPrefill {
+            val number = typed?.trim()?.ifBlank { null }
+            if (values.pehchanCardNumber != null || number == null) return values
+            return values.copy(pehchanCardAvailable = true, pehchanCardNumber = number)
+        }
+
+        /**
+         * The stated address a match carries, written onto [location]: a district only under its
+         * state, a village when given; the coordinates are never touched.
+         */
+        fun withStatedAddress(location: LocationRequest, stated: CrossPortalAddressDto): LocationRequest {
+            val state = stated.state?.trim()?.ifBlank { null }
+            val village = stated.village?.trim()?.ifBlank { null }
+            var next = location
+            if (state != null) next = next.copy(state = state, district = stated.district?.trim()?.ifBlank { null })
+            if (village != null) next = next.copy(village = village)
+            return next
+        }
+
+        /** The identity values a refresh changed, read off the artisan the server returned. */
+        fun fromRefreshed(artisan: CrossPortalFieldsDto, changed: List<String>): CrossPortalPrefill {
+            fun has(key: String) = key in changed
+            return CrossPortalPrefill(
+                name = artisan.name?.trim()?.ifBlank { null }?.takeIf { has("name") },
+                localName = artisan.localName?.trim()?.ifBlank { null }?.takeIf { has("localName") },
+                gender = artisan.gender?.trim()?.ifBlank { null }?.takeIf { has("gender") },
+                dateOfBirth = day(artisan.dateOfBirth)?.takeIf { has("dateOfBirth") },
+                pehchanCardAvailable = artisan.pehchanCardAvailable?.takeIf { has("pehchanCardAvailable") },
+                pehchanCardNumber = artisan.pehchanCardNumber?.trim()?.ifBlank { null }?.takeIf { has("pehchanCardNumber") },
+            )
+        }
+
         /** "Meena Devi · Bandhani · Kachchh" — the one line that says who was found. */
         fun summary(match: CrossPortalMatchDto): String {
             val parts = mutableListOf(match.fields.name?.trim()?.ifBlank { null } ?: "Unnamed artisan")
@@ -186,7 +237,16 @@ data class CrossPortalPrefill(
 /** The card's words, held once so the web and the handset say the same thing (web `CrossPortalLookup.tsx`). */
 object CrossPortalCopy {
     const val HEADING = "Find in the Field Repository"
-    const val CONSENT = "The artisan agrees to share their details between the two portals"
+    /** The server's list as of this build (held to it by the backend's identity tests). */
+    const val SHARED_FIELDS_FALLBACK = "name, local name, gender, date of birth, Pehchan card, phone number, address, place, craft and craft experience"
+
+    /** The consent tick: every item the lookup shares, from the server's list ([sharedFields]). */
+    fun consent(sharedFields: String?): String =
+        "The artisan agrees to share their ${sharedFields?.trim()?.ifBlank { null } ?: SHARED_FIELDS_FALLBACK} between the two portals"
+
+    const val UNLINK_TITLE = "Unlink from the Field Repository?"
+    const val UNLINK_BODY = "Refresh stops. What is already filled in stays."
+    const val LINK_AFTER_SYNC = "Link it to the Field Repository from its page once it has synced."
     const val FIND = "Find"
     const val FILL = "Fill the form"
     const val NOT_THIS = "Not this person"

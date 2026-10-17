@@ -52,7 +52,15 @@ import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIden
 import { RequiredMark } from "@/components/ui/RequiredMark";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { CrossPortalFind, CrossPortalLinkPanel } from "@/components/forms/CrossPortalLookup";
-import { linkToFieldRepository, prefillFromMatch, type ArtisanPrefill, type CrossPortalMatch } from "@/lib/crossPortal";
+import {
+  keepTypedPehchan,
+  linkToFieldRepository,
+  prefillFromMatch,
+  prefillFromRefreshedArtisan,
+  type ArtisanPrefill,
+  type CrossPortalMatch
+} from "@/lib/crossPortal";
+import type { StatedPrefill } from "@/components/forms/statedPrefill";
 
 // Android parity (MainActivity.kt genderOptions).
 const genderOptions = ["Male", "Female", "Transgender", "Other"];
@@ -517,6 +525,8 @@ export function ArtisanForm({
   const [crossMatch, setCrossMatch] = useState<CrossPortalMatch | null>(null);
   const [prefill, setPrefill] = useState<ArtisanPrefill>({});
   const [prefillKey, setPrefillKey] = useState(0);
+  /** The Field Repository's stated address, written into the location card once per Fill. */
+  const [statedPrefill, setStatedPrefill] = useState<StatedPrefill | null>(null);
   const { dirty: typedSinceMount, markDirty, resetDirty } = useUnsavedChanges();
   const [backPromptOpen, setBackPromptOpen] = useState(false);
   /**
@@ -761,7 +771,8 @@ export function ArtisanForm({
    * a field it no longer fills.
    */
   function fillFromFieldRepository(match: CrossPortalMatch) {
-    const values = prefillFromMatch(match);
+    // A Pehchan number already typed survives a match that has none (an Aadhaar match, say).
+    const values = keepTypedPehchan(prefillFromMatch(match), typedIdentityNumbers().pehchanCardNumber);
     if (values.name) setName(values.name);
     if (values.localName) setLocalName(values.localName);
     if (values.place) setPlace(values.place);
@@ -770,8 +781,32 @@ export function ArtisanForm({
     if (values.craftId) setCraftId(values.craftId);
     setPrefill(values);
     setPrefillKey((key) => key + 1);
+    if (match.statedAddress) {
+      setStatedPrefill((current) => ({
+        key: (current?.key ?? 0) + 1,
+        state: match.statedAddress?.state,
+        district: match.statedAddress?.district,
+        village: match.statedAddress?.village,
+        source: "Field Repository"
+      }));
+    }
     setCrossMatch(match);
     markDirty();
+  }
+
+  /*
+   * C27 — A REFRESH CHANGED THE ARTISAN ON THE SERVER, SO THE FORM TAKES THE NEW VALUES. Without
+   * this the boxes kept the old name, gender, date of birth and Pehchan, and the next Save wrote
+   * them back over what the Field Repository had just supplied. Not dirty: this is the stored state.
+   */
+  function takeRefreshedArtisan(artisan: Artisan | null, changed: string[]) {
+    if (!artisan) return;
+    const values = prefillFromRefreshedArtisan(artisan, changed);
+    if (values.name) setName(values.name);
+    if (values.localName) setLocalName(values.localName);
+    if (values.dateOfBirth) setDateOfBirth(values.dateOfBirth);
+    setPrefill((current) => ({ ...current, ...values }));
+    setPrefillKey((key) => key + 1);
   }
 
   /** The two numbers as typed right now, read from the form's own inputs. */
@@ -788,6 +823,7 @@ export function ArtisanForm({
     setDuplicatePromptOpen(false);
     setCrossMatch(null);
     setPrefill({});
+    setStatedPrefill(null);
     setConflict(null);
     setError(null);
     setMediaFiles([]);
@@ -1102,6 +1138,7 @@ export function ArtisanForm({
                 setEmail("");
                 setCrossMatch(null);
                 setPrefill({});
+                setStatedPrefill(null);
                 setDateOfBirth("");
                 setCraftStartDate("");
                 setName("");
@@ -1585,7 +1622,7 @@ export function ArtisanForm({
               onDirty={markDirty}
             />
             {initial?.id ? (
-              <CrossPortalLinkPanel artisanId={initial.id} />
+              <CrossPortalLinkPanel artisanId={initial.id} onRefreshed={takeRefreshedArtisan} />
             ) : (
               <CrossPortalFind
                 readNumbers={typedIdentityNumbers}
@@ -1632,6 +1669,7 @@ export function ArtisanForm({
           onDirty={markDirty}
           subjectLabel="the artisan"
           statedPlace={initial?.place}
+          statedPrefill={statedPrefill}
         />
         {uploadProgress ? <UploadProgress progress={uploadProgress} files={mediaFiles} /> : null}
         {/*

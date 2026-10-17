@@ -1,7 +1,10 @@
 """The designer portal's calls to the documentation portal (C27), and nothing else.
 
 ONE function, :func:`peer_call`, and it refuses to hand back a body the other server did not sign
-(``services/cross_portal.signature_matches``). Every failure — not configured, unreachable, a timeout,
+FOR THIS REQUEST (``services/cross_portal.signature_matches``: the method, the peer path and a fresh
+nonce sent with the call are in the signed material, so an answer captured from one call cannot be
+passed off as the answer to another). It also names the designer-portal account that asked
+(``X-Cross-Portal-Requested-By``) for the other server's access log. Every failure — not configured, unreachable, a timeout,
 a bad signature, a body that is not JSON — becomes :class:`PeerUnavailable` with a sentence a
 designer can read; the route turns it into a 503 and nothing on this side is written.
 
@@ -14,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 from typing import Any
 
 import requests
@@ -37,14 +41,27 @@ def _url(settings: Any, path: str) -> str:
 
 
 def _call_sync(
-    settings: Any, method: str, path: str, body: Any | None, params: dict[str, str] | None
+    settings: Any,
+    method: str,
+    path: str,
+    body: Any | None,
+    params: dict[str, str] | None,
+    requested_by: str | None,
 ) -> tuple[int, Any]:
     token = settings.cross_portal_token
+    nonce = secrets.token_hex(16)
+    headers = {
+        "Authorization": f"Bearer {token.strip()}",
+        "Content-Type": "application/json",
+        cross_portal.NONCE_HEADER: nonce,
+    }
+    if requested_by:
+        headers[cross_portal.REQUESTED_BY_HEADER] = str(requested_by)[:64]
     try:
         response = requests.request(
             method,
             _url(settings, path),
-            headers={"Authorization": f"Bearer {token.strip()}", "Content-Type": "application/json"},
+            headers=headers,
             data=json.dumps(body).encode("utf-8") if body is not None else None,
             params=params,
             timeout=TIMEOUT_SECONDS,
@@ -57,7 +74,12 @@ def _call_sync(
         logger.error("cross-portal %s %s refused our token (%s)", method, path, response.status_code)
         raise PeerUnavailable(UNAVAILABLE)
     if not cross_portal.signature_matches(
-        token, response.content, response.headers.get(cross_portal.SIGNATURE_HEADER)
+        token,
+        response.content,
+        response.headers.get(cross_portal.SIGNATURE_HEADER),
+        method=method,
+        path=f"{cross_portal.PEER_PREFIX}{path}",
+        nonce=nonce,
     ):
         logger.error("cross-portal %s %s: answer not signed by the peer (%s)", method, path, response.status_code)
         raise PeerUnavailable(UNAVAILABLE)
@@ -75,8 +97,11 @@ async def peer_call(
     *,
     body: Any | None = None,
     params: dict[str, str] | None = None,
+    requested_by: str | None = None,
 ) -> tuple[int, Any]:
     """``(status, signed JSON body)`` from the documentation portal, or :class:`PeerUnavailable`."""
     if not cross_portal.active(settings, needs_url=True):
         raise PeerUnavailable(UNAVAILABLE)
-    return await asyncio.to_thread(_call_sync, settings, method, path, body, params)
+    return await asyncio.to_thread(
+        _call_sync, settings, method, path, body, params, requested_by
+    )

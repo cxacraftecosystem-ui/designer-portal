@@ -919,6 +919,25 @@ model CrossPortalArtisanLink {
   @@index([remoteArtisanId])
 }
 
+/// C27: one row per Field Repository lookup, link, refresh and unlink made from this portal — who
+/// (``userId``), what (``action``), and which record it reached (``artisanId`` here,
+/// ``remoteArtisanId`` there) or that it reached none (``outcome``). NEVER the Aadhaar number, its
+/// code, or the Pehchan number. Also the per-account lookup limit's counter.
+model CrossPortalAccessLog {
+  id              String   @id @default(cuid())
+  userId          String?
+  action          String
+  outcome         String
+  artisanId       String?
+  remoteArtisanId String?
+  matchedBy       String?
+  createdAt       DateTime @default(now())
+
+  @@index([userId, action, createdAt])
+  @@index([artisanId, createdAt])
+  @@index([createdAt])
+}
+
 /// TWO ANSWERS TO TWO DIFFERENT QUESTIONS, and reading one as the other is what this model was
 /// changed to stop.
 ///

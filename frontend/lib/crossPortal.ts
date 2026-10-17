@@ -7,6 +7,19 @@
  * the source of truth for `identityFields`; the rest is a one-time suggestion the designer may edit.
  */
 import { apiFetch } from "@/lib/api";
+import type { Artisan } from "@/lib/types";
+
+/**
+ * What a lookup shares, in words, as of this build. The live list comes from the server
+ * (`/cross-portal/status` → `sharedFields`, built from the same list the answer is); this is the
+ * fallback, held to the server's phrase by `backend/tests/test_cross_portal_identity.py`.
+ */
+export const SHARED_FIELDS_FALLBACK = "name, local name, gender, date of birth, Pehchan card, phone number, address, place, craft and craft experience";
+
+/** The consent tick: every item the lookup shares, so the artisan never agrees to less. */
+export function consentLabel(sharedFields: string): string {
+  return `The artisan agrees to share their ${sharedFields} between the two portals`;
+}
 
 export type CrossPortalFields = {
   name?: string | null;
@@ -43,19 +56,28 @@ export type CrossPortalLink =
       identityFields: string[];
     };
 
-let statusPromise: Promise<boolean> | null = null;
+export type CrossPortalStatus = { enabled: boolean; sharedFields: string };
 
-/** Whether to draw the lookup at all. Asked once per page load; a failure reads as "off". */
-export function crossPortalEnabled(): Promise<boolean> {
+let statusPromise: Promise<CrossPortalStatus> | null = null;
+
+/** Whether to draw the lookup at all, and what it shares. Asked once per page load; a failure reads as "off". */
+export function crossPortalStatus(): Promise<CrossPortalStatus> {
   if (!statusPromise) {
-    statusPromise = apiFetch<{ enabled: boolean }>("/cross-portal/status", {}, { redirectOn401: false })
-      .then((answer) => Boolean(answer?.enabled))
+    statusPromise = apiFetch<{ enabled: boolean; sharedFields?: string }>("/cross-portal/status", {}, { redirectOn401: false })
+      .then((answer) => ({
+        enabled: Boolean(answer?.enabled),
+        sharedFields: answer?.sharedFields?.trim() || SHARED_FIELDS_FALLBACK
+      }))
       .catch(() => {
         statusPromise = null;
-        return false;
+        return { enabled: false, sharedFields: SHARED_FIELDS_FALLBACK };
       });
   }
   return statusPromise;
+}
+
+export function crossPortalEnabled(): Promise<boolean> {
+  return crossPortalStatus().then((status) => status.enabled);
 }
 
 export function lookupInFieldRepository(input: {
@@ -85,7 +107,7 @@ export function linkToFieldRepository(artisanId: string, expectedRemoteArtisanId
 
 export function refreshFromFieldRepository(
   artisanId: string
-): Promise<{ link: CrossPortalLink; changed: string[] }> {
+): Promise<{ link: CrossPortalLink; changed: string[]; artisan?: Artisan }> {
   return apiFetch(`/cross-portal/artisans/${encodeURIComponent(artisanId)}/link/refresh`, { method: "POST" });
 }
 
@@ -130,6 +152,40 @@ export function prefillFromMatch(match: CrossPortalMatch): ArtisanPrefill {
   if (f.pehchanCardNumber?.trim()) out.pehchanCardNumber = f.pehchanCardNumber.trim();
   if (match.craft?.craftId) out.craftId = match.craft.craftId;
   return out;
+}
+
+/**
+ * The values a refresh changed, as the form's prefill: the identity fields only (the Field
+ * Repository is their source of truth), read off the artisan the server returned after writing.
+ */
+export function prefillFromRefreshedArtisan(artisan: Artisan, changed: string[]): ArtisanPrefill {
+  const a = artisan as Artisan & Record<string, unknown>;
+  const out: ArtisanPrefill = {};
+  const text = (key: string) => (typeof a[key] === "string" ? (a[key] as string).trim() : "");
+  if (changed.includes("name") && text("name")) out.name = text("name");
+  if (changed.includes("localName") && text("localName")) out.localName = text("localName");
+  if (changed.includes("gender") && text("gender")) out.gender = text("gender");
+  if (changed.includes("dateOfBirth")) {
+    const dob = day(typeof a.dateOfBirth === "string" ? a.dateOfBirth : null);
+    if (dob) out.dateOfBirth = dob;
+  }
+  if (changed.includes("pehchanCardAvailable") && typeof a.pehchanCardAvailable === "boolean") {
+    out.pehchanCardAvailable = a.pehchanCardAvailable;
+  }
+  if (changed.includes("pehchanCardNumber") && text("pehchanCardNumber")) {
+    out.pehchanCardNumber = text("pehchanCardNumber");
+  }
+  return out;
+}
+
+/**
+ * The match's Pehchan pair, unless the match has no number and the designer typed one: then the
+ * typed number stands (with the card marked held) rather than being wiped by the fill.
+ */
+export function keepTypedPehchan(values: ArtisanPrefill, typed: string | null | undefined): ArtisanPrefill {
+  const number = typed?.trim();
+  if (values.pehchanCardNumber || !number) return values;
+  return { ...values, pehchanCardAvailable: true, pehchanCardNumber: number };
 }
 
 /** "Meena Devi · Bandhani" — the one line that says who was found. */

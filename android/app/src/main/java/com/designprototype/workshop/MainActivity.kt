@@ -636,6 +636,7 @@ import com.designprototype.workshop.data.ArtisanDetailDto
 import com.designprototype.workshop.data.ArtisanQuestionnaireDto
 import com.designprototype.workshop.data.CraftDto
 import com.designprototype.workshop.data.CrossPortalClient
+import com.designprototype.workshop.data.CrossPortalCopy
 import com.designprototype.workshop.data.CrossPortalMatchDto
 import com.designprototype.workshop.data.CrossPortalPrefill
 import com.designprototype.workshop.ui.CrossPortalFindCard
@@ -11610,7 +11611,10 @@ private fun ArtisanForm(
             }.getOrNull()
             if (queuedOffline != null) {
                 draft.discard(); media.reset()
-                onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
+                // C27: a filled-from-the-Field-Repository artisan banked offline has no id to link
+                // yet. Say where the link is made rather than dropping the match without a word.
+                val linkNote = if (!isEdit && crossMatch != null) " ${CrossPortalCopy.LINK_AFTER_SYNC}" else ""
+                onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit) + linkNote)
                 onDone()
                 saving = false
                 return@launch
@@ -11922,10 +11926,21 @@ private fun ArtisanForm(
             )
         }
         if (isEdit) {
-            CrossPortalLinkCard(artisanId = editing!!.id)
+            // A refresh changed the artisan on the server: the boxes take the new values, or the next
+            // Save writes the old name, gender, date of birth and Pehchan back over them.
+            CrossPortalLinkCard(artisanId = editing!!.id) { artisan, changed ->
+                val values = CrossPortalPrefill.fromRefreshed(artisan, changed)
+                values.name?.let { name = it }
+                values.localName?.let { localName = it }
+                values.gender?.let { gender = it }
+                values.pehchanCardAvailable?.let { pehchanAvailable = it }
+                values.pehchanCardNumber?.let { pehchanNumber = it }
+                values.dateOfBirth?.let { parseFieldDate(it) }?.let { dateOfBirth = it }
+            }
         } else {
             CrossPortalFindCard(aadhaar = aadhaar, pehchanNumber = pehchanNumber, filled = crossMatch) { match ->
-                val values = CrossPortalPrefill.from(match)
+                // A Pehchan number already typed survives a match that has none.
+                val values = CrossPortalPrefill.keepTypedPehchan(CrossPortalPrefill.from(match), pehchanNumber)
                 values.name?.let { name = it }
                 values.localName?.let { localName = it }
                 values.gender?.let { gender = it }
@@ -11938,6 +11953,13 @@ private fun ArtisanForm(
                 values.experienceYears?.let { experienceYears = it.toString() }
                 values.experienceMonths?.let { experienceMonths = it.toString() }
                 values.craftId?.let { craftId = it }
+                // The stated address, onto a location that already has its fix (the card derives
+                // its boxes from that value); with no fix yet there is nothing to write it onto.
+                match.statedAddress?.let { stated ->
+                    media.location?.let { here ->
+                        media.location = CrossPortalPrefill.withStatedAddress(here, stated)
+                    }
+                }
                 crossMatch = match
             }
         }

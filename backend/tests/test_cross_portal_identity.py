@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -43,7 +43,14 @@ def anyio_backend():
 
 
 def _match(row: dict[str, Any], where: dict[str, Any]) -> bool:
-    return all(row.get(k) == v for k, v in where.items())
+    for key, want in where.items():
+        have = row.get(key)
+        if isinstance(want, dict) and "gte" in want:
+            if have is None or have < want["gte"]:
+                return False
+        elif have != want:
+            return False
+    return True
 
 
 class Table:
@@ -77,6 +84,17 @@ class Table:
 
     async def delete(self, where):
         self.rows = [r for r in self.rows if not _match(r, where)]
+
+    async def delete_many(self, where):
+        self.rows = [r for r in self.rows if not _match(r, where)]
+
+    async def create(self, data):
+        row = {"id": f"log{len(self.rows) + 1}", "createdAt": datetime.now(UTC), **data}
+        self.rows.append(row)
+        return SimpleNamespace(**row)
+
+    async def count(self, where=None):
+        return len([r for r in self.rows if _match(r, where or {})])
 
 
 def _settings(**over):
@@ -116,9 +134,15 @@ def world(monkeypatch):
     calls: list[tuple[str, str, Any]] = []
     answers: dict[tuple[str, str], tuple[int, Any]] = {}
 
-    async def fake_peer(settings, method, path, *, body=None, params=None):
+    async def fake_peer(settings, method, path, *, body=None, params=None, requested_by=None):
         calls.append((method, path, body))
-        return answers.get((method, path), (200, {"match": REMOTE}))
+        asked_by.append(requested_by)
+        answer = answers.get((method, path), (200, {"match": REMOTE}))
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    asked_by: list[Any] = []
 
     artisan = {
         "id": "dp1",
@@ -131,11 +155,13 @@ def world(monkeypatch):
         "aadhaarNumber": AADHAAR,
         "createdById": "u1",
         "designWorkshopId": None,
+        "status": "APPROVED",
     }
     fake = SimpleNamespace(
         artisan=Table([artisan]),
         craft=Table([{"id": "c-local", "name": "Bandhej", "craftCode": "bandhani"}]),
         crossportalartisanlink=Table(),
+        crossportalaccesslog=Table(),
     )
 
     @asynccontextmanager
@@ -155,6 +181,12 @@ def world(monkeypatch):
     monkeypatch.setattr(routes, "peer_call", fake_peer)
     monkeypatch.setattr(routes, "assert_may_write_a_record_filed_under", allowed)
     monkeypatch.setattr(routes, "guard_record_edit", guard)
+    clash_checks: list[Any] = []
+
+    async def no_clash(data, exclude_id=None):
+        clash_checks.append((dict(data), exclude_id))
+
+    monkeypatch.setattr(routes, "_guard_identity_conflicts", no_clash)
 
     async def required(model, record_id):
         row = await model.find_unique(where={"id": record_id})
@@ -163,7 +195,9 @@ def world(monkeypatch):
         return row
 
     monkeypatch.setattr(routes, "require_record", required)
-    return SimpleNamespace(db=fake, calls=calls, answers=answers)
+    return SimpleNamespace(
+        db=fake, calls=calls, answers=answers, asked_by=asked_by, clash_checks=clash_checks
+    )
 
 
 OWNER = SimpleNamespace(id="u1", role="DESIGNER")
@@ -174,7 +208,10 @@ async def test_everything_is_404_until_the_url_and_secrets_are_set(world, monkey
     with pytest.raises(HTTPException) as exc:
         await routes.lookup_artisan(routes.LookupIn(aadhaarNumber=AADHAAR, consent=True), OWNER)
     assert exc.value.status_code == 404
-    assert await routes.cross_portal_status(OWNER) == {"enabled": False}
+    assert await routes.cross_portal_status(OWNER) == {
+        "enabled": False,
+        "sharedFields": cross_portal.consent_fields_phrase(),
+    }
 
 
 async def test_lookup_needs_the_artisans_agreement_and_a_number(world):
@@ -217,6 +254,38 @@ async def test_link_re_derives_the_match_from_the_stored_numbers(world):
     assert lookup[2] == {"aadhaarCode": cross_portal.aadhaar_code(AADHAAR, KEY)}
     assert world.calls[1][:2] == ("POST", "/artisans/fr1/links")
     assert world.db.crossportalartisanlink.rows[0]["consentRecordedById"] == "u1"
+    assert world.asked_by == ["u1", "u1"], "the other side's log is told who asked"
+
+
+async def test_a_link_the_other_side_refuses_is_never_written(world):
+    """Consent withdrawn between the lookup and the link: FR answers 409, and DP keeps no row."""
+    world.answers[("POST", "/artisans/fr1/links")] = (409, {"linked": False})
+    with pytest.raises(HTTPException) as exc:
+        await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
+    assert exc.value.status_code == 409
+    assert exc.value.detail == routes.CONSENT_WITHDRAWN
+    assert world.db.crossportalartisanlink.rows == []
+    assert world.db.crossportalaccesslog.rows[-1]["outcome"] == "REFUSED"
+
+
+async def test_an_unacknowledged_link_is_re_sent_by_the_next_refresh(world):
+    world.answers[("POST", "/artisans/fr1/links")] = cross_portal_client.PeerUnavailable("down")
+    out = await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
+    assert out["linked"] is True and out["remoteAcknowledged"] is False
+    del world.answers[("POST", "/artisans/fr1/links")]
+    refreshed = await routes.refresh_artisan("dp1", OWNER)
+    assert refreshed["link"]["remoteAcknowledged"] is True
+    assert [c[:2] for c in world.calls[-2:]] == [("POST", "/artisans/fr1/links"), ("GET", "/artisans/fr1")]
+
+
+async def test_a_refresh_whose_resent_link_is_refused_drops_ours(world):
+    world.answers[("POST", "/artisans/fr1/links")] = cross_portal_client.PeerUnavailable("down")
+    await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
+    world.answers[("POST", "/artisans/fr1/links")] = (409, {"linked": False})
+    with pytest.raises(HTTPException) as exc:
+        await routes.refresh_artisan("dp1", OWNER)
+    assert exc.value.status_code == 409
+    assert world.db.crossportalartisanlink.rows == []
 
 
 async def test_link_refuses_a_mismatch_and_a_missing_agreement(world):
@@ -254,6 +323,49 @@ async def test_refresh_copies_only_the_identity_fields(world):
     assert out["link"]["lastRefreshedAt"] is not None
 
 
+async def test_refresh_runs_the_ordinary_edits_helpers(world):
+    world.db.artisan.rows[0]["status"] = "NEEDS_REVISION"
+    await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
+    await routes.refresh_artisan("dp1", OWNER)
+    row = world.db.artisan.rows[0]
+    assert row["status"] == "PENDING", "the creator's refresh resubmits a record sent back"
+    assert world.clash_checks and world.clash_checks[-1][1] == "dp1"
+    assert world.clash_checks[-1][0]["pehchanCardNumber"] == "PEH12345"
+
+
+async def test_refresh_holds_the_pehchan_pair(world):
+    await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
+    broken = {**REMOTE, "fields": {**REMOTE["fields"], "pehchanCardNumber": None}}
+    world.answers[("GET", "/artisans/fr1")] = (200, {"match": broken})
+    with pytest.raises(HTTPException) as exc:
+        await routes.refresh_artisan("dp1", OWNER)
+    assert exc.value.status_code == 422
+    assert exc.value.detail == routes.REFRESH_PEHCHAN
+    assert world.db.artisan.rows[0]["name"] == "Meena", "nothing was written"
+
+
+async def test_every_lookup_is_logged_and_limited_per_hour(world):
+    out = await routes.lookup_artisan(routes.LookupIn(aadhaarNumber=AADHAAR, consent=True), OWNER)
+    assert out["match"]
+    log = world.db.crossportalaccesslog.rows
+    assert [(r["userId"], r["action"], r["outcome"], r["remoteArtisanId"]) for r in log] == [
+        ("u1", "LOOKUP", "MATCH", "fr1")
+    ]
+    assert AADHAAR not in json.dumps(log, default=str)
+    assert cross_portal.aadhaar_code(AADHAAR, KEY) not in json.dumps(log, default=str)
+    now = datetime.now(UTC)
+    world.db.crossportalaccesslog.rows = [
+        {"userId": "u1", "action": "LOOKUP", "outcome": "NO_MATCH", "createdAt": now}
+        for _ in range(routes.LOOKUPS_PER_HOUR)
+    ] + [{"userId": "u1", "action": "LOOKUP", "outcome": "NO_MATCH", "createdAt": now - timedelta(hours=2)}]
+    with pytest.raises(HTTPException) as exc:
+        await routes.lookup_artisan(routes.LookupIn(aadhaarNumber=AADHAAR, consent=True), OWNER)
+    assert exc.value.status_code == 429
+    # Another account is not held to this one's count.
+    other = SimpleNamespace(id="u2", role="DESIGNER")
+    assert (await routes.lookup_artisan(routes.LookupIn(aadhaarNumber=AADHAAR, consent=True), other))["match"]
+
+
 async def test_refresh_when_sharing_was_withdrawn_is_a_409(world):
     await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
     world.answers[("GET", "/artisans/fr1")] = (404, {"match": None})
@@ -279,28 +391,56 @@ class _Response:
         self.headers = {cross_portal.SIGNATURE_HEADER: signature} if signature else {}
 
 
-def test_the_client_accepts_only_a_signed_answer(monkeypatch):
+def test_the_client_accepts_only_an_answer_signed_for_its_own_request(monkeypatch):
     body = b'{"match":null}'
     sent: dict[str, Any] = {}
 
     def good(method, url, headers, data, params, timeout):
-        sent.update(url=url, auth=headers["Authorization"])
-        return _Response(200, body, cross_portal.sign(TOKEN, body))
+        nonce = headers[cross_portal.NONCE_HEADER]
+        sent.update(url=url, auth=headers["Authorization"], nonce=nonce, by=headers.get(cross_portal.REQUESTED_BY_HEADER))
+        signature = cross_portal.sign(
+            TOKEN, body, method=method, path="/api/cross-portal/peer/artisans/lookup", nonce=nonce
+        )
+        return _Response(200, body, signature)
 
     monkeypatch.setattr(cross_portal_client.requests, "request", good)
-    assert cross_portal_client._call_sync(_settings(), "POST", "/artisans/lookup", {}, None) == (
+    assert cross_portal_client._call_sync(_settings(), "POST", "/artisans/lookup", {}, None, "u1") == (
         200,
         {"match": None},
     )
     assert sent["url"] == f"{URL}/cross-portal/peer/artisans/lookup"
     assert sent["auth"] == f"Bearer {TOKEN}"
+    assert len(sent["nonce"]) >= cross_portal.MIN_NONCE_LENGTH and sent["by"] == "u1"
 
     def forged(method, url, headers, data, params, timeout):
-        return _Response(200, body, cross_portal.sign("x" * 40, body))
+        nonce = headers[cross_portal.NONCE_HEADER]
+        return _Response(200, body, cross_portal.sign("x" * 40, body, method=method, path=url, nonce=nonce))
 
     monkeypatch.setattr(cross_portal_client.requests, "request", forged)
     with pytest.raises(cross_portal_client.PeerUnavailable):
-        cross_portal_client._call_sync(_settings(), "POST", "/artisans/lookup", {}, None)
+        cross_portal_client._call_sync(_settings(), "POST", "/artisans/lookup", {}, None, None)
+
+    captured = cross_portal.sign(TOKEN, body, method="POST", path="/cross-portal/peer/artisans/lookup", nonce="a" * 32)
+
+    def replayed(method, url, headers, data, params, timeout):
+        return _Response(200, body, captured)
+
+    monkeypatch.setattr(cross_portal_client.requests, "request", replayed)
+    with pytest.raises(cross_portal_client.PeerUnavailable):
+        cross_portal_client._call_sync(_settings(), "POST", "/artisans/lookup", {}, None, None)
+
+
+def test_the_clients_fall_back_to_the_servers_words():
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    phrase = cross_portal.consent_fields_phrase()
+    web = (root / "frontend/lib/crossPortal.ts").read_text(encoding="utf-8")
+    kotlin = (
+        root / "android/app/src/main/java/com/designprototype/workshop/data/CrossPortalApi.kt"
+    ).read_text(encoding="utf-8")
+    assert f'"{phrase}"' in web
+    assert f'"{phrase}"' in kotlin
 
 
 def test_the_config_defaults_to_off():
