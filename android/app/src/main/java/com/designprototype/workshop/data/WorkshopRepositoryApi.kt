@@ -2170,6 +2170,13 @@ interface WorkshopRepositoryApi {
     @GET("access/roster/pending-count")
     suspend fun pendingAccessCount(): PendingAccessCountDto
 
+    // THE IN-APP ACTIVITY LIST (C25, data/AppNotifications.kt). The same routes on both servers.
+    @GET("notifications")
+    suspend fun notifications(@Query("limit") limit: Int): NotificationPageDto
+
+    @POST("notifications/read")
+    suspend fun markNotificationsRead(@Body body: NotificationReadBody): NotificationReadResultDto
+
     @POST("access/roster")
     suspend fun addToAccessRoster(@Body body: AccessRosterCreateBody): AccessRosterDto
 

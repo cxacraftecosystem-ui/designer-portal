@@ -304,6 +304,11 @@ import com.designprototype.workshop.data.QuestionnaireSectionDto
 import com.designprototype.workshop.data.questionnaireSaveRefusal
 import com.designprototype.workshop.data.QuestionnaireSectionUpdateRequest
 import com.designprototype.workshop.data.TokenStore
+import com.designprototype.workshop.data.LocalAlerts
+import com.designprototype.workshop.data.NotificationInboxRules
+import com.designprototype.workshop.data.NotificationState
+import com.designprototype.workshop.data.notificationWorkshopId
+import com.designprototype.workshop.ui.NotificationsScreen
 import com.designprototype.workshop.data.apiHostNeedsLocalNetwork
 import com.designprototype.workshop.data.ToolCreateRequest
 import com.designprototype.workshop.data.UserDto
@@ -853,12 +858,14 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         takeQuestionnaireDelivery(intent)
         takePasswordLink(intent)
+        LocalAlerts.takeTap(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         takeQuestionnaireDelivery(intent)
         takePasswordLink(intent, restored = savedInstanceState != null)
+        if (savedInstanceState == null) LocalAlerts.takeTap(intent)
         askForLocalNetworkWhenTheApiNeedsIt()
         val tokenStore = TokenStore(applicationContext)
         val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
@@ -1102,6 +1109,8 @@ private sealed interface Screen {
     data object MyActivity : Screen
     data object ToolAssign : Screen
     data object Feedback : Screen
+    /** The in-app activity list (C25): `ui/NotificationsScreen.kt`. */
+    data object Notifications : Screen
     /*
      * There is deliberately NO `Screen.Settings` here, and there was one until it was traced.
      *
@@ -1999,6 +2008,9 @@ private fun RepositoryApp(
                 runCatching { repository.pendingAccessCount() }
                     .onSuccess { pendingAccessRequests = it.pending }
             }
+            // THE ACTIVITY LIST (C25) rides the same loop: one small read, the device copy kept for
+            // offline, and a local alert for anything new. A failure keeps the copy it has.
+            runCatching { repository.syncNotifications(appContext) }
             // RE-PROBE A SERVER THAT STOPPED ANSWERING. An empty queue sends nothing, so without
             // this the "can't reach the server" line would wait for the designer to tap something.
             // Any answer clears it (ServerReachability.recordAnswer, in ApiClient).
@@ -3244,6 +3256,13 @@ private fun HomeScreen(
             screen = Screen.Questionnaires
         }
     }
+    // A tap on a posted activity alert (C25) opens the list it came from.
+    val notificationOpenRequest by NotificationState.openRequests.collectAsState()
+    LaunchedEffect(notificationOpenRequest) {
+        if (notificationOpenRequest > 0L) screen = Screen.Notifications
+    }
+    val notificationInbox by NotificationState.inbox.collectAsState()
+    val unreadNotifications = notificationInbox?.takeIf { it.userId == user.id }?.let { NotificationInboxRules.unread(it) } ?: 0
     var carryForward by remember { mutableStateOf<Prefill?>(null) }
     /**
      * The record form a design-workshop reference picker has asked for, or null when none is open.
@@ -3739,6 +3758,7 @@ private fun HomeScreen(
             // what is left for the person themselves is Appearance & accessibility.
             NavDestination.SETTINGS -> screen = Screen.Appearance
             NavDestination.GIVE_FEEDBACK -> screen = Screen.Feedback
+            NavDestination.NOTIFICATIONS -> screen = Screen.Notifications
         }
     }
 
@@ -3780,6 +3800,7 @@ private fun HomeScreen(
             is Screen.MyActivity -> Screen.Dashboard
             is Screen.ToolAssign -> Screen.Dashboard
             is Screen.Feedback -> Screen.Dashboard
+            is Screen.Notifications -> Screen.Dashboard
             is Screen.Appearance -> Screen.Dashboard
             // One level at a time, exactly as the tool screens below: back from the phone's speech
             // settings lands on the settings screen that offered them, not on the dashboard.
@@ -3877,6 +3898,7 @@ private fun HomeScreen(
         is Screen.MyActivity -> "My Activity"
         is Screen.ToolAssign -> "Assign tools to artisans"
         is Screen.Feedback -> "App feedback"
+        is Screen.Notifications -> "Notifications"
         is Screen.Appearance -> "Appearance & accessibility"
         // Null: this screen owns its whole viewport and draws its own heading and back arrow, the
         // same arrangement Appearance has. A shared header above it would state the section twice.
@@ -3957,6 +3979,7 @@ private fun HomeScreen(
         is Screen.MyActivity -> NavDestination.MY_ACTIVITY
         is Screen.ToolAssign -> NavDestination.ASSIGN_TOOLS
         is Screen.Feedback -> NavDestination.GIVE_FEEDBACK
+        is Screen.Notifications -> NavDestination.NOTIFICATIONS
         is Screen.Appearance -> NavDestination.SETTINGS
         // The SAME row as its parent, deliberately: a designer inside the phone's speech settings is
         // inside Settings, and dimming the menu row they arrived through would read as having left.
@@ -4114,6 +4137,7 @@ private fun HomeScreen(
                         currentDestination = currentDestination,
                         onNavigate = ::navigate,
                         pendingAccessCount = pendingAccessRequests,
+                        unreadNotifications = unreadNotifications,
                         pushingUpdate = pushingUpdate,
                         onToggleAdminView = { requestAdminView(!adminView) },
                         onPushUpdate = {
@@ -4766,6 +4790,20 @@ private fun HomeScreen(
             is Screen.Feedback -> FeedbackScreen(
                 repository = repository,
                 onError = { showError(it) }
+            )
+
+            // The activity list (C25). A notice's link is a web path; the two a handset can open
+            // in place are a workshop and the account's own settings.
+            is Screen.Notifications -> NotificationsScreen(
+                api = repository.notificationApi(),
+                userId = user.id,
+                onOpenLink = { link ->
+                    val workshopId = notificationWorkshopId(link)
+                    when {
+                        workshopId != null -> { message = null; screen = Screen.DesignWorkshopStages(workshopId) }
+                        link == "/settings" -> screen = Screen.Appearance
+                    }
+                }
             )
 
             // The whole hub is admin chrome (/admin heads the web's ADMIN_CHROME_ROUTES). The role
