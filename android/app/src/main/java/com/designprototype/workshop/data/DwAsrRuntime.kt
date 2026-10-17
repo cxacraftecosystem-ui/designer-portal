@@ -1144,7 +1144,7 @@ fun dwAsrOfferSentence(
     DwAsrOffer.NOT_ENOUGH_STORAGE -> buildString {
         append("Not enough storage. This phone has ")
         append(dwBytesLabel(measurement.freeStorageBytes))
-        append(" free.")
+        append(" free. Free some space and check again.")
     }
 
     DwAsrOffer.UNKNOWN ->

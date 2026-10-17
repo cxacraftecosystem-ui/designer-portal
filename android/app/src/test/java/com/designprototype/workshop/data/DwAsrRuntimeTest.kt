@@ -788,7 +788,13 @@ class DwAsrRuntimeTest {
         )
         sentences.forEach { sentence ->
             assertTrue("a refusal must be a sentence: $sentence", sentence.trimEnd().endsWith("."))
-            assertTrue("and long enough to say what to do: $sentence", sentence.length > 25)
+            // Short is fine; silent about what happens next is not. Each one names a move ("Tap",
+            // "Try again", "Add", "stay on") or the settled state the designer can rely on.
+            assertTrue(
+                "says what to do or what holds: $sentence",
+                listOf("tap", "try again", "add ", "install", "stay on", "works", "free some space", "built for")
+                    .any { sentence.lowercase().contains(it) }
+            )
         }
         // The short labels likewise: two states behind one label read as one state.
         val labels = DwAsrRuntimeState.entries.map { dwAsrStateLabel(it) }

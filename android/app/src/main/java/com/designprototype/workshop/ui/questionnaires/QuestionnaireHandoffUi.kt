@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.questionnaires
 
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import com.designprototype.workshop.data.userMessage
 
 import android.content.Intent
@@ -629,7 +630,7 @@ private fun ReceivedQuestionnaireRow(
             )
         } else {
             ActionRow {
-                TextButton(onClick = onDiscard, enabled = !busy) {
+                TextButton(modifier = Modifier.destructiveAction(), onClick = onDiscard, enabled = !busy) {
                     Text("Remove this file", fontSize = 13.sp)
                 }
             }

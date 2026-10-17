@@ -300,7 +300,10 @@ internal fun DwMediaAiVerbsRow(
             // `DwVerbGate.StillReading` exists.
             currentGate is DwVerbGate.StillReading -> Unit
 
-            currentGate is DwVerbGate.Refused -> DwMediaVerbNote(currentGate.sentence)
+            currentGate is DwVerbGate.Refused -> {
+                DwMediaVerbNote(currentGate.sentence)
+                DwRecordConsentLink(surface.consent)
+            }
 
             serverMediaId == null -> DwMediaVerbNote(DW_VERBS_MEDIA_NOT_UPLOADED)
 

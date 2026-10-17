@@ -279,7 +279,7 @@ fun dwTraceSentence(kind: DwTraceFailureKind, detail: String = ""): String {
             "The trace frame doesn't match the photo, so there's no comparison; the drawing is unaffected. Turn off “Rectify the page” to compare." + if (trimmed.isEmpty()) "" else " ($trimmed)"
 
         DwTraceFailureKind.IMAGE_UNREADABLE ->
-            "Couldn't read this photo. The original is unaffected."
+            "Couldn't read this photo. Choose another; the original is unaffected."
 
         DwTraceFailureKind.IMAGE_EMPTY ->
             "This photo is empty, so there's nothing to trace; the original is unaffected. Choose another."

@@ -1745,6 +1745,7 @@ private fun MultiSelectField(
                             )
                         }
                     }
+                    // Not an ActionRow: the picker's own toolbar (Select all, Clear … Done).
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),

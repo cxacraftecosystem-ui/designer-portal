@@ -733,7 +733,7 @@ fun LocationCaptureCard(
         // button whose whole effect is to make the form unsaveable.
         if (!required && (latText.isNotBlank() || lngText.isNotBlank())) {
             ActionRow {
-                TextButton(onClick = { listening = false; emitted = null; latText = ""; lngText = ""; onChange(null) }) {
+                TextButton(modifier = Modifier.destructiveAction(), onClick = { listening = false; emitted = null; latText = ""; lngText = ""; onChange(null) }) {
                     Text("Clear location")
                 }
             }

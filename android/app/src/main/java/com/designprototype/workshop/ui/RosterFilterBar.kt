@@ -603,6 +603,7 @@ fun RosterPageBar(
     busy: Boolean,
     onPage: (Int) -> Unit,
 ) {
+    // Not an ActionRow: a pager (Previous · page count · Next).
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

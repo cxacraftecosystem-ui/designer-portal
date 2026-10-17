@@ -727,7 +727,7 @@ fun IssuedPasswordLinkPanel(
                 ) {
                     Text(if (copied) "Copied" else "Copy", maxLines = 1, softWrap = false, fontSize = 13.sp)
                 }
-                OutlinedButton(
+                OutlinedButton(modifier = Modifier.destructiveAction(), 
                     // NO LOCAL BUSY FLAG. The withdrawal is a network call the CALLER owns and
                     // launches; a `busy` set and cleared around a plain callback here would be
                     // theatre — flipped back in the same frame, telling nobody anything. The caller

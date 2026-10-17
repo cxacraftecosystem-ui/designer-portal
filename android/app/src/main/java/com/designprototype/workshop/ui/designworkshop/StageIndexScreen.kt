@@ -6,7 +6,10 @@ import com.designprototype.workshop.data.userMessage
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,6 +50,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -156,6 +160,11 @@ import retrofit2.HttpException
 fun StageIndexScreen(
     repository: WorkshopRepository,
     workshopId: String,
+    /**
+     * Arrived from a "Record consent" control on a stage: scroll the consent card into view once.
+     * Web's `#consent` anchor.
+     */
+    focusConsent: Boolean = false,
     /** [DwStageFocus] is null for "just open it" — the row itself, and any label with no address. */
     onOpenStage: (stageKey: String, focus: DwStageFocus?) -> Unit,
     onOpenReport: () -> Unit,
@@ -526,6 +535,7 @@ fun StageIndexScreen(
 
         DwDictationConsentRow(
             consent = consent,
+            focus = focusConsent,
             // `can_run_design_workshops` — {DESIGNER, ADMIN, MASTER_ADMIN}, the set the server's own
             // consent route is gated on. NOT the rank ladder: a PROFESSOR outranks a designer and may
             // not run a workshop, so a threshold would put these two buttons in front of a 403.
@@ -613,16 +623,29 @@ fun StageIndexScreen(
  * state sentence above already says which answer is on record. The only disabling here is while a
  * write is in flight, which is the same reason the microphone disables while a clip is uploading.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DwDictationConsentRow(
     consent: DraftConsent,
+    focus: Boolean,
     mayRecord: Boolean,
     busy: Boolean,
     note: String?,
     onRecord: (DwTier3Consent) -> Unit,
 ) {
     val state = dwTier3ConsentOf(consent.decision)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val requester = remember { BringIntoViewRequester() }
+    // Once, on arrival: the route is a fresh screen each time, so `focus` never re-fires here.
+    LaunchedEffect(focus) {
+        if (focus) {
+            withFrameNanos { }
+            requester.bringIntoView()
+        }
+    }
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.bringIntoViewRequester(requester),
+    ) {
         Text(
             DW_CONSENT_ROW_TITLE,
             color = MaterialTheme.colorScheme.onSurface,

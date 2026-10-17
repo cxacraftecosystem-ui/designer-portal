@@ -67,9 +67,13 @@ class DwSketchTraceFailureTest {
     fun `every sentence is long enough to say what to do and short enough to read`() {
         for (kind in DwTraceFailureKind.entries) {
             val sentence = dwTraceSentence(kind)
-            // Below about eighty characters a sentence has named the problem and not the remedy;
-            // above about four hundred it is a paragraph under a spinner that nobody reads.
-            assertTrue("$kind is too terse to be actionable: $sentence", sentence.length >= 40)
+            // A sentence that names the problem and not the remedy is a shrug, however short or long;
+            // above about four hundred characters it is a paragraph under a spinner nobody reads.
+            assertTrue(
+                "$kind names no remedy: $sentence",
+                listOf("update", "retry", "use ", "raise", "try ", "turn off", "choose")
+                    .any { sentence.lowercase().contains(it) }
+            )
             assertTrue("$kind is a paragraph, not a sentence: $sentence", sentence.length <= 420)
             assertTrue("$kind does not end a sentence: $sentence", sentence.trim().endsWith("."))
         }

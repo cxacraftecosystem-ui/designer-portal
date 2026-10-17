@@ -316,6 +316,7 @@ fun InspectionListScreen(
                     )
                 }
                 if (pages > 1) {
+                    // Not an ActionRow: a pager (Previous · page count · Next).
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),

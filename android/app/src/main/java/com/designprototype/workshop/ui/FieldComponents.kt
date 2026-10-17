@@ -150,7 +150,7 @@ fun LocationEditor(
         }
         if (latText.isNotBlank() || lngText.isNotBlank()) {
             ActionRow {
-                TextButton(onClick = { latText = ""; lngText = ""; onChange(null) }) {
+                TextButton(modifier = Modifier.destructiveAction(), onClick = { latText = ""; lngText = ""; onChange(null) }) {
                     Text("Clear location")
                 }
             }

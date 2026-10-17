@@ -1,6 +1,7 @@
 package com.designprototype.workshop
 
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import android.Manifest
 import android.app.DownloadManager
 import android.content.ContentValues
@@ -1166,7 +1167,8 @@ private sealed interface Screen {
      * and backing out of a workshop must not reopen the form the designer just used.
      */
     data class DesignWorkshops(val startCreating: Boolean = false) : Screen
-    data class DesignWorkshopStages(val workshopId: String) : Screen
+    /** [focusConsent]: arrived from a stage's "Record consent" control, so the consent card is scrolled to. */
+    data class DesignWorkshopStages(val workshopId: String, val focusConsent: Boolean = false) : Screen
     /**
      * One stage, optionally arriving at ONE BOX on it.
      *
@@ -4710,6 +4712,7 @@ private fun HomeScreen(
             is Screen.DesignWorkshopStages -> StageIndexScreen(
                 repository = repository,
                 workshopId = s.workshopId,
+                focusConsent = s.focusConsent,
                 onOpenStage = { key, focus ->
                     message = null
                     screen = Screen.DesignWorkshopStage(s.workshopId, key, focus)
@@ -4767,7 +4770,13 @@ private fun HomeScreen(
                  * Editing rides on the same gate rather than a looser one, because a designer who may
                  * not create a record has no business rewriting one either.
                  */
-                inlineRecords = if (canCreate(EntryMode.ARTISAN)) inlineRecordHost else null
+                inlineRecords = if (canCreate(EntryMode.ARTISAN)) inlineRecordHost else null,
+                // "Record consent" under an AI-tool refusal: the consent card lives on the workshop's
+                // own screen, so go there and scroll to it (web: `/design-workshops/{id}#consent`).
+                onOpenConsent = {
+                    message = null
+                    screen = Screen.DesignWorkshopStages(s.workshopId, focusConsent = true)
+                },
             )
 
             is Screen.DesignWorkshopReport -> ReportScreen(
@@ -5284,6 +5293,7 @@ private fun HomeScreen(
                             }) { Text("Save") }
                         },
                         dismissButton = {
+                            // Not an ActionRow: an AlertDialog button slot, which Material lays out itself.
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 TextButton(onClick = { pendingExit = null }) { Text("Keep editing") }
                                 TextButton(onClick = {
@@ -9897,7 +9907,7 @@ private fun MediaCaptureSection(
                     }
                 }
                 ActionRow {
-                    TextButton(onClick = {
+                    TextButton(modifier = Modifier.destructiveAction(), onClick = {
                         val pending = media.stagedDeferred.values.toList()
                         media.stagedDeferred.clear()
                         media.staged = emptyMap()
@@ -13507,7 +13517,7 @@ private fun ToolStagesSection(
                 }
             }
             ActionRow {
-                TextButton(onClick = { stages.uris = emptyList() }) { Text("Clear stages") }
+                TextButton(modifier = Modifier.destructiveAction(), onClick = { stages.uris = emptyList() }) { Text("Clear stages") }
             }
         }
     }
@@ -15053,7 +15063,7 @@ private fun TranscriptRefineControls(
                     enabled = !applying,
                     contentPadding = pad
                 ) { Text(if (applying) "Saving…" else "Approve", maxLines = 1, softWrap = false, fontSize = 12.sp) }
-                OutlinedButton(
+                OutlinedButton(modifier = Modifier.destructiveAction(), 
                     onClick = { refined = null },
                     enabled = !applying,
                     contentPadding = pad
@@ -16789,7 +16799,7 @@ private fun PendingReviewRow(
                     enabled = !busy,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
                 ) { Text(if (busy) "Working…" else "Approve", maxLines = 1, fontSize = 13.sp) }
-                OutlinedButton(
+                OutlinedButton(modifier = Modifier.destructiveAction(), 
                     // Asks first, as the web's review page does. Rejection is the end of the road for a
                     // submission and it sits one tap away from "Send for revision", the recoverable
                     // action with almost the same meaning; on a phone, where the two buttons are a
@@ -18066,7 +18076,7 @@ private fun AndroidMediaForm(
                     }
                 }
                 ActionRow {
-                    TextButton(onClick = { selectedUris = emptyList() }) {
+                    TextButton(modifier = Modifier.destructiveAction(), onClick = { selectedUris = emptyList() }) {
                         Text("Clear batch")
                     }
                 }
@@ -18697,7 +18707,7 @@ private fun AndroidSavedMediaPreview(
                 Text("Save to device", fontSize = 12.sp)
             }
             if (onDelete != null) {
-                TextButton(onClick = { confirmDelete = true }) {
+                TextButton(modifier = Modifier.destructiveAction(), onClick = { confirmDelete = true }) {
                     Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(4.dp))
                     Text("Remove", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
@@ -21399,7 +21409,7 @@ private fun SharingForm(
                                 // that is deliberate — it GIVES access, is undone by Revoke beside
                                 // it, and destroys nothing. Web parity: `decide` only confirms DENIED.
                                 Button(enabled = !busy, onClick = { run({ repository.decideDataAccess(g.id, "GRANTED", g.tier) }, "Granted") }) { Text("Approve") }
-                                OutlinedButton(
+                                OutlinedButton(modifier = Modifier.destructiveAction(), 
                                     enabled = !busy,
                                     onClick = {
                                         confirming = SharingConfirm(
@@ -21413,7 +21423,7 @@ private fun SharingForm(
                                     }
                                 ) { Text("Deny") }
                             }
-                            "GRANTED" -> OutlinedButton(
+                            "GRANTED" -> OutlinedButton(modifier = Modifier.destructiveAction(), 
                                 enabled = !busy,
                                 onClick = {
                                     confirming = SharingConfirm(
@@ -21426,7 +21436,7 @@ private fun SharingForm(
                                     )
                                 }
                             ) { Text("Revoke") }
-                            else -> OutlinedButton(
+                            else -> OutlinedButton(modifier = Modifier.destructiveAction(), 
                                 enabled = !busy,
                                 onClick = {
                                     confirming = SharingConfirm(
@@ -21707,7 +21717,7 @@ private fun WorkshopAssignmentCard(
                                 }
                             ) { Text(if (busy) "Working…" else "Grant", maxLines = 1, fontSize = 13.sp) }
                             if (row.status == "PENDING") {
-                                OutlinedButton(
+                                OutlinedButton(modifier = Modifier.destructiveAction(), 
                                     enabled = !busy,
                                     onClick = {
                                         act(row.userId, "Request denied") {
@@ -22069,7 +22079,7 @@ private fun WorkshopAccessQueueCard(
                                     enabled = !busy,
                                     onClick = { decide(row, "GRANTED") }
                                 ) { Text(if (busy) "Working…" else "Approve", maxLines = 1, fontSize = 13.sp) }
-                                OutlinedButton(
+                                OutlinedButton(modifier = Modifier.destructiveAction(), 
                                     enabled = !busy,
                                     onClick = { decide(row, "DENIED") }
                                 ) { Text("Deny", maxLines = 1, fontSize = 13.sp) }
@@ -22440,6 +22450,7 @@ private fun TaskCard(
             }
 
             if (!editable) return@Column
+            // Not an ActionRow: a segmented status choice — equal weights, one selected — not a set of actions.
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 assigneeTaskStatuses.forEach { value ->
                     val current = task.status == value
@@ -22936,7 +22947,7 @@ private fun DwUnfiledRecordCard(
         // ── 3. DISCARD ─────────────────────────────────────────────────────────────────────────
         if (!confirmingDelete) {
             ActionRow {
-                TextButton(onClick = { confirmingDelete = true }, enabled = !busy) {
+                TextButton(modifier = Modifier.destructiveAction(), onClick = { confirmingDelete = true }, enabled = !busy) {
                     Text("Discard permanently", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
             }
@@ -22953,7 +22964,7 @@ private fun DwUnfiledRecordCard(
                 OutlinedButton(onClick = { confirmingDelete = false }, enabled = !busy) {
                     Text("Keep it", fontSize = 12.sp)
                 }
-                TextButton(
+                TextButton(modifier = Modifier.destructiveAction(), 
                     onClick = {
                         scope.launch {
                             busy = true

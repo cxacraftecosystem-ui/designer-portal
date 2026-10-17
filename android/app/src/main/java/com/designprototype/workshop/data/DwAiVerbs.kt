@@ -1163,15 +1163,18 @@ const val DW_VERBS_NEED_A_CONNECTION: String =
  * artisan, and telling somebody to go and ask again when the answer is already on record is the sort
  * of instruction that teaches a designer to stop reading these messages.
  *
+ * Both sit beside a "Record consent" control ([DW_VERB_CONSENT_LINK_LABEL]) that opens the workshop's
+ * consent card, so the sentence itself only states the condition — web's `lib/aiVerbs.ts` words exactly.
+ *
  * It names the fix rather than "ask an administrator", which would be wrong twice over — the server
  * answers 409 and not 403 precisely because *"what is not in a state to permit the send is the
  * WORKSHOP"*, and the designer reading this is the person who can put it right.
  */
 fun dwVerbConsentRefusal(consent: DwTier3Consent): String = when (consent) {
     DwTier3Consent.REFUSED ->
-        "The artisan declined sharing — that is the answer on record — so these are off. Change it on the workshop's own screen if they've agreed."
+        "The artisan declined sharing, so AI tools are off."
     DwTier3Consent.NOT_RECORDED ->
-        "Needs the artisan's sharing consent first. record the artisan's answer on the workshop's own screen."
+        "Needs the artisan's sharing consent first."
     // GRANTED never reaches here through [dwVerbGate], which tests for it first. It is spelled out
     // rather than left to an `else` so that a fourth consent state added to the enum fails to compile
     // here instead of silently inheriting the "nobody has been asked" sentence — which is the one
@@ -1179,6 +1182,9 @@ fun dwVerbConsentRefusal(consent: DwTier3Consent): String = when (consent) {
     DwTier3Consent.GRANTED ->
         "Sharing allowed."
 }
+
+/** The control beside a consent refusal that opens the workshop's consent card. Web: `CONSENT_LINK_LABEL`. */
+const val DW_VERB_CONSENT_LINK_LABEL: String = "Record consent"
 
 /** A photograph the server has never seen cannot be described by a model running on the server. */
 const val DW_VERBS_MEDIA_NOT_UPLOADED: String =

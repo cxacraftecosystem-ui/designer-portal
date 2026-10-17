@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import android.Manifest
 import android.content.Context
 import android.net.Uri
@@ -1038,7 +1039,7 @@ internal fun DwIdentityCardControl(
                 }
             }
             ActionRow {
-                TextButton(onClick = {
+                TextButton(modifier = Modifier.destructiveAction(), onClick = {
                     choices = emptyList()
                     discardPhoto()
                 }) { Text("None of these — discard", fontSize = 13.sp) }

@@ -1755,7 +1755,7 @@ fun LocationFieldsSection(
                 ActionRow {
                     OutlinedButton(
                         onClick = { clearApplied() },
-                        modifier = Modifier.heightIn(min = 48.dp)
+                        modifier = Modifier.destructiveAction().heightIn(min = 48.dp)
                     ) { Text("Clear the copied answers") }
                 }
             }

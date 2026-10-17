@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import com.designprototype.workshop.data.userMessage
 
 import androidx.compose.foundation.background
@@ -260,19 +261,25 @@ internal fun InspectionFeedbackPanel(
                         enabled = !busy,
                         onSelect = { stageKey = it }
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // Short labels so the pair stays on one line in two equal halves at 360dp.
+                    ActionRow {
                         OutlinedButton(
                             onClick = { file(DwInspectionNoteKind.SUGGESTION) },
                             enabled = !busy && note.isNotBlank()
-                        ) { Text("File a suggestion") }
+                        ) { Text("Suggest") }
                         Button(
                             onClick = { confirmSendBack = true },
                             enabled = !busy && note.isNotBlank()
-                        ) { Text("Send the report back") }
-                        if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        ) { Text("Send back") }
+                    }
+                    if (busy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp).align(Alignment.CenterHorizontally),
+                            strokeWidth = 2.dp
+                        )
                     }
                     Text(
-                        "Filing keeps the report as is; sending back moves it to Needs revision. Neither can be undone. Works offline.",
+                        "Suggest keeps the report as is; Send back moves it to Needs revision. Neither can be undone.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
                     )
@@ -402,7 +409,7 @@ private fun QueuedNoteCard(
             }
         }
         ActionRow {
-            TextButton(onClick = onDiscard, enabled = !busy) { Text("Discard") }
+            TextButton(modifier = Modifier.destructiveAction(), onClick = onDiscard, enabled = !busy) { Text("Discard") }
         }
     }
 }

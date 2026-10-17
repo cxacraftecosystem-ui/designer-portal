@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -657,7 +658,7 @@ fun WorkshopViewersScreen(
                 Text(if (saving) "Saving…" else "Save")
             }
             if (selection.dirty) {
-                OutlinedButton(
+                OutlinedButton(modifier = Modifier.destructiveAction(), 
                     onClick = { selection = selection.discard(); saveError = null },
                     enabled = !saving,
                 ) { Text("Discard") }

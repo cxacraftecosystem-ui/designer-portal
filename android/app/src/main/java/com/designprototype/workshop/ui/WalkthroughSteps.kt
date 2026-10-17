@@ -638,7 +638,7 @@ internal val walkthroughInspectorJourney: List<WalkStep> = listOf(
         title = "Correction suggestions · File or send back",
         icon = Icons.Filled.RateReview,
         destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
-        body = "Say what should be corrected and which stage it is about. The buttons differ: “File a suggestion” keeps the report as is; “Send the report back” moves it to Needs revision. Watch out: neither can be undone, and offline notes send only if the round hasn't changed.",
+        body = "Say what should be corrected and which stage it is about. The buttons differ: “Suggest” keeps the report as is; “Send back” moves it to Needs revision. Watch out: neither can be undone, and offline notes send only if the round hasn't changed.",
     ),
     WalkStep(
         id = "inspection-review-queue",

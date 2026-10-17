@@ -42,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
@@ -336,6 +337,34 @@ private class PendingWrite {
 
 @Composable
 fun StageScreen(
+    repository: WorkshopRepository,
+    workshopId: String,
+    stageKey: String,
+    focus: DwStageFocus? = null,
+    onMessage: (String) -> Unit,
+    onError: (String) -> Unit,
+    inlineRecords: DwInlineRecordHost? = null,
+    /**
+     * Opens the workshop's consent card — what every "Record consent" control under an AI-tool
+     * refusal on this stage does. Null draws no such control. See [LocalDwOpenConsent].
+     */
+    onOpenConsent: (() -> Unit)? = null,
+) {
+    CompositionLocalProvider(LocalDwOpenConsent provides onOpenConsent) {
+        StageScreenBody(
+            repository = repository,
+            workshopId = workshopId,
+            stageKey = stageKey,
+            focus = focus,
+            onMessage = onMessage,
+            onError = onError,
+            inlineRecords = inlineRecords,
+        )
+    }
+}
+
+@Composable
+private fun StageScreenBody(
     repository: WorkshopRepository,
     workshopId: String,
     stageKey: String,

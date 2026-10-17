@@ -329,11 +329,11 @@ class DwWorkshopNameFieldTest {
     @Test
     fun `a searched line says the whole list was searched, and keeps the escape`() {
         assertEquals(
-            "Names from workshops you can open. Type a new one if it isn't here.",
+            "Names from workshops you can open. All searched. Type a new one if it isn't here.",
             dwWorkshopNameOfferLine(workshopKind = "", shown = 12, total = 12, searching = true)
         )
         assertEquals(
-            "Names from workshops of this type. Type a new one if it isn't here. Showing 12 of 40.",
+            "Names from workshops of this type. All searched. Type a new one if it isn't here. Showing 12 of 40.",
             dwWorkshopNameOfferLine(
                 workshopKind = "DESIGN_INTERVENTION",
                 shown = 12,

@@ -894,8 +894,8 @@ private val WALKTHROUGH_INSPECTOR_FIELDS: Map<String, List<String>> = mapOf(
     "inspection-feedback" to listOf(
         "What should be corrected?",
         "Which stage is it about? — “The report as a whole”, or one named stage",
-        "“File a suggestion” — leaves the report where it is",
-        "“Send the report back” — moves it to Needs revision",
+        "“Suggest” — leaves the report where it is",
+        "“Send back” — moves it to Needs revision",
     ),
     "inspection-review-queue" to listOf(
         "The queue, newest first, with the record's type, title and who submitted it",

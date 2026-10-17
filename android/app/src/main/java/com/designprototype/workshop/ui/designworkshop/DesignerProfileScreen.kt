@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1899,7 +1900,7 @@ fun DesignerProfileScreen(
                                 Text(if (form.cvMediaId.isBlank()) "Attach CV" else "Replace CV")
                             }
                             if (form.cvMediaId.isNotBlank()) {
-                                TextButton(
+                                TextButton(modifier = Modifier.destructiveAction(), 
                                     onClick = {
                                         form = form.copy(cvMediaId = "")
                                         localPreview = localPreview - ProfileMediaSlot.CV
@@ -2422,7 +2423,7 @@ private fun ProfileMediaRow(
                 }
                 if (mediaId.isNotBlank()) {
                     ActionRow {
-                        TextButton(onClick = onClear, enabled = enabled) {
+                        TextButton(modifier = Modifier.destructiveAction(), onClick = onClear, enabled = enabled) {
                             Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Remove")

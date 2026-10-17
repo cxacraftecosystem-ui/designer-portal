@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.destructiveAction
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1174,7 +1175,9 @@ internal fun dwWorkshopNameOfferLine(
         // offered the one they were typing. That kept the control from lying and it did not make the
         // box work. The box now asks the server, so the two facts are separated and both are said.
         append(
-            if (searching) " Type a new one if it isn't here."
+            // "All searched." is the completeness marker (rule 10): the rows are the server's whole
+            // answer, not a page of it.
+            if (searching) " All searched. Type a new one if it isn't here."
             else " Type to search, or add a new one."
         )
         // BOTH NUMBERS OR NEITHER. "Showing 80" alone leaves a reader guessing whether that is most
@@ -2323,7 +2326,7 @@ private fun GeoField(
             Text("Pick on map")
         }
         if (point != null) {
-            TextButton(onClick = { latText = ""; lonText = ""; onChange(null) }, enabled = enabled) {
+            TextButton(modifier = Modifier.destructiveAction(), onClick = { latText = ""; lonText = ""; onChange(null) }, enabled = enabled) {
                 Text("Clear")
             }
         }

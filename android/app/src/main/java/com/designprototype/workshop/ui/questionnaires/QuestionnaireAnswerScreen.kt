@@ -581,6 +581,7 @@ private fun SectionNavigator(
     onGo: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+        // Not an ActionRow: a pager (Previous · section count · Next).
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),

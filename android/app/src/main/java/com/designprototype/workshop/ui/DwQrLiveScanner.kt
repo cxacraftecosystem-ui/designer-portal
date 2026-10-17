@@ -892,6 +892,7 @@ fun DwQrLiveScannerDialog(
             }
 
             // Close and torch, at the top, clear of the reticle.
+            // Not an ActionRow: an overlay toolbar (Close left, torch right).
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

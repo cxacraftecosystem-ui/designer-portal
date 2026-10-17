@@ -1285,7 +1285,13 @@ class DwDeviceTierTest {
         )
         sentences.forEach { sentence ->
             assertTrue("a refusal must be a sentence: $sentence", sentence.trimEnd().endsWith("."))
-            assertTrue("and a long enough one to say what to do: $sentence", sentence.length > 25)
+            // Short is fine; a dead end is not. Each names the move ("Tap", "Close", "Free some
+            // space", "download") or what happens instead ("online", "nothing to install").
+            assertTrue(
+                "says what to do or what happens instead: $sentence",
+                listOf("tap", "close", "free some space", "download", "online", "nothing to install", "use the card")
+                    .any { sentence.lowercase().contains(it) }
+            )
         }
     }
 

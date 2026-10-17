@@ -416,8 +416,10 @@ internal fun DwAiVerbsPanel(
                             val model = deviceModel
                             if (model == null || !dwTier2CanRecord(context, surface.serverWorkshopId)) {
                                 DwVerbRefusal(gate.sentence)
+                                DwRecordConsentLink(surface.consent)
                             } else if (passageChars == 0 || passageChars > DW_TIER2_MAX_PASSAGE_CHARS) {
                                 DwVerbRefusal(gate.sentence)
+                                DwRecordConsentLink(surface.consent)
                             } else {
                                 Text(
                                     "“$passagePreview”",
