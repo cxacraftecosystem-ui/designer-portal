@@ -144,12 +144,27 @@ rejected, withdrawn — is a `RecordRevision` row (`recordType` `user` or `artis
 `aadhaarVerification`, in the `{old, new}` shape both clients' history panels render, carrying the
 method, outcome, refusal code and last four digits and nothing else; plus one `app.aadhaar` log line.
 **Retention (Regulation 18(3)).** Entries older than two years are archived, a month at a time, to
-the encrypted backup bucket (`aadhaar-log-archive/`, SSE-KMS when `AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` is
-set, SSE-S3 otherwise) and removed from the live table once the object reads back; an archive is
-deleted `AADHAAR_LOG_ARCHIVE_YEARS` (at least 5) after its newest entry. A record under an open
-`AadhaarLegalHold` (`scripts/aadhaar_legal_hold.py`) keeps its entries live and its archives
-undeleted. The queue worker runs this once a day (`services/aadhaar/log_retention.py`); the ledger
-is `AadhaarLogArchive`. The API's AWS key needs Put/Get/Delete on that prefix — see §8.
+`AADHAAR_LOG_ARCHIVE_BUCKET` under `aadhaar-log-archive/` (SSE-KMS when
+`AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` is set, SSE-S3 otherwise) and removed from the live table once the
+object reads back; an archive is deleted `AADHAAR_LOG_ARCHIVE_YEARS` (at least 5) after its newest
+entry. A record under an open `AadhaarLegalHold` (`scripts/aadhaar_legal_hold.py`) keeps its entries
+live and its archives undeleted. The queue worker runs this once a day
+(`services/aadhaar/log_retention.py`); the ledger is `AadhaarLogArchive`.
+
+*Where the archive lives.* The bucket defaults to the **media bucket** (`AWS_S3_BUCKET`,
+`designrepo-media-626159998512`), not a separate backup bucket. That bucket is versioned and
+replicates every object to `designrepo-offsite-626159998512` (ap-south-2, Object Lock GOVERNANCE 35
+days), and both keep noncurrent versions for 90 days. So "deleted after the archive period" means the
+current object goes on the due date and its versions follow about 90 days later in both regions (up
+to 125 if the object was rewritten in its last 35 days). With `AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` set
+the objects are SSE-KMS, and the replication rule does not copy SSE-KMS objects, so they then have
+no off-site copy at all.
+
+*Open, before October 2028* (when the first entries turn two): the API's IAM user
+(`designrepo-media`) may Put/Get/Delete only under `media/*`. Until a statement for
+`aadhaar-log-archive/*` (`s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`) is added, each daily run
+is refused at the upload, deletes nothing and logs the failure. Optionally add a lifecycle rule on
+that prefix that expires noncurrent versions sooner, to shorten the tail above.
 
 ---
 

@@ -372,6 +372,9 @@ sudo systemctl restart fieldrepo fieldrepo-queue
 Seconds, no build, no network fetch. **The one thing a flip cannot undo is an applied migration.** If
 the release you are rolling back to predates a migration that has run, the old code meets a schema it
 was not written for, and the symlink will not save you — that is a restore, not a rollback.
+**Never flip back past the Aadhaar fingerprint release once it has saved an artisan**: older code
+misses duplicates and starts storing full numbers again. Fix forward instead
+([DEPLOY_AWS.md](../backend/DEPLOY_AWS.md), "Aadhaar fingerprint", has the check).
 
 **Each release runs the interpreter it was built with**, so a rollback also needs that interpreter on
 the box: `/usr/bin/python3.12` for the releases built before 2026-10-09, the pinned upstream CPython

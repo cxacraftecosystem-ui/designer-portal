@@ -8,9 +8,9 @@ the outcome, a refusal code and at most the last four digits, never the number.
 WHAT THE JOB DOES, once a day from the queue worker (``app/worker.py``):
 
 1. ARCHIVE. Entries older than :data:`LIVE_YEARS` are written, a calendar month at a time, as one
-   gzipped JSON-lines object to the encrypted backup bucket (``AADHAAR_LOG_ARCHIVE_BUCKET``, default
-   the media bucket, under ``aadhaar-log-archive/``; SSE-KMS when ``AADHAAR_LOG_ARCHIVE_KMS_KEY_ID``
-   is set, SSE-S3 otherwise). The object is read back (size and SHA-256) BEFORE anything is
+   gzipped JSON-lines object to ``AADHAAR_LOG_ARCHIVE_BUCKET`` (default the media bucket, which is
+   versioned and replicated off-site, not a separate backup bucket), under ``aadhaar-log-archive/``;
+   SSE-KMS when ``AADHAAR_LOG_ARCHIVE_KMS_KEY_ID`` is set, SSE-S3 otherwise. The object is read back (size and SHA-256) BEFORE anything is
    deleted; only then are the archived entries removed from the live table, in the same
    transaction that records the archive in ``AadhaarLogArchive``. A failed upload deletes nothing.
 2. DELETE. An archive whose newest entry is older than LIVE_YEARS + ``AADHAAR_LOG_ARCHIVE_YEARS``
@@ -74,7 +74,8 @@ class ArchiveStore(Protocol):
 
 
 class S3ArchiveStore:
-    """The encrypted backup bucket. The API's key needs Put/Get/Delete on the prefix (docs/AADHAAR.md)."""
+    """The archive bucket (the media bucket by default). The API's key needs Put/Get/Delete on the
+    prefix, which it does not have yet (docs/AADHAAR.md §3)."""
 
     def __init__(self, settings: Any) -> None:
         self.settings = settings
