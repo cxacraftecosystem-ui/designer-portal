@@ -8,6 +8,13 @@ import com.designprototype.workshop.data.StageDraft
 import com.designprototype.workshop.data.StageDto
 import com.designprototype.workshop.data.StageListDto
 import com.designprototype.workshop.data.WorkshopDraft
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -24,8 +31,10 @@ import kotlin.math.abs
  *
  *  · THE ZOOM MATH — [dwFitScale], [dwZoomTarget], [dwScaledExtent] — and the guard that the sheet
  *    is not drawn with `requiredSize` again, whose centring left the page blank at every zoom but 100%;
- *  · THE DRAFT — [dwStagePreviewDraft] — which must build from the server's copy when this device
- *    holds no draft, rather than waiting for a keystroke to write one.
+ *  · THE DRAFT — [dwStagePreviewDraft] — which is always the report screen's merge of this device's
+ *    draft with the server's copy, so a one-stage local draft never hides the other stages;
+ *  · THE SERVER READ — [DwPreviewServerCopy] — which tells offline and failed apart from empty, and
+ *    survives the debounce cancelling the build that is waiting for it.
  */
 class DwStagePreviewTest {
 
@@ -166,15 +175,89 @@ class DwStagePreviewTest {
     }
 
     @Test
-    fun `a local draft wins and the live stage is laid over it`() {
+    fun `a one-stage local draft keeps the server's other stages, with the live stage laid over it`() {
+        // What the first debounced save writes on a workshop this device had never opened.
         val local = WorkshopDraft(
             workshopId = "ws-1",
+            remoteId = "ws-1",
             stages = mapOf(stageKey to StageDraft(stageId = stageKey, values = mapOf("objectives" to JsonPrimitive("old")))),
         )
         val draft = dwStagePreviewDraft(schema, "ws-1", stageKey, local = local, remoteId = "ws-1", remote = serverCopy, live = typed("new"))
         assertEquals("new", (draft!!.stages[stageKey]?.values?.get("objectives") as JsonPrimitive).content)
-        // The server's copy is not merged over a device that holds a draft — the stage screen's rule.
+        // The device holds no work for setup, so it is the server's — the report screen's merge.
+        assertEquals(
+            "Dabu print",
+            (draft.stages["WORKSHOP_SETUP"]?.values?.get("craftName") as JsonPrimitive).content,
+        )
+    }
+
+    @Test
+    fun `a stage this device holds work for stays the device's`() {
+        val local = WorkshopDraft(
+            workshopId = "ws-1",
+            remoteId = "ws-1",
+            stages = mapOf(
+                "WORKSHOP_SETUP" to StageDraft(stageId = "WORKSHOP_SETUP", values = mapOf("craftName" to JsonPrimitive("Ajrakh"))),
+            ),
+        )
+        val draft = dwStagePreviewDraft(schema, "ws-1", stageKey, local = local, remoteId = "ws-1", remote = serverCopy, live = untouched)
+        assertEquals("Ajrakh", (draft!!.stages["WORKSHOP_SETUP"]?.values?.get("craftName") as JsonPrimitive).content)
+    }
+
+    @Test
+    fun `with no server copy the local draft is used as it is`() {
+        val local = WorkshopDraft(
+            workshopId = "ws-1",
+            stages = mapOf(stageKey to StageDraft(stageId = stageKey, values = mapOf("objectives" to JsonPrimitive("old")))),
+        )
+        val draft = dwStagePreviewDraft(schema, "ws-1", stageKey, local = local, remoteId = "ws-1", remote = null, live = untouched)
+        assertEquals("old", (draft!!.stages[stageKey]?.values?.get("objectives") as JsonPrimitive).content)
         assertFalse("WORKSHOP_SETUP" in draft.stages)
+    }
+
+    // ── The server read ───────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `offline with no earlier read is Offline, and nothing is fetched`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var calls = 0
+        val read = DwPreviewServerCopy(scope).read(online = false) { calls++; serverCopy }
+        assertEquals(DwServerRead.Offline, read)
+        assertEquals(0, calls)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a failed read is Failed, is not remembered, and the next read asks again`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val copy = DwPreviewServerCopy(scope)
+        var calls = 0
+        val first = copy.read(online = true) { calls++; throw IllegalStateException("500") }
+        assertEquals(DwServerRead.Failed, first)
+        val second = copy.read(online = true) { calls++; serverCopy }
+        assertEquals(DwServerRead.Read(serverCopy), second)
+        // Read once, then served from memory — even offline.
+        assertEquals(DwServerRead.Read(serverCopy), copy.read(online = false) { calls++; serverCopy })
+        assertEquals(2, calls)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a build cancelled by the next keystroke does not cancel the read it was waiting for`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val copy = DwPreviewServerCopy(scope)
+        val gate = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        var calls = 0
+        val fetch: suspend () -> StageListDto = { calls++; started.complete(Unit); gate.await(); serverCopy }
+        val firstBuild = launch(Dispatchers.Default) { copy.read(online = true, fetch = fetch) }
+        started.await()
+        firstBuild.cancel()
+        firstBuild.join()
+        gate.complete(Unit)
+        assertEquals(DwServerRead.Read(serverCopy), copy.read(online = true, fetch = fetch))
+        assertEquals(1, calls)
+        scope.cancel()
     }
 
     private fun repoFile(relative: String): File {

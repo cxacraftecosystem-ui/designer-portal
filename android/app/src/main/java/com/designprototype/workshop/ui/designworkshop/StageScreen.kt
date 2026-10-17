@@ -1351,35 +1351,39 @@ fun StageScreen(
         )
 
         /*
-          THE STAGE'S PAGES, LIVE. Rebuilt from the draft on disk — or, when this device holds no
-          draft of the workshop yet, from the server's copy — with this screen's unsaved answers laid
-          over it, on the same debounce rhythm the web uses; see [dwStagePreviewDraft].
+          THE STAGE'S PAGES, LIVE. Rebuilt from the draft on disk merged with the server's copy (read
+          once per screen, the report screen's merge) with this screen's unsaved answers laid over it,
+          on the same debounce rhythm the web uses; see [dwStagePreviewDraft].
           Closed until asked for: building the document is the right cost for a designer who wants to
           see it and the wrong one for every stage open.
         */
-        val previewServerCopy = remember(workshopId) { DwPreviewServerCopy() }
+        val previewServerCopy = remember(workshopId, scope) { DwPreviewServerCopy(scope) }
         DwStageDocumentPreview(
             workshopId = workshopId,
             stageTitle = spec.title,
             schema = previewSchema,
             revision = revision,
             liveDraft = liveDraft@{
-                val registry = previewSchema ?: return@liveDraft null
-                val disk = WorkshopDraftStore.load(appContext, workshopId)
                 val remoteId = syncId
-                val remote = if (disk == null && remoteId != null && ConnectivityObserver.isOnline(appContext)) {
-                    previewServerCopy.get { repository.designWorkshopStages(remoteId) }
+                val read = if (remoteId == null) {
+                    DwServerRead.NotNeeded
                 } else {
-                    null
+                    previewServerCopy.read(online = ConnectivityObserver.isOnline(appContext)) {
+                        repository.designWorkshopStages(remoteId)
+                    }
                 }
-                dwStagePreviewDraft(
-                    schema = registry,
-                    workshopId = workshopId,
-                    stageKey = spec.key,
-                    local = disk,
-                    remoteId = remoteId,
-                    remote = remote,
-                    live = { existing -> dwLiveStageDraft(spec, state, existing) },
+                val registry = previewSchema ?: return@liveDraft DwStagePreviewSource(null, read)
+                DwStagePreviewSource(
+                    draft = dwStagePreviewDraft(
+                        schema = registry,
+                        workshopId = workshopId,
+                        stageKey = spec.key,
+                        local = WorkshopDraftStore.load(appContext, workshopId),
+                        remoteId = remoteId,
+                        remote = (read as? DwServerRead.Read)?.copy,
+                        live = { existing -> dwLiveStageDraft(spec, state, existing) },
+                    ),
+                    serverRead = read,
                 )
             },
         )
