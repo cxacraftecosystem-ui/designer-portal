@@ -20306,6 +20306,12 @@ private fun QuestionnaireForm(
                     }
                     if (isEdit && (forceOffline || !repository.isOnline(context))) {
                         val original = editing!!
+                        // No version, no queue: see `interviewCorrectionCanQueue`.
+                        if (!com.designprototype.workshop.data.interviewCorrectionCanQueue(original.updatedAt)) {
+                            saveState = SaveState.IDLE
+                            onError(com.designprototype.workshop.data.INTERVIEW_CORRECTION_NEEDS_SIGNAL)
+                            return@launch
+                        }
                         val originalArtisans = original.artisans.map { it.artisanId }.toSet()
                         val queued = runCatching {
                             val request = QuestionnaireInterviewUpdateRequest(

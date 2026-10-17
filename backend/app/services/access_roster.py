@@ -113,6 +113,7 @@ from app.services.designers import (
     email_match_keys,
     normalise_email,
     note_recording_a_consequence,
+    person_name,
     roster_allows,
     suspend_empanelment,
 )
@@ -1314,14 +1315,6 @@ def access_payload(row: Any) -> dict[str, Any]:
         "addedByName": person_name(getattr(row, "addedBy", None)),
         "decidedByName": person_name(getattr(row, "decidedBy", None)),
     }
-
-
-def person_name(user: Any) -> str | None:
-    """An account as a roster screen names it: its name, else its address, else nothing."""
-    if user is None:
-        return None
-    name = str(getattr(user, "name", "") or "").strip()
-    return name or (getattr(user, "email", None) or None)
 
 
 def _iso(value: Any) -> str | None:

@@ -3701,7 +3701,9 @@ class WorkshopRepository(
             QFormOp.REUSE -> {
                 reuseQuestionnaire(
                     id = qid,
-                    designWorkshopId = op.designWorkshopId,
+                    // Through the same map as the source, so a workshop saved since the copy was
+                    // asked for is named by its server id.
+                    designWorkshopId = op.designWorkshopId?.let { need(it, "design & prototype workshop") },
                     title = op.title,
                     description = op.description,
                     changeDescription = op.changeDescription,
@@ -4115,12 +4117,16 @@ class WorkshopRepository(
         )
         val key = java.util.UUID.randomUUID().toString()
         val map = TempIdMap.all(context)
-        val waitsForParent = isTempId(id) && isTempId(resolveTempId(id, map))
-        val behindOthers = pendingQuestionnaireOps(context, setOf(id)).isNotEmpty()
-        if (!waitsForParent && !behindOthers && isOnline(context)) {
+        val pending = pendingQuestionnaireOps(context, setOf(id)).size
+        if (reuseCanSendNow(id, designWorkshopId, map, pending, isOnline(context))) {
             try {
                 return reuseQuestionnaire(
-                    resolveTempId(id, map) ?: id, designWorkshopId, title, description, changeDescription, key,
+                    resolveTempId(id, map) ?: id,
+                    resolveTempId(designWorkshopId, map),
+                    title,
+                    description,
+                    changeDescription,
+                    key,
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -7956,7 +7962,11 @@ class WorkshopRepository(
      * media moves, and each finished file is ticked off as soon as it is up — so whatever kills this
      * pass, the next one starts from what has actually happened rather than from the top.
      */
-    private suspend fun replayEntry(context: Context, queued: PendingEntry): ReplayOutcome {
+    private suspend fun replayEntry(
+        context: Context,
+        queued: PendingEntry,
+        rebasedOnMatch: Boolean = false,
+    ): ReplayOutcome {
         appContextForReplay = context.applicationContext
         var entry = queued
         // AN ENTRY QUEUED BEFORE IDEMPOTENCY KEYS EXISTED gets one now, written down BEFORE the first
@@ -7993,6 +8003,19 @@ class WorkshopRepository(
                     null
                 }
                 if (staleAt != null) {
+                    // THE CORRECTION ALREADY LANDED AND ONLY ITS ANSWER WAS LOST. A PATCH that
+                    // committed while the connection dropped is queued again with the old version,
+                    // so its replay is refused although nobody else touched the record. When the
+                    // server already holds every value this correction sends, nothing needs
+                    // choosing: it is re-based on the server's version and sent once more (an
+                    // identical write), and its files go up as usual.
+                    if (!rebasedOnMatch && runCatching { reviewCorrection(entry)?.fields?.isEmpty() == true }
+                            .getOrDefault(false)
+                    ) {
+                        entry = entry.copy(baseUpdatedAt = staleAt.ifBlank { null } ?: entry.baseUpdatedAt)
+                        OfflineOutbox.update(context, entry)
+                        return replayEntry(context, entry, rebasedOnMatch = true)
+                    }
                     return ReplayOutcome.Rejected(
                         STALE_CORRECTION_SENTENCE,
                         schemaSkew = false,
@@ -8324,6 +8347,11 @@ class WorkshopRepository(
      */
     suspend fun reviewStaleCorrection(context: Context, entryId: String): StaleCorrectionReview? {
         val entry = OfflineOutbox.all(context).firstOrNull { it.id == entryId } ?: return null
+        return reviewCorrection(entry)
+    }
+
+    /** [reviewStaleCorrection] for an entry already in hand. Needs a connection. */
+    private suspend fun reviewCorrection(entry: PendingEntry): StaleCorrectionReview? {
         val target = entry.targetId ?: return null
         val record: JsonObject = when (entry.type) {
             "artisan" -> offlineJson.encodeToJsonElement(ArtisanDetailDto.serializer(), artisan(target))
@@ -8340,7 +8368,7 @@ class WorkshopRepository(
                 }.getOrNull() ?: return null
                 val labels = runCatching { questionnaireQuestions() }.getOrDefault(emptyList())
                     .associate { it.id to interviewQuestionLabel(it) }
-                return interviewCorrectionReview(mine, interview(target), labels)
+                return interviewCorrectionReview(mine, interview(target), labels, entry.changedKeys)
             }
             else -> return null
         } as JsonObject
@@ -8352,6 +8380,14 @@ class WorkshopRepository(
     /** "Send mine": rebase the correction on the version the server holds now and send it. */
     suspend fun keepMyCorrection(context: Context, entryId: String, currentUpdatedAt: String?): Boolean =
         OfflineOutbox.rebaseCorrection(context, entryId, currentUpdatedAt).also { BackgroundSync.requestSoon(context) }
+
+    /**
+     * "Keep theirs": drop this correction's field changes. Its photographs and recordings are never
+     * deleted with them — they stay queued and are added to the record. See
+     * [OfflineOutbox.keepServerVersionKeepFiles].
+     */
+    suspend fun keepTheirVersion(context: Context, entryId: String): Boolean =
+        OfflineOutbox.keepServerVersionKeepFiles(context, entryId).also { BackgroundSync.requestSoon(context) }
 
     /**
      * An artisan queued by a build that predates the identity fields carries no Pehchan answer at all,

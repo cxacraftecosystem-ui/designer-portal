@@ -101,6 +101,30 @@ async def test_a_lost_claim_is_the_same_409_as_a_stale_precondition():
     assert refused.value.detail["currentUpdatedAt"] == moved.isoformat()
 
 
+async def test_a_version_half_a_second_off_is_refused_although_the_assert_would_pass_it():
+    """The assert's one-second slack would let a correction composed against the version BEFORE
+    another interviewer's quick save through; the claim is exact to the millisecond."""
+    stored = datetime(2026, 1, 5, 9, 0, 0, 500_000, tzinfo=UTC)
+    record = SimpleNamespace(id="iv-1", updatedAt=stored)
+    records_service.assert_expected_updated_at(record, STORED_AT)  # passes: within a second
+    delegate = _Delegate(matched=1)
+    with pytest.raises(HTTPException) as refused:
+        await records_service.claim_expected_updated_at(delegate, record, STORED_AT)
+    assert refused.value.status_code == 409
+    assert refused.value.detail["code"] == "record_changed"
+    assert delegate.calls == [], "nothing may be written for a version that is not the one sent"
+
+
+async def test_the_claim_compares_to_the_millisecond_the_column_stores():
+    """A naive value, or one carrying microseconds the column drops, still matches its own version."""
+    record = SimpleNamespace(id="iv-1", updatedAt=datetime(2026, 1, 5, 9, 0, 0, 123_000, tzinfo=UTC))
+    delegate = _Delegate(matched=1)
+    await records_service.claim_expected_updated_at(
+        delegate, record, datetime(2026, 1, 5, 9, 0, 0, 123_456)  # noqa: DTZ001 - naive on purpose
+    )
+    assert [c[0] for c in delegate.calls] == ["update_many"]
+
+
 async def test_a_row_without_a_stored_version_is_not_claimed():
     delegate = _Delegate()
     await records_service.claim_expected_updated_at(

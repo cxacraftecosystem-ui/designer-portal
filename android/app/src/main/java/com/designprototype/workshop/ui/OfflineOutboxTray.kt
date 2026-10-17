@@ -186,8 +186,15 @@ fun OfflineOutboxTray(
             onKeepTheirs = {
                 reviewing = null
                 act {
-                    repository.discardOutboxEntry(appContext, row.entryId)
-                    "Kept the version on the server. Your copy of “${row.label}” was deleted from this device."
+                    // Never discardOutboxEntry here: the files queued with this correction were
+                    // never uploaded, and choosing the other person's text must not delete them.
+                    repository.keepTheirVersion(appContext, row.entryId)
+                    if (row.mediaCount > 0) {
+                        "Kept the version on the server. Your ${filesPhrase(row.mediaCount)} from “${row.label}” " +
+                            "will still be added to it."
+                    } else {
+                        "Kept the version on the server. Your copy of “${row.label}” was deleted from this device."
+                    }
                 }
             },
         )
@@ -693,7 +700,7 @@ private fun StaleCorrectionDialog(
                     problem != null -> Text(problem.orEmpty(), color = MaterialTheme.field.warning, fontSize = 12.sp)
                     loaded == null -> CircularProgressIndicator(modifier = Modifier.size(18.dp))
                     loaded.fields.isEmpty() -> Text(
-                        "The other person's version already holds what you changed. Sending yours changes nothing.",
+                        "Everything you changed is already on the record. Send mine to finish saving it.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                     )
@@ -708,6 +715,15 @@ private fun StaleCorrectionDialog(
                             )
                         }
                     }
+                }
+                if (row.mediaCount > 0) {
+                    // Said before either button is tapped: "Keep theirs" drops text, never files.
+                    Text(
+                        "Your ${filesPhrase(row.mediaCount)} ${if (row.mediaCount == 1) "stays" else "stay"} queued " +
+                            "whichever you choose, and ${if (row.mediaCount == 1) "is" else "are"} added to the record.",
+                        color = MaterialTheme.field.muted,
+                        fontSize = 12.sp,
+                    )
                 }
             }
         },
@@ -754,3 +770,7 @@ private fun OutboxQueuedFiles(files: List<OutboxQueuedFile>) {
         MediaDownloadNotice(downloader)
     }
 }
+
+/** "1 photograph or recording", "3 photographs and recordings". */
+internal fun filesPhrase(count: Int): String =
+    if (count == 1) "1 photograph or recording" else "$count photographs and recordings"

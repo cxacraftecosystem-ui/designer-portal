@@ -62,6 +62,7 @@ import {
   createdPanelOffersLink,
   createsPeerAccount,
   hasPrefill,
+  lastSignIn,
   newAccountBody,
   passwordFrom,
   passwordHasEdgeSpace,
@@ -117,14 +118,17 @@ const STATUS_TONE: Record<AccountStatusKind, string> = {
 
 function AccountStatusCell({ user }: { user: User }) {
   const kind = accountStatus(user);
+  const signedIn = lastSignIn(user);
   return (
     <td className="px-4 py-3">
       <span className="inline-flex flex-col gap-0.5">
         <span className={`inline-flex w-fit rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS_TONE[kind]}`}>
           {ACCOUNT_STATUS_LABEL[kind]}
         </span>
-        {user.firstLoginAt ? (
-          <span className="text-xs text-ink-500">First signed in {formatDate(user.firstLoginAt)}</span>
+        {signedIn ? (
+          <span className="text-xs text-ink-500">
+            {signedIn.label} {formatDate(signedIn.at)}
+          </span>
         ) : null}
         {user.twoFactorEnabled ? (
           <span className="inline-flex w-fit items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-800">
@@ -1381,6 +1385,7 @@ function UsersScreen() {
               ["May download the dataset", hasRank(viewing, "PROFESSOR") || viewing.canDownloadDataset ? "Yes" : "No"],
               ["Sign-in", ACCOUNT_STATUS_LABEL[accountStatus(viewing)]],
               ["First signed in", viewing.firstLoginAt ? formatDate(viewing.firstLoginAt) : "Not yet"],
+              ["Last signed in", viewing.lastLoginAt ? formatDate(viewing.lastLoginAt) : "Not recorded"],
               ["Two-step verification", viewing.twoFactorEnabled ? "On" : "Off"]
             ].map(([label, value]) => (
               <div key={label} className="grid gap-0.5 sm:grid-cols-[13rem_minmax(0,1fr)] sm:gap-3">

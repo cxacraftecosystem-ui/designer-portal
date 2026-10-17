@@ -129,6 +129,22 @@ object TempIdMap {
 fun resolveTempId(id: String?, map: Map<String, String>): String? = if (isTempId(id)) map[id] ?: id else id
 
 /**
+ * Can "Use this questionnaire again" be sent now, or must it wait in the outbox as a [QFormOp.REUSE]?
+ * It waits with no signal, while the source (or the workshop it is for) exists only on this phone,
+ * and while any earlier step for the source is still queued — so the copy includes those steps.
+ * Pure; pinned by `QuestionnaireReuseOutboxTest`.
+ */
+fun reuseCanSendNow(
+    sourceId: String,
+    designWorkshopId: String?,
+    map: Map<String, String>,
+    pendingForSource: Int,
+    online: Boolean,
+): Boolean =
+    online && pendingForSource == 0 &&
+        !isTempId(resolveTempId(sourceId, map)) && !isTempId(resolveTempId(designWorkshopId, map))
+
+/**
  * The form as the designer should see it: the server's copy with every step still waiting on this
  * phone applied on top — new sections and questions drawn under their temporary ids, renames,
  * edits and removals applied. Pure. Pinned by `QuestionnaireAuthoringTest`.

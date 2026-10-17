@@ -135,4 +135,75 @@ class InterviewCorrectionTest {
         )
         assertEquals("B3. What tools are used?", interviewQuestionLabel(question))
     }
+
+    @Test
+    fun an_answer_note_that_differs_is_listed_so_send_mine_cannot_overwrite_it_unseen() {
+        val withNote = record.copy(
+            responses = listOf(InterviewResponseDto(questionId = "q-1", answerText = "Lathe and chisel", notes = "Theirs")),
+        )
+        val review = interviewCorrectionReview(
+            QuestionnaireInterviewUpdateRequest(
+                responses = listOf(
+                    QuestionnaireResponseRequest(questionId = "q-1", answerText = "Lathe and chisel", notes = "Mine"),
+                ),
+            ),
+            withNote,
+            mapOf("q-1" to "B3. What tools are used?"),
+        )
+        val field = review.fields.single()
+        assertEquals("B3. What tools are used? (note)", field.key)
+        assertEquals("Mine", field.mine)
+        assertEquals("Theirs", field.theirs)
+    }
+
+    @Test
+    fun only_the_keys_the_correction_sends_are_compared() {
+        val review = interviewCorrectionReview(
+            QuestionnaireInterviewUpdateRequest(title = "Something else", status = "APPROVED", place = "Channapatna"),
+            record,
+            emptyMap(),
+            changedKeys = setOf("place"),
+        )
+        assertTrue(review.fields.isEmpty())
+    }
+
+    @Test
+    fun a_changed_status_and_workshop_are_named_in_words_not_codes_or_ids() {
+        val review = interviewCorrectionReview(
+            QuestionnaireInterviewUpdateRequest(status = "NEEDS_REVISION", workshopId = "ws-2"),
+            record.copy(workshopId = "ws-1"),
+            emptyMap(),
+            changedKeys = setOf("status", "workshopId"),
+        )
+        assertEquals(listOf("Review status", "Workshop"), review.fields.map { it.key })
+        assertEquals("Needs revision", review.fields[0].mine)
+        assertEquals("Pending", review.fields[0].theirs)
+        assertFalse(review.fields[1].mine.contains("ws-"))
+        assertFalse(review.fields[1].theirs.contains("ws-"))
+    }
+
+    @Test
+    fun a_correction_the_server_already_holds_reviews_empty_so_the_outbox_sends_it_without_asking() {
+        // The lost-response case: the PATCH committed, its answer did not arrive, and the queued
+        // copy is refused against the old version. Nothing differs, so nothing needs choosing.
+        val review = interviewCorrectionReview(
+            QuestionnaireInterviewUpdateRequest(
+                title = "Lac turning",
+                responses = listOf(QuestionnaireResponseRequest(questionId = "q-1", answerText = "Lathe and chisel")),
+            ),
+            record,
+            emptyMap(),
+            changedKeys = setOf("responses"),
+        )
+        assertTrue(review.fields.isEmpty())
+    }
+
+    @Test
+    fun a_correction_with_no_version_is_refused_in_the_room_rather_than_queued_bare() {
+        assertFalse(interviewCorrectionCanQueue(null))
+        assertFalse(interviewCorrectionCanQueue(" "))
+        assertTrue(interviewCorrectionCanQueue("2026-10-17T10:00:00.000Z"))
+        assertFalse(INTERVIEW_CORRECTION_NEEDS_SIGNAL.contains("updatedAt"))
+        assertTrue(INTERVIEW_CORRECTION_NEEDS_SIGNAL.contains("still on screen"))
+    }
 }

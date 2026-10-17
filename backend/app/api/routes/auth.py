@@ -60,6 +60,7 @@ from app.services.account_provisioning import (
     issuer_still_manages,
 )
 from app.services.designers import ensure_empanelled, mark_roster_seen, roster_allows
+from app.services.sign_in_stamps import stamp_sign_in
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
@@ -1013,16 +1014,9 @@ async def open_session(user: Any, access: Any) -> dict[str, Any]:
     # two differ for everybody whose account predates the roster row that admits it — which, after
     # the grandfathering migration, is every account that existed before the allow-list shipped.
     # Written once and never moved, so "has this person ever actually used the product" stays
-    # answerable.
-    #
-    # ONE WRITE PER SIGN-IN (2026-10-17; it was once per account): the LAST time moves every time,
-    # so "last signed in" on the account screens is a fact, and the first sign-in stamps both.
-    signed_in_at = datetime.now(UTC)
-    stamps: dict[str, Any] = {"lastLoginAt": signed_in_at}
-    if getattr(user, "firstLoginAt", None) is None:
-        stamps["firstLoginAt"] = signed_in_at
-    await db.user.update(where={"id": user.id}, data=stamps)
-    invalidate_cached_user(user.id)
+    # answerable — and beside it the LAST sign-in, which moves every time. One write either way;
+    # see ``services.sign_in_stamps``.
+    await stamp_sign_in(user)
 
     # ── THE USAGE-CONSENT GATE, AT THE ONE POINT BOTH CREDENTIALS JOIN ──────────────────────────
     #

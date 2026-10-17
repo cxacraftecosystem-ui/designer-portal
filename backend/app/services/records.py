@@ -1932,12 +1932,23 @@ async def claim_expected_updated_at(delegate: Any, record: Any, expected: dateti
     holds the value that was read: the first writer's UPDATE takes the row lock, the second waits
     for it, re-reads the row under PostgreSQL's READ COMMITTED rule, matches nothing and is refused
     with the same 409. Call it after the assert and before any other write. ``None`` passes, as there.
+
+    EXACT TO THE MILLISECOND, NOT WITHIN THE ASSERT'S SECOND. The stored value is ``timestamp(3)``
+    and both clients send back the millisecond string they were given, so no slack is needed — and
+    the second of slack would let a correction composed against a version another interviewer wrote
+    over less than a second later pass and replace answers it never saw.
     """
     if expected is None:
         return
     stored = getattr(record, "updatedAt", None)
     if not isinstance(stored, datetime):
         return
+    if expected.tzinfo is None:
+        expected = expected.replace(tzinfo=UTC)
+    if stored.tzinfo is None:
+        stored = stored.replace(tzinfo=UTC)
+    if _to_millisecond(stored) != _to_millisecond(expected):
+        raise _record_changed(expected, stored)
     claimed = await delegate.update_many(
         where={"id": record.id, "updatedAt": stored}, data={"updatedAt": datetime.now(UTC)}
     )
@@ -1945,9 +1956,12 @@ async def claim_expected_updated_at(delegate: Any, record: Any, expected: dateti
         return
     current = await delegate.find_unique(where={"id": record.id})
     now_stored = getattr(current, "updatedAt", None)
-    if expected.tzinfo is None:
-        expected = expected.replace(tzinfo=UTC)
     raise _record_changed(expected, now_stored if isinstance(now_stored, datetime) else stored)
+
+
+def _to_millisecond(value: datetime) -> datetime:
+    """``value`` truncated to the millisecond, the precision the column stores."""
+    return value.replace(microsecond=value.microsecond - value.microsecond % 1000)
 
 
 def _record_changed(expected: datetime, stored: datetime) -> HTTPException:

@@ -1483,6 +1483,50 @@ object OfflineOutbox {
             }
         }
 
+    /**
+     * "KEEP THEIRS" on a correction that carries photographs or recordings: the field changes are
+     * dropped, and the files stay queued against the record as a media-only entry, so choosing the
+     * other person's text never deletes a clip that was only ever on this phone. A correction with no
+     * files is simply removed. Returns false when the entry is gone or is not a held correction.
+     */
+    suspend fun keepServerVersionKeepFiles(context: Context, entryId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            var found = false
+            val dropped = mutex.withLock {
+                val current = read(context)
+                val entry = current.firstOrNull { it.id == entryId && it.staleCorrection }
+                    ?: return@withLock null
+                found = true
+                if (entry.media.isEmpty()) {
+                    write(context, current.filterNot { it.id == entryId })
+                    return@withLock entry
+                }
+                write(
+                    context,
+                    current.map {
+                        if (it.id != entryId) it else it.copy(
+                            type = OFFLINE_MEDIA_ONLY,
+                            payloadJson = "",
+                            // A step clip has no step id without the correction's answer, so it is
+                            // filed on the record itself rather than refused.
+                            media = it.media.map { m -> m.copy(linkedType = m.linkedType ?: it.type, stepIndex = null) },
+                            failure = null,
+                            failedAt = null,
+                            conflict = false,
+                            staleCorrection = false,
+                            currentUpdatedAt = null,
+                            changedKeys = null,
+                            baseUpdatedAt = null,
+                            idempotencyKey = null,
+                        )
+                    }
+                )
+                null
+            }
+            dropped?.media?.forEach { runCatching { File(it.localPath).delete() } }
+            found
+        }
+
     /** Give a just-queued entry its temporary id (see [PendingEntry.tempId]). */
     suspend fun setTempId(context: Context, entryId: String, tempId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {

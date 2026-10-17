@@ -312,9 +312,15 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         # (scripts/provision_account.py, which writes no User row of its own) and the route share one
         # writer. It invalidates exactly as the route did.
         "app/services/account_provisioning.py",
+        # Aadhaar verification writes the account's verified identity inside its own transaction and
+        # invalidates after it.
+        "app/services/aadhaar/records.py",
         # The sanction register creates a designer's account inside its own transaction
         # (``create_from_sanction``, through ``tx``) and invalidates after the commit.
         "app/services/sanction_orders.py",
+        # The two sign-in times (2026-10-17), moved out of routes/auth.open_session; it invalidates
+        # after its one write.
+        "app/services/sign_in_stamps.py",
         # Two-step verification (2026-10-16): the secret, the recovery codes, the last step and the
         # failure budgets. Every budget write invalidates; the routes invalidate after the rest.
         "app/services/two_factor.py",

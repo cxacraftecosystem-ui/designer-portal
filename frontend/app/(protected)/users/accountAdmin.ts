@@ -224,6 +224,17 @@ export function accountStatus(user: User): AccountStatusKind {
   return "ACTIVE";
 }
 
+/**
+ * When this account last got in, for the status cell and the account view: the last sign-in where
+ * one is recorded, else the first (an account that has not signed in since the last time was
+ * recorded), else nothing. The same order the handset's users card uses.
+ */
+export function lastSignIn(user: User): { label: "Last signed in" | "First signed in"; at: string } | null {
+  if (user.lastLoginAt) return { label: "Last signed in", at: user.lastLoginAt };
+  if (user.firstLoginAt) return { label: "First signed in", at: user.firstLoginAt };
+  return null;
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Creating an account
  * ──────────────────────────────────────────────────────────────────────────── */

@@ -63,22 +63,67 @@ def test_the_designer_roster_payload_names_who_empanelled():
 
 
 def test_both_roster_lists_load_the_accounts_with_the_page():
+    from app.api.routes.access import ROSTER_PEOPLE
+    from app.api.routes.designers import ROSTER_ADDED_BY
+    from app.services.records import Relation
+
+    assert Relation("addedBy", "user", "addedById") in ROSTER_PEOPLE
+    assert Relation("decidedBy", "user", "decidedById") in ROSTER_PEOPLE
+    assert (Relation("addedBy", "user", "addedById"),) == ROSTER_ADDED_BY
     access = (ROUTES / "access.py").read_text(encoding="utf-8")
-    assert 'Relation("addedBy", "user", "addedById")' in access
-    assert 'Relation("decidedBy", "user", "decidedById")' in access
     assert "relations=ROSTER_PEOPLE" in access
     designers = (ROUTES / "designers.py").read_text(encoding="utf-8")
-    assert 'relations=(Relation("addedBy", "user", "addedById"),)' in designers
+    assert "relations=ROSTER_ADDED_BY" in designers
+
+
+def test_both_rosters_name_people_one_way():
+    from app.services.designers import person_name
+
+    assert access_roster.person_name is person_name
+    assert person_name(None) is None
+    assert person_name(SimpleNamespace(name=" Meera ", email="m@example.org")) == "Meera"
+    assert person_name(SimpleNamespace(name="", email="m@example.org")) == "m@example.org"
+    assert person_name(SimpleNamespace(name=None, email=None)) is None
+
+
+async def test_a_single_row_answer_names_its_people_like_the_list(monkeypatch):
+    """A PATCH's answer replaces a list row on both clients, so it carries the names too."""
+    from app.api.routes import access as access_routes
+    from app.services import records as records_service
+
+    class _Users:
+        async def find_many(self, **kwargs):
+            wanted = set(kwargs["where"]["id"]["in"])
+            people = {
+                "u-1": SimpleNamespace(id="u-1", name="Meera Rao", email="meera@example.org"),
+                "u-9": SimpleNamespace(id="u-9", name="", email="admin@example.org"),
+            }
+            return [p for k, p in people.items() if k in wanted]
+
+    monkeypatch.setattr(records_service, "db", SimpleNamespace(user=_Users()))
+    row = await access_routes.with_roster_people(_access_row())
+    payload = access_roster.access_payload(row)
+    assert payload["addedByName"] == "Meera Rao"
+    assert payload["decidedByName"] == "admin@example.org"
+    assert await access_routes.with_roster_people(None) is None
 
 
 def test_every_sign_in_stamps_the_last_time_and_the_first_only_once():
+    from app.services.sign_in_stamps import sign_in_stamps
+
+    now = datetime(2026, 10, 17, 9, 0, tzinfo=UTC)
+    first = sign_in_stamps(SimpleNamespace(firstLoginAt=None), now)
+    assert first == {"lastLoginAt": now, "firstLoginAt": now}
+    later = sign_in_stamps(SimpleNamespace(firstLoginAt=datetime(2026, 1, 1, tzinfo=UTC)), now)
+    assert later == {"lastLoginAt": now}
+
+
+def test_the_sign_in_route_stamps_through_the_helper():
     source = (ROUTES / "auth.py").read_text(encoding="utf-8")
     body = source[source.index("async def open_session(") :]
     body = body[: body.index("\nasync def ", 1)]
-    assert '{"lastLoginAt": signed_in_at}' in body
-    assert 'stamps["firstLoginAt"] = signed_in_at' in body
-    # The first-login stamp stays conditional; the last-login one is not.
-    assert 'if getattr(user, "firstLoginAt", None) is None:' in body
+    assert "await stamp_sign_in(user)" in body
+    assert "lastLoginAt" not in body
 
 
 def test_last_login_is_a_user_column_and_reaches_clients():
