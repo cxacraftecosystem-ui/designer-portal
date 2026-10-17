@@ -127,6 +127,12 @@ fun dwClearanceBlocked(record: DwInspectionDetailDto, userId: String?): Boolean 
 fun dwClearanceDescription(record: DwInspectionDetailDto, userId: String?): String =
     if (dwClearanceBlocked(record, userId)) "You've filed notes on this round." else "Shown to the approving authority."
 
+/**
+ * The switch's status line, "Since 17 Oct 2026" — the web's `Since ${formatDate(...)}`. A stamp this
+ * build cannot read prints nothing rather than raw ISO.
+ */
+fun dwClearanceStatus(clearedAt: String?): String? = usageDay(clearedAt)?.let { "Since $it" }
+
 /** The server's `MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS`. Over it, the note is refused. */
 const val DW_INSPECTION_NOTE_MAX = 4000
 

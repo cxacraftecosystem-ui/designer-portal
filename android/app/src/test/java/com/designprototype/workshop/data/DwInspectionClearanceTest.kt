@@ -35,6 +35,17 @@ class DwInspectionClearanceTest {
     }
 
     @Test
+    fun theStatusLineIsADateLikeTheWebs() {
+        assertEquals("Since 17 Oct 2026", dwClearanceStatus("2026-10-17T12:00:00Z"))
+        assertNull(dwClearanceStatus(null))
+        assertNull(dwClearanceStatus("not a date"))
+        val root = generateSequence(File("").absoluteFile) { it.parentFile }.first { File(it, "backend").isDirectory }
+        val panel = File(root, "android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionFeedbackPanel.kt").readText()
+        assertTrue(panel.contains("status = dwClearanceStatus(record.myClearedAt)"))
+        assertFalse(panel.contains("it.take(10)"))
+    }
+
+    @Test
     fun aClearedRoundCanAlwaysBeTakenBack() {
         val mine = DwInspectionFeedbackDto(id = "a", round = 2, note = "Fix it.", actorId = "me")
         assertFalse(dwClearanceBlocked(read(cleared = "2026-10-17T09:00:00Z", notes = listOf(mine)), "me"))

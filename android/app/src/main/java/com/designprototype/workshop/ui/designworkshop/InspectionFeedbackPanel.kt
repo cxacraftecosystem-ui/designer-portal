@@ -50,6 +50,7 @@ import com.designprototype.workshop.data.StageDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.dwClearanceBlocked
 import com.designprototype.workshop.data.dwClearanceDescription
+import com.designprototype.workshop.data.dwClearanceStatus
 import com.designprototype.workshop.data.dwFeedbackAuthor
 import com.designprototype.workshop.data.dwFeedbackRounds
 import com.designprototype.workshop.data.dwInspectionNoteProblem
@@ -254,7 +255,7 @@ internal fun InspectionFeedbackPanel(
                         label = DW_CLEARANCE_LABEL,
                         checked = record.myClearedAt != null,
                         description = dwClearanceDescription(record, viewerId),
-                        status = record.myClearedAt?.let { "Since ${it.take(10)}" },
+                        status = dwClearanceStatus(record.myClearedAt),
                         enabled = !dwClearanceBlocked(record, viewerId),
                         busy = clearing,
                         onCheckedChange = { next ->
