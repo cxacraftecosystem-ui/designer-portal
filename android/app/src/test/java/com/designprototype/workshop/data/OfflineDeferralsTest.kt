@@ -243,4 +243,36 @@ class OfflineDeferralsTest {
         assertEquals(op, json.decodeFromString(QFormOp.serializer(), json.encodeToString(QFormOp.serializer(), op)))
         assertEquals("Questionnaire change", outboxKindLabel(OFFLINE_QFORM_OP, isUpdate = false))
     }
+
+    // ── Release-review follow-ups (2026-10-16) ─────────────────────────────────────────────────
+
+    @Test
+    fun a_landed_correction_rebases_only_the_same_records_waiting_corrections() {
+        fun e(id: String, type: String = "artisan", target: String? = "a1", failure: String? = null, base: String? = "t0") =
+            PendingEntry(id = id, type = type, payloadJson = "{}", label = id, createdAt = "t",
+                targetId = target, failure = failure, baseUpdatedAt = base)
+        assertTrue(advancesWith(e("later"), "artisan", "a1", exceptId = "landed"))
+        assertFalse(advancesWith(e("landed"), "artisan", "a1", exceptId = "landed"))
+        assertFalse(advancesWith(e("other", target = "a2"), "artisan", "a1", exceptId = "landed"))
+        assertFalse(advancesWith(e("craft", type = "craft"), "artisan", "a1", exceptId = "landed"))
+        assertFalse("a refused one is left for its review", advancesWith(e("refused", failure = "x"), "artisan", "a1", "landed"))
+        assertFalse("an older build's entry has no base to move", advancesWith(e("old", base = null), "artisan", "a1", "landed"))
+    }
+
+    @Test
+    fun a_stored_create_answer_gives_back_the_record_and_its_steps() {
+        val body = json.parseToJsonElement("""{"id":"p1","steps":[{"id":"s1"},{"id":"s2"}]}""")
+        assertEquals("p1" to listOf("s1", "s2"), createdFromStoredAnswer(body))
+        assertEquals("c1" to emptyList<String>(), createdFromStoredAnswer(json.parseToJsonElement("""{"id":"c1"}""")))
+        assertNull(createdFromStoredAnswer(json.parseToJsonElement("""{"detail":"x"}""")))
+        assertNull(createdFromStoredAnswer(null))
+    }
+
+    @Test
+    fun draft_writes_ask_for_a_pass_at_most_once_a_minute_while_online() {
+        assertTrue("offline, every write asks", draftWriteShouldRequest(online = false, nowMs = 5_000, lastRequestMs = 4_000))
+        assertTrue("the first online write asks", draftWriteShouldRequest(online = true, nowMs = 5_000, lastRequestMs = 0))
+        assertFalse(draftWriteShouldRequest(online = true, nowMs = 30_000, lastRequestMs = 5_000))
+        assertTrue(draftWriteShouldRequest(online = true, nowMs = 65_000, lastRequestMs = 5_000))
+    }
 }

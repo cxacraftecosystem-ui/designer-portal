@@ -27,7 +27,6 @@ from app.services.records import (
     Relation,
     apply_status_policy_create,
     apply_status_policy_update,
-    assert_expected_updated_at,
     attach_location,
     clean_data,
     contains,
@@ -35,6 +34,7 @@ from app.services.records import (
     enum_filter_or_422,
     hydrate_relations,
     include_of,
+    lock_and_assert_expected_updated_at,
     merge_field_provenance,
     prose_contains,
     public_encode,
@@ -558,7 +558,8 @@ async def update_artisan(
         # changes nothing, which is every client shipped to date — see
         # ``records.assert_expected_updated_at``, and note that an Aadhaar clash is still a 409 of
         # its own with its own detail, so the two conflicts never have to be told apart by a code.
-        assert_expected_updated_at(artisan, expected_updated_at)
+        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
+        await lock_and_assert_expected_updated_at(tx, "artisan", artisan, expected_updated_at)
         await guard_record_edit(artisan, current_user, data, "artisan", client=tx)
         await apply_status_policy_update(current_user, artisan, data)
         # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's

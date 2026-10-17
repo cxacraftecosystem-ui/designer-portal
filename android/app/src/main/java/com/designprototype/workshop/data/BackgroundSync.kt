@@ -101,6 +101,23 @@ object BackgroundSync {
         }
     }
 
+    /** When a draft write last asked for a pass (elapsed ms), for [requestSoonFromDraftWrite]. */
+    private val lastDraftRequestAt = java.util.concurrent.atomic.AtomicLong(0L)
+
+    /**
+     * [requestSoon] for a design-workshop DRAFT WRITE, at most once a minute while online (2026-10-16).
+     * The stage screen saves on an 800 ms debounce; each of those used to cost a binder call and, when
+     * idle, a re-schedule. Offline every write still asks, because a job that is merely waiting for a
+     * network costs nothing and must exist.
+     */
+    fun requestSoonFromDraftWrite(context: Context) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val online = runCatching { ConnectivityObserver.isOnline(context) }.getOrDefault(false)
+        if (!draftWriteShouldRequest(online, now, lastDraftRequestAt.get())) return
+        lastDraftRequestAt.set(now)
+        requestSoon(context)
+    }
+
     private fun scheduler(context: Context): JobScheduler? =
         context.applicationContext.getSystemService(JobScheduler::class.java)
 
@@ -179,3 +196,13 @@ class OutboxSyncJobService : JobService() {
         return true
     }
 }
+
+/** The throttle window for draft-write sync requests while online. */
+internal const val DRAFT_WRITE_REQUEST_INTERVAL_MS = 60_000L
+
+/**
+ * Should a draft write ask for a background pass? Always when offline; while online, at most once per
+ * [DRAFT_WRITE_REQUEST_INTERVAL_MS]. Pure. Pinned by `OfflineDeferralsTest`.
+ */
+internal fun draftWriteShouldRequest(online: Boolean, nowMs: Long, lastRequestMs: Long): Boolean =
+    !online || lastRequestMs == 0L || nowMs - lastRequestMs >= DRAFT_WRITE_REQUEST_INTERVAL_MS

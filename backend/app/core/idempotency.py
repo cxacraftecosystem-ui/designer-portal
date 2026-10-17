@@ -143,7 +143,7 @@ class PrismaIdempotencyStore:
         from prisma.errors import UniqueViolationError
 
         now = datetime.now(UTC)
-        # Opportunistic sweep: the table only ever holds a day of keys.
+        # Opportunistic sweep: the table only ever holds TTL (30 days) of keys.
         await self._table.delete_many(where={"expiresAt": {"lt": now}})
         try:
             await self._table.create(
@@ -268,7 +268,15 @@ class IdempotencyMiddleware:
                     return
             elif existing.fingerprint != fingerprint:
                 await _send_json(
-                    send, 422, {"detail": "This Idempotency-Key was already used for a different request."}, []
+                    send,
+                    422,
+                    {
+                        "detail": "This Idempotency-Key was already used for a different request.",
+                        # Machine-readable, so a client replaying its own key can ask what the first
+                        # request created (GET /api/idempotency-keys/{key}) instead of giving up.
+                        "code": "IDEMPOTENCY_KEY_REUSED",
+                    },
+                    [],
                 )
                 return
             elif existing.status_code is not None:
@@ -323,15 +331,18 @@ class IdempotencyMiddleware:
         if 200 <= status_code < 300 and not too_large:
             try:
                 await self.store.complete(user_id, key, status_code, b"".join(captured), content_type)
-            except Exception:  # noqa: BLE001 - the answer is already sent; losing the record only loses dedup
+            except Exception:
                 logger.exception("Could not store the answer for an Idempotency-Key")
+                # RELEASED, not left running: a marker with no answer would hold every repeat at 409
+                # for STALE_PENDING and then be taken over anyway. Released, a repeat runs at once.
+                await self._release_quietly(user_id, key)
         else:
             await self._release_quietly(user_id, key)
 
     async def _release_quietly(self, user_id: str, key: str) -> None:
         try:
             await self.store.release(user_id, key)
-        except Exception:  # noqa: BLE001 - a stale marker is taken over after STALE_PENDING
+        except Exception:
             logger.exception("Could not release an Idempotency-Key")
 
     @staticmethod
@@ -342,3 +353,11 @@ class IdempotencyMiddleware:
             {"detail": "The same request is still being processed. Try again shortly.", "code": "IDEMPOTENCY_IN_PROGRESS"},
             [(b"idempotency-status", b"in-progress"), (b"retry-after", b"5")],
         )
+
+
+async def stored_answer_for(user_id: str, key: str, store: IdempotencyStore | None = None) -> StoredAnswer | None:
+    """The answer stored under the caller's own key, or None (never stored, still running, expired)."""
+    answer = await (store or PrismaIdempotencyStore()).get(user_id, key)
+    if answer is None or answer.status_code is None:
+        return None
+    return answer

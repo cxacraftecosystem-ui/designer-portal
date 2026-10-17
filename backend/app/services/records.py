@@ -1936,6 +1936,66 @@ def assert_expected_updated_at(record: Any, expected: datetime | None) -> None:
     )
 
 
+#: The Prisma models whose PATCH carries ``expectedUpdatedAt``, by their client accessor.
+EXPECTED_UPDATED_AT_MODELS = frozenset(
+    {
+        "artisan",
+        "craft",
+        "productdocumentation",
+        "tooldocumentation",
+        "process",
+        "workshop",
+        "questionnaireinterview",
+    }
+)
+
+
+async def lock_and_assert_expected_updated_at(
+    client: Any,
+    model: str,
+    record: Any,
+    expected: datetime | None,
+) -> None:
+    """``assert_expected_updated_at``, made to hold under concurrency (2026-10-16).
+
+    THE RACE THIS CLOSES. The seven routes compared the precondition against the copy of the row
+    they read before opening the transaction. Two corrections composed against the same version
+    could both pass that comparison and both write, the second overwriting the first: the exact
+    silent overwrite the precondition exists to refuse.
+
+    Now, after the usual comparison, the row is CLAIMED with a conditional write inside the caller's
+    transaction (``client`` MUST be the ``tx``): ``update_many(where={id, updatedAt: <the value
+    read>})``. If somebody wrote the row since it was read, nothing matches and the edit is refused
+    with the same 409 ``record_changed``. If it matches, the row is now locked by this transaction
+    until it commits, so a concurrent second correction waits and then matches nothing.
+
+    ``None`` passes without touching the database, so every client that sends no precondition pays
+    nothing and behaves exactly as before.
+    """
+    if expected is None:
+        return
+    if model not in EXPECTED_UPDATED_AT_MODELS:
+        raise ValueError(f"{model} is not a model with an expectedUpdatedAt precondition")
+    assert_expected_updated_at(record, expected)
+    read = getattr(record, "updatedAt", None)
+    if not isinstance(read, datetime):
+        return
+    claimed = await getattr(client, model).update_many(
+        where={"id": record.id, "updatedAt": read},
+        data={"updatedAt": datetime.now(UTC)},
+    )
+    if not claimed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "record_changed",
+                "message": "Someone else changed this record after this edit was composed.",
+                "expectedUpdatedAt": expected.isoformat(),
+                "currentUpdatedAt": None,
+            },
+        )
+
+
 # --- Loading a page's relations without paying for them one at a time ----------------------------
 #
 # THE PROBLEM THIS SOLVES, measured rather than guessed. Prisma's query engine already batches a

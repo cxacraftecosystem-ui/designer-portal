@@ -181,6 +181,14 @@ interface WorkshopRepositoryApi {
      * A POST AND NOT THE PUT ABOVE, and the difference is the whole reason this route exists:
      * `feedback/me` upserts one row per account, so a second submission destroyed the first.
      */
+    /**
+     * What this account's own create under [key] answered (backend `routes/idempotency_keys.py`), for
+     * an outbox replay refused as a different request: the record exists and this is how its id is
+     * found again. 404 when nothing is stored.
+     */
+    @GET("idempotency-keys/{key}")
+    suspend fun idempotencyAnswer(@Path("key") key: String): IdempotencyAnswerDto
+
     @POST("feedback/reports")
     suspend fun createFeedbackReport(@Body body: FeedbackReportCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): FeedbackReportDto
 

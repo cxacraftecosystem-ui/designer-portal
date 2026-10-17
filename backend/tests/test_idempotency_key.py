@@ -119,7 +119,7 @@ def test_the_same_key_for_a_different_body_is_refused():
 
 def test_a_refused_or_failed_create_is_not_remembered():
     store = MemoryStore()
-    app, records = _app(store)
+    app, _records = _app(store)
     client = TestClient(app, raise_server_exceptions=False)
     headers = {**_auth(), "Idempotency-Key": "failing-key-0001"}
     assert client.post("/api/crafts", json={"name": "refuse"}, headers=headers).status_code == 409
@@ -299,8 +299,8 @@ def test_routes_off_the_create_allow_list_are_never_stored():
 
 
 def test_keys_are_kept_thirty_days():
-    assert idempotency.TTL == timedelta(days=30)
-    assert idempotency.STALE_PENDING == timedelta(minutes=15)
+    assert timedelta(days=30) == idempotency.TTL
+    assert timedelta(minutes=15) == idempotency.STALE_PENDING
 
 
 def test_the_prisma_store_round_trip_and_expiry():
@@ -318,3 +318,53 @@ def test_the_prisma_store_round_trip_and_expiry():
         assert table.rows == {}
 
     asyncio.run(scenario())
+
+
+def test_a_reused_key_says_so_in_a_code_the_client_can_read():
+    app, _records = _app(MemoryStore())
+    client = TestClient(app)
+    headers = {**_auth(), "Idempotency-Key": "reused-key-0002"}
+    client.post("/api/crafts", json={"name": "Ajrakh"}, headers=headers)
+    other = client.post("/api/crafts", json={"name": "Ajrakh", "place": "Bhuj"}, headers=headers)
+    assert other.status_code == 422
+    assert other.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
+class _FailingCompleteStore(MemoryStore):
+    async def complete(self, user_id, key, status_code, body, content_type):
+        raise RuntimeError("the table is unavailable")
+
+
+def test_a_marker_whose_answer_could_not_be_stored_is_released():
+    store = _FailingCompleteStore()
+    app, _records = _app(store)
+    client = TestClient(app)
+    headers = {**_auth(), "Idempotency-Key": "store-fails-0001"}
+    assert client.post("/api/crafts", json={"name": "Ajrakh"}, headers=headers).status_code == 201
+    # Not left running: no 409 for fifteen minutes on the next attempt.
+    assert store.rows == {}
+
+
+def test_the_lookup_returns_only_the_callers_own_stored_answer():
+    store = MemoryStore()
+
+    async def scenario():
+        await store.claim("user_1", "lookup-key-0001", "fp")
+        await store.complete("user_1", "lookup-key-0001", 201, b'{"id":"craft_9"}', "application/json")
+        mine = await idempotency.stored_answer_for("user_1", "lookup-key-0001", store)
+        theirs = await idempotency.stored_answer_for("user_2", "lookup-key-0001", store)
+        assert mine is not None and mine.body == b'{"id":"craft_9"}'
+        assert theirs is None
+        await store.claim("user_1", "running-key-0009", "fp")
+        assert await idempotency.stored_answer_for("user_1", "running-key-0009", store) is None
+
+    asyncio.run(scenario())
+
+
+def test_the_lookup_route_is_mounted():
+    from app.main import create_app
+
+    # Asked of the real app over HTTP: an unauthenticated call is refused (401) by the route, not
+    # answered "no such route" (404).
+    answer = TestClient(create_app()).get("/api/idempotency-keys/some-key-0001")
+    assert answer.status_code == 401

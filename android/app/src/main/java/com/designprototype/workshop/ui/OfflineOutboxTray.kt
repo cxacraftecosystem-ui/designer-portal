@@ -680,6 +680,12 @@ private fun StaleCorrectionDialog(
                     "nothing has been sent or deleted."
             }
     }
+    // NOTHING TO CHOOSE BETWEEN: the record moved, but nothing this correction changes disagrees with
+    // it now. Sent at once on the new version instead of asking a person to compare two empty lists.
+    LaunchedEffect(review) {
+        val loaded = review
+        if (loaded != null && loaded.fields.isEmpty()) onSendMine(loaded.currentUpdatedAt)
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Review changes to “${row.label}”", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) },

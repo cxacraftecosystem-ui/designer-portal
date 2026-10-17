@@ -33,7 +33,6 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
-    assert_expected_updated_at,
     attach_location,
     clean_data,
     client_key_replay,
@@ -44,6 +43,7 @@ from app.services.records import (
     enum_filter_or_422,
     hydrate_relations,
     include_of,
+    lock_and_assert_expected_updated_at,
     media_url_owners,
     merge_field_provenance,
     prose_contains,
@@ -1000,7 +1000,8 @@ async def update_tool(
         # after it would leave a committed ledger entry for an edit that was then turned down. ``None``
         # passes and changes nothing, which is every client shipped to date. See
         # ``records.assert_expected_updated_at``.
-        assert_expected_updated_at(tool, expected_updated_at)
+        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
+        await lock_and_assert_expected_updated_at(tx, "tooldocumentation", tool, expected_updated_at)
         privileged = await guard_record_edit(
             tool, current_user, data, "tool", client=tx, derived=derived
         )

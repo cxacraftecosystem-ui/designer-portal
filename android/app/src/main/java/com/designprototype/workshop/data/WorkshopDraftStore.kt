@@ -987,8 +987,10 @@ object WorkshopDraftStore {
     private fun writeLocked(context: Context, draft: WorkshopDraft, onDisk: WorkshopDraft?) =
         writeDraftIn(workshopDir(context, draft.workshopId), draft, onDisk)
             // A stage edited offline is sent when signal returns even if the app is closed by then.
-            // Cheap and idempotent (an already-pending job is left alone); see [BackgroundSync].
-            .also { BackgroundSync.requestSoon(context) }
+            // THROTTLED: the stage screen writes on every 800 ms debounce, and while online the
+            // foreground loop is already sending, so at most one request a minute (offline, every
+            // write asks — the job just waits for the network). See [BackgroundSync.requestSoonFromDraftWrite].
+            .also { BackgroundSync.requestSoonFromDraftWrite(context) }
 
     /**
      * [writeLocked] against a named directory — the same test seam as [readDraftIn], for the same reason.

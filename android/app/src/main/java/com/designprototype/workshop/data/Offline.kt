@@ -399,6 +399,8 @@ data class PendingEntry(
      * sections and questions can be queued under it. See `data/QuestionnaireAuthoring.kt`.
      */
     val tempId: String? = null,
+    /** A stale correction already re-based and re-sent once because its review was empty. */
+    val staleRetried: Boolean = false,
 ) {
     /**
      * The link columns this entry's author DELIBERATELY emptied, and which a replay must therefore
@@ -1137,7 +1139,16 @@ fun outboxDiscardConfirmation(
 
 /** Live connectivity check (validated internet, not just an attached interface). */
 object ConnectivityObserver {
+    /**
+     * A JVM test's answer, in place of the platform's (which a unit test cannot reach). Null — always,
+     * outside a test — asks the platform. See `OutboxReplayEndToEndTest`.
+     */
+    @androidx.annotation.VisibleForTesting
+    @Volatile
+    internal var answerForTests: Boolean? = null
+
     fun isOnline(context: Context): Boolean {
+        answerForTests?.let { return it }
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
         val network = cm.activeNetwork ?: return false
         val caps = cm.getNetworkCapabilities(network) ?: return false
@@ -1234,7 +1245,19 @@ object OfflineOutbox {
                 out.flush()
                 out.fd.sync()
             }
-            if (!temp.renameTo(target)) throw IOException("Unable to replace ${target.name}")
+            // AN ATOMIC REPLACING MOVE rather than `renameTo`, which on some filesystems (and on the
+            // Windows host that runs the JVM tests) will not overwrite an existing file. Android has
+            // had java.nio.file since API 26, this app's minSdk.
+            try {
+                java.nio.file.Files.move(
+                    temp.toPath(),
+                    target.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                )
+            } catch (e: java.nio.file.AtomicMoveNotSupportedException) {
+                if (!temp.renameTo(target)) throw IOException("Unable to replace ${target.name}")
+            }
         } catch (e: Throwable) {
             runCatching { temp.delete() }
             throw e
@@ -1480,6 +1503,22 @@ object OfflineOutbox {
                     }
                 )
                 true
+            }
+        }
+
+    /**
+     * A correction to [targetId] just landed and moved the record to [updatedAt]: every OTHER queued
+     * correction to the same record, still waiting, is re-based on it (2026-10-16). They were composed
+     * on this phone after the one that landed, so the version they really followed is this one.
+     */
+    suspend fun advanceBase(context: Context, type: String, targetId: String, updatedAt: String, exceptId: String) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val current = read(context)
+                if (current.none { advancesWith(it, type, targetId, exceptId) }) return@withLock
+                write(context, current.map {
+                    if (advancesWith(it, type, targetId, exceptId)) it.copy(baseUpdatedAt = updatedAt) else it
+                })
             }
         }
 
@@ -1891,3 +1930,31 @@ fun peekErrorBody(error: retrofit2.HttpException): String? = runCatching {
     source.request(Long.MAX_VALUE)
     source.buffer.clone().readUtf8()
 }.getOrNull()
+
+/**
+ * Which queued entries a landed correction re-bases: the same record, still waiting (not refused,
+ * not the one that landed), and carrying a base at all. Pure. Pinned by `OfflineDeferralsTest`.
+ */
+internal fun advancesWith(entry: PendingEntry, type: String, targetId: String, exceptId: String): Boolean =
+    entry.id != exceptId && entry.type == type && entry.targetId == targetId &&
+        entry.createdId == null && entry.failure == null && entry.baseUpdatedAt != null
+
+/**
+ * The record a stored create answer describes: its id, and a process's step ids in order. Null when
+ * the answer has no id. Pure. Pinned by `OfflineDeferralsTest`.
+ */
+fun createdFromStoredAnswer(body: kotlinx.serialization.json.JsonElement?): Pair<String, List<String>>? {
+    val obj = body as? JsonObject ?: return null
+    val id = (obj["id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: return null
+    val steps = (obj["steps"] as? kotlinx.serialization.json.JsonArray)
+        ?.mapNotNull { ((it as? JsonObject)?.get("id") as? JsonPrimitive)?.content }
+        .orEmpty()
+    return id to steps
+}
+
+/** The server's answer to `GET /api/idempotency-keys/{key}`. */
+@Serializable
+data class IdempotencyAnswerDto(
+    val statusCode: Int = 0,
+    val body: kotlinx.serialization.json.JsonElement? = null,
+)

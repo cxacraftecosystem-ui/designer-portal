@@ -323,7 +323,6 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         "app/services/two_factor.py",
         # Aadhaar verification (2026-10-16): the verified status on a User row. Each of its three
         # write sites invalidates after the write (``invalidate_cached_user``).
-        "app/services/aadhaar/records.py",
         "scripts/seed_admin.py",
         "scripts/seed_test_accounts.py",
         # The sessionsValidFrom backfill (2026-09-03) writes User rows from OUTSIDE any serving

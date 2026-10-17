@@ -19,7 +19,6 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
-    assert_expected_updated_at,
     attach_location,
     clean_data,
     client_key_replay,
@@ -30,6 +29,7 @@ from app.services.records import (
     enum_filter_or_422,
     hydrate_relations,
     include_of,
+    lock_and_assert_expected_updated_at,
     media_url_owners,
     merge_field_provenance,
     prose_contains,
@@ -464,7 +464,8 @@ async def update_product(
         # means the rollback takes the ledger entry with it.
         #
         # ``None`` PASSES AND CHANGES NOTHING, which is every client shipped to date.
-        assert_expected_updated_at(product, expected_updated_at)
+        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
+        await lock_and_assert_expected_updated_at(tx, "productdocumentation", product, expected_updated_at)
         await guard_record_edit(product, current_user, data, "product", client=tx)
         await apply_status_policy_update(current_user, product, data)
         # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's

@@ -60,7 +60,6 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
-    assert_expected_updated_at,
     attach_location,
     clean_data,
     contains,
@@ -68,6 +67,7 @@ from app.services.records import (
     enum_filter_or_422,
     hydrate_relations,
     jsonify_metadata,
+    lock_and_assert_expected_updated_at,
     media_url_owners,
     merge_field_provenance,
     public_encode,
@@ -1747,7 +1747,8 @@ async def update_interview(
     # transaction — a split is what put the ledger and the row in different commits to begin with.
     async with db.tx() as tx:
         # Before any write in the block, so a refusal rolls nothing back. A None passes.
-        assert_expected_updated_at(interview, expected_updated_at)
+        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
+        await lock_and_assert_expected_updated_at(tx, "questionnaireinterview", interview, expected_updated_at)
         privileged = await guard_record_edit(
             interview, current_user, data, "questionnaire", client=tx
         )
