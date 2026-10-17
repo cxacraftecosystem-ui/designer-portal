@@ -684,3 +684,14 @@ def _clear_account_credential_budget():
 # start in the other order, and `tests/test_async_plugin_order.py` checks that a fixture and its
 # test share a loop. The pattern above stays the rule all the same: it is correct with or without
 # the pin.
+
+
+@pytest.fixture(autouse=True)
+def _fresh_aadhaar_legacy_answer():
+    """Every test starts not knowing whether legacy Aadhaar rows remain. The answer is cached per
+    process and sticky once "none" (``aadhaar_fingerprint.legacy_pending``), which is right on a box
+    and wrong across tests that each build their own table."""
+    from app.services.aadhaar_fingerprint import reset_legacy_pending
+
+    reset_legacy_pending()
+    yield
