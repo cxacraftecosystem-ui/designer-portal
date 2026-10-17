@@ -47,3 +47,20 @@ val LocalBannerClearance = staticCompositionLocalOf<State<Dp>?> { null }
  * it; 0 where there is no bar. The same name the documentation app uses.
  */
 val LocalIslandClearance = staticCompositionLocalOf<MutableState<Dp>?> { null }
+
+/**
+ * Whether a banner is on screen right now, read off its clearance: the root reserves nothing while
+ * no banner is drawn — none to show, or the keyboard is up and they have stood down. The "Could not
+ * connect" error is only redundant while this is true; otherwise it is the only thing saying so.
+ */
+fun bannerDrawn(clearance: Dp): Boolean = clearance > 0.dp
+
+/**
+ * Whether an error is only the banner's own news: "Could not connect" while the offline (or
+ * server-unreachable) line is already on screen. Raising it anyway stacked a second card saying the
+ * same thing (smoke test, doc/75 on the documentation app; a failed search does it here). Every
+ * other error still shows — offline does not make a refused save any less refused.
+ */
+fun bannerAlreadySays(text: String, tone: AppMessageTone, bannerShowing: Boolean): Boolean =
+    bannerShowing && tone == AppMessageTone.ERROR &&
+        text.trim().startsWith(com.designprototype.workshop.data.CONNECTION_FAILED_SENTENCE.substringBefore('.'))

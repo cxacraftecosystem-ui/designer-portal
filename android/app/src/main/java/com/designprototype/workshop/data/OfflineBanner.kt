@@ -552,6 +552,16 @@ fun connectionNotice(online: Boolean, serverUnreachable: Boolean): String? = whe
     else -> null
 }
 
+/**
+ * Whether the network coming back should ask the server once. A failed request while offline marks
+ * the server unreachable, and nothing clears that until a request gets an answer — an empty outbox
+ * sends nothing, and the sync loop may be most of a 45-second wait away — so a healthy server read
+ * "Can't reach the server" for up to that long after reconnecting. Only on the way back online, not
+ * on every capability change, so a server that really is down is not asked on each signal flicker.
+ */
+fun shouldReprobeServer(wasOnline: Boolean, nowOnline: Boolean, serverUnreachable: Boolean): Boolean =
+    nowOnline && !wasOnline && serverUnreachable
+
 /** The line the app shows while the phone has no network. */
 const val OFFLINE_SENTENCE = "You're offline — showing what was last loaded. New work stays on this phone."
 

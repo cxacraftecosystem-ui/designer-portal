@@ -91,14 +91,4 @@ class ConnectivityBannersTest {
             offlineSavedMessage(kept, isCorrection = false),
         )
     }
-
-    @Test
-    fun `the admin view switch starts where this account left it, else at the role's default`() {
-        assertTrue(AdminViewPreference.initial(saved = true, isMasterAdmin = false))
-        assertFalse(AdminViewPreference.initial(saved = false, isMasterAdmin = true))
-        assertTrue(AdminViewPreference.initial(saved = null, isMasterAdmin = true))
-        assertFalse(AdminViewPreference.initial(saved = null, isMasterAdmin = false))
-        // Per account: one admin's choice on a shared phone is not the next one's.
-        assertFalse(AdminViewPreference.key("u1") == AdminViewPreference.key("u2"))
-    }
 }

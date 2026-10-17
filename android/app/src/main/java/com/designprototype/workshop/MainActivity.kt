@@ -117,7 +117,15 @@ import com.designprototype.workshop.ui.rememberIslandImeVisible
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
-import com.designprototype.workshop.data.AdminViewPreference
+import com.designprototype.workshop.ui.readAdminView
+import com.designprototype.workshop.ui.restoredAdminView
+import com.designprototype.workshop.ui.writeAdminView
+import com.designprototype.workshop.ui.bannerAlreadySays
+import com.designprototype.workshop.ui.bannerDrawn
+import com.designprototype.workshop.ui.AppMessageTone
+import com.designprototype.workshop.data.serverDidNotAnswer
+import com.designprototype.workshop.data.sessionExpired
+import com.designprototype.workshop.data.shouldReprobeServer
 import com.designprototype.workshop.data.ServerReachability
 import com.designprototype.workshop.data.connectionNotice
 import com.designprototype.workshop.ui.BANNER_STACK_GAP
@@ -1993,9 +2001,19 @@ private fun RepositoryApp(
         if (user == null || mustChangePasswordBlocks(user)) return@DisposableEffect onDispose {}
         val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java)
         val callback = object : android.net.ConnectivityManager.NetworkCallback() {
+            // Back online with the server still marked unreachable from the offline spell: ask it
+            // once, so the "can't reach the server" line clears now rather than at the next loop.
+            fun settle(nowOnline: Boolean) {
+                val wasOnline = online
+                online = nowOnline
+                if (shouldReprobeServer(wasOnline, nowOnline, ServerReachability.unreachable.value)) {
+                    scope.launch { runCatching { repository.currentUser() } }
+                }
+            }
+
             override fun onAvailable(network: android.net.Network) {
                 scope.launch {
-                    online = repository.isOnline(appContext)
+                    settle(repository.isOnline(appContext))
                     runCatching { repository.syncOutbox(appContext) }
                     outboxCounts = runCatching { repository.outboxCounts(appContext) }.getOrDefault(outboxCounts)
                     pendingUploads = outboxCounts.waiting
@@ -2009,7 +2027,7 @@ private fun RepositoryApp(
             override fun onCapabilitiesChanged(network: android.net.Network, caps: android.net.NetworkCapabilities) {
                 val usable = caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
                     caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-                scope.launch { online = usable }
+                scope.launch { settle(usable) }
             }
 
             // The DEFAULT network went away. If another takes over, onAvailable and
@@ -2030,13 +2048,19 @@ private fun RepositoryApp(
     // Not over the password gate: nothing moves while it holds, so "sending now" would be false on a
     // phone that is online, and the tray it opens could only retry into the same refusal. The counts
     // are where they were, and the banner returns with the sync loop.
-    val banner = if (user != null && !passwordHeld) {
+    // Nor over the usage-consent gate, which sits outside HomeScreen and has no banner reserve: its
+    // agree and sign-out buttons would end up under the cards.
+    val bannersHeld = user == null || passwordHeld || usageConsentBlocks(user)
+    val banner = if (!bannersHeld) {
         outboxDeviceBanner(outboxCounts, online = online, serverReachable = !serverUnreachable)
     } else {
         null
     }
-    val connectionLine = if (user != null && !passwordHeld) connectionNotice(online, serverUnreachable) else null
-    val bannersShown = banner != null || connectionLine != null
+    val connectionLine = if (!bannersHeld) connectionNotice(online, serverUnreachable) else null
+    // Stood down while the keyboard is up, as in the documentation app: the window is short then,
+    // the island bar has gone, and the cards would sit over the field being typed into.
+    val rootImeOpen by rememberIslandImeVisible()
+    val bannersShown = !rootImeOpen && (banner != null || connectionLine != null)
     bannerReserve.value = bannerClearance(bannerStackHeight, bannersShown)
     val rootDensity = LocalDensity.current
 
@@ -3251,7 +3275,8 @@ private fun HomeScreen(
     SideEffect { onAppMenuShowing(menuShowing) }
     DisposableEffect(Unit) { onDispose { onAppMenuShowing(false) } }
     // The offline / outbox banners' footprint, measured by the root (ui/BannerClearance.kt).
-    val bannerReserve = LocalBannerClearance.current?.value ?: 0.dp
+    val bannerClearanceState = LocalBannerClearance.current
+    val bannerReserve = bannerClearanceState?.value ?: 0.dp
     // The reduced-motion switch, which the menu now honours when it opens and closes.
     val reducedMotion = preferences.reducedMotion
     // The search panel the page header opens. See AppSearch.kt.
@@ -3298,15 +3323,15 @@ private fun HomeScreen(
     // user who never had the switch in the first place. ANDing the gate in at every read means a
     // stale ON simply cannot survive the gate failing, which a one-shot reset would not guarantee.
     //
-    // REMEMBERED PER ACCOUNT across restarts and sign-ins (data/AdminViewPreference.kt); it used to
+    // REMEMBERED PER ACCOUNT across restarts and sign-ins (ui/AdminViewMemory.kt); it used to
     // reset to the role's default every time (release smoke test 2026-10-17).
     val adminViewContext = LocalContext.current.applicationContext
     var adminViewRequested by remember(user.id) {
-        mutableStateOf(AdminViewPreference.initial(AdminViewPreference.read(adminViewContext, user.id), isMasterAdmin))
+        mutableStateOf(restoredAdminView(readAdminView(adminViewContext, user.id), isMasterAdmin))
     }
     fun requestAdminView(on: Boolean) {
         adminViewRequested = on
-        AdminViewPreference.write(adminViewContext, user.id, on)
+        writeAdminView(adminViewContext, user.id, on)
     }
     val adminView = canToggleAdminView && adminViewRequested
 
@@ -3420,10 +3445,18 @@ private fun HomeScreen(
     // Surface a message, but swallow the noise from a coroutine being cancelled when a screen is
     // left during navigation (e.g. "The coroutine scope left the composition") — that is expected,
     // not a real error, and must not get stuck on screen.
+    //
+    // "Could not connect" while the offline or server line is already on screen says nothing new
+    // (ui/BannerClearance.kt). Read off the clearance, so with the keyboard up — banners stood
+    // down — the error is still shown.
+    fun offlineLineSays(text: String): Boolean =
+        bannerAlreadySays(text, AppMessageTone.ERROR, bannerDrawn(bannerClearanceState?.value ?: 0.dp))
+
     fun showMessage(text: String?) {
         if (text.isNullOrBlank()) return
         val lower = text.lowercase()
         if ("left the composition" in lower || "was cancelled" in lower || "job was cancelled" in lower) return
+        if (offlineLineSays(text)) return
         message = text
     }
 
@@ -3432,6 +3465,7 @@ private fun HomeScreen(
         if (text.isNullOrBlank()) return
         val lower = text.lowercase()
         if ("left the composition" in lower || "was cancelled" in lower || "job was cancelled" in lower) return
+        if (offlineLineSays(text)) return
         messageState.showError(text)
     }
 
@@ -17991,7 +18025,11 @@ private fun AndroidMediaForm(
      * same way (it used to say "check your connection" and keep nothing), with a sentence that does
      * not send a designer with four bars looking for a signal.
      */
-    suspend fun queueForLater(items: List<Pair<Int, Uri>>, serverDown: Boolean = false): Boolean {
+    suspend fun queueForLater(
+        items: List<Pair<Int, Uri>>,
+        serverDown: Boolean = false,
+        signInNeeded: Boolean = false
+    ): Boolean {
         val result = runCatching {
             repository.queueLooseMedia(
                 context = context,
@@ -18007,7 +18045,12 @@ private fun AndroidMediaForm(
         result.onSuccess { queued ->
             // KEPT, NOT FAILED: drawn as a notice rather than as an error. Files that could not be
             // read are the exception, and they go out as the error they are.
-            val message = offlineSavedMessage(queued, isCorrection = false, serverDown = serverDown)
+            val message = offlineSavedMessage(
+                queued,
+                isCorrection = false,
+                serverDown = serverDown,
+                signInNeeded = signInNeeded
+            )
             localMessage = null
             if (queued.allFilesQueued) savedNotice(message) else onError(message)
         }.onFailure { error ->
@@ -18340,9 +18383,13 @@ private fun AndroidMediaForm(
                         // upload storage did not answer: the files that did not go are queued for the
                         // outbox rather than left in a picker that dies with this screen. A refusal
                         // (a 4xx the server meant) is not queued — no retry can change it.
+                        // Which sentence: the server did not answer (no reply, 5xx, 408, 429), or it
+                        // answered 401 and the session wants signing in again — queued either way.
                         (!repository.isOnline(context) || failures.all { repository.isTransient(it) }) && queueForLater(
                             failedUris.map { uri -> (uris.indexOf(uri) + 1) to uri },
-                            serverDown = repository.isOnline(context)
+                            serverDown = repository.isOnline(context) && failures.isNotEmpty() &&
+                                failures.all { serverDidNotAnswer(it) },
+                            signInNeeded = failures.any { sessionExpired(it) }
                         ) -> {
                             draft.discard()
                             selectedUris = emptyList()
@@ -18715,7 +18762,8 @@ private fun AndroidUriPreview(
             subtitle = sizeLabel,
             onOpen = {
                 if (mediaType in IN_APP_PLAYABLE) showViewer = true else openUri(context, uri, mimeType)
-            }
+            },
+            onTile = onTile
         )
         if (onRemove != null) {
             DiscardBadge(

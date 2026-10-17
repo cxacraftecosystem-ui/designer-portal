@@ -12,6 +12,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
@@ -353,7 +355,14 @@ fun MediaThumb(
      * fails to draw is still a dark square with the filename beside it, which is what a row with no
      * readable bytes has always looked like here.
      */
-    onLoadError: (() -> Unit)? = null
+    onLoadError: (() -> Unit)? = null,
+    /**
+     * The ink of a coloured tile this row sits on (the upload form's "files ready" card), or null.
+     * On a tile the row drops its own surface and takes the tile's ink: the name in it, the size in
+     * the tile's muted ink, and "Open" as the same outlined button as the card's Download and Clear
+     * batch — theme purple on the purple tile all but vanished (smoke test 2026-10-17, dp/58).
+     */
+    onTile: Color? = null
 ) {
     val loader = rememberMediaImageLoader()
     Row(
@@ -361,7 +370,7 @@ fun MediaThumb(
             .fillMaxWidth()
             // Themed (UX audit 2026-10-16, DA-13): a fixed near-black row under Canvas-coloured text read
             // as nothing in dark mode, where Canvas is itself near-black.
-            .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
+            .background(onTile?.copy(alpha = 0.08f) ?: MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -391,9 +400,19 @@ fun MediaThumb(
             }
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            subtitle?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Text(title, color = onTile ?: MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val subtitleInk = if (onTile != null) MaterialTheme.field.onBrandTileMuted else MaterialTheme.field.muted
+            subtitle?.let { Text(it, color = subtitleInk, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
-        TextButton(onClick = onOpen) { Text("Open") }
+        if (onTile != null) {
+            OutlinedButton(
+                onClick = onOpen,
+                colors = onTileButtonColors(onTile),
+                border = onTileBorder(onTile),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+            ) { Text("Open", fontSize = 13.sp) }
+        } else {
+            TextButton(onClick = onOpen) { Text("Open") }
+        }
     }
 }
