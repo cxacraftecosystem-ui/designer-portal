@@ -23,11 +23,12 @@ measurements; the shape that matters is that no query is issued per workshop.
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.db import db
-from app.core.deps import require_admin
+from app.core.deps import get_current_user, role_value
 from app.services.concurrency import gather_reads
+from app.services.ministry_dashboard import scope_clause as ministry_scope_clause
 from app.services.workshop_analytics import (
     WorkshopRows,
     analyse_archive,
@@ -63,7 +64,7 @@ ROW_CAP = 50_000
 HEADER_CAP = 20_000
 
 
-async def _load() -> tuple[list[WorkshopRows], int, bool]:
+async def _load(scope: dict[str, Any] | None = None) -> tuple[list[WorkshopRows], int, bool]:
     """Every row this comparison reads, and the size of the archive it came from.
 
     THREE QUERIES, AND DELIBERATELY NOT ONE PER WORKSHOP. The naive shape — list the workshops, then
@@ -131,7 +132,11 @@ async def _load() -> tuple[list[WorkshopRows], int, bool]:
 
     headers = (
         await db.designworkshop.find_many(
-            where={"id": {"in": workshop_ids}, "deletedAt": None},
+            where=(
+                {"id": {"in": workshop_ids}, "deletedAt": None}
+                if scope is None
+                else {"AND": [{"id": {"in": workshop_ids}, "deletedAt": None}, scope]}
+            ),
         )
         if workshop_ids
         else []
@@ -174,14 +179,40 @@ async def _load() -> tuple[list[WorkshopRows], int, bool]:
     return workshops, archive_size, truncated
 
 
+#: Who may READ the cross-workshop analytics (owner decision C14, 2026-10-17): the admins, and the
+#: two ministry tiers the owner named — the Ministry Admin over the whole archive, a Regional
+#: Director over the workshops they were posted to. Read-only by construction (three SELECTs).
+#: ``frontend/lib/permissions.ts::ANALYTICS_READ_ROLES`` is its twin.
+ANALYTICS_READ_ROLES = frozenset({"REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"})
+
+ANALYTICS_REFUSAL = (
+    "For admins, Ministry Admins and Regional Directors. Your own workshops are on Design workshops."
+)
+
+
+async def require_analytics_reader(current_user: Any = Depends(get_current_user)) -> Any:
+    if role_value(current_user) not in ANALYTICS_READ_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ANALYTICS_REFUSAL)
+    return current_user
+
+
+def analytics_scope(user: Any) -> dict[str, Any] | None:
+    """``None`` for the whole archive; a Regional Director's posting clause otherwise."""
+    if role_value(user) == "REGIONAL_DIRECTOR":
+        return ministry_scope_clause(user)
+    return None
+
+
 @router.get("/design-workshops")
-async def design_workshop_analytics(_: Any = Depends(require_admin)) -> dict[str, Any]:
+async def design_workshop_analytics(
+    current_user: Any = Depends(require_analytics_reader),
+) -> dict[str, Any]:
     """Adoption, survival, cost-to-price and recurring opportunities across the whole archive.
 
     Read-only by construction: it issues three SELECTs and writes nothing, so there is no state a
     caller can reach through it and no per-workshop authority to check. The admin gate is about
     VISIBILITY, not about mutation.
     """
-    workshops, archive_size, truncated = await _load()
+    workshops, archive_size, truncated = await _load(analytics_scope(current_user))
     findings = analyse_archive(workshops, workshops_in_archive=archive_size, truncated=truncated)
     return archive_findings_payload(findings)

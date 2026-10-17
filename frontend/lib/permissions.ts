@@ -1851,6 +1851,23 @@ export function canSeeMinistryDashboard(user: User | null | undefined) {
 }
 
 /**
+ * Who may READ the cross-workshop analytics (owner decision C14, 2026-10-17) — the twin of
+ * `backend/app/api/routes/analytics.py::ANALYTICS_READ_ROLES`. The admins read them on
+ * `/admin/analytics`; the Ministry Admin (whole archive) and a Regional Director (their posted
+ * workshops) read the same findings on the Ministry dashboard.
+ */
+export const ANALYTICS_READ_ROLES: readonly UserRole[] = [
+  "REGIONAL_DIRECTOR",
+  "MINISTRY_ADMIN",
+  "ADMIN",
+  "MASTER_ADMIN"
+];
+
+export function canReadWorkshopAnalytics(user: User | null | undefined) {
+  return !!user && ANALYTICS_READ_ROLES.includes(user.role);
+}
+
+/**
  * THE SANCTIONING AUTHORITY — who approves a design workshop's report, sends it back or withdraws an
  * approval, and hands an approved report on to the office. Mirrors `APPROVAL_AUTHORITY_ROLES` in
  * `backend/app/core/deps.py`, which `require_approving_authority` reads; both are registered in

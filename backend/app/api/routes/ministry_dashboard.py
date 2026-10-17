@@ -156,7 +156,13 @@ def _search_clause(term: str | None) -> dict[str, Any] | None:
     }
 
 
-def _design_where(current_user: Any, search: str | None, standing: str | None) -> dict[str, Any]:
+def _design_where(
+    current_user: Any,
+    search: str | None,
+    standing: str | None,
+    attention: str | None = None,
+    state: str | None = None,
+) -> dict[str, Any]:
     """The whole ``where`` for a design & prototype read, composed in the one correct order.
 
     ``deletedAt: None`` because a soft-deleted workshop is a 404 for everyone but an admin, and a
@@ -182,6 +188,16 @@ def _design_where(current_user: Any, search: str | None, standing: str | None) -
     standing_clause = register.standing_clause(standing)
     if standing_clause is not None:
         where.setdefault("AND", []).append(standing_clause)
+    # THE ATTENTION CARDS AND THE STATE BREAKDOWN (C14), AND-composed like the two above.
+    attention_clause = register.attention_clause(attention)
+    if attention_clause is not None:
+        where.setdefault("AND", []).append(attention_clause)
+    clean_state = (state or "").strip()
+    if clean_state:
+        # "none" is the reserved word for "state not recorded" — buildQuery drops an empty string.
+        where.setdefault("AND", []).append(
+            {"state": None} if clean_state == "none" else {"state": clean_state}
+        )
     return where
 
 
@@ -297,9 +313,15 @@ async def list_design_workshops(
     pageSize: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
     search: str | None = Query(None, max_length=MAX_SEARCH),
     standing: str | None = Query(None, max_length=32),
+    attention: str | None = Query(None, max_length=32),
+    state: str | None = Query(None, max_length=80),
     current_user: Any = Depends(require_ministry_dashboard_reader),
 ) -> dict[str, Any]:
     """The design & prototype workshops this account may read, newest-touched first, with progress.
+
+    ``attention`` (C14) is one of ``ministry_dashboard.ATTENTION_KEYS`` — the card the reader
+    clicked — and ``state`` one row of the state breakdown (``none`` for "not recorded"). Both narrow
+    the same scoped ``where`` the summary counted, so a card's number is the list's total.
 
     **WHAT "THIS ACCOUNT MAY READ" MEANS IS ON THE WIRE**, under ``scope`` and ``scopeLabel``, and
     that is the whole defence against this repository's most repeated bug class. A MINISTRY_ADMIN and
@@ -315,7 +337,14 @@ async def list_design_workshops(
     builder cannot be a boolean, and absence has to mean EVERYTHING rather than "false".
     """
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
-    where = _design_where(current_user, search, standing)
+    where = _design_where(current_user, search, standing, attention, state)
+    setup_capped = False
+    if (attention or "").strip() == "setupIncomplete":
+        # Scored rather than queried — stage 1's completeness lives in stage JSON.
+        ids, setup_capped = await register.setup_incomplete_ids(
+            _design_where(current_user, search, standing, None, state)
+        )
+        where.setdefault("AND", []).append({"id": {"in": ids}})
     total, rows = await _design_rows(current_user, where=where, skip=skip, take=clean_size)
 
     payload = page_payload(rows, total, clean_page, clean_size)
@@ -326,6 +355,8 @@ async def list_design_workshops(
         name: list(members) for name, members in register.STANDING_GROUPS.items()
     }
     payload["progressScoreCap"] = register.PROGRESS_SCORE_CAP
+    payload["attention"] = (attention or "").strip() or None
+    payload["attentionCapped"] = setup_capped
     return payload
 
 
@@ -481,6 +512,23 @@ async def register_summary(
     total = int(counts[0])
     grouped = {name: int(counts[index + 1]) for index, name in enumerate(names)}
 
+    # ── WHAT NEEDS ATTENTION, WHERE, AND WHAT WAS SANCTIONED (C14) ────────────────────────────────
+    # Every figure over the SAME scoped base as the counts above, so a card and the list it opens
+    # agree. Setup-incomplete is scored, not queried, and says when it stopped at its cap.
+    queried = [key for key in register.ATTENTION_KEYS if register.attention_clause(key) is not None]
+    answers = await gather_reads(
+        *(
+            db.designworkshop.count(where={"AND": [base, register.attention_clause(key)]})
+            for key in queried
+        ),
+        register.state_breakdown(base),
+        register.sanctioned_total(base),
+        register.setup_incomplete_ids(base),
+    )
+    by_state, sanctioned, setup = answers[len(queried)], answers[len(queried) + 1], answers[-1]
+    attention = {key: int(answers[index]) for index, key in enumerate(queried)}
+    attention["setupIncomplete"] = len(setup[0])
+
     # ⚠ THE SCOPE SENTENCE BELONGS TO THE DESIGN-WORKSHOP HALF AND NOT TO THE PAYLOAD, and it sat at
     # the top level until review caught it. The two counts in this response are scoped DIFFERENTLY:
     # the design-workshop counts honour `scope_clause`, while `Workshop` has no oversight relation to
@@ -500,6 +548,11 @@ async def register_summary(
             "unclassified": max(0, total - sum(grouped.values())),
             "scope": "estate" if register.sees_whole_estate(current_user) else "posted",
             "scopeLabel": register.scope_label(current_user),
+            # C14, additive. `attention` keys are the list's `attention=` words.
+            "attention": attention,
+            "setupIncompleteCapped": bool(setup[1]),
+            "byState": by_state,
+            "sanctioned": sanctioned,
         },
         "otherWorkshops": {
             "total": int(counts[-1]),
