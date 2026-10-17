@@ -325,6 +325,11 @@ fun RichTextEditor(
     help: String? = null,
     modifier: Modifier = Modifier,
     /**
+     * Drawn in place of [help] when set — the stage form passes its `FieldCaption`, so a narrative
+     * field gets the same "i" for its details as every other field.
+     */
+    helpRow: (@Composable () -> Unit)? = null,
+    /**
      * Start this field as a list of the given kind — set for `report_role=BULLETS` fields so the
      * designer is inside a numbered item the moment the field opens. See [seedAsList].
      */
@@ -768,7 +773,10 @@ fun RichTextEditor(
             )
         }
 
-        if (!help.isNullOrBlank()) {
+        if (helpRow != null) {
+            Spacer(Modifier.height(4.dp))
+            helpRow()
+        } else if (!help.isNullOrBlank()) {
             Spacer(Modifier.height(4.dp))
             Text(help, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

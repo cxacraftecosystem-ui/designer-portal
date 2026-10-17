@@ -11,7 +11,10 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,12 +23,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import com.designprototype.workshop.ui.FieldCircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,7 +50,15 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.ConnectivityObserver
@@ -74,8 +90,6 @@ import com.designprototype.workshop.data.dwModelWaitSentence
 import com.designprototype.workshop.data.dwMayAsk
 import com.designprototype.workshop.data.dwPackOffer
 import com.designprototype.workshop.data.dwPackState
-import com.designprototype.workshop.ui.SearchableSelectField
-import com.designprototype.workshop.ui.SelectOption
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -284,6 +298,38 @@ internal fun rememberDictationAvailable(): Boolean {
     }
 }
 
+/**
+ * THE MICROPHONE'S NAMES, one table for both clients (owner ruling, 2026-10-17, audit DW-14).
+ *
+ * The web's `components/dictation/dictationAdornment.ts` says the same words: "Dictate" on the
+ * button, the language on the caret beside it, and a long press on the microphone opens the same
+ * menu. The field and the language are the button's DESCRIPTION, not its name — a screen reader
+ * hears "Dictate" first, which is what the button does.
+ */
+internal object DwDictationAdornment {
+    /** The press target, on both buttons. Material's own minimum, never less. */
+    const val TARGET_DP = 48
+
+    fun label(state: DwDictationState): String = when (state) {
+        DwDictationState.IDLE -> "Dictate"
+        // Named apart from "Stop dictating" because a screen reader is the one surface that cannot
+        // see the panel explaining that this rung does not stream.
+        DwDictationState.RECORDING -> "Stop and transcribe"
+        DwDictationState.UPLOADING -> "Writing down what you dictated"
+        else -> "Stop dictating"
+    }
+
+    /** Read after the name: which language the microphone will listen in. */
+    fun languageState(languageLabel: String): String = "In $languageLabel"
+
+    fun languageButton(languageLabel: String): String = "Dictation language: $languageLabel"
+
+    const val LONG_PRESS_LABEL = "Choose dictation language"
+
+    /** Recording is a filled disc, not only a different glyph, so it is seen without motion. */
+    fun filled(state: DwDictationState): Boolean = state != DwDictationState.IDLE
+}
+
 /** What the control is doing, for the caller that has to draw it. */
 internal enum class DwDictationState {
     IDLE,
@@ -337,6 +383,7 @@ internal enum class DwDictationState {
  * and a transcript that appears somewhere other than where it will be saved is a transcript nobody
  * trusts.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun DwDictationButton(
     enabled: Boolean,
@@ -1267,169 +1314,174 @@ internal fun DwDictationButton(
         }
     }
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(
-            // Disabled while the clip is with the server. There is nothing a tap could mean: the
-            // recording has already gone, and a second tap that started a NEW dictation would leave
-            // the first one's words arriving into a field that has moved on.
-            enabled = enabled &&
+    val languageLabel = DW_DICTATION_LANGUAGES.firstOrNull { it.tag == tag }?.label ?: tag
+    val micEnabled = enabled &&
                 state != DwDictationState.UPLOADING &&
                 // The same reasoning as UPLOADING, one rung up: this phone is mid-decode, the
                 // microphone is shut, and a second tap that started a NEW dictation would leave the
                 // first one's words arriving into a field that has moved on — except that here the
                 // first one's decode is also holding 1.26 GB, so a second would be the pair of them.
-                state != DwDictationState.TRANSCRIBING_ON_THIS_PHONE,
-            onClick = {
-                when (state) {
-                    // Stop means "I have finished the sentence": stopListening asks the engine to
-                    // finalise what it already has, where cancel would throw it away. A designer who
-                    // has just spoken forty words and taps the obvious button must not lose them.
-                    DwDictationState.LISTENING, DwDictationState.WORKING ->
-                        runCatching { recognizer?.stopListening() }
-                    // The same promise on rung 2, kept a different way: the recording is closed and
-                    // sent rather than discarded. Reached from the panel's Stop button too — this
-                    // one is here for the case where the panel is not what the designer taps.
-                    DwDictationState.RECORDING -> finishRecording()
-                    // RUNG 1b, AND STOP MEANS THE SAME THING IT MEANS EVERYWHERE ELSE HERE: close
-                    // the microphone and write down what was said. It does NOT abandon the audio —
-                    // the decode starts the moment the read loop ends. Discarding is a separate,
-                    // labelled button on the panel, because eighty seconds of speech is too much to
-                    // lose to a button whose meaning has to be guessed.
-                    DwDictationState.RECORDING_FOR_THIS_PHONE -> pcm.requestStop()
-                    // Nothing to stop that would not also throw the words away: the microphone is
-                    // already shut and this phone is mid-decode. The panel's Cancel is the way out,
-                    // and it is labelled as one. A tap here doing nothing is correct and is why the
-                    // button is disabled below for this state as well as for UPLOADING.
-                    DwDictationState.TRANSCRIBING_ON_THIS_PHONE -> Unit
-                    DwDictationState.UPLOADING -> Unit
-                    DwDictationState.IDLE -> {
-                        if (hasPermission(context, Manifest.permission.RECORD_AUDIO)) {
-                            beginWalk()
-                        } else {
-                            micPermission.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    }
-                }
+                state != DwDictationState.TRANSCRIBING_ON_THIS_PHONE
+
+    /** A language picked from the menu: remembered, and the offline pack offered where one can be fetched. */
+    fun chooseLanguage(chosen: String) {
+        if (chosen.isNotBlank()) {
+            tag = chosen
+            lastDictationTag = chosen
+            /*
+              THE OFFER OPENS ONLY WHERE A TAP COULD ACTUALLY FETCH SOMETHING.
+
+              ── THE MEASUREMENT THAT FORCED THIS ──────────────────────────────────
+
+              On the fleet's SM-M325F this dialog opened for **17 of 19 languages** and
+              the only control on it was `Close`. Fifty-seven words, a dismissal, and
+              nothing done — on every language choice, for ever. This file's own
+              `DwLanguagePackOfferDialog` docstring already argued the principle: *"a
+              dialog that says 'we cannot tell' on every language choice is a dialog a
+              designer learns to dismiss without reading"*. A dialog that says "nothing
+              can be done" is the same dialog with a different sentence in it.
+
+              ── `dwMayAsk` WAS ALREADY THE PREDICATE; THIS CALL SITE WAS IGNORING IT ──
+
+              The gate is now the same function the settings list and the dialog's own
+              confirm button use, so three surfaces cannot disagree about whether one
+              pack may be asked for. NO_OFFLINE_PACK, UNSUPPORTED, NETWORK_ONLY,
+              INSTALLED, UNKNOWN and DOWNLOADING all fall through it — five of them
+              because nothing could be fetched, and DOWNLOADING because it already is.
+
+              THE ONE CASE THAT STILL OPENS ON A MAYBE is a check that has not landed:
+              a designer who picks a language a half-second after opening the list must
+              not silently miss a real offer. The dialog opens saying it is asking and
+              resolves in place — and if the answer turns out to be "nothing to do", it
+              shows the state sentence with a Close, which is the one moment that panel
+              is honest rather than pointless.
+            */
+            val offerNow = dwPackOffer(
+                dwPackState(chosen, packs.support),
+                packs.connection,
+            )
+            packOffer = when {
+                packs.support == null && packs.checking -> chosen
+                dwMayAsk(
+                    offer = offerNow,
+                    requested = packs.requests[chosen] != null,
+                    refused = packs.requests[chosen]?.failed == true,
+                ) -> chosen
+                else -> null
             }
+        }
+        showLanguages = false
+    }
+
+    /*
+     * THE MICROPHONE IN THE BOX'S TRAILING ICON, AND THE LANGUAGE IN A MENU BESIDE IT (DW-14).
+     *
+     * It used to be the mic plus an "English (India)" text button, and the button opened a whole
+     * labelled select under the box. Now: one 48dp microphone (tap to dictate, long-press for the
+     * language) and a 48dp caret that opens the same menu, so the choice is reachable without
+     * knowing the gesture. Recording is a filled purple disc with a stop square — visible without
+     * any motion. The web draws the same two buttons inside its input's end adornment.
+     */
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(DwDictationAdornment.TARGET_DP.dp)
+                .clip(CircleShape)
+                .background(
+                    if (DwDictationAdornment.filled(state)) MaterialTheme.colorScheme.primary else Color.Transparent
+                )
+                .combinedClickable(
+                    enabled = micEnabled,
+                    role = Role.Button,
+                    onLongClickLabel = DwDictationAdornment.LONG_PRESS_LABEL,
+                    onLongClick = { if (state == DwDictationState.IDLE && enabled) showLanguages = true },
+                    onClick = {
+                        when (state) {
+                            // Stop means "I have finished the sentence": stopListening asks the engine to
+                            // finalise what it already has, where cancel would throw it away. A designer who
+                            // has just spoken forty words and taps the obvious button must not lose them.
+                            DwDictationState.LISTENING, DwDictationState.WORKING ->
+                                runCatching { recognizer?.stopListening() }
+                            // The same promise on rung 2, kept a different way: the recording is closed and
+                            // sent rather than discarded. Reached from the panel's Stop button too — this
+                            // one is here for the case where the panel is not what the designer taps.
+                            DwDictationState.RECORDING -> finishRecording()
+                            // RUNG 1b, AND STOP MEANS THE SAME THING IT MEANS EVERYWHERE ELSE HERE: close
+                            // the microphone and write down what was said. It does NOT abandon the audio —
+                            // the decode starts the moment the read loop ends. Discarding is a separate,
+                            // labelled button on the panel, because eighty seconds of speech is too much to
+                            // lose to a button whose meaning has to be guessed.
+                            DwDictationState.RECORDING_FOR_THIS_PHONE -> pcm.requestStop()
+                            // Nothing to stop that would not also throw the words away: the microphone is
+                            // already shut and this phone is mid-decode. The panel's Cancel is the way out,
+                            // and it is labelled as one. A tap here doing nothing is correct and is why the
+                            // button is disabled below for this state as well as for UPLOADING.
+                            DwDictationState.TRANSCRIBING_ON_THIS_PHONE -> Unit
+                            DwDictationState.UPLOADING -> Unit
+                            DwDictationState.IDLE -> {
+                                if (hasPermission(context, Manifest.permission.RECORD_AUDIO)) {
+                                    beginWalk()
+                                } else {
+                                    micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            }
+                        }
+                    },
+                )
+                .semantics {
+                    contentDescription = DwDictationAdornment.label(state)
+                    stateDescription = DwDictationAdornment.languageState(labelOf(tag))
+                },
         ) {
             Icon(
                 if (state == DwDictationState.IDLE) Icons.Filled.Mic else Icons.Filled.Stop,
-                contentDescription = when (state) {
-                    DwDictationState.IDLE -> "Dictate this answer in ${labelOf(tag)}"
-                    // Named apart from "Stop dictating" because a screen reader is the one surface
-                    // that cannot see the panel explaining that this rung does not stream.
-                    DwDictationState.RECORDING ->
-                        "Stop and transcribe"
-                    DwDictationState.UPLOADING -> "Writing down what you dictated"
-                    else -> "Stop dictating"
-                },
-                tint = if (state == DwDictationState.IDLE) {
-                    MaterialTheme.field.muted
+                contentDescription = null,
+                tint = if (DwDictationAdornment.filled(state)) {
+                    MaterialTheme.colorScheme.onPrimary
                 } else {
-                    MaterialTheme.colorScheme.error
+                    MaterialTheme.field.muted
                 },
                 modifier = Modifier.size(20.dp)
             )
         }
         if (state == DwDictationState.IDLE) {
-            TextButton(
-                onClick = { showLanguages = !showLanguages },
-                enabled = enabled,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
-            ) {
-                Text(
-                    DW_DICTATION_LANGUAGES.firstOrNull { it.tag == tag }?.label ?: tag,
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
-                    maxLines = 1
-                )
-            }
-        }
-    }
-
-    if (showLanguages) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
-                .padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            SearchableSelectField(
-                label = "Dictation language",
-                options = remember { DW_DICTATION_LANGUAGES.map { SelectOption(it.tag, it.label) } },
-                selectedValue = tag,
-                includeNone = false,
-                onSelect = { chosen ->
-                    if (chosen.isNotBlank()) {
-                        tag = chosen
-                        lastDictationTag = chosen
-                        /*
-                          THE OFFER OPENS ONLY WHERE A TAP COULD ACTUALLY FETCH SOMETHING.
-
-                          ── THE MEASUREMENT THAT FORCED THIS ──────────────────────────────────
-
-                          On the fleet's SM-M325F this dialog opened for **17 of 19 languages** and
-                          the only control on it was `Close`. Fifty-seven words, a dismissal, and
-                          nothing done — on every language choice, for ever. This file's own
-                          `DwLanguagePackOfferDialog` docstring already argued the principle: *"a
-                          dialog that says 'we cannot tell' on every language choice is a dialog a
-                          designer learns to dismiss without reading"*. A dialog that says "nothing
-                          can be done" is the same dialog with a different sentence in it.
-
-                          ── `dwMayAsk` WAS ALREADY THE PREDICATE; THIS CALL SITE WAS IGNORING IT ──
-
-                          The gate is now the same function the settings list and the dialog's own
-                          confirm button use, so three surfaces cannot disagree about whether one
-                          pack may be asked for. NO_OFFLINE_PACK, UNSUPPORTED, NETWORK_ONLY,
-                          INSTALLED, UNKNOWN and DOWNLOADING all fall through it — five of them
-                          because nothing could be fetched, and DOWNLOADING because it already is.
-
-                          THE ONE CASE THAT STILL OPENS ON A MAYBE is a check that has not landed:
-                          a designer who picks a language a half-second after opening the list must
-                          not silently miss a real offer. The dialog opens saying it is asking and
-                          resolves in place — and if the answer turns out to be "nothing to do", it
-                          shows the state sentence with a Close, which is the one moment that panel
-                          is honest rather than pointless.
-                        */
-                        val offerNow = dwPackOffer(
-                            dwPackState(chosen, packs.support),
-                            packs.connection,
-                        )
-                        packOffer = when {
-                            packs.support == null && packs.checking -> chosen
-                            dwMayAsk(
-                                offer = offerNow,
-                                requested = packs.requests[chosen] != null,
-                                refused = packs.requests[chosen]?.failed == true,
-                            ) -> chosen
-                            else -> null
-                        }
-                    }
-                    showLanguages = false
+            Box {
+                IconButton(
+                    onClick = { showLanguages = !showLanguages },
+                    enabled = enabled,
+                    modifier = Modifier.semantics {
+                        contentDescription = DwDictationAdornment.languageButton(languageLabel)
+                    },
+                ) {
+                    Icon(
+                        Icons.Filled.ArrowDropDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.field.muted,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
-            )
-            /*
-             * ── AND THAT IS THE WHOLE PANEL. ─────────────────────────────────────────────────
-             *
-             * Three things stood here and all three are gone. Measured before: **61 words**. After:
-             * the select and its label.
-             *
-             *  1. **A per-language state line** ("Hindi: works offline"). The row a designer just
-             *     picked from is not improved by being told what they picked.
-             *  2. **The suppressed-rung warning** — that a craft-aware path was withheld for want of
-             *     consent or allowance. It was in the right place for the wrong reason: it is a
-             *     failure, and principle 2 says a failure is reported AT THE MOMENT IT FAILS, not as
-             *     a standing note above a control that is about to work anyway. `dwDictationLadder`
-             *     still computes it and `dwDictationNothingLeftSentence` still says it when the walk
-             *     runs out — which is when it costs something.
-             *  3. **A 35-word lecture** about choosing the wrong language transcribing into the wrong
-             *     script. The web trusts its dropdown; so does this one. If the language is wrong the
-             *     recogniser answers ERROR_NO_MATCH and `onError` above says so, naming the language,
-             *     at the moment it happens.
-             *
-             * The web's whole dictation surface is three words. This is now a labelled select.
-             */
+                DropdownMenu(expanded = showLanguages, onDismissRequest = { showLanguages = false }) {
+                    DW_DICTATION_LANGUAGES.forEach { option ->
+                        val chosen = option.tag == tag
+                        DropdownMenuItem(
+                            text = { Text(option.label) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = if (chosen) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                )
+                            },
+                            onClick = { chooseLanguage(option.tag) },
+                            modifier = Modifier.semantics {
+                                role = Role.RadioButton
+                                selected = chosen
+                            },
+                        )
+                    }
+                }
+            }
         }
     }
 

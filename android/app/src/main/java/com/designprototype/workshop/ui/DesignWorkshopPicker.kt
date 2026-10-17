@@ -348,11 +348,9 @@ internal fun workshopTypeOptions(
  * call, so an offline handset really is showing built-in labels and really does need to say so.
  */
 internal fun workshopTypeHint(served: Boolean): String = if (served) {
-    "Chooses which workshops the box below lists. It is not saved on this record — the workshop you " +
-        "pick already carries its own type."
+    "Narrows the list below. It is not saved on this record."
 } else {
-    "These are the standard types of workshop — connect once to refresh them. They choose " +
-        "which workshops the box below lists, and are not saved on this record."
+    "These are the standard types of workshop until you connect; they are not saved on this record."
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════
