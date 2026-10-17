@@ -38,6 +38,7 @@ from fastapi import FastAPI
 import app.core.db as core_db
 from app.api.routes import auth as auth_routes, usage as usage_routes
 from app.core import deps
+from app.core.security import hash_password
 from app.schemas.auth import LoginRequest
 from app.services import usage
 
@@ -47,6 +48,9 @@ USER_ID = "ckv9r2m4x0001qz8h3n7d2f5g"
 #: A moment safely inside every window the tests ask for, fixed rather than relative to "now" so a
 #: run cannot straddle a boundary and start asserting a different number of anything.
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
+
+#: A real bcrypt hash from the app's own hasher, the 60-character shape `verify_password` insists on.
+_FIXTURE_PASSWORD_HASH = hash_password("a-designer-password")
 
 
 # --------------------------------------------------------------------------------------
@@ -136,7 +140,7 @@ def _account(**overrides: Any) -> Any:
         email="designer@example.org",
         name="A Designer",
         role="DESIGNER",
-        passwordHash="not-a-real-hash",
+        passwordHash=_FIXTURE_PASSWORD_HASH,
         usageConsent="NOT_RECORDED",
         usageConsentAt=None,
         usageConsentBasis=None,
@@ -839,8 +843,9 @@ def sign_in(monkeypatch: pytest.MonkeyPatch, store: SimpleNamespace) -> Iterator
     monkeypatch.setattr(auth_routes, "verify_password", lambda _raw, _hash: True)
     # The password sign-in checks through `verify_password_or_decoy` since 3f7dedf7 (a missing account
     # costs a decoy bcrypt round, so timing does not say which addresses exist). Stubbing only
-    # `verify_password` left this fixture's "not-a-real-hash" reaching the real check, which refuses a
+    # `verify_password` left the fixture's old fake hash reaching the real check, which refuses a
     # malformed stored hash out loud — the four sign-in-gate tests then failed on the hash, not the gate.
+    # The fixture now carries a real 60-character bcrypt hash from the app's own hasher as well.
     monkeypatch.setattr(auth_routes, "verify_password_or_decoy", lambda _raw, _hash: True)
     monkeypatch.setattr(
         auth_routes, "create_access_token", lambda **_kwargs: "a-real-looking-token"
