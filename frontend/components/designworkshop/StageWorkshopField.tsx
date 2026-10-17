@@ -136,7 +136,7 @@ export function StageWorkshopField({
    * "Bagru Block Print Workshop 2025". So the button follows the box: offered where a designer is
    * deliberately typing prose the list cannot answer, withheld where they are choosing from it.
    */
-  dictation?: React.ReactNode;
+  dictation?: (control: React.ReactNode) => React.ReactNode;
 }) {
   const [workshops, setWorkshops] = useState<Workshop[] | null>(null);
   /** True once the list could not be loaded. Not the same state as "loaded and empty". */
@@ -194,18 +194,19 @@ export function StageWorkshopField({
   if (typing || failed) {
     return (
       <div className="grid gap-1">
-        <input
-          className="field-input"
-          type="text"
-          maxLength={field.maxLength || undefined}
-          aria-labelledby={labelId}
-          aria-describedby={describedBy}
-          aria-invalid={invalid}
-          value={current}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
-        />
-        {dictation}
+        {(dictation ?? ((control: React.ReactNode) => control))(
+          <input
+            className="field-input"
+            type="text"
+            maxLength={field.maxLength || undefined}
+            aria-labelledby={labelId}
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+            value={current}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value)}
+          />
+        )}
         {failed ? (
           // Said out loud rather than left as a box that looks like every other box. A designer who
           // cannot see why the list is missing assumes there are no workshops.

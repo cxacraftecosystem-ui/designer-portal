@@ -1,0 +1,127 @@
+package com.designprototype.workshop.ui.designworkshop
+
+import com.designprototype.workshop.data.FieldDto
+import com.designprototype.workshop.data.SchemaResponse
+import kotlinx.serialization.json.Json
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * DW-14 (UX audit 2026-10-16), owner ruling 2026-10-17, on the handset.
+ *
+ *  1. Every field's `help` is one short line; the rest is `details`, behind a collapsed "i".
+ *  2. The "i" is announced as a button with its state, named "About <label>" — the web's words.
+ *  3. Dictate is a 48dp microphone in the box's trailing icon, named "Dictate", with the language in
+ *     a menu from the caret beside it (or a long press) — no "English (India)" text button.
+ *
+ * The registry half reads the SHIPPED asset — a dump of what the API serves — through the app's own
+ * decoder, so it also proves `details` survives the trip into [FieldDto]. The web's
+ * `e2e/stage-help-dictate-unit.spec.ts` and the backend's `test_stage_help_copy.py` hold the same rule.
+ */
+class DwStageHelpDictateTest {
+
+    private val schema: SchemaResponse by lazy {
+        Json { ignoreUnknownKeys = true; isLenient = true }
+            .decodeFromString(SchemaResponse.serializer(), asset().readText())
+    }
+
+    private val fields: List<Pair<String, FieldDto>> by lazy {
+        schema.stages.flatMap { stage ->
+            stage.entities.flatMap { entity -> entity.fields.map { "${entity.key}.${it.key}" to it } }
+        }
+    }
+
+    @Test
+    fun `every help line the APK ships is one sentence of at most 120 characters`() {
+        val helps = fields.filter { it.second.help.isNotBlank() }
+        assertTrue("the walk found too few help lines to mean anything", helps.size > 100)
+        val long = helps.filter { it.second.help.length > 120 }.map { it.first }
+        assertEquals("move the rest of these into details", emptyList<String>(), long)
+        val sentenceBreak = Regex("[.!?…][\"”’)]?\\s+\\S")
+        val twoSentences = helps.filter { sentenceBreak.containsMatchIn(it.second.help.trim()) }.map { it.first }
+        assertEquals("one sentence per help line", emptyList<String>(), twoSentences)
+    }
+
+    @Test
+    fun `details decode into the field and are never blank where present`() {
+        val withDetails = fields.filter { DwFieldDetails.has(it.second) }
+        assertTrue("no field in the shipped asset carries details", withDetails.isNotEmpty())
+        val aadhaar = fields.first { it.first == "participant.aadhaarNumber" }.second
+        assertTrue(aadhaar.help.contains("last four digits"))
+        assertTrue(aadhaar.details.contains("XXXX XXXX"))
+        assertFalse(DwFieldDetails.has(FieldDto(key = "x", label = "X", details = "  ")))
+    }
+
+    @Test
+    fun `the info toggle says what it opens and whether it is open`() {
+        assertEquals("About Aadhaar number", DwFieldDetails.label("Aadhaar number"))
+        assertEquals("Collapsed", DwFieldDetails.state(false))
+        assertEquals("Expanded", DwFieldDetails.state(true))
+    }
+
+    @Test
+    fun `the info toggle is drawn on the caption, collapsed until tapped, and on reference fields too`() {
+        val renderer = source("ui/designworkshop/FieldRenderer.kt")
+        assertTrue(renderer.contains("var open by rememberSaveable(field.key) { mutableStateOf(false) }"))
+        assertTrue(renderer.contains("stateDescription = DwFieldDetails.state(open)"))
+        assertTrue(renderer.contains("contentDescription = DwFieldDetails.label(field.label)"))
+        assertTrue(renderer.contains("if (open) {"))
+        val reference = source("ui/designworkshop/DwReferenceField.kt")
+        assertEquals(2, Regex("FieldCaption\\(field\\)").findAll(reference).count())
+    }
+
+    @Test
+    fun `the microphone is named Dictate, is 48dp, and fills while it records`() {
+        assertEquals(48, DwDictationAdornment.TARGET_DP)
+        assertEquals("Dictate", DwDictationAdornment.label(DwDictationState.IDLE))
+        assertEquals("Stop dictating", DwDictationAdornment.label(DwDictationState.LISTENING))
+        assertEquals("Stop and transcribe", DwDictationAdornment.label(DwDictationState.RECORDING))
+        assertEquals("In English (India)", DwDictationAdornment.languageState("English (India)"))
+        assertEquals("Dictation language: Hindi", DwDictationAdornment.languageButton("Hindi"))
+        assertFalse(DwDictationAdornment.filled(DwDictationState.IDLE))
+        DwDictationState.values().filter { it != DwDictationState.IDLE }.forEach {
+            assertTrue("$it must be visible without motion", DwDictationAdornment.filled(it))
+        }
+    }
+
+    @Test
+    fun `the language is a menu from the caret or a long press, and the text button is gone`() {
+        val dictation = source("ui/designworkshop/DwDictation.kt")
+        assertTrue(dictation.contains("DropdownMenu(expanded = showLanguages"))
+        assertTrue(dictation.contains("onLongClickLabel = DwDictationAdornment.LONG_PRESS_LABEL"))
+        assertTrue(dictation.contains("role = Role.RadioButton"))
+        assertTrue(dictation.contains(".size(DwDictationAdornment.TARGET_DP.dp)"))
+        assertFalse("the old text button that printed the language", dictation.contains("contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)"))
+        assertFalse(dictation.contains("label = \"Dictation language\","))
+        // And it is still drawn in the box's trailing icon on the ordinary text field.
+        val renderer = source("ui/designworkshop/FieldRenderer.kt")
+        assertTrue(renderer.contains("trailingIcon = if (!canDictate) null else {"))
+    }
+
+    private fun repoFile(vararg relative: String): File {
+        var dir: File? = File(".").absoluteFile
+        while (dir != null) {
+            for (path in relative) {
+                val candidate = File(dir, path)
+                if (candidate.isFile) return candidate
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("none of ${relative.toList()} found from ${File(".").absolutePath}")
+    }
+
+    private fun asset(): File = repoFile(
+        "src/main/assets/design-workshop-schema.json",
+        "app/src/main/assets/design-workshop-schema.json",
+        "android/app/src/main/assets/design-workshop-schema.json",
+    )
+
+    private fun source(name: String): String = repoFile(
+        "src/main/java/com/designprototype/workshop/$name",
+        "app/src/main/java/com/designprototype/workshop/$name",
+        "android/app/src/main/java/com/designprototype/workshop/$name",
+    ).readText()
+}

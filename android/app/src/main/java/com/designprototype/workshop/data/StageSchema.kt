@@ -209,7 +209,13 @@ data class FieldDto(
     /** BASIC | STANDARD | ADVANCED. */
     val tier: String = "STANDARD",
     val required: Boolean = false,
+    /** ONE short line: only what the designer needs to fill the box (owner ruling, 2026-10-17). */
     val help: String = "",
+    /**
+     * Extra guidance, drawn behind the field's collapsed "i" ([DwFieldDetails]). Omitted on the wire
+     * when the registry declares none, so the default is the honest "nothing more to say".
+     */
+    val details: String = "",
     val unit: String = "",
     /**
      * The name of the shared list in the registry's `enums` table.

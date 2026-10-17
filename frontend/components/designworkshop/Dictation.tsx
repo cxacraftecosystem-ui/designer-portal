@@ -46,8 +46,8 @@
  * is the only file in the tree that may hold them.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Mic, Square } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, Loader2, Mic, Square } from "lucide-react";
 
 import {
   createBrowserRecognition,
@@ -58,8 +58,20 @@ import {
   storeLanguage,
   type SpeechRecognitionLike
 } from "@/components/dictation/onDeviceSpeech";
+import {
+  adornmentPosition,
+  DICTATE_BUTTON_BASE,
+  DICTATE_BUTTON_IDLE,
+  DICTATE_BUTTON_RECORDING,
+  dictateButtonDescription,
+  dictateButtonLabel,
+  DICTATION_FIELD_PADDED,
+  DICTATION_FIELD_WRAPPER,
+  DICTATION_LANGUAGE_BUTTON,
+  dictationLanguageButtonLabel
+} from "@/components/dictation/dictationAdornment";
 import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
-import { Dropdown } from "@/components/ui/Dropdown";
+import { AnchoredPopover } from "@/components/ui/AnchoredPopover";
 import { ApiError } from "@/lib/api";
 import {
   DW_DICTATE_PATH,
@@ -104,13 +116,29 @@ export function DictationButton({
    * "the call site that forgot" indistinguishable from "the call site that meant it", on the one
    * control whose whole subject is a named artisan's voice leaving the device.
    */
-  workshopId
+  workshopId,
+  /**
+   * The box being dictated into. When given, the microphone is drawn INSIDE it, in the end
+   * adornment (owner ruling, 2026-10-17); without it (a list of rows, a dropdown, the rich-text
+   * editor's footer) the same two buttons are drawn on their own, end-aligned.
+   *
+   * The wrapper is the same element whatever the mode, so the box is never remounted (and never
+   * loses the caret) when this control learns, a frame after mount, that it can dictate.
+   */
+  children,
+  /** A textarea: the adornment sits top-right instead of centred. */
+  multiline = false
 }: {
   onCommit: (text: string) => void;
   disabled?: boolean;
   fieldLabel: string;
   workshopId: string;
+  children?: ReactNode;
+  multiline?: boolean;
 }) {
+  const describedById = useId();
+  const menuAnchorRef = useRef<HTMLDivElement | null>(null);
+  const caretRef = useRef<HTMLButtonElement | null>(null);
   const [mode, setMode] = useState<Mode>("unknown");
   const [language, setLanguage] = useState("en-IN");
   const [listening, setListening] = useState(false);
@@ -421,118 +449,197 @@ export function DictationButton({
     setListening(false);
   }
 
-  const languageOptions = useMemo(() => DICTATION_LANGUAGES.map(({ value, label }) => ({ value, label })), []);
   const languageName = DICTATION_LANGUAGES.find((entry) => entry.value === language)?.label ?? language;
+  const ready = mode === "browser" || mode === "server";
 
-  // Rule 1 in the file header: nothing is drawn until something is known to work.
-  if (mode === "unknown" || mode === "none") return null;
+  function chooseLanguage(next: string) {
+    setLanguage(next);
+    storeLanguage(next);
+    setShowLanguages(false);
+    caretRef.current?.focus();
+  }
 
-  return (
-    <div className="grid gap-1.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          className={
-            listening
-              ? "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md bg-purple-700 px-2.5 py-1 text-xs font-medium text-white transition"
-              : "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-line-200 bg-card px-2.5 py-1 text-xs font-medium text-ink-900 transition hover:border-purple-300 hover:bg-purple-50 disabled:opacity-60"
+  // Rule 1 in the file header: nothing is drawn until something is known to work. With a box to
+  // wrap, the box is still drawn, in the same wrapper, so it is never remounted.
+  if (!ready && !children) return null;
+
+  const adornment = ready ? (
+    <div ref={menuAnchorRef} className="flex items-center gap-0.5" data-dictation-adornment="">
+      <button
+        type="button"
+        className={`${DICTATE_BUTTON_BASE} ${listening ? DICTATE_BUTTON_RECORDING : DICTATE_BUTTON_IDLE}`}
+        disabled={disabled || transcribing}
+        aria-pressed={listening}
+        aria-label={dictateButtonLabel(listening, transcribing)}
+        aria-describedby={describedById}
+        data-dictate-button=""
+        // A secondary click opens the language menu, as the caret does.
+        onContextMenu={(event) => {
+          if (listening || disabled) return;
+          event.preventDefault();
+          setShowLanguages(true);
+        }}
+        onClick={() => {
+          if (listening) {
+            stop();
+            return;
           }
-          disabled={disabled || transcribing}
-          aria-pressed={listening}
-          aria-label={listening ? `Stop dictating ${fieldLabel}` : `Dictate ${fieldLabel} in ${languageName}`}
-          onClick={() => {
-            if (listening) {
-              stop();
-              return;
-            }
-            if (mode === "browser") startBrowserRecognition();
-            else void startServerRecording();
-          }}
-        >
-          {transcribing ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : listening ? (
-            <Square className="h-3.5 w-3.5" aria-hidden />
-          ) : (
-            <Mic className="h-3.5 w-3.5" aria-hidden />
-          )}
-          {transcribing ? "Transcribing…" : listening ? "Stop" : "Dictate"}
-        </button>
+          if (mode === "browser") startBrowserRecognition();
+          else void startServerRecording();
+        }}
+      >
+        {transcribing ? (
+          <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+        ) : listening ? (
+          <Square className="h-4 w-4 fill-current" aria-hidden />
+        ) : (
+          <Mic className="h-5 w-5" aria-hidden />
+        )}
+      </button>
+      <span id={describedById} className="sr-only">
+        {dictateButtonDescription(fieldLabel, languageName)}
+      </span>
+      <button
+        ref={caretRef}
+        type="button"
+        className={DICTATION_LANGUAGE_BUTTON}
+        aria-label={dictationLanguageButtonLabel(languageName)}
+        aria-haspopup="menu"
+        aria-expanded={showLanguages}
+        disabled={disabled || listening || transcribing}
+        data-dictation-language=""
+        onClick={() => setShowLanguages((current) => !current)}
+      >
+        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+      </button>
+      <AnchoredPopover
+        open={showLanguages}
+        onClose={() => setShowLanguages(false)}
+        anchorRef={menuAnchorRef}
+        label="Dictation language"
+        restoreFocusRef={caretRef}
+        className="w-60"
+      >
+        <LanguageMenu value={language} onChoose={chooseLanguage} />
+      </AnchoredPopover>
+    </div>
+  ) : null;
 
-        <button
-          type="button"
-          className="text-xs font-medium text-ink-500 underline"
-          aria-expanded={showLanguages}
-          disabled={disabled || listening}
-          onClick={() => setShowLanguages((current) => !current)}
-        >
-          {languageName}
-        </button>
-
-        {mode === "server" ? (
-          // Said rather than hidden. On this path there is no live readout at all, and a designer who
-          // has used dictation in Chrome will otherwise stand there waiting for words that only
-          // arrive when they press Stop.
-          <span className="text-xs text-ink-500">
-            The recording is transcribed after you press Stop.
-          </span>
-        ) : null}
-
-        {/*
-          THE CEILING, IN WORDS, BEFORE THE UPLOAD RATHER THAN AFTER IT.
-
-          `dictationsRemaining` is null on an uncapped deployment and that is NOT the same as zero —
-          the server keeps the two apart deliberately, so nothing is printed there rather than "0
-          left", which would turn "no ceiling" into "you are out". `dictationDay` is the server's
-          own India-time date and is named beside the count because "3 left" is only meaningful with
-          the boundary it resets on; a designer refused at nine in the evening needs to know when it
-          lifts, and the handset's refusal wording says the same thing.
-        */}
-        {mode === "server" && transcribing && lastRecording ? (
-          <DownloadMediaButton
-            name="voice note"
-            onDownload={() => downloadLocalMedia(lastRecording.blob, { capturedAt: lastRecording.at })}
-          />
-        ) : null}
-
-        {mode === "server" && allowance && allowance.dictationsRemaining !== null ? (
-          <span className="text-xs text-ink-500">
-            {allowance.dictationsRemaining} dictation
-            {allowance.dictationsRemaining === 1 ? "" : "s"} left today ({allowance.dictationDay}).
-          </span>
-        ) : null}
-      </div>
-
-      {showLanguages ? (
-        <div className="max-w-xs">
-          <Dropdown
-            value={language}
-            onChange={(next) => {
-              setLanguage(next);
-              storeLanguage(next);
-              setShowLanguages(false);
-            }}
-            options={languageOptions}
-            placeholder="Dictation language"
-            ariaLabel="Dictation language"
-            disabled={disabled || listening}
-          />
-        </div>
-      ) : null}
-
+  const status = (
+    <>
       {listening || interim ? (
         // Rule 2: provisional text has to LOOK provisional. Italic, dimmed, and inside a polite live
         // region so a screen-reader user hears it accumulate rather than being told at the end that
-        // a paragraph appeared from nowhere.
+        // a paragraph appeared from nowhere. On the server rung nothing streams, so it says when the
+        // words will come instead.
         <p
           aria-live="polite"
           className="min-h-5 rounded-md border border-dashed border-purple-300 bg-purple-50 px-2 py-1 text-xs italic leading-5 text-purple-800"
         >
-          {interim || "Listening… speak now."}
+          {interim || (mode === "server" ? "Recording… press stop to transcribe." : "Listening… speak now.")}
+        </p>
+      ) : null}
+
+      {mode === "server" && transcribing && lastRecording ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <DownloadMediaButton
+            name="voice note"
+            onDownload={() => downloadLocalMedia(lastRecording.blob, { capturedAt: lastRecording.at })}
+          />
+        </div>
+      ) : null}
+
+      {/*
+        THE CEILING, IN WORDS, BEFORE THE UPLOAD RATHER THAN AFTER IT.
+
+        `dictationsRemaining` is null on an uncapped deployment and that is NOT the same as zero:
+        the server keeps the two apart deliberately, so nothing is printed there rather than "0
+        left", which would turn "no ceiling" into "you are out". `dictationDay` is the server's
+        own India-time date and is named beside the count because "3 left" is only meaningful with
+        the boundary it resets on.
+      */}
+      {mode === "server" && allowance && allowance.dictationsRemaining !== null ? (
+        <p className="text-xs text-ink-500">
+          {allowance.dictationsRemaining} dictation
+          {allowance.dictationsRemaining === 1 ? "" : "s"} left today ({allowance.dictationDay}).
         </p>
       ) : null}
 
       {problem ? <p className="text-xs font-medium leading-5 text-error-600">{problem}</p> : null}
+    </>
+  );
+
+  if (!children) {
+    return (
+      <div className="grid gap-1.5">
+        <div className="flex justify-end">{adornment}</div>
+        {status}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid min-w-0 gap-1.5">
+      <div className={ready ? `${DICTATION_FIELD_WRAPPER} ${DICTATION_FIELD_PADDED}` : DICTATION_FIELD_WRAPPER}>
+        {children}
+        {adornment ? <div className={adornmentPosition(multiline)}>{adornment}</div> : null}
+      </div>
+      {status}
+    </div>
+  );
+}
+
+/**
+ * The language list, as a menu of radio items: the eleven languages, the current one ticked.
+ *
+ * Arrow keys move, Home and End jump, Enter or Space chooses; Escape and a click outside are
+ * `AnchoredPopover`'s. Focus lands on the ticked row when it opens.
+ */
+function LanguageMenu({ value, onChoose }: { value: string; onChoose: (next: string) => void }) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      listRef.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  function move(event: React.KeyboardEvent<HTMLDivElement>) {
+    const items = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next = -1;
+    if (event.key === "ArrowDown") next = (at + 1) % items.length;
+    else if (event.key === "ArrowUp") next = (at - 1 + items.length) % items.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = items.length - 1;
+    if (next < 0) return;
+    event.preventDefault();
+    items[next]?.focus();
+  }
+
+  return (
+    <div ref={listRef} role="menu" aria-label="Dictation language" className="grid gap-0.5" onKeyDown={move}>
+      {DICTATION_LANGUAGES.map((entry) => {
+        const checked = entry.value === value;
+        return (
+          <button
+            key={entry.value}
+            type="button"
+            role="menuitemradio"
+            aria-checked={checked}
+            tabIndex={checked ? 0 : -1}
+            onClick={() => onChoose(entry.value)}
+            className={
+              checked
+                ? "flex min-h-11 items-center gap-2 rounded-md bg-purple-50 px-3 text-left text-sm font-medium text-purple-800"
+                : "flex min-h-11 items-center gap-2 rounded-md px-3 text-left text-sm text-ink-900 hover:bg-surface-50"
+            }
+          >
+            <Check className={checked ? "h-4 w-4 shrink-0" : "h-4 w-4 shrink-0 opacity-0"} aria-hidden />
+            {entry.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
