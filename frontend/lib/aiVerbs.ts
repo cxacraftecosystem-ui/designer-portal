@@ -433,8 +433,7 @@ export function subtitleDesignWorkshopMedia(workshopId: string, sourceMediaId: s
 
 /** Said before the press on the one verb that costs an upload of bytes the archive already holds. */
 export const SUBTITLES_SECOND_UPLOAD_NOTE =
-  "Subtitling sends this recording for transcription again, with timings, so it is uploaded once more " +
-  "and uses one of today's AI runs.";
+  "Uploads the recording again and uses one AI run.";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The subtitle file
@@ -444,8 +443,8 @@ export type DwSubtitleFormat = "srt" | "vtt";
 
 /** What each format is actually for, so a designer picks by the player rather than by the extension. */
 export const SUBTITLE_FORMAT_LABELS: Record<DwSubtitleFormat, string> = {
-  srt: "SubRip (.srt) — VLC, a phone gallery, an email attachment",
-  vtt: "WebVTT (.vtt) — a browser video player"
+  srt: "SubRip (.srt) — most players",
+  vtt: "WebVTT (.vtt) — web players"
 };
 
 export type DwSubtitleFile = { blob: Blob; fileName: string };
@@ -696,8 +695,7 @@ export function selectedPassage(doc: RichDoc, range: DocRange): string {
  * screen earlier than that panel applies it.
  */
 export const NOTHING_SELECTED =
-  "Select the words you want worked on first. Only the selected passage is sent, and the layer " +
-  "records it as its source.";
+  "Select some text first.";
 
 export function passageTooLong(chars: number): string {
   return (
@@ -716,8 +714,7 @@ export function passageTooLong(chars: number): string {
  * words are in the stage draft in IndexedDB and are untouched.
  */
 export const VERBS_NEED_A_CONNECTION =
-  "These need a connection. Nothing was sent and nothing will be sent later. Your words are safe on " +
-  "this device; reconnect and select the passage again.";
+  "Needs a connection. Nothing was sent; your text is safe.";
 
 /**
  * The workshop has not been cleared to send anything, so no verb can run — the third pre-press state.
@@ -741,24 +738,17 @@ export const VERBS_NEED_A_CONNECTION =
 export function consentNotGranted(consent: string | null | undefined): string {
   const token = (consent ?? "").trim().toUpperCase();
   if (token === "REFUSED") {
-    return (
-      "This workshop's material may not be sent out — that is the answer on record — so nothing " +
-      "here can be proofread, written out, translated, described or subtitled. Nothing was sent, " +
-      "and your words are exactly as you left them. If the artisan has since agreed, change that " +
-      "answer on the workshop's own screen."
-    );
+    return "The artisan declined sharing, so AI tools are off.";
   }
-  return (
-    "Nobody has recorded yet whether material from this workshop may be sent out, so nothing here " +
-    "can be proofread, written out, translated, described or subtitled. Open the workshop's own " +
-    "screen and record the artisan's answer to that question — until somebody does, this stays " +
-    "unavailable."
-  );
+  return "Needs the artisan's sharing consent first.";
 }
+
+/** The link drawn after {@link consentNotGranted}; it opens the consent card on the workshop page. */
+export const CONSENT_LINK_LABEL = "Record consent";
 
 /** A photograph still only on this device has no server id to send, which is a different refusal. */
 export const MEDIA_NOT_UPLOADED_YET =
-  "This file hasn't uploaded yet. It will upload with the next sync, and you can describe it then.";
+  "Available once this file uploads.";
 
 /**
  * THE FIFTH PRE-PRESS STATE: the WORKSHOP itself has never reached the server, so no verb has a
@@ -795,8 +785,7 @@ export const MEDIA_NOT_UPLOADED_YET =
  * copy.
  */
 export const WORKSHOP_NOT_ON_SERVER_YET =
-  "This workshop is still only on this device. These AI tools become available once it uploads with " +
-  "the next sync. Everything you have written is safe in the draft here, and nothing has been sent.";
+  "Available once this workshop uploads.";
 
 /**
  * THE PRE-PRESS LADDER AS A FUNCTION, so the thing that was wrong can be asserted about.
@@ -883,15 +872,15 @@ export function verbAllowanceRefusal(allowance: DwAiVerbAllowanceState | null | 
  */
 export function translationTargetRefusal(value: string): string | null {
   const token = value.trim();
-  if (!token) return "Name the language to translate into — a name or a code, such as “Odia”, “or” or “English”.";
+  if (!token) return "Name the language, e.g. “Odia” or “English”.";
   if (token.toLowerCase() === "multi") {
     return (
       "“multi” can describe the mixed language a passage was spoken in, but not the language to " +
-      "translate into. Name the one language you want it in."
+        "translate into. Name the one language you want it in."
     );
   }
   if (token.length > MAX_VERB_LANGUAGE_CHARS) {
-    return `A language name here is at most ${MAX_VERB_LANGUAGE_CHARS} characters — “Odia (Kalahandi dialect)” fits comfortably.`;
+    return `A language name is at most ${MAX_VERB_LANGUAGE_CHARS} characters.`;
   }
   return null;
 }

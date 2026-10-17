@@ -39,6 +39,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Check, Copy, Download, PencilLine, Sparkles } from "lucide-react";
 
 import { Markdown } from "@/components/Markdown";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * Hand a blob to the browser as a download, and release the object URL once it has been taken.
@@ -164,7 +165,7 @@ export function MarkdownDocument({
         {/* Pushed right so the flag reads first: the state of the text matters before what can be
             done with it. `ml-auto` on the group rather than `justify-between` on the row, because
             the row has no children at all on the surfaces that pass no flag. */}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <ActionGroup className="ml-auto">
           <button type="button" className="field-button-secondary min-h-8! px-2.5! py-1! text-xs" onClick={copy}>
             {copied ? <Check className="h-3.5 w-3.5" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}
             {copied ? "Copied" : "Copy"}
@@ -173,7 +174,7 @@ export function MarkdownDocument({
             <Download className="h-3.5 w-3.5" aria-hidden />
             Download
           </button>
-        </div>
+        </ActionGroup>
       </div>
       <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2">
         <Markdown text={text} />

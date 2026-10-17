@@ -71,8 +71,7 @@ import { canRunDesignWorkshops } from "@/lib/permissions";
  * client has no equivalent worth naming.
  */
 const NOT_YOURS_TO_RECORD =
-  "Only the designer running this workshop, or an administrator, can record this answer. Ask " +
-  "whoever is running it to put the question to the artisan and record what they say.";
+  "Only this workshop's designer or an admin can record this.";
 
 export type DictationConsentCardProps = {
   /** The draft's `localId`, so the answer can be written with no connection. Null = no local copy. */
@@ -143,10 +142,10 @@ export function DictationConsentCard({
         // fortnight, not an error — but it must not be reported as "recorded and sent".
         setOutcome(
           stored
-            ? "Recorded on this device. It will upload with the workshop."
+            ? "Saved on this device. It uploads with the workshop."
             : null
         );
-        if (!stored) setProblem("The answer couldn't be saved on this device, and the workshop hasn't uploaded yet. Nothing has been recorded — try again.");
+        if (!stored) setProblem("Couldn't save the answer. Try again.");
         onRecorded();
         return;
       }
@@ -167,9 +166,8 @@ export function DictationConsentCard({
         setProblem(
           `${aiLayerProblem(err, "The answer couldn't be saved.")} ` +
             (stored
-              ? "The answer is recorded on this device and will upload with the next sync. Until it does, " +
-                "dictation and the AI tools on this workshop stay unavailable."
-              : "It could not be stored on this device either, so nothing has been recorded — try again.")
+              ? "Saved on this device; AI tools unlock after it uploads."
+              : "Couldn't save it. Try again.")
         );
       }
       onRecorded();
@@ -179,7 +177,7 @@ export function DictationConsentCard({
   }
 
   return (
-    <section className="panel mb-5 grid gap-3 p-4" aria-labelledby="dw-consent-heading">
+    <section id="consent" className="panel mb-5 grid scroll-mt-28 gap-3 p-4" aria-labelledby="dw-consent-heading">
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <h2 id="dw-consent-heading" className="font-display text-sm font-bold text-ink-900">
           {DW_CONSENT_ROW_TITLE}
@@ -220,8 +218,7 @@ export function DictationConsentCard({
         <p className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
           <CloudOff className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>
-            This answer is on this device and hasn&apos;t uploaded yet. Dictation and the AI tools on this workshop stay
-            unavailable until it does — it uploads with the next sync and nothing needs to be typed again.
+            Not uploaded yet. AI tools unlock after the next sync.
           </span>
         </p>
       ) : null}
@@ -236,8 +233,7 @@ export function DictationConsentCard({
               workshop's recordings as failed. That is the difference between a consent and a
               preference, and discovering it afterwards looks like the app losing work. */}
           <p className="text-xs leading-5 text-ink-500">
-            Recording “they did not agree” also stops any of this workshop&apos;s recordings that are still waiting to be
-            written down. The recordings themselves are kept and can be listened to.
+            “They did not agree” also stops pending transcriptions. Recordings are kept.
           </p>
           <div className="flex flex-col gap-2 sm:flex-row">
             {/* Both labels are sentences rather than verbs, and they are worded as the ARTISAN'S

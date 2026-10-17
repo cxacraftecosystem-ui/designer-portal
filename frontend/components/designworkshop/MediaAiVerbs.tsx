@@ -69,12 +69,14 @@ import {
   isVerbOffline,
   subtitleDesignWorkshopMedia,
   verbAllowanceRefusal,
-  verbWorkshopRefusal,
+    verbWorkshopRefusal,
+  CONSENT_LINK_LABEL,
   type DwAiVerbAllowanceState,
   type DwAiVerbResult
 } from "@/lib/aiVerbs";
 import { listDesignWorkshopAiLayers } from "@/lib/aiLayers";
 import type { MediaFile } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 export type MediaAiVerbsProps = {
   workshopId: string;
@@ -239,8 +241,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
       </div>
 
       <p className="text-xs leading-5 text-ink-500">
-        A description or a set of subtitles is recorded as a layer over this file — it is read and accepted or declined
-        by name, and it never fills in the caption box below. Write that yourself.
+        Saved as an AI layer to accept or decline. It doesn&rsquo;t fill in the caption.
       </p>
 
       {blocked ? (
@@ -249,10 +250,9 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
           {consent.ready && !granted ? (
             <>
               {" "}
-              <Link href={`/design-workshops/${workshopId}`} className="font-medium text-purple-700 dark:text-purple-300 underline">
-                Open the workshop&apos;s own screen
+              <Link href={`/design-workshops/${workshopId}#consent`} className="font-medium text-purple-700 dark:text-purple-300 underline">
+                {CONSENT_LINK_LABEL}
               </Link>
-              .
             </>
           ) : null}
         </p>
@@ -277,7 +277,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
           return (
             <li key={file.id} className="grid gap-1.5">
               <p className="truncate text-xs font-medium text-ink-700">{file.originalFilename}</p>
-              <div className="flex flex-wrap gap-2">
+              <ActionGroup>
                 {isImage || isVideo ? (
                   <button
                     type="button"
@@ -308,7 +308,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
                     Make subtitles
                   </button>
                 ) : null}
-              </div>
+              </ActionGroup>
               {(isAudio || isVideo) && alreadySubtitled ? (
                 // THE FIFTH PRE-PRESS STATE, AND ONLY THIS VERB HAS IT. Subtitling is a second paid
                 // upload of audio the system has already transcribed — the route's own docstring
@@ -319,7 +319,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
                   <Link href={`/design-workshops/${workshopId}/ai-layers`} className="font-medium text-purple-700 dark:text-purple-300 underline">
                     Read them on the AI layers screen
                   </Link>{" "}
-                  — running it again would upload the recording again and use another run.
+                  — running again uses another AI run.
                 </p>
               ) : (isAudio || isVideo) && !blocked ? (
                 <p className="text-xs leading-5 text-ink-500">

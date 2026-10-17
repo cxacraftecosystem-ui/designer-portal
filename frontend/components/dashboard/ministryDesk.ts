@@ -97,28 +97,28 @@ export const MINISTRY_DESK: readonly MinistryDestination[] = [
     label: "Ministry dashboard",
     href: "/ministry-dashboard",
     icon: LayoutDashboard,
-    note: "Every workshop on the platform — ongoing, completed and newly registered — with each designer's progress and the lists to download",
+    note: "Every workshop and each designer's progress",
     can: canSeeMinistryDashboard
   },
   {
     label: "Annual plan",
     href: "/annual-plan",
     icon: CalendarRange,
-    note: "The ministry's directory of what is planned this year, and the row you open a workshop from",
+    note: "This year's planned workshops",
     can: canReadAnnualPlan
   },
   {
     label: "Sanction orders",
     href: "/sanction-orders",
     icon: FileSignature,
-    note: "Record an order: it opens the workshop, creates the designer's account and issues their sign-in link",
+    note: "Record an order to open its workshop",
     can: canRecordSanctionOrders
   },
   {
     label: "Workshop oversight",
     href: "/officers",
     icon: UserCheck,
-    note: "Name a workshop's designer and its two supervising officers, and upload its artisan list",
+    note: "Name designers, officers and artisans",
     can: canAssignWorkshopOversight
   },
   {
@@ -132,7 +132,7 @@ export const MINISTRY_DESK: readonly MinistryDestination[] = [
     label: "Workshops I monitor",
     href: "/officers/monitored",
     icon: Binoculars,
-    note: "The workshops you were named on as Assistant Director or Regional Director, read stage by stage",
+    note: "Workshops you supervise",
     can: canReadWorkshopOversight
   },
   {
@@ -146,7 +146,7 @@ export const MINISTRY_DESK: readonly MinistryDestination[] = [
     label: "Reports to approve",
     href: "/design-workshop-approvals",
     icon: Stamp,
-    note: "Read each report its designers hand in, approve it or send it back with a reason, and hand the approved report on to the office",
+    note: "Approve or return handed-in reports",
     can: canApproveDesignWorkshops
   }
 ];

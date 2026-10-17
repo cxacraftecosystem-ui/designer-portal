@@ -73,6 +73,7 @@ import {
   type QFormEntry,
   type QFormSection
 } from "@/lib/questionnaireForms";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * ══ WHICH FIELDS ON THIS SCREEN GOT A MICROPHONE, AND WHICH DID NOT (req 13) ═══════════════════
@@ -557,7 +558,7 @@ function AnswerPageBody() {
     <>
       <PageHeader
         title={`Record answers · ${form.title}`}
-        description="One sitting is one filled-in copy of this questionnaire. Each section is saved as you move through it."
+        description="Each section saves as you go."
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
         actions={
           // STILL A LINK, deliberately: it keeps the URL in the status bar, and a middle-click or a
@@ -596,8 +597,7 @@ function AnswerPageBody() {
       ) : null}
       {!form.isActive ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-          This questionnaire has been taken out of use, so no new sittings can be started against it. Answers already
-          recorded are still readable here.
+          Out of use — no new sittings. Existing answers are kept.
         </div>
       ) : null}
 
@@ -617,7 +617,7 @@ function AnswerPageBody() {
           <InstrumentPicker
             value={id}
             allowed
-            hint="The shared artisan questionnaire opens on Take interview, which is where its answers are recorded."
+            hint="The shared questionnaire is on Take interview."
             onChange={(next) => {
               if (next === id) return;
               requestExit({ kind: "instrument", target: next });
@@ -705,7 +705,7 @@ function AnswerPageBody() {
               <DictatedTextArea
                 name="notes"
                 label="Notes"
-                helper="Where and when this was recorded, anything about the conditions"
+                helper="Where, when and conditions"
                 explainWhenUnavailable={false}
               />
             </div>
@@ -730,7 +730,7 @@ function AnswerPageBody() {
         <div className="panel p-4">
           <EmptyState
             title="This questionnaire has no questions yet"
-            body="Add sections and questions on the edit screen, or upload a filled-in pro-forma, and then come back to record the answers."
+            body="Add questions first, or upload a pro-forma."
           />
         </div>
       ) : !entry ? (
@@ -739,8 +739,8 @@ function AnswerPageBody() {
             title="No sitting open"
             body={
               form.entries.length
-                ? "Choose a sitting above to carry on with it, or start a new one."
-                : "Start a sitting above. It works whether or not the spreadsheet you uploaded already had answers in it."
+                ? "Choose a sitting above, or start a new one."
+                : "Start a sitting above."
             }
           />
         </div>
@@ -781,8 +781,7 @@ function AnswerPageBody() {
                           <span className="text-ink-500">{index + 1}.</span> {question.prompt}
                         </p>
                         <p className="mt-1 text-xs leading-5 text-ink-500">
-                          This question has been retired, so it can no longer be answered. What was recorded against it
-                          stays in the record.
+                          Retired. Existing answers are kept.
                         </p>
                         {stored?.answerText ? (
                           <p className="mt-2 rounded-md border border-line-200 bg-card px-3 py-2 text-sm text-ink-900">
@@ -862,8 +861,7 @@ function AnswerPageBody() {
                           inviting overflow into it would put answer text in a column no export
                           reads as one. The cap is stated; where the rest goes is the designer's
                           call. */}
-                      This box is full — one answer holds {ANSWER_MAX.toLocaleString("en-IN")} characters on this
-                      screen. Anything spoken or typed beyond that is not added.
+                      Full — {ANSWER_MAX.toLocaleString("en-IN")} characters maximum.
                     </p>
                   ) : null}
                   <details className="text-xs text-ink-500">
@@ -919,7 +917,7 @@ function AnswerPageBody() {
               <ChevronLeft className="h-4 w-4" aria-hidden />
               Previous section
             </button>
-            <div className="flex flex-wrap gap-2">
+            <ActionGroup>
               <button type="button" className="field-button-secondary" disabled={saving} onClick={() => saveSection(section)}>
                 <Save className="h-4 w-4" aria-hidden />
                 {saving ? "Saving…" : "Save this section"}
@@ -940,7 +938,7 @@ function AnswerPageBody() {
                     toast({
                       tone: "success",
                       title: "Answers recorded",
-                      description: "Every section of this sitting has been saved. You can reopen it and carry on at any time."
+                      description: "All sections saved."
                     });
                     router.push(`/questionnaires/${id}`);
                   }}
@@ -948,7 +946,7 @@ function AnswerPageBody() {
                   Finish this sitting
                 </button>
               )}
-            </div>
+            </ActionGroup>
           </footer>
         </section>
       ) : null}

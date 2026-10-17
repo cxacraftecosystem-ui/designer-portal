@@ -148,8 +148,7 @@ export function DropCard({
         // A drop can carry no files at all — dragged text, a link, a folder on some platforms. Saying
         // so is the difference between a card that refused and a card that is broken.
         setRefusal(
-          "Nothing that was dropped here is a file. Drag a file out of a folder, or use the button to " +
-            "choose one."
+          "That wasn't a file. Drag a file or use the button."
         );
         return;
       }
@@ -176,9 +175,7 @@ export function DropCard({
       }
       if (extra > 0) {
         notes.push(
-          `This holds one file, so the first was used and ${
-            extra === 1 ? "the other one was" : `the other ${extra} were`
-          } left out.`
+          `One file only — used the first.`
         );
       }
       setRefusal(notes.length > 0 ? notes.join(" ") : null);

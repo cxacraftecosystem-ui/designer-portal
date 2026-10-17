@@ -150,12 +150,12 @@ function stateSentence(hasPhotograph: boolean, filed: boolean, imageLabel: strin
       would be this card asserting something about a read it did not perform.
     */
     return rowName
-      ? `Filed to “${imageLabel}” on “${rowName}”. The tracing panel still holds it — tracing line art does not write it again.`
-      : `Filed. The tracing panel still holds it — tracing line art does not write it again.`;
+      ? `Filed to “${imageLabel}” on “${rowName}”.`
+      : `Filed.`;
   }
   return rowName
-    ? `Nothing filed yet — “${imageLabel}” on “${rowName}” is written when you press a button below.`
-    : `Nothing filed yet. Choose a sketch in the picker above first.`;
+    ? `Not filed yet.`
+    : `Choose a sketch above first.`;
 }
 
 export function SharedPhotoField({
@@ -199,7 +199,7 @@ export function SharedPhotoField({
       // One line: the formats, and the one thing that happens to a file without being asked. The
       // clause that went ("the trace was never going to run above it") argued for the reduction
       // rather than reporting it — 2026-09-03.
-      acceptSentence={`${TRACEABLE_IMAGE_TYPES}. Anything over ${DECODE_MAX_EDGE_PX}px on the long edge is reduced before tracing.`}
+      acceptSentence={`${TRACEABLE_IMAGE_TYPES}. Larger than ${DECODE_MAX_EDGE_PX}px is reduced.`}
       disabled={disabled}
       /*
         THE SAME RULE THE TRACING PANEL USED TO CARRY, MOVED RATHER THAN REWRITTEN, so the files this
@@ -217,10 +217,10 @@ export function SharedPhotoField({
       */
       validate={(candidate) => {
         if (candidate.type === "image/svg+xml") {
-          return "an SVG is already vector art — attach it with the ordinary picker instead.";
+          return "an SVG is already vector art — attach it directly.";
         }
         if (candidate.type === "" || candidate.type.startsWith("image/")) return null;
-        return `this is ${candidate.type}, not a photograph. A drawing has to be traced from an image.`;
+        return `this is ${candidate.type}, not an image.`;
       }}
       onFiles={(files) => {
         const chosen = files[0];

@@ -889,8 +889,8 @@ export function StageRecordEmbed({
         setNotice({
           tone: "warn",
           text: previous
-            ? "The record was saved and linked, but its details couldn't be loaded just now, so the boxes the previous record filled in have been cleared. Fill them in by hand, or reopen the picker and search for it."
-            : "The record was saved and linked, but its details couldn't be loaded just now, so the boxes it would have filled in are still blank. Fill them in by hand, or reopen the picker and search for it — a required box left blank will stop the stage being submitted."
+            ? "Saved and linked, but its details didn't load, so the old values were cleared. Fill them in, or pick it again."
+            : "Saved and linked, but its details didn't load. Fill the boxes in, or pick it again."
         });
       } else {
         /*
@@ -903,7 +903,7 @@ export function StageRecordEmbed({
         */
         setNotice({
           tone: "done",
-          text: "Saved to the records and linked to this row. The form below is now that record — check its photographs, since anything still uploading when you pressed Save may not have finished."
+          text: "Saved and linked. Check its photos have finished uploading."
         });
       }
       /*
@@ -953,7 +953,7 @@ export function StageRecordEmbed({
       if (!after) {
         setNotice({
           tone: "warn",
-          text: "Your changes were saved to the record, but its details couldn't be loaded just now, so the boxes on this row still show what it said before. Re-open the picker and choose it again to refresh them."
+          text: "Saved, but this row didn't refresh. Pick the record again to update it."
         });
         // Still remounted: the record HAS changed, so the form's `initial` and its dirty tracking
         // are stale whether or not the list could describe it — and on `ProcessForm` a form left
@@ -1018,10 +1018,10 @@ export function StageRecordEmbed({
       if (!before) {
         setNotice({
           tone: "warn",
-          text: "Your changes were saved. Boxes on this row that were already filled in have been left as they are — check them against the record if you changed something they show."
+          text: "Saved. Boxes you'd already filled in were left as they are."
         });
       } else {
-        setNotice({ tone: "done", text: "Your changes were saved to the record, and this row has been refreshed from it." });
+        setNotice({ tone: "done", text: "Saved." });
       }
       /*
         THE FORM IS REMOUNTED OVER THE RECORD IT JUST WROTE, and this is not tidiness.
@@ -1094,7 +1094,7 @@ export function StageRecordEmbed({
   const handleQueued = useCallback(() => {
     setNotice({
       tone: "warn",
-      text: `This ${noun} is saved on this device and will upload when you are back online. It is not linked to this row yet — come back and choose it in the picker above once it has uploaded.`
+      text: `Saved on this device. Once it uploads, pick this ${noun} above to link it.`
     });
   }, [noun]);
 
@@ -1118,9 +1118,9 @@ export function StageRecordEmbed({
     remountForm();
     setNotice({
       tone: "done",
-      text: `The ${noun} form has been cleared and nothing was saved. This row is unchanged.`
+      text: `Cleared. Nothing was saved.`
     });
-  }, [noun, remountForm]);
+  }, [remountForm]);
 
   /**
    * "Discard", answered to a prompt one of the HOST PAGE'S OWN exits raised.
@@ -1164,9 +1164,9 @@ export function StageRecordEmbed({
     remountForm();
     setNotice({
       tone: "done",
-      text: `The unsaved ${noun} was discarded and nothing was saved. This page did not move — press the same control again to go on. Nothing in this row is holding you now; if another form on this stage also has unsaved work, that one will ask you next.`
+      text: `Discarded. Press the same control again to continue.`
     });
-  }, [noun, remountForm]);
+  }, [remountForm]);
 
   /**
    * Has the designer asked for the form on an unlinked row? See {@link mountOnRequest}.
@@ -1193,8 +1193,8 @@ export function StageRecordEmbed({
       <div className="rounded-md border border-line-200 bg-surface-50 p-3">
         <p className="text-xs leading-5 text-ink-muted">
           {linkedId
-            ? `This row is linked to an existing ${noun} record. The page below is that record — what you change here changes the record itself, for every workshop that references it, and the boxes filled in from it are refreshed when you save.`
-            : `Fill the ${noun} in here and it is saved to the records and linked to this row. It is the same page as the ${noun}'s own, so nothing has to be typed twice.`}
+            ? `Linked ${noun}. Edits here change the record everywhere it is used.`
+            : `Fill in the ${noun} here — it is saved and linked to this row.`}
         </p>
       </div>
 
@@ -1268,7 +1268,7 @@ export function StageRecordEmbed({
         argument, and the same two tones, as `StageReferenceField`'s `PickerNotice`.
       */}
       <p role="status" className={liveRegionClass(busy, notice)}>
-        {busy ? "Reading the record back so this row can be filled in from it…" : notice?.text ?? ""}
+        {busy ? "Loading the record…" : notice?.text ?? ""}
       </p>
 
       {mirroredFields}
@@ -1392,9 +1392,7 @@ export function MirroredFieldsDisclosure({
         {/* Said in words and not only by position: these boxes are EDITABLE, and a designer who
             assumes otherwise leaves a wrong village standing in a ministry report. */}
         <p className="text-xs leading-5 text-ink-muted">
-          These are filled in from the linked record when it is chosen or saved, and only where they
-          were blank. Correct any of them here — what you type is kept, and the record is not changed
-          by it.
+          Filled in from the linked record where blank. Edits here don&rsquo;t change the record.
         </p>
         {children}
       </div>

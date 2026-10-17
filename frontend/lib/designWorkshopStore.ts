@@ -4702,10 +4702,8 @@ async function runSync(): Promise<DwSyncResult> {
           await mutate(draft.localId, (current) => ({
             ...current,
             failure: failure(
-              "This workshop was sent once but no reply arrived, and there are now several workshops with this title — " +
-                "so we can't tell which one is yours, and sending it again could create a duplicate. Nothing has been " +
-                "thrown away. Open the list, find the one you started, and either rename this one or delete the copy you " +
-                "don't want, then select Try again.",
+              "Several workshops now share this title, so resending could duplicate it. Rename this one or delete the extra " +
+                "copy, then Try again.",
               true,
               (current.failure?.attempts ?? 0) + 1
             )
@@ -4760,11 +4758,8 @@ async function runSync(): Promise<DwSyncResult> {
           await mutate(draft.localId, (current) => ({
             ...current,
             failure: failure(
-              `${DESIGN_WORKSHOP_CREATE_REFUSAL} This workshop was started on this device and has ` +
-                "not been sent, so nothing has been lost and nothing has been deleted — every stage, " +
-                "photograph and recording is still here. When an admin has created the workshop, open " +
-                'the design workshops list and use "Move into a workshop" on this row to send all of ' +
-                "this into it.",
+              `${DESIGN_WORKSHOP_CREATE_REFUSAL} Your work is safe here — once the workshop exists, use ` +
+                '"Move into a workshop" on this row.',
               true,
               (current.failure?.attempts ?? 0) + 1
             )
@@ -4903,9 +4898,7 @@ async function runSync(): Promise<DwSyncResult> {
           await mutate(draft.localId, (current) => ({
             ...current,
             failure: failure(
-              "This workshop was created online, but this browser couldn't save that fact — usually because the disk or " +
-                "the browser's storage is full. Nothing has been thrown away, and nothing more will be sent for it until " +
-                "this is fixed, so no duplicate is created. Free some space on this device, then select Try again.",
+              "Created online, but this browser's storage is full. Free some space, then Try again.",
               true,
               (current.failure?.attempts ?? 0) + 1
             )
@@ -5164,17 +5157,13 @@ async function runSync(): Promise<DwSyncResult> {
             stageKey,
             refusedNames.length
               ? failure(
-                  `This stage hasn't been sent because ${refusedNames.length === 1 ? "a file" : "files"} attached to it ` +
-                    `couldn't be uploaded (${refusedNames.join(", ")}), and sending the stage without ${refusedNames.length === 1 ? "it" : "them"} ` +
-                    "would delete what's already saved in that field. Nothing has been thrown away. Open the " +
-                    `stage and either remove ${refusedNames.length === 1 ? "the file" : "those files"} or attach ` +
-                    `${refusedNames.length === 1 ? "it" : "them"} again in another format, then select Try again.`,
+                  `Not sent — ${refusedNames.join(", ")} couldn't upload. Remove ${refusedNames.length === 1 ? "it" : "them"} or ` +
+                    "try another format, then Try again.",
                   true,
                   (stage.failure?.attempts ?? 0) + 1
                 )
               : failure(
-                  `${outstanding.length} attached file${outstanding.length === 1 ? " is" : "s are"} still on this device, so this ` +
-                    "stage has not been sent yet. It sends itself as soon as they upload — nothing has been thrown away.",
+                  `Waiting for ${outstanding.length} file${outstanding.length === 1 ? "" : "s"} to upload, then this stage sends.`,
                   false,
                   (stage.failure?.attempts ?? 0) + 1
                 )
@@ -5215,8 +5204,7 @@ async function runSync(): Promise<DwSyncResult> {
             draft.localId,
             stageKey,
             failure(
-              `The form this page loaded has no stage called “${stageKey}”, so its answers couldn't be sent. They're still ` +
-                "on this device. Reload the page once you're online to update the app, then select Try again.",
+              `Stage “${stageKey}” isn't in this version of the app. Reload online, then Try again.`,
               true,
               (stage.failure?.attempts ?? 0) + 1,
               // A SKEW LIKE ANY OTHER, and the one whose own sentence gave the instruction away: it
@@ -5389,9 +5377,7 @@ async function runSync(): Promise<DwSyncResult> {
             stageKey,
             failure(
               schemaRefusal
-                ? `Stage “${stageKey}” couldn't be sent: ${said} Nothing you typed is wrong and nothing has been thrown ` +
-                  "away — your work is safe on this device. Reload the page to update the app, and it will send by " +
-                  "itself. If this keeps happening, contact your administrator."
+                ? `Stage “${stageKey}” couldn't be sent: ${said} Your work is safe. Reload to update the app.`
                 : error.status === 403
                   ? /*
                       A 403 IS ABOUT WHO MAY WRITE THIS WORKSHOP, NEVER ABOUT AN ANSWER, so the sentence
@@ -5400,10 +5386,8 @@ async function runSync(): Promise<DwSyncResult> {
                       is holding a post on the workshop (`design_workshop_posts.write_refusal`, which
                       names the post and the remedy); the server's own sentence is quoted whole.
                     */
-                    `Stage “${stageKey}” couldn't be saved: ${said} It's still on this device and nothing has been ` +
-                    "thrown away. This is about who can edit this workshop, so changing the stage won't fix it."
-                  : `Stage “${stageKey}” couldn't be saved: ${said} It's still on this device and nothing has been ` +
-                    "thrown away. Open the stage, correct the answer that caused this, then select Try again.",
+                    `Stage “${stageKey}” couldn't be saved: ${said} It's safe on this device.`
+                  : `Stage “${stageKey}” couldn't be saved: ${said} Correct the answer, then Try again.`,
               true,
               (stage.failure?.attempts ?? 0) + 1,
               schemaRefusal ? APP_RUN_ID : null
@@ -5453,9 +5437,8 @@ async function runSync(): Promise<DwSyncResult> {
                 completeness: saved.completeness ?? target.completeness,
                 failure: rejected
                   ? failure(
-                      `${rejected} answer${rejected === 1 ? "" : "s"} in this stage couldn't be saved, so the previously ` +
-                        `saved ${rejected === 1 ? "value was" : "values were"} kept. Everything else was saved and nothing you ` +
-                        "typed has been thrown away — open the stage to see which answers, and what's saved for them.",
+                      `${rejected} answer${rejected === 1 ? "" : "s"} couldn't be saved; the old ${rejected === 1 ? "value was" : "values were"} ` +
+                        "kept. Open the stage to see which.",
                       /*
                         `permanent: true` IS DELIBERATE HERE, AND IT IS NOT WHAT THE HANDSET WRITES.
 
@@ -5565,13 +5548,9 @@ async function runSync(): Promise<DwSyncResult> {
 
                  Nothing has been sent either way.
                */
-              "This workshop is no longer available to you: it may have been deleted, or your access to it removed. " +
-                "Nothing more can be sent to it, and everything you captured is still on this device. Ask an admin to " +
-                "restore it or your access, then select Try again."
+              "This workshop is no longer available to you. Your work is safe here — ask an admin to restore access."
             : schemaDrift
-              ? `This workshop couldn't be sent: ${schemaDrift.message} Nothing you typed is wrong and nothing has been ` +
-                "thrown away — everything you captured is safe on this device. Reload the page to update the app, and it " +
-                "will send by itself."
+              ? `Couldn't send: ${schemaDrift.message} Your work is safe. Reload to update the app.`
               : error instanceof Error
                 ? error.message
                 : "This workshop couldn't be saved.",

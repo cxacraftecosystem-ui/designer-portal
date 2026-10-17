@@ -1408,7 +1408,7 @@ export const ReportSheets = memo(function ReportSheets({
         </span>
         {!compact && (scale < 0.995 || scale > 1.005) ? (
           <span>
-            Shown at {Math.round(scale * 100)}% of the paper&rsquo;s size; printing uses full size.
+            Shown at {Math.round(scale * 100)}%.
           </span>
         ) : null}
         {/* Never silent about a block the preview had to shrink. The .pdf caps a photograph at 0.62
@@ -1420,8 +1420,7 @@ export const ReportSheets = memo(function ReportSheets({
             {packed?.scaled.length} block{packed?.scaled.length === 1 ? "" : "s"} taller than one page{" "}
             {packed?.scaled.length === 1 ? "is" : "are"} shown scaled down to fit (page
             {scaledPages.length === 1 ? " " : "s "}
-            {scaledPages.join(", ")}) — nothing is cut off here, and the file divides such a block
-            across pages instead.
+            {scaledPages.join(", ")}); the file splits them across pages.
           </span>
         ) : null}
         {overflow ? (
@@ -1434,8 +1433,7 @@ export const ReportSheets = memo(function ReportSheets({
             className="rounded-md border border-amber-500/40 bg-amber-100 px-2 py-0.5 text-amber-800"
           >
             {overflow.pages} page{overflow.pages === 1 ? "" : "s"} of content overruns the sheet by up
-            to {overflow.worstPx} px and is clipped below. The document itself is complete — open the
-            generated file to see the section in full.
+            to {overflow.worstPx} px and is clipped here; the file is complete.
           </span>
         ) : null}
         {packed?.abandoned.length ? (
@@ -1450,8 +1448,8 @@ export const ReportSheets = memo(function ReportSheets({
             reason the designer can trust what they are looking at. */}
         <span className={compact ? "hidden" : undefined}>
           {paletteChosen
-            ? "Drawn in the accent colour chosen above — the same colour the .docx and .pdf will be written in."
-            : "Drawn in the default report palette; each template writes its own accent colour into the file. Choose a colour above to see the document in it."}
+            ? "In your chosen accent colour."
+            : "In the default palette."}
         </span>
       </div>
 

@@ -237,7 +237,7 @@ export function WorkshopCodeScanner({
         return;
       }
       setBusy(true);
-      setOutcome({ tone: "found", lead: "", text: "That is a join card. Putting you on the workshop…" });
+      setOutcome({ tone: "found", lead: "", text: "Join card — adding you…" });
       try {
         const answer = await redeemJoinCard(card.code);
         const member = joinOutcomeIsMembership(answer.outcome);
@@ -353,8 +353,7 @@ export function WorkshopCodeScanner({
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setProblem(
-        "This browser won't open a camera on this page. " +
-          "Upload a picture of the code instead, or type the code printed under the QR."
+        "No camera here. Upload a picture or type the code."
       );
       return;
     }
@@ -369,10 +368,10 @@ export function WorkshopCodeScanner({
       const name = error instanceof Error ? error.name : "";
       setProblem(
         name === "NotAllowedError" || name === "SecurityError"
-          ? "This site is not allowed to use the camera. Open the site settings — the padlock or the camera icon at the left of the address bar — allow the camera, then press Scan again. You can also upload a picture of the code, or type the code printed under the QR."
+          ? "Camera blocked. Allow it in site settings, or upload a picture or type the code."
           : name === "NotFoundError" || name === "OverconstrainedError"
-            ? "No camera was found on this device. Upload a picture of the code instead, or type the code printed under the QR."
-            : "The camera could not be opened. Check that nothing else is using it, then try again — or upload a picture of the code, or type the code printed under the QR."
+            ? "No camera found. Upload a picture or type the code."
+            : "Couldn't open the camera. Close other apps using it, or upload a picture or type the code."
       );
       return;
     }
@@ -532,15 +531,14 @@ export function WorkshopCodeScanner({
             Reading the code…
           </span>
         ) : scanning ? (
-          <span className="text-xs text-ink-500">Hold the card 10–15 cm from the lens, with the whole square in view.</span>
+          <span className="text-xs text-ink-500">Hold the card 10–15 cm away.</span>
         ) : null}
       </div>
 
       <p className="flex items-start gap-2 text-xs leading-5 text-ink-500">
         <ClipboardPaste className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
         <span>
-          A picture works as well as the card itself — a screenshot, a photo taken earlier, or one forwarded to you. You can
-          also drop it here or paste it with Ctrl+V.
+          Or drop or paste (Ctrl+V) a picture of the code.
         </span>
       </p>
 
@@ -627,8 +625,7 @@ export function WorkshopCodeScanner({
           </button>
         </div>
         <p className="text-xs leading-5 text-ink-500">
-          Spaces and capitals do not matter. The four characters at the end are a check — if they do not match, the app will
-          say so rather than open the wrong record. A join card typed here puts you on its workshop.
+          Spaces and capitals don&apos;t matter.
         </p>
       </div>
 

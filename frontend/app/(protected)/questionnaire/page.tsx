@@ -80,6 +80,7 @@ import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { canManageQuestionnaire, canRunDesignWorkshops, hasRank, isAdmin } from "@/lib/permissions";
 import { UploadsProvider, useEagerStaging, useUploads } from "@/lib/uploads";
 import type { Artisan, MediaFile, PageResult, QuestionnaireInterview, QuestionnaireQuestion, QuestionnaireSection } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** Section ids the two questionnaire upload paths publish under, for the page-level tray. */
 const INTERVIEW_SECTION = "interview-audio";
@@ -337,7 +338,7 @@ function sharedEntryContents(responses: number, media: number): string {
   if (responses && media) return `${typed} and ${clips} are already on it.`;
   if (media) return `${clips}, no typed answers yet.`;
   if (responses) return `${typed}, and no recordings yet.`;
-  return "No answers and no recordings on it yet — you can be the first to add to it.";
+  return "No answers or recordings yet.";
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1716,14 +1717,14 @@ function QuestionnairePageBody() {
       */
       setMergeOutcome({
         moved: false,
-        message: readableError(err, "That move couldn't be made, and nothing on either interview was changed."),
+        message: readableError(err, "Couldn't move it. Nothing changed."),
         questions: mergeConflictQuestions(err)
       });
       return true;
     }
     setMergeOutcome({
       moved: true,
-      message: `This interview's answers and recordings are now on “${holder.title}”, which is in the list below. This form has been cleared.`,
+      message: `Moved into “${holder.title}”.`,
       questions: []
     });
     /*
@@ -2069,12 +2070,9 @@ function QuestionnairePageBody() {
         setUploadError(
           `${failedNames.length} of ${attempted} audio file(s) failed to upload: ${failedNames.join(", ")}.` +
             (firstCause ? ` Reason given: ${firstCause}` : "") +
-            " The interview was saved and those clips are still on this form — they are the only copy." +
-            " Press Save again to send just them: it adds them to the same interview rather than" +
-            " creating a second one. Leaving this page is what would lose them." +
+            " The interview was saved. Press Save again to send them — leaving would lose them." +
             (orphanedClips
-              ? ` A further ${orphanedClips} clip(s) belong to a question that is no longer in this form; ` +
-                "they cannot be sent until it is put back."
+              ? ` ${orphanedClips} more clip(s) belong to a removed question.`
               : "")
         );
         setSaving(false);
@@ -2166,8 +2164,8 @@ function QuestionnairePageBody() {
     const ok = await confirm(
       deleteConfirm(
         "Delete this interview?",
-        "This permanently deletes the interview and every answer in it. This action cannot be undone.",
-        "The recordings made during the interview, and their transcripts, are deleted with it."
+        "The interview, its answers and recordings are deleted permanently.",
+        "This can't be undone."
       )
     );
     if (!ok) return;
@@ -2219,7 +2217,7 @@ function QuestionnairePageBody() {
     <>
       <PageHeader
         title="Questionnaire"
-        description="Interview artisans section by section, answer only the questions asked, and link the interview to one or more artisans."
+        description="Interview artisans, section by section."
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
       />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
@@ -2338,7 +2336,7 @@ function QuestionnairePageBody() {
       */}
       <MegaCard
         title={editingInterview ? "Correct this interview" : "Take interview"}
-        note="Interview artisans section by section, answer only the questions asked, and link the interview to one or more artisans."
+        note="Answer only the questions asked."
         icon={ClipboardList}
         tone="purple"
         count={orderedGroups.length}
@@ -2383,7 +2381,7 @@ function QuestionnairePageBody() {
         <InstrumentPicker
           value={SHARED_INSTRUMENT}
           allowed={canRunDesignWorkshops(user)}
-          hint="Questionnaires you built yourself open on their own screen, which is where their answers are recorded."
+          hint="Your own questionnaires open on their own screen."
           onChange={(next) => {
             if (next === SHARED_INSTRUMENT) return;
             router.push(`/questionnaires/${next}/answer`);
@@ -2729,7 +2727,6 @@ function QuestionnairePageBody() {
             */}
             <p className="mt-2 text-xs text-amber-800 dark:text-amber-100">
               {sharedEntryContents(existingEntry.responses?.length ?? 0, existingEntry.media?.length ?? 0)}
-              {existingEntry.responses?.length || existingEntry.media?.length ? null : " You can be the first to fill it in."}
             </p>
             {existingEntry.responses && existingEntry.responses.length > 0 ? (
               <div className="mt-3 grid gap-2">
@@ -2773,7 +2770,7 @@ function QuestionnairePageBody() {
           files={mediaFiles}
           onFilesChange={setMediaFiles}
           title="Interview audio"
-          description="Record or upload interview audio. It is transcribed automatically when transcription is available; the audio is saved either way."
+          description="Record or upload audio. It is transcribed when possible."
           allowDocuments={false}
           allowedTypes={["AUDIO"]}
         />
@@ -2822,7 +2819,7 @@ function QuestionnairePageBody() {
                       hint={
                         capture.recordingMode === "SECTION"
                           ? "Record this entire section in one take."
-                          : "A whole-section take from earlier. It still uploads and saves with this interview."
+                          : "Earlier section take — saves with this interview."
                       }
                       showRecordButton={capture.recordingMode === "SECTION"}
                       recording={recordingKey === sectionClipKey(group.section.id)}
@@ -2898,7 +2895,7 @@ function QuestionnairePageBody() {
                         hint={
                           capture.recordingMode === "INDIVIDUAL"
                             ? undefined
-                            : "Recorded against this question earlier. It still uploads and saves with this interview."
+                            : "Earlier take — saves with this interview."
                         }
                         showRecordButton={capture.recordingMode === "INDIVIDUAL"}
                         recording={recordingKey === question.id}
@@ -3107,7 +3104,7 @@ function QuestionnairePageBody() {
 
       <MegaCard
         title="Recorded interviews"
-        note="Everything filed from this instrument, with the funnel and the search that narrow it."
+        note="Filter and search interviews."
         icon={ListFilter}
         tone="archive"
         /*
@@ -3226,7 +3223,7 @@ function QuestionnairePageBody() {
                             Update
                           </Link>
                           {adminMode ? (
-                            <button className={rowAction("danger")} onClick={() => remove(interview.id)}>
+                            <button data-danger className={rowAction("danger")} onClick={() => remove(interview.id)}>
                               Delete
                             </button>
                           ) : null}
@@ -3335,8 +3332,7 @@ function SavedClips({
     <div className="rounded-md border border-line-200 bg-card p-3">
       <h4 className="font-display text-sm font-bold text-ink">{heading}</h4>
       <p className="mt-0.5 text-xs text-ink-muted">
-        Already saved with this interview and still attached to it. This form does not send them again, so there is
-        nothing here to re-upload.
+        Already saved with this interview.
       </p>
       <ul className="mt-2 grid gap-2 sm:grid-cols-2">
         {items.map((media) => {
@@ -3446,7 +3442,7 @@ function QuickTranscript({
             Another take was transcribed. Your words are kept either way.
           </p>
           <MarkdownDocument text={offered} filenameBase={filenameBase} />
-          <div className="mt-2 flex flex-wrap gap-2">
+          <ActionGroup className="mt-2">
             {/* "Add to answer", not "Use this": the accept path appends, and a button whose word
                 implies replacement would have a person expecting to lose their edits — or, worse,
                 pressing Discard to protect words that were never at risk. */}
@@ -3456,7 +3452,7 @@ function QuickTranscript({
             <button type="button" className="field-button-secondary min-h-8! px-2.5! py-1! text-xs" onClick={onDismiss}>
               Discard
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
       {problem ? <p className="text-xs text-ink-muted">{problem}</p> : null}
@@ -3680,9 +3676,7 @@ function CompletionMatrixPanel({
   return (
     <MegaCard
       title="Check completion"
-      note={`Which questionnaire sections are covered for each artisan, derived from recorded answers and audio.${
-        canOverride ? " Click a cell to cycle an admin override: complete, not complete, clear." : ""
-      }`}
+      note={`Sections covered per artisan.${canOverride ? " Click a cell to override." : ""}`}
       icon={ClipboardCheck}
       tone="errand"
       /*
@@ -3731,8 +3725,8 @@ function CompletionMatrixPanel({
       {matrix && matrix.artisans.length === 0 && !loading ? (
         <p className="text-sm text-ink-muted">
           {scope.workshopIds.length
-            ? "No artisans in the chosen workshops. Widen the scope, or choose All records."
-            : "No artisans yet — the matrix appears once artisans are recorded."}
+            ? "No artisans in these workshops."
+            : "No artisans yet."}
         </p>
       ) : null}
       {matrix && matrix.artisans.length > 0 ? (
@@ -3809,9 +3803,7 @@ function CompletionMatrixPanel({
               that stays green when the scope moves. */}
           {matrix.overridesAreRepositoryWide ? (
             <p className="mt-2 text-[11px] leading-4 text-ink-500">
-              The workshop scope narrows the green derived from recordings. An admin override is a judgement
-              about that artisan&rsquo;s section across all records, so a marked cell keeps its
-              colour under every scope.
+              Admin overrides apply across all workshops.
             </p>
           ) : null}
         </>
@@ -3964,7 +3956,7 @@ function QuestionnaireAdminEditor({
           interviews.
         </>
       ),
-      note: "Questions are deactivated, not erased: answers already recorded against them stay on the interviews that hold them.",
+      note: "Existing answers are kept.",
       tone: "warning",
       confirmLabel: "Remove section"
     });
@@ -4042,7 +4034,7 @@ function QuestionnaireAdminEditor({
           <span className="font-medium text-ink-900">{question.prompt}</span> stops appearing in new interviews.
         </>
       ),
-      note: "Answers already recorded against it stay linked to the interviews that hold them.",
+      note: "Existing answers are kept.",
       tone: "warning",
       confirmLabel: "Remove question"
     });
@@ -4165,7 +4157,7 @@ function QuestionnaireAdminEditor({
   return (
     <MegaCard
       title="Questionnaire Builder"
-      note="Master admin controls for sections, ordering, question text, moves and removals."
+      note="Edit sections and questions."
       icon={Wrench}
       tone="steward"
       count={localSections.length}
@@ -4202,8 +4194,7 @@ function QuestionnaireAdminEditor({
         </form>
 
         <p className="text-xs text-ink-muted">
-          Drag a question by its grip to reorder it within a section or drop it into another section. Keyboard users can use the
-          up/down buttons on each tile, or the &ldquo;Move to&rdquo; menu to change section.
+          Drag to reorder or move between sections, or use the arrows and &ldquo;Move to&rdquo;.
         </p>
 
         <div className="grid gap-4">
@@ -4264,7 +4255,7 @@ function QuestionnaireAdminEditor({
                   <input name="isActive" type="checkbox" defaultChecked={section.isActive} />
                   Active
                 </label>
-                <div className="flex flex-wrap items-end gap-2">
+                <ActionGroup>
                   <button className="field-button-secondary" type="submit">
                     <Save className="h-4 w-4" aria-hidden />
                     Save
@@ -4272,7 +4263,7 @@ function QuestionnaireAdminEditor({
                   <button type="button" className="text-sm font-semibold text-red-700 dark:text-red-400" onClick={() => removeSection(section)}>
                     <Trash2 className="inline h-4 w-4" aria-hidden /> Remove
                   </button>
-                </div>
+                </ActionGroup>
               </form>
 
               <div

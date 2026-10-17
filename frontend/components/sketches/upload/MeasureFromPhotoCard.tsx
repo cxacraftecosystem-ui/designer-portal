@@ -367,7 +367,7 @@ export function MeasureFromPhotoCard({
    * is the fact that decides whether somebody is willing to open a measuring tool over a record at
    * all. `SketchTraceField` carries the same pair for the same reason.
    */
-  const description = `Take a dimension off a photograph of the chosen ${what}. It never writes a dimension by itself.`;
+  const description = `Measure a dimension from a photo of the ${what}.`;
 
   return (
     /*
@@ -598,8 +598,7 @@ function Body({
   if (!rowName) {
     return (
       <Note>
-        A dimension is measured against the photograph on ONE row, so choose which {what} this is about in the picker
-        above. Nothing here can be measured until one is chosen.
+        Choose a {what} above first.
       </Note>
     );
   }
@@ -635,8 +634,7 @@ function Body({
   if (targets.length === 0) {
     return (
       <Note>
-        There is no dimension on a {what} that can be measured from a photograph here. Reload the page to update
-        the app, then try again.
+        Nothing to measure. Reload to update the app.
       </Note>
     );
   }
@@ -663,10 +661,7 @@ function Body({
         <p className="flex max-w-prose items-start gap-2 text-sm leading-6 text-ink-700">
           <ImageOff className="mt-1 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
           <span>
-            No photograph has been attached to “{rowName}” yet, so there is nothing to measure against. Attach one in{" "}
-            {fieldsPhrase} — from a panel above, where this tab offers that field, or on the {what}’s own stage form,
-            which offers all of them — a photograph with a ruler, a scale card or a sheet of paper beside the object in
-            it.
+            No photo on “{rowName}” yet. Attach one in {fieldsPhrase}, with a ruler or scale card in the frame.
           </span>
         </p>
         {/* The same element every other branch renders — see `escape`. `targets.length > 0` is
@@ -707,10 +702,9 @@ function Body({
           <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
           <span>
             {photos.unreadable === 1
-              ? "One more file on this piece couldn't be opened here, so it isn't in the list below."
-              : `${photos.unreadable} more files on this piece couldn't be opened here, so they aren't in the list below.`}{" "}
-            This is usually a file your account doesn&apos;t have access to; it can be measured on the stage form, or on
-            the phone that took it.
+              ? "One file couldn't be opened here."
+              : `${photos.unreadable} files couldn't be opened here.`}{" "}
+            You may not have access.
           </span>
         </p>
       ) : null}
@@ -724,8 +718,7 @@ function Body({
         component this file does not own and cannot annotate from underneath.
       */}
       <p className="max-w-prose text-xs leading-5 text-ink-500">
-        Nothing here writes a dimension by itself. Every figure is written by a button you press, and that button says
-        which field it will write and exactly what it will put there.
+        Nothing is written until you press a button.
       </p>
 
       {/*
@@ -797,8 +790,7 @@ function ReadFailure({ rowName, reason }: { rowName: string; reason: string }) {
     >
       <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
       <span>
-        The photographs attached to “{rowName}” could not be read, so this cannot say whether there is one to measure
-        against. {reason}
+        Couldn&apos;t read the photos on “{rowName}”. {reason}
       </span>
     </p>
   );
@@ -836,10 +828,8 @@ function measuringSentence(
   }
   const workingPhrase =
     working.source === "shared"
-      ? "the photograph chosen above, which is not attached to anything yet"
-      : what === "sketch"
-        ? "a photograph chosen for this panel only, which is not attached to anything and is not the one being traced"
-        : "a photograph chosen for this panel only, which is not attached to anything";
+      ? "the photo chosen above (not attached)"
+      : "a photo for this panel only (not attached)";
   return filedPhrase
     ? `Measuring against ${workingPhrase}, and ${filedPhrase}.`
     : `Measuring against ${workingPhrase}.`;
@@ -942,8 +932,8 @@ function DifferentPhoto({
               <span className="font-medium text-ink-900">{working.photo.name}</span> is being measured here and nowhere
               else.{" "}
               {what === "sketch"
-                ? "The tracing panel above is still working from the photograph chosen at the top of this section, and neither of them has been filed."
-                : `It is on no record — nothing on this card files anything — and the photographs attached to this ${what} are untouched.`}
+                ? "Not filed. The tracing panel still uses the photo chosen above."
+                : "Not filed."}
             </p>
             <button
               type="button"
@@ -978,9 +968,7 @@ function DifferentPhoto({
             */}
             <span className="block text-xs font-medium text-ink-900">Measure a different photograph</span>
             <span className="mt-0.5 block text-xs leading-5 text-ink-500">
-              {what === "sketch"
-                ? "The sheet worth tracing and the photograph with a ruler beside the object are often two different pictures. This measures one that is not the one being traced, and files neither."
-                : "The photographs a prototype is judged by and the photograph with a ruler beside it are rarely the same picture — one is a clean turn against a plain background, the other has a scale card lying in the frame. This measures one that is on no record at all, and files it nowhere."}
+              Use a photo with a ruler in it. It isn&apos;t filed.
             </span>
           </span>
           <ChevronDown
@@ -996,7 +984,7 @@ function DifferentPhoto({
             label={inForce ? "A different photograph to measure" : "Photograph to measure"}
             buttonLabel={inForce ? "Choose another one" : "Choose a photograph to measure"}
             accept={TRACEABLE_ACCEPT}
-            acceptSentence={`${TRACEABLE_IMAGE_TYPES}, wherever this browser can read them. It is only shown and measured here — it isn't changed, reduced or sent anywhere.`}
+            acceptSentence={`${TRACEABLE_IMAGE_TYPES}. Measured here only — never uploaded.`}
             disabled={disabled}
             /*
               THE SAME REFUSALS AS THE SHARED CARD, MINUS THE ONE THAT DOES NOT APPLY. An SVG is
@@ -1008,10 +996,10 @@ function DifferentPhoto({
             */
             validate={(candidate) => {
               if (candidate.type === "image/svg+xml") {
-                return "an SVG has no fixed pixel size, so a mark placed on it cannot be turned into a length. Use the photograph itself.";
+                return "an SVG can't be measured. Use the photo.";
               }
               if (candidate.type === "" || candidate.type.startsWith("image/")) return null;
-              return `this is ${candidate.type}, not a photograph. A dimension is measured off an image.`;
+              return `this is ${candidate.type}, not an image.`;
             }}
             onFiles={(files) => {
               const chosen = files[0];

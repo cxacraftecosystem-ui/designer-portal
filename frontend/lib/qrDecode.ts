@@ -401,7 +401,7 @@ function readSegments(bytes: Uint8Array, version: number): SegmentOutcome {
     return {
       ok: false,
       reason: "UNSUPPORTED_VERSION",
-      message: "This code is too large to read. Type the code printed under the QR instead."
+      message: "Too large to read. Type the code under the QR."
     };
   }
 
@@ -431,7 +431,7 @@ function readSegments(bytes: Uint8Array, version: number): SegmentOutcome {
         return {
           ok: false,
           reason: "UNREADABLE",
-          message: "This code is not laid out the way the standard describes, so it cannot be read. Type the code printed under the QR instead."
+          message: "Can't read this code. Type the code under the QR."
         };
       }
       continue;
@@ -448,7 +448,7 @@ function readSegments(bytes: Uint8Array, version: number): SegmentOutcome {
         ok: false,
         reason: "UNSUPPORTED_CONTENT",
         message:
-          "This is one part of a code split across several QR symbols, so it isn't a workshop code. Type the code printed under the QR instead."
+          "Not a workshop code. Type the code under the QR."
       };
     }
 
@@ -456,7 +456,7 @@ function readSegments(bytes: Uint8Array, version: number): SegmentOutcome {
       return {
         ok: false,
         reason: "UNSUPPORTED_CONTENT",
-        message: "This code holds Japanese text, not a record reference, so it isn't a workshop code."
+        message: "This isn't a workshop code."
       };
     }
 
@@ -521,7 +521,7 @@ function readSegments(bytes: Uint8Array, version: number): SegmentOutcome {
     return {
       ok: false,
       reason: "UNREADABLE",
-      message: "This code is not laid out the way the standard describes, so it cannot be read. Type the code printed under the QR instead."
+      message: "Can't read this code. Type the code under the QR."
     };
   }
 
@@ -533,7 +533,7 @@ function truncated(): SegmentOutcome {
     ok: false,
     reason: "DATA_UNRECOVERABLE",
     message:
-      "This code was read but the text inside it stops part-way, so part of the symbol is damaged or was cut off. Photograph the whole square again, or type the code printed under the QR."
+      "The code is cut off or damaged. Photograph the whole square, or type the code."
   };
 }
 
@@ -542,7 +542,7 @@ function corrupt(): SegmentOutcome {
     ok: false,
     reason: "DATA_UNRECOVERABLE",
     message:
-      "This code was read but the text inside it is not valid, so the symbol is damaged. Photograph it again with the whole square in frame, or type the code printed under the QR."
+      "The code is damaged. Photograph the whole square, or type the code."
   };
 }
 
@@ -635,13 +635,13 @@ function readFormat(matrix: boolean[][]): { level: QrEccLevel; mask: number } | 
 export function decodeQrMatrix(matrix: boolean[][]): QrDecodeResult {
   const size = matrix.length;
   if (!size || matrix.some((row) => row.length !== size)) {
-    return { ok: false, reason: "UNREADABLE", message: "That is not a square grid of modules, so it is not a QR symbol." };
+    return { ok: false, reason: "UNREADABLE", message: "Not a QR code." };
   }
   if ((size - 17) % 4 !== 0) {
     return {
       ok: false,
       reason: "UNREADABLE",
-      message: "The grid read out of that picture is not a legal QR size, so the symbol was not measured correctly."
+      message: "Couldn't measure the QR code. Try again."
     };
   }
   const version = (size - 17) / 4;
@@ -650,7 +650,7 @@ export function decodeQrMatrix(matrix: boolean[][]): QrDecodeResult {
       ok: false,
       reason: "UNSUPPORTED_VERSION",
       message:
-        "This QR code is bigger than any workshop card or tag, so it isn't a workshop code. A shop barcode, a payment code or a shipping label won't open a record here."
+        "This isn't a workshop code."
     };
   }
 
@@ -660,7 +660,7 @@ export function decodeQrMatrix(matrix: boolean[][]): QrDecodeResult {
       ok: false,
       reason: "UNREADABLE",
       message:
-        "A QR code was found but the strip that says how it is encoded could not be read, so the rest of it cannot be trusted. Photograph it again straight on, with the whole square in frame and no glare across the corners."
+        "Couldn't read the code. Photograph it straight on, without glare."
     };
   }
 
@@ -711,7 +711,7 @@ export function decodeQrMatrix(matrix: boolean[][]): QrDecodeResult {
         ok: false,
         reason: "DATA_UNRECOVERABLE",
         message:
-          "A QR code was found but too much of it is damaged or blurred to repair. Photograph it again with the whole square in frame and in focus, or type the code printed under the QR."
+          "Too blurred or damaged. Photograph it in focus, or type the code."
       };
     }
     for (let index = 0; index < dataLengths[block]; index++) corrected.push(joined[index]);
@@ -1545,7 +1545,7 @@ export function decodeQrFromGrey(plane: GreyPlane): QrDecodeResult {
     return {
       ok: false,
       reason: "NO_SYMBOL",
-      message: "That picture is too small to hold a QR code. Use the original photograph rather than a thumbnail."
+      message: "Too small. Use the original photo."
     };
   }
 
@@ -1571,7 +1571,7 @@ export function decodeQrFromGrey(plane: GreyPlane): QrDecodeResult {
       ok: false,
       reason: "NO_SYMBOL",
       message:
-        "No QR code was found in that picture. Make sure the whole square — including the pale border around it — is in the frame and in focus, and that nothing is covering a corner. If the code is small in a large photograph, crop to it and try again."
+        "No QR code found. Get the whole square in focus, or crop to it."
     };
   }
 
@@ -1588,7 +1588,7 @@ export function decodeQrFromGrey(plane: GreyPlane): QrDecodeResult {
       ok: false,
       reason: "UNREADABLE",
       message:
-        "A QR code was found but its size could not be measured, so it could not be read. Photograph it straight on with the whole square in the frame, or type the code printed under the QR.",
+        "Couldn't read the code. Photograph it straight on, or type the code.",
       region
     };
   }
@@ -1598,7 +1598,7 @@ export function decodeQrFromGrey(plane: GreyPlane): QrDecodeResult {
       ok: false,
       reason: "UNSUPPORTED_VERSION",
       message:
-        "This QR code is bigger than any workshop card or tag, so it isn't a workshop code. A shop barcode, a payment code or a shipping label won't open a record here.",
+        "This isn't a workshop code.",
       region
     };
   }
@@ -1653,7 +1653,7 @@ export function decodeQrFromGrey(plane: GreyPlane): QrDecodeResult {
       ok: false,
       reason: "UNREADABLE",
       message:
-        "A QR code was found but the picture is too distorted to lay a grid over it. Photograph it straight on rather than at an angle, or type the code printed under the QR.",
+        "Too distorted. Photograph it straight on, or type the code.",
       region
     };
   }

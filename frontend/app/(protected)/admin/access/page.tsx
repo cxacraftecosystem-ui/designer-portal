@@ -142,6 +142,7 @@ import {
   listFilteredAccessRoster,
   type AccessRosterAnswer
 } from "./rosterQuery";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** The whole list. Twenty is the designer roster's page size and this table is no denser. */
 const PAGE_SIZE = 20;
@@ -403,7 +404,7 @@ function PlatformAccessScreen() {
     const mustChange = form.get("mustChangePassword") === "on";
     if (!email) return;
     if (withPassword && !fullName) {
-      setError("Enter their full name. It becomes the name on the account.");
+      setError("Enter their full name.");
       return;
     }
 
@@ -442,9 +443,7 @@ function PlatformAccessScreen() {
         // The account exists now, with the password just typed. Nothing else to make, so no link to
         // the users form; hand the password over the way you would any other secret.
         setNotice(
-          `${created.email} may sign in with the password you set${
-            mustChange ? ", and will choose a new one the first time they do" : ""
-          }. They can also sign in with Google, Microsoft or Yahoo on the same address.`
+          `${created.email} can sign in with your password${mustChange ? " and will then choose their own" : ""}.`
         );
         setPasswordAccount(null);
         formElement.reset();
@@ -493,8 +492,8 @@ function PlatformAccessScreen() {
     const ok = await confirm({
       title: `Let ${entry.email} in?`,
       body: role
-        ? `They will be able to sign in immediately, as ${roleLabel(role)}.`
-        : "They will be able to sign in immediately, with the default role, and can be promoted afterwards on Manage users.",
+        ? `They can sign in now, as ${roleLabel(role)}.`
+        : "They can sign in now, with the default role.",
       // The middle clause became true on 2026-10-09: approving promotes an account that already
       // exists, and one still holding a temporary password is not promoted — see `heldPromotion`.
       note:
@@ -525,13 +524,13 @@ function PlatformAccessScreen() {
       // somebody who is signed in at that moment needs to know it takes effect now and not at their
       // next attempt — that is the difference between a refusal and a note for later.
       body:
-        "They will be told their request was reviewed and not approved, and whom to contact. Any session they are in now ends with it.",
+        "They're told it wasn't approved. Any session they are in now ends with it.",
       // The tone is danger and the note has to correct what it implies twice over: nothing is
       // deleted, AND the refusal does not expire. An admin using this as "not now" would never see
       // the person again, because a rejected person's next attempt bumps a counter instead of
       // rejoining this queue.
       note:
-        "The entry stays on the list, with when they asked and how many times they tried. Trying again will not put them back in this queue; you can approve them here later.",
+        "The entry stays; you can approve them later.",
       confirmLabel: "Refuse",
       tone: "danger"
     });
@@ -553,9 +552,9 @@ function PlatformAccessScreen() {
       // `User.sessionsValidFrom` here (2026-09-03), and on its own it now understates the act: an
       // admin suspending somebody mid-shift would have read it as taking effect tomorrow.
       body:
-        "They will be refused at their next sign-in, and told that their access to this application was ended. Any session they are in now ends immediately.",
+        "They can't sign in again. Any session they are in now ends immediately.",
       note:
-        "The entry is kept, with the date they joined. Approving them again here restores their access and keeps that date.",
+        "The entry is kept. Approve again to restore access.",
       confirmLabel: "Suspend",
       tone: "danger"
     });
@@ -607,7 +606,7 @@ function PlatformAccessScreen() {
   const header = (
     <PageHeader
       title="Who may sign in"
-      description="Every address allowed to sign in, and the people waiting for a decision. Entries are never deleted: access is granted, refused, suspended or restored, and each entry keeps its history."
+      description="Who may sign in, and who is waiting."
       icon={<ShieldCheck className="h-5 w-5" aria-hidden />}
     />
   );
@@ -637,7 +636,7 @@ function PlatformAccessScreen() {
             // `roleLabel` answers "" for an absent user; AppShell never renders a protected page
             // without one, but a sentence reading "  does not open this" is a worse way to discover
             // that than a fallback nobody will see.
-            `${roleLabel(user?.role) || "Your role"} does not open this. Ask an admin or the master admin.`
+            `Admins only.`
           }
         />
       </>
@@ -718,11 +717,11 @@ function PlatformAccessScreen() {
         the person is then told the wrong reason on the sign-in screen.
       */}
       <p className="mb-4 text-sm leading-6 text-ink-500">
-        This list decides who may sign in at all. Who the institution recognises as a designer is on the{" "}
+        Designers are managed on the{" "}
         <Link href="/admin/designers" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
           designer roster
         </Link>
-        . The master admin can always sign in, so somebody can always let people back in.
+        .
       </p>
 
       {error ? (
@@ -743,9 +742,9 @@ function PlatformAccessScreen() {
           {notice}
           {passwordAccount && passwordAccount.notice === notice ? (
             <>
-              {" "}Will they sign in with a password instead? Adding them here does not create a password account —{" "}
+              {" "}Using a password?{" "}
               <Link href={passwordAccount.href} className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
-                create their password account on Manage users
+                Create a password account
               </Link>
               {/* Two sentences, because the link carries a tier only when one was chosen here. An
                   address admitted at the platform default arrives with the tier EMPTY, and /users
@@ -782,8 +781,7 @@ function PlatformAccessScreen() {
               ) : null}
             </h2>
             <p className="text-sm text-ink-500">
-              Each of these people signed in correctly, with a password or a Google account, but their address is not on
-              this list. They have been told they are waiting for approval.
+              Signed in but not on the list yet.
             </p>
           </div>
         </div>
@@ -796,9 +794,7 @@ function PlatformAccessScreen() {
         */}
         {counted?.capReached ? (
           <div className="border-b border-amber-500/30 bg-amber-100 px-4 py-2 text-xs leading-5 text-amber-900">
-            This queue is full ({counted.capacity} waiting requests), so new requests are not being recorded. Anybody
-            turned away now is told that requests are temporarily closed and to contact an administrator. Decide the
-            requests below to make room.
+            Queue full ({counted.capacity}). New requests aren&apos;t recorded — decide some to make room.
           </div>
         ) : null}
 
@@ -810,7 +806,7 @@ function PlatformAccessScreen() {
           <div className="p-4">
             <EmptyState
               title="Nobody is waiting"
-              body="When somebody who is not on this list signs in, they appear here with their address, when they asked and how many times they have tried. They are told an administrator has to approve them."
+              body="New sign-in requests appear here."
             />
           </div>
         ) : (
@@ -845,16 +841,14 @@ function PlatformAccessScreen() {
           </h2>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
             {editing ? (
-              "The name, role and note are your own record of whom you admitted and why. Changing them does not change whether this person may sign in — use Approve, Refuse, Suspend or Restore for that."
+              "For your records. Use Approve, Refuse, Suspend or Restore to change access."
             ) : (
               <>
-                Choose how they will sign in. With Google, Microsoft or Yahoo, no account is needed yet: it is created
-                the first time they sign in. With a password, the account is made now with the password you type —
-                you can also do this on{" "}
+                Choose how they sign in. Adding them here approves them. Password accounts can also be made on{" "}
                 <Link href="/users" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
                   Manage users
                 </Link>
-                . Adding somebody here approves them, so they never appear in the queue above.
+                .
               </>
             )}
           </p>
@@ -913,7 +907,7 @@ function PlatformAccessScreen() {
             placeholder="Who they are and why they were admitted."
           />
         </Field>
-        <div className="flex flex-wrap gap-2">
+        <ActionGroup>
           <button className="field-button" disabled={saving}>
             <MailPlus className="h-4 w-4" aria-hidden />
             {saving ? "Saving…" : editing ? "Update entry" : "Add to the list"}
@@ -923,7 +917,7 @@ function PlatformAccessScreen() {
               Cancel
             </button>
           ) : null}
-        </div>
+        </ActionGroup>
       </form>
 
       {/*
@@ -1148,7 +1142,7 @@ function PlatformAccessScreen() {
                         {entry.status === "ACTIVE" ? (
                           // Never labelled "Delete". The verb has to say what happens, and what
                           // happens is that the entry stays.
-                          <button type="button" className={rowAction("danger")} onClick={() => suspend(entry)}>
+                          <button type="button" data-danger className={rowAction("danger")} onClick={() => suspend(entry)}>
                             Suspend
                           </button>
                         ) : (
@@ -1158,7 +1152,7 @@ function PlatformAccessScreen() {
                           </button>
                         )}
                         {entry.status === "PENDING" ? (
-                          <button type="button" className={rowAction("danger")} onClick={() => reject(entry)}>
+                          <button type="button" data-danger className={rowAction("danger")} onClick={() => reject(entry)}>
                             Refuse
                           </button>
                         ) : null}
@@ -1295,7 +1289,7 @@ function SignInMethodField() {
             Ask them to choose a new one at first sign-in
           </label>
           <p className="text-xs leading-5 text-ink-500">
-            {passwordRuleLine("Fill in their full name too — it becomes the name on the account.")}
+            {passwordRuleLine("Full name required.")}
           </p>
         </div>
       ) : null}
@@ -1390,14 +1384,14 @@ function QueueRow({
             className="h-9 min-w-56 py-0 text-sm"
           />
         </FieldLabelProvider>
-        <button type="button" className={rowAction("positive")} onClick={() => onApprove(role)}>
+        <ActionGroup className="max-sm:w-full"><button type="button" className={rowAction("positive")} onClick={() => onApprove(role)}>
           <UserCheck className="h-3.5 w-3.5" aria-hidden />
           Approve
         </button>
-        <button type="button" className={rowAction("danger")} onClick={onReject}>
+        <button type="button" data-danger className={rowAction("danger")} onClick={onReject}>
           <UserX className="h-3.5 w-3.5" aria-hidden />
           Refuse
-        </button>
+        </button></ActionGroup>
       </div>
     </li>
   );

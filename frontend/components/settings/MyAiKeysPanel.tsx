@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { FieldLabelProvider } from "@/components/ui/fieldLabel";
 import { PasswordRevealButton } from "@/components/ui/PasswordReveal";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * **A designer's OWN provider keys.** One card, one row per provider, and an accordion per provider
@@ -371,7 +372,7 @@ function ProviderRow({
       ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
+        <ActionGroup className="max-sm:w-full"><button
           type="button"
           disabled={busy !== null || (!key.trim() && model === state.model)}
           onClick={() =>
@@ -420,7 +421,7 @@ function ProviderRow({
           >
             <Trash2 className="h-4 w-4" aria-hidden /> Remove
           </button>
-        ) : null}
+        ) : null}</ActionGroup>
         {message ? <span className="text-xs text-ink-500">{message}</span> : null}
       </div>
 

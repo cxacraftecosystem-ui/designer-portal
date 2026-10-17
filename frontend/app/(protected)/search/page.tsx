@@ -40,6 +40,7 @@ import { formatDateTime } from "@/lib/format";
 import { canViewDesignWorkshopData } from "@/lib/permissions";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { Artisan, Craft, MediaFile, ProductDocumentation, ToolDocumentation, Workshop } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 type SearchResult = {
   artisans: Artisan[];
@@ -743,14 +744,14 @@ function SearchPager({
       <span>
         Page {page} · {shown} result{shown === 1 ? "" : "s"} on this page · every result type pages together
       </span>
-      <div className="flex gap-2">
+      <ActionGroup>
         <button className="field-button-secondary" disabled={loading || page <= 1} onClick={() => onPage(page - 1)}>
           Previous
         </button>
         <button className="field-button-secondary" disabled={loading || !hasMore} onClick={() => onPage(page + 1)}>
           Next
         </button>
-      </div>
+      </ActionGroup>
     </div>
   );
 }

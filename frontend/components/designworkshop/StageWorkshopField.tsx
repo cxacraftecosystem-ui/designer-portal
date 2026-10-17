@@ -210,8 +210,7 @@ export function StageWorkshopField({
           // Said out loud rather than left as a box that looks like every other box. A designer who
           // cannot see why the list is missing assumes there are no workshops.
           <p className="text-xs text-ink-500">
-            The list of workshops could not be loaded, so this is a plain box. Type the workshop&apos;s title as it is
-            recorded, or reload the page to try the list again.
+            Workshops didn&apos;t load. Type the title, or reload.
           </p>
         ) : (
           <button

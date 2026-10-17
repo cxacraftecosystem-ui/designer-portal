@@ -117,6 +117,7 @@ import {
   listDesignerRosterPage,
   type DesignerRosterPage
 } from "./rosterQuery";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 20;
 
@@ -136,11 +137,11 @@ const ROSTER_PATH = "/admin/designers";
  * the first thought an admin has when this list goes blank is that something has been deleted.
  */
 const ROSTER_READ_FAILED =
-  "The roster could not be loaded. Check your connection and try again. Nothing has changed.";
+  "Couldn't load the roster. Try again.";
 
 /** §3.5's **genuinely-empty, unscoped** sentence: a statement about the repository, whose next move is to create one. */
 const NOBODY_EMPANELLED =
-  "Nobody has been empanelled yet. Add the first designer above — their email address is all that is needed, and their account is created when they first sign in.";
+  "No designers yet. Add one above by email.";
 
 /**
  * The filters excluded everything. NOT the same claim as either sentence above.
@@ -151,7 +152,7 @@ const NOBODY_EMPANELLED =
  * from the one a client-side box would print, which is the sentence that is not to be trusted.
  */
 const NARROWED_TO_NOTHING =
-  "No entry matches these filters. Clear them to see everybody, suspended entries included.";
+  "No matches. Clear the filters to see everyone.";
 
 /**
  * The institution vocabulary could not be read — §3.5's could-not-be-listed, one control down.
@@ -166,15 +167,15 @@ const NARROWED_TO_NOTHING =
  * genuinely empty.
  */
 const INSTITUTIONS_READ_FAILED =
-  "The list of institutions could not be loaded, so the Institution filter above may be incomplete. You can still type an institution's name into the search box.";
+  "Institutions didn't load — search by name instead.";
 
 /** The same fact, for the picker's own panel. See {@link INSTITUTIONS_READ_FAILED}. */
 const INSTITUTIONS_EMPTY_FAILED =
-  "The institution list could not be loaded. Type the institution's name into the search box above instead.";
+  "Institutions didn't load — search by name instead.";
 
 /** §3.5's genuinely-empty-unscoped, for the institution picker: a claim about the roster, not about a read. */
 const INSTITUTIONS_EMPTY_NONE =
-  "No institution has been recorded on any roster entry yet, so there is nothing to filter by here.";
+  "No institutions recorded yet.";
 
 export default function DesignerRosterPage() {
   return (
@@ -412,7 +413,7 @@ function DesignerRosterPageInner() {
           notes: notes.trim() || null
         });
         setNotice(
-          `${created.email} is on the roster. They can sign in with Google using that address, and the account will be created as a Designer the first time they do.`
+          `${created.email} added. They can sign in with Google.`
         );
       }
       formElement.reset();
@@ -448,12 +449,12 @@ function DesignerRosterPageInner() {
   async function suspend(entry: DesignerRosterEntry) {
     const ok = await confirm({
       title: `Suspend ${entry.fullName || entry.email}?`,
-      body: "They lose access straight away and cannot sign in until the entry is restored.",
+      body: "They lose access until restored.",
       // The tone is danger because access is being taken away, but the note has to correct the word
       // the tone implies: nothing is deleted here, and an admin who believes otherwise will hesitate
       // over something that is one click from being undone.
       note:
-        "The roster entry is kept, and nothing they have recorded is touched. Restore gives their access back.",
+        "Their work is kept.",
       confirmLabel: "Suspend",
       tone: "danger"
     });
@@ -504,7 +505,7 @@ function DesignerRosterPageInner() {
   const header = (
     <PageHeader
       title="Designer roster"
-      description="Who the institution recognises as a designer. An address on this list may sign in; one that is suspended may not, and the entry stays either way."
+      description="Designers who may sign in."
       icon={<BadgeCheck className="h-5 w-5" aria-hidden />}
     />
   );
@@ -532,7 +533,7 @@ function DesignerRosterPageInner() {
             // `roleLabel` answers "" for an absent user. AppShell never renders a protected page
             // without one, but a sentence that reads "  does not open this" is a worse way to find
             // that out than a fallback nobody will ever see.
-            `${roleLabel(user?.role) || "Your role"} does not open this. Ask an admin or the master admin.`
+            `Admins only.`
           }
         />
       </>
@@ -574,8 +575,7 @@ function DesignerRosterPageInner() {
         <Link href="/admin/access" className="font-medium text-purple-700 dark:text-purple-300 hover:underline">
           Who may sign in
         </Link>
-        , where people waiting for approval also appear. Empanelling somebody here admits them there too, and admitting
-        somebody there as a designer empanels them here.
+        . The two lists stay in step.
       </p>
 
       {error ? (
@@ -599,8 +599,8 @@ function DesignerRosterPageInner() {
           </h2>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
             {editing
-              ? "The name, institution and note are the admin’s own record of whom they empanelled and why. Changing them does not change whether this person may sign in — use Suspend or Restore for that."
-              : "Only the email address is needed; no account has to exist yet. The first time they sign in with Google using this address, their account is created as a Designer."}
+              ? "For your records only. Use Suspend or Restore to change access."
+              : "Only the email is required."}
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -632,7 +632,7 @@ function DesignerRosterPageInner() {
             placeholder="Which programme they were empanelled under, and when."
           />
         </Field>
-        <div className="flex flex-wrap gap-2">
+        <ActionGroup>
           <button className="field-button" disabled={saving}>
             <MailPlus className="h-4 w-4" aria-hidden />
             {saving ? "Saving…" : editing ? "Update entry" : "Add to roster"}
@@ -642,7 +642,7 @@ function DesignerRosterPageInner() {
               Cancel
             </button>
           ) : null}
-        </div>
+        </ActionGroup>
       </form>
 
       {/*
@@ -686,8 +686,7 @@ function DesignerRosterPageInner() {
 
       {directoryCapped ? (
         <p className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-          Only the first {DIRECTORY_CAP} accounts are matched to roster entries, so “Open profile” may be missing from some
-          entries. The roster itself is complete and paged below.
+          “Open profile” may be missing for some entries (first {DIRECTORY_CAP} accounts matched).
         </p>
       ) : null}
 
@@ -822,7 +821,7 @@ function DesignerRosterPageInner() {
                           {entry.isActive ? (
                             // Never labelled "Delete". The verb has to say what happens, and what
                             // happens is that the row stays.
-                            <button type="button" className={rowAction("danger")} onClick={() => suspend(entry)}>
+                            <button type="button" data-danger className={rowAction("danger")} onClick={() => suspend(entry)}>
                               Suspend
                             </button>
                           ) : (

@@ -10,6 +10,7 @@ import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { bytes } from "@/lib/format";
 import { downloadMediaUrl } from "@/lib/localMediaDownload";
 import type { MediaType } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 export type PreviewMedia = {
   key: string;
@@ -457,7 +458,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
             <h2 className="truncate font-display font-bold text-2xl text-ink">{item.caption || item.name}</h2>
             <p className="text-sm text-ink-muted">{mediaLabel(item)}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <ActionGroup>
             {src ? (
               <button type="button" className="field-button-secondary" onClick={() => saveToDevice(src, item.name)}>
                 <Download className="h-4 w-4" aria-hidden />
@@ -473,7 +474,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
             <button type="button" className="field-button-secondary" onClick={onClose} aria-label="Close preview">
               <X className="h-4 w-4" aria-hidden />
             </button>
-          </div>
+          </ActionGroup>
         </div>
         <div className="grid max-h-[74vh] place-items-center overflow-auto rounded-md bg-card p-3">
           {kind === "IMAGE" && src ? (
@@ -499,7 +500,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
                 <div className="text-xs text-ink-muted">{mediaLabel(item)}</div>
               </div>
               <p className="text-sm text-ink-muted">This file type cannot be rendered inline — download it to view.</p>
-              <div className="flex flex-wrap justify-center gap-2">
+              <ActionGroup>
                 <button type="button" className="field-button" onClick={() => saveToDevice(src, item.name)}>
                   <Download className="h-4 w-4" aria-hidden />
                   Download file
@@ -508,7 +509,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
                   <ExternalLink className="h-4 w-4" aria-hidden />
                   Open in new tab
                 </a>
-              </div>
+              </ActionGroup>
             </div>
           ) : (
             <div className="grid gap-3 text-center text-ink-muted">

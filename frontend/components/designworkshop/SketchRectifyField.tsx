@@ -56,6 +56,7 @@ import {
 import type { GreyPlane } from "@/lib/imageQuality";
 import type { Point } from "@/lib/photoMeasure";
 import type { MediaFile } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * A photograph this panel could make a plate from: a media id, or a `dwlocal:` reference to bytes
@@ -124,7 +125,7 @@ async function loadSourceBlob(ref: string): Promise<{ blob: Blob; name: string }
   if (isLocalMediaRef(ref)) {
     const media = await readLocalMedia(ref);
     if (!media?.blob) {
-      return { reason: "The copy of that photograph on this device has already been released. Re-attach it to straighten it." };
+      return { reason: "Re-attach the photo to straighten it." };
     }
     return { blob: media.blob, name: media.name };
   }
@@ -132,10 +133,10 @@ async function loadSourceBlob(ref: string): Promise<{ blob: Blob; name: string }
   try {
     media = await apiFetch<MediaFile>(`/media/${ref}`);
   } catch {
-    return { reason: "That photograph couldn't be loaded just now. It can be straightened later, or re-attach it here." };
+    return { reason: "Couldn't load the photo. Try later, or re-attach it." };
   }
   if (!media.url) {
-    return { reason: "You don't have access to that photograph's file, so it can't be straightened here." };
+    return { reason: "You can't access that photo." };
   }
   try {
     const response = await fetch(media.url);
@@ -144,7 +145,7 @@ async function loadSourceBlob(ref: string): Promise<{ blob: Blob; name: string }
   } catch {
     return {
       reason:
-        "This photograph was uploaded in an earlier session and its file cannot be read back in the browser. Re-attach it here to straighten it, or straighten it on the handset that took it."
+        "Re-attach the photo to straighten it here."
     };
   }
 }
@@ -215,7 +216,7 @@ export function SketchRectifyField({
       const decoded = await loadSketchPlane(got.blob, RECTIFY_MAX_EDGE_PX);
       if (cancelled) return;
       if (!decoded) {
-        setLoad({ status: "failed", reason: "This browser could not decode that photograph, so it cannot be straightened here." });
+        setLoad({ status: "failed", reason: "This browser can't read that photo." });
         return;
       }
       blobRef.current = got.blob;
@@ -276,13 +277,13 @@ export function SketchRectifyField({
       // answer, and "I could not tell" is an answer. What it must never do is move the handles to a
       // quadrilateral it does not believe in.
       setGuessNote(
-        "The edges of the sheet could not be made out in this photograph — the corners below are yours to place."
+        "Couldn't find the sheet — place the corners yourself."
       );
       return;
     }
     setCorners(guess.corners);
     setGuessNote(
-      `Found a sheet filling ${Math.round(guess.frameShare * 100)}% of the frame. Check the four corners and drag any that are off.`
+      `Found the sheet. Check the corners.`
     );
   }, [load]);
 
@@ -358,8 +359,7 @@ export function SketchRectifyField({
       }
       onAttach(outcome.file);
       setDone(
-        `${outcome.file.name} was added to “${targetLabel}”. The photograph itself is untouched. ` +
-          `Decoded in ${Math.round(outcome.decodeMs)} ms, straightened in ${Math.round(outcome.processMs)} ms.`
+        `Added ${outcome.file.name} to “${targetLabel}”.`
       );
       setOpen(false);
     } catch (error) {
@@ -389,8 +389,7 @@ export function SketchRectifyField({
           Straighten a photographed sketch
         </button>
         <p className="mt-1 text-xs text-ink-500">
-          Marks the four corners of the sheet and makes a flat, high-contrast plate for the report. The photograph you
-          took stays attached exactly as it is.
+          Makes a flat, high-contrast copy for the report. The photo is unchanged.
         </p>
         {done ? (
           <p className="mt-2 flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs text-ink-700">
@@ -408,7 +407,7 @@ export function SketchRectifyField({
         <div>
           <p className="text-sm font-medium text-ink-900">Straighten a photographed sketch</p>
           <p className="mt-0.5 text-xs text-ink-500">
-            The plate is a new file added to “{targetLabel}”. Your photograph is never modified or replaced.
+            Added to “{targetLabel}” as a new file.
           </p>
         </div>
         <button
@@ -459,7 +458,7 @@ export function SketchRectifyField({
               comparison the designer has to make by remembering the other picture is not one. */}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <span className="field-label">The photograph — drag the four corners of the sheet</span>
+              <span className="field-label">Drag the sheet&apos;s corners</span>
               <div
                 ref={imageBox}
                 className="relative mt-1 select-none overflow-hidden rounded-md border border-line-200 bg-card"
@@ -575,8 +574,7 @@ export function SketchRectifyField({
 
           {!lineArt ? (
             <p className="mt-2 text-xs text-ink-500">
-              Straightened only — the pencil tones are kept as they are. Choose this when a faint construction line or a
-              shaded area is part of the drawing.
+              Keeps pencil tones and shading.
             </p>
           ) : null}
 
@@ -591,7 +589,7 @@ export function SketchRectifyField({
             </p>
           ) : null}
 
-          <div className="mt-3 flex flex-wrap gap-2">
+          <ActionGroup className="mt-3">
             <button type="button" className="field-button" onClick={attachPlate} disabled={busy || disabled}>
               <Wand2 className="h-4 w-4" aria-hidden />
               {busy ? "Making the plate…" : `Add this plate to “${targetLabel}”`}
@@ -602,7 +600,7 @@ export function SketchRectifyField({
             <button type="button" className="field-button-secondary" onClick={() => setOpen(false)} disabled={busy}>
               Keep the original only
             </button>
-          </div>
+          </ActionGroup>
         </>
       ) : null}
     </div>

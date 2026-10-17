@@ -37,6 +37,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * Who may open one design & prototype workshop, administered beside the workshop-access console.
@@ -411,7 +412,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               return;
             }
             setEligible([]);
-            setLoadError(describeFailure(err, "Unable to load the designers who may be given access", readerIsAdmin));
+            setLoadError(describeFailure(err, "Couldn't load designers", readerIsAdmin));
           });
       },
       term ? SEARCH_DEBOUNCE_MS : 0
@@ -829,8 +830,8 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
   const announcement = !workshopId
     ? ""
     : dirty
-      ? `${selected.length} designer${selected.length === 1 ? "" : "s"} selected, not yet saved. ${added.length} to add, ${removed.length} to remove.`
-      : `${selected.length} designer${selected.length === 1 ? "" : "s"} can see this workshop, in addition to the designer who created it. Nothing unsaved.`;
+      ? `${selected.length} selected — unsaved (+${added.length}, −${removed.length}).`
+      : `${selected.length} designer${selected.length === 1 ? "" : "s"}, plus its creator.`;
 
   async function save() {
     if (!workshopId || writesHeld(postRefusal)) return;
@@ -852,7 +853,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
       setSelected(editable);
       toast({
         title: editable.length ? `${editable.length} designer${editable.length === 1 ? "" : "s"} can see this workshop` : "Nobody else can see this workshop",
-        description: "The designer who created it always can, and is not affected by this list.",
+        description: "Its creator always can.",
         tone: "success"
       });
     } catch (err) {
@@ -871,15 +872,13 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
         <div>
           <h2 className="font-display font-bold text-ink-900">Design workshop visibility</h2>
           <p className="text-xs leading-5 text-ink-500">
-            Who may open one design &amp; prototype workshop, besides the designer who created it.
+            Who can open a workshop.
           </p>
         </div>
       </div>
 
       <p className="mt-3 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-        A design workshop is visible only to the designer who started it and to the designers named here. A workshop is
-        usually run by two designers alongside a master craftsperson and a reviewing officer, so name the designers who
-        should see this one.
+        Only its creator and the designers named here can see it.
       </p>
 
       {featureMissing ? (
@@ -977,7 +976,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                 */
                 emptyLabel={
                   filteredAway
-                    ? "No design workshop of this type is on this page."
+                    ? "None of this type here."
                     : workshopEmptyLabel(workshops, workshopVoice)
                 }
                 placeholder="Select or type to search"
@@ -990,14 +989,12 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               indistinguishable from a repository with nothing in it. */}
           {typeFilter && untyped > 0 ? (
             <p className="mt-2 text-xs leading-5 text-ink-500">
-              {untyped} design workshop{untyped === 1 ? " is" : "s are"} not linked to a workshop record, so
-              {untyped === 1 ? " it carries" : " they carry"} no type and {untyped === 1 ? "is" : "are"} not offered
-              under this filter. Choose “Any workshop type” to administer {untyped === 1 ? "it" : "them"}.
+              {untyped} unlinked workshop{untyped === 1 ? "" : "s"} hidden — choose “Any workshop type”.
             </p>
           ) : null}
           {!typeKnown ? (
             <p className="mt-2 text-xs leading-5 text-ink-500">
-              The workshop list could not be loaded, so the type filter is off. Every design workshop is offered.
+              Type filter off — workshops didn&rsquo;t load.
             </p>
           ) : null}
           {/* THE OTHER STAND-DOWN, SAID RATHER THAN PERFORMED. A control that keeps its value and
@@ -1006,14 +1003,12 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               because it is one keystroke away. */}
           {typeKnown && typeNarrowingSuspended ? (
             <p className="mt-2 text-xs leading-5 text-ink-500" aria-live="polite">
-              The type filter is off while you are searching. Empty the search box inside the design workshop picker to
-              filter by type again.
+              Type filter is off while searching.
             </p>
           ) : null}
           {typeKnown && typeMapPartial ? (
             <p className="mt-2 text-xs leading-5 text-ink-500">
-              {WORKSHOP_PAGE * WORKSHOP_TYPE_MAP_MAX_PAGES} of the workshops are typed for this filter. A design
-              workshop linked to an older one shows under &ldquo;Any workshop type&rdquo;.
+              Only the latest {WORKSHOP_PAGE * WORKSHOP_TYPE_MAP_MAX_PAGES} are typed; older ones are under &ldquo;Any workshop type&rdquo;.
             </p>
           ) : null}
           {/* THE CAP, WITH THE NUMBER, AND NOW POINTING AT SOMETHING. It used to read "Showing the
@@ -1033,7 +1028,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
           ) : null}
 
           {!workshopId ? (
-            <p className="mt-4 text-sm text-ink-500">Pick a design workshop to see who can open it.</p>
+            <p className="mt-4 text-sm text-ink-500">Pick a workshop.</p>
           ) : viewers === null ? (
             <p className="mt-4 text-sm text-ink-500">Loading…</p>
           ) : (
@@ -1047,7 +1042,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                   {creator?.role ? <span className="text-ink-500"> · {roleLabel(creator.role)}</span> : null}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-ink-500">
-                  They created this workshop, so they can always open it. Nothing below removes that.
+                  Creator — always has access.
                 </p>
               </div>
 
@@ -1058,9 +1053,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                   label="Designers who may see this workshop"
                   hint={
                     <p className="text-xs leading-5 text-ink-500">
-                      Only accounts that can run a design workshop are offered, never your own. Somebody who inspects
-                      this workshop, or is its Assistant Director or Regional Director, cannot be added: nobody may
-                      change work they inspect or supervise. Unticking somebody removes their access when you save.
+                      Its inspectors and directors can&rsquo;t be added.
                     </p>
                   }
                 >
@@ -1110,7 +1103,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                         sentence whose whole job is to describe this list; pointing it at the wrong
                         control is worse than leaving it blank.
                       */
-                      capHint="Use the search box above to find the rest."
+                      capHint="Search above to find the rest."
                       values={selected}
                     />
                   </div>
@@ -1122,7 +1115,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               <div className="mt-3">
                 {viewers.filter((row) => row.userId !== creatorId).length === 0 ? (
                   <p className="text-sm text-ink-500">
-                    Nobody else can open this workshop yet. Only the designer who created it, and admins, can.
+                    Only its creator and admins can open it.
                   </p>
                 ) : (
                   <ul className="grid gap-1.5">
@@ -1162,7 +1155,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
+                <ActionGroup className="max-sm:w-full"><button
                   className="field-button"
                   disabled={!dirty || saving || writesHeld(postRefusal)}
                   aria-describedby={postRefusal ? heldNoticeId : undefined}
@@ -1185,7 +1178,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                     Discard changes
                   </button>
                 ) : null}
-                {/* Colour never carries the meaning on its own — the word "unsaved" does. */}
+                {/* Colour never carries the meaning on its own — the word "unsaved" does. */}</ActionGroup>
                 {dirty ? <span className="text-xs text-amber-800 dark:text-amber-100">{added.length + removed.length} unsaved change{added.length + removed.length === 1 ? "" : "s"}</span> : null}
               </div>
             </>

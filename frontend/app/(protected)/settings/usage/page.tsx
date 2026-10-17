@@ -96,6 +96,7 @@ import {
   type UsageScreens,
   type UsageTimeline
 } from "@/lib/usage";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -172,7 +173,7 @@ function CollectionPosture({ method }: { method: UsageCollectionMethod }) {
         <div className="min-w-0 flex-1 text-sm leading-6 text-amber-900">
           <p className="font-semibold">
             {method.consent.flowExists
-              ? "Everyone is asked for consent. The figures below leave out people who declined."
+              ? "People who declined are left out."
               : `Requests from accounts that haven't answered are recorded ${attributed ? "with their name" : "without a name"}.`}
           </p>
 
@@ -248,10 +249,9 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
         <div className="min-w-0">
           <h2 className="font-display font-bold text-ink-900">One person&apos;s activity</h2>
           <p className="mt-0.5 text-sm leading-6 text-ink-500">
-            Step by step, for one person, over the period chosen above. Only the master admin can see this, and only for
-            someone who agreed to be recorded.{" "}
+            One person&apos;s steps, if they agreed.{" "}
             <span className="font-medium text-ink-700">
-              Each time you open it, your name, theirs and the period are logged.
+              Each view is logged.
             </span>
           </p>
         </div>
@@ -288,7 +288,7 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
           </p>
           {trail.events.length === 0 ? (
             <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-              Nothing recorded for this person in this period. Activity from before they agreed is not recorded.
+              Nothing recorded in this period.
             </p>
           ) : (
             <div className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-purple-700" tabIndex={0} role="region" aria-label="Usage table">
@@ -429,7 +429,7 @@ export default function UsagePage() {
       .catch((err) => !cancelled && setClientsError(readableError(err, "Couldn't load the split by app. Try again.")));
     loadUsageScreens({ from, to, limit: 10 })
       .then((result) => !cancelled && setScreens(result))
-      .catch((err) => !cancelled && setScreensError(readableError(err, "Couldn't load the busiest and slowest screens. Try again.")));
+      .catch((err) => !cancelled && setScreensError(readableError(err, "Couldn't load screens. Try again.")));
 
     return () => {
       cancelled = true;
@@ -456,7 +456,7 @@ export default function UsagePage() {
   const header = (
     <PageHeader
       title="Usage"
-      description="Which screens people use, how often, how fast, and how often they fail — totals across every account, with no names."
+      description="Screen usage, speed and errors. Anonymous totals."
       icon={<Activity className="h-5 w-5" aria-hidden />}
     />
   );
@@ -476,7 +476,7 @@ export default function UsagePage() {
         {header}
         <RestrictedPanel
           title="Admin access required"
-          body="Usage shows totals across every account, so only admins and the master admin can open it."
+          body="Admins only."
         />
       </>
     );
@@ -576,7 +576,7 @@ export default function UsagePage() {
             {routes ? (
               <p className="text-xs leading-5 text-ink-500">
                 {routes.window.days} day{routes.window.days === 1 ? "" : "s"} chosen, up to {routes.window.maxDays} at a
-                time. Days and hours are in UTC, not local time.
+                time. Times in UTC.
               </p>
             ) : null}
           </div>
@@ -615,7 +615,7 @@ export default function UsagePage() {
               <div className="grid gap-4 xl:grid-cols-2">
                 <ChartFrame
                   title="Traffic over time"
-                  description={`Requests per ${timeline.bucket} (UTC), across these screens. A period with no requests is drawn at zero; a hidden period is drawn as a hatched gap.`}
+                  description={`Requests per ${timeline.bucket} (UTC). Hatched gaps are hidden periods.`}
                   caps={
                     <>
                       {timeline.series.length} point{timeline.series.length === 1 ? "" : "s"} drawn, at most{" "}
@@ -638,10 +638,10 @@ export default function UsagePage() {
 
                 <ChartFrame
                   title="Error rate over time"
-                  description="The share of requests that were refused or failed."
+                  description="Share of requests that failed."
                   caps={
                     <>
-                      Drawn as a gap where there were no requests at all.{" "}
+                      Gaps mean no requests.{" "}
                       {scopeText(timeline.scope)}
                     </>
                   }
@@ -672,7 +672,7 @@ export default function UsagePage() {
             ) : (
               <ChartFrame
                 title="How long each screen took"
-                description={`Typical and slowest times: ${latency.percentiles.join(", ")}. An average can hide a few slow requests, so these won't match the averages in the table below.`}
+                description={`Percentiles: ${latency.percentiles.join(", ")}.`}
                 legend={
                   <ChartLegend
                     items={[
@@ -684,8 +684,7 @@ export default function UsagePage() {
                 }
                 caps={
                   <>
-                    {scopeText(latency.scope)} Measured from when a request reaches us until we answer; connection
-                    and device time are not included.
+                    {scopeText(latency.scope)} Server time only.
                   </>
                 }
                 table={
@@ -724,7 +723,7 @@ export default function UsagePage() {
                 description="Which app each request came from."
                 caps={
                   <>
-                    Requests that did not say which app sent them are counted under &ldquo;{clients.fallback}&rdquo;.{" "}
+                    Unknown apps count as &ldquo;{clients.fallback}&rdquo;.{" "}
                     {scopeText(clients.scope)}
                   </>
                 }
@@ -817,7 +816,7 @@ export default function UsagePage() {
 
                 <ChartFrame
                   title="Slowest screens"
-                  description="Ranked by average time. An average can hide a few slow requests — the response-time chart above shows those."
+                  description="By average time."
                   caps={
                     <>
                       Top {screens.limit}. {screens.withheld.routes > 0 ? screens.withheld.explanation : null}{" "}
@@ -934,7 +933,7 @@ export default function UsagePage() {
                   <span className="text-ink-500">
                     Page {routes.page} of {routes.pages} — {routes.total} screen{routes.total === 1 ? "" : "s"} in total
                   </span>
-                  <div className="flex gap-2">
+                  <ActionGroup>
                     <button
                       type="button"
                       className="field-button-secondary"
@@ -951,7 +950,7 @@ export default function UsagePage() {
                     >
                       Next
                     </button>
-                  </div>
+                  </ActionGroup>
                 </div>
               ) : null}
             </section>

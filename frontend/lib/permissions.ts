@@ -519,9 +519,7 @@ const RECORD_CREATOR_GUARD = {
   gate: "require_record_creator",
   title: "Researcher access required",
   message:
-    "Creating artisans, products, processes and tools needs Researcher access or above. " +
-    "Field contributors and crowdsource volunteers answer existing interviews, upload media, and " +
-    "comment on existing records — browse the records to find an entry to add to."
+    "Needs Researcher access or above. You can still answer interviews, upload media and comment."
 } as const;
 
 /**
@@ -533,7 +531,7 @@ const RECORD_CREATOR_GUARD = {
  * module loads and a `const` declared below it would still be in its temporal dead zone there.
  */
 export const APPROVAL_AUTHORITY_REFUSAL =
-  "Reports to approve belongs to the Ministry Admin and the master admin: they approve a design workshop's report, send it back or withdraw an approval, and hand it on to the office. Assistant and Regional Directors read the workshops they are named on in Workshops I monitor, and inspectors file their corrections in Workshops to inspect.";
+  "Only the Ministry Admin and the master admin approve reports.";
 
 export const ROUTE_GUARDS: RouteGuard[] = [
   {
@@ -542,14 +540,14 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_professor",
     title: "Professor access required",
     message:
-      "Managing users starts at Professor: every role from there can change roles, Ministry Admins and admins also create accounts and reset passwords, and only admins grant capabilities or delete accounts."
+      "Needs Professor access or above."
   },
   {
     path: "/admin",
     can: isAdmin,
     gate: "require_admin",
     title: "Admin access required",
-    message: "The settings hub is available to admins and the master admin only."
+    message: "Admins only."
   },
   {
     /*
@@ -571,7 +569,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_admin",
     title: "Admin access required",
     message:
-      "Comparing adoption, costs and outcomes across workshops draws on fieldwork from clusters and designers beyond your own, so it is available to admins and the master admin. Your own workshops, with the same stage 22 follow-up records, are on Design workshops."
+      "Admins only. Your own workshops are on Design workshops."
   },
   {
     // Nested under /admin, which already refuses everyone below admin — so this rule changes no
@@ -585,7 +583,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_designer_roster_manager",
     title: "Admin access required",
     message:
-      "The designer roster decides who may sign in as a designer. Admins and the master admin add, suspend and restore designers there."
+      "Admins only."
   },
   {
     // The PLATFORM allow-list, and the queue of people waiting to be let in. Nested under /admin
@@ -602,7 +600,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_access_manager",
     title: "Admin access required",
     message:
-      "Who may sign in, and the queue of people waiting for a decision, are managed by admins and the master admin."
+      "Admins only."
   },
   {
     /*
@@ -664,7 +662,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     ministry: true,
     title: "Ministry administrator access required",
     message:
-      "The annual plan of workshops — the ministry's directory of what is to be held this year, and where — is uploaded and corrected by the ministry administrator and above, and a Regional Director corrects the rows of the states assigned to them. Workshops that have already been opened are on Design workshops."
+      "For the Ministry Admin and above, and Regional Directors for their states."
   },
   {
     // The page now holds two things with two different owners, so the ROUTE is admin and the halves
@@ -677,7 +675,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_admin",
     title: "Admin access required",
     message:
-      "Provider keys and the transcription provider order are managed by admins and the master admin. Reading or replacing a key value is the master admin's alone."
+      "Admins only. Key values are master admin only."
   },
   {
     // Usage aggregates navigation across every account on the platform — which screens, how often,
@@ -694,7 +692,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_usage_reader",
     title: "Admin access required",
     message:
-      "Usage is an aggregate view across every account's navigation on the platform, so it is available to admins and the master admin."
+      "Admins only."
   },
   {
     // Batch task assignment (POST /tasks/batch, /tasks/batches, /tasks/progress) is admin-only;
@@ -704,7 +702,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_admin",
     title: "Admin access required",
     message:
-      "Assigning documentation tasks and tracking their progress is available to admins and the master admin. Your own assigned tasks are on the Tasks page."
+      "Admins only. Your own tasks are on Tasks."
   },
   {
     path: "/review",
@@ -712,7 +710,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_reviewer",
     title: "Review access required",
     message:
-      "The review queue is available to Field Contributors and above, and to anyone granted review access."
+      "Needs Field Contributor access or above, or review access."
   },
   {
     path: "/data",
@@ -720,7 +718,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_dataset_downloader",
     title: "Dataset access required",
     message:
-      "Browsing and downloading the full dataset is available to professors and above, or to anyone granted dataset-download access. Use Browse records to search the records instead."
+      "Needs Professor access or dataset access. Use Browse records instead."
   },
   {
     // Hiding the nav entry was never enough: the link disappeared and the URL stayed open, so
@@ -758,7 +756,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_admin (GET /design-workshops/{id}/provenance)",
     title: "Admin access required",
     message:
-      "Field-by-field provenance across the shared records reports one account's data beside another's, so it is an admin view. The per-field authorship on each stage is unaffected and stays open to every designer on the workshop."
+      "Admins only. Each stage still shows who filled in each field."
   },
   {
     /*
@@ -789,7 +787,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "can_run_design_workshops (load_ratable_workshop_or_404)",
     title: "Designer access required",
     message:
-      "A review round ranks named designers' sketches and prototypes against each other and records who said what, so it is read and rated by designers, the Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin."
+      "For designers, ministry officers and admins."
   },
   {
     /*
@@ -844,7 +842,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "can_run_design_workshops (load_workshop_or_404 once a workshop is chosen; the picker's list is get_current_user + visible_to_clause)",
     title: "Designer access required",
     message:
-      "Sketches and prototypes are a named designer's work in progress, uploaded to a workshop and then ranked against other designers' pieces under the name of whoever ranked them, so this page is opened by designers, the Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin."
+      "For designers, ministry officers and admins."
   },
   {
     /*
@@ -883,7 +881,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "assert_inspection_surface (INSPECTION_HOLDER_ROLES, services/design_workshop_inspectors.py)",
     title: "Inspector / Reviewer access required",
     message:
-      "Workshops to inspect lists the design & prototype workshops this account has been appointed to inspect, so it opens for whoever may be appointed: the Inspector / Reviewer role, a Ministry Admin, an admin and the master admin. Designers read design & prototype workshops on Design workshops instead; who inspects a workshop is chosen on Workshop oversight."
+      "For Inspector / Reviewers, Ministry Admins and admins."
   },
   {
     /*
@@ -912,7 +910,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     ministry: true,
     title: "Ministry Admin access required",
     message:
-      "Naming the designer, the Assistant Director and the Regional Director on a design & prototype workshop — and uploading that workshop's artisan list — is done by a Ministry Admin, an admin or the master admin. An Assistant Director or Regional Director reads the workshops they have been assigned on Workshops I monitor."
+      "For Ministry Admins and admins. Directors see theirs on Workshops I monitor."
   },
   {
     /*
@@ -938,7 +936,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     ministry: true,
     title: "Officer access required",
     message:
-      "Workshops I monitor lists the design & prototype workshops this account has been named on as Assistant Director or Regional Director, so it opens for whoever may be named: the Assistant Director and Regional Director posts, a Ministry Admin, an admin and the master admin. Designers read design & prototype workshops on Design workshops instead; who monitors a workshop is chosen on Workshop oversight."
+      "For Assistant and Regional Directors, Ministry Admins and admins."
   },
   {
     /*
@@ -1002,7 +1000,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "can_run_design_workshops",
     title: "Designer access required",
     message:
-      "A design & prototype workshop is a fortnight of a named designer's work that ends in a report submitted under their name, so it is run by designers, the Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin."
+      "For designers, ministry officers and admins."
   },
   {
     /*
@@ -1026,7 +1024,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "can_run_design_workshops (_require_designer)",
     title: "Designer access required",
     message:
-      "A custom questionnaire is a research instrument a designer builds for their own workshop, so building one and recording answers against it belongs to designers, the Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin. The shared artisan questionnaire is on Take interview, and it is open to everyone."
+      "For designers, ministry officers and admins. The shared questionnaire is on Take interview."
   },
   {
     // Gated with the workshops rather than left open, and the ENDPOINT was tightened to match in
@@ -1038,7 +1036,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_designer",
     title: "Designer access required",
     message:
-      "A designer profile is the name, institution and biography a workshop report is submitted under. It belongs to designers, the Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin."
+      "For designers, ministry officers and admins."
   },
   { path: "/artisans/new", ...RECORD_CREATOR_GUARD },
   { path: "/products/new", ...RECORD_CREATOR_GUARD },
@@ -1351,10 +1349,8 @@ export function canExportDesignWorkshopData(user: User | null | undefined) {
  * works the moment an admin has opened the workshop. A greyed-out button says even less than that.
  */
 export const DESIGN_WORKSHOP_CREATE_REFUSAL =
-  "Only admins and the master admin can start a new design & prototype workshop. Ask an admin to " +
-  "create it for your cluster and give you access — you can then fill in all 22 stages, add " +
-  "artisans, products and photographs, and generate the report exactly as before. Any workshop " +
-  "you already have access to is open to you now.";
+  "Only admins can start a workshop. Ask an admin to create it and add you — then you can fill in " +
+  "all 22 stages and the report.";
 
 /**
  * THE INSPECTOR / REVIEWER TIER — the ROLE whose whole work is inspection, which since the owner's

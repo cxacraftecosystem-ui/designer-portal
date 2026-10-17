@@ -31,6 +31,7 @@ import {
   type QForm,
   type QFormQuestion
 } from "@/lib/questionnaireForms";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 export function QuestionRow({
   questionnaireId,
@@ -166,7 +167,7 @@ export function QuestionRow({
             <span className="field-label">Help text</span>
             <input className="field-input" value={helpText} onChange={(event) => setHelpText(event.target.value)} />
           </label>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="button" className="field-button" onClick={save} disabled={busy || !prompt.trim()}>
               {busy ? "Saving…" : question.hasAnswers && prompt.trim() !== question.prompt ? "Save as a new question" : "Save"}
             </button>
@@ -182,7 +183,7 @@ export function QuestionRow({
             >
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : (
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -200,7 +201,7 @@ export function QuestionRow({
             ) : null}
           </div>
           {mayEdit ? (
-            <div className="flex flex-wrap justify-end gap-2">
+            <ActionGroup align="end">
               <button type="button" className={rowAction("edit")} onClick={() => setEditing(true)} disabled={busy}>
                 Update
               </button>
@@ -212,7 +213,7 @@ export function QuestionRow({
                 does to the URL. Offering "Delete" on a question the server will retire instead is
                 the single most misleading control this screen could carry.
               */}
-              <button type="button" className={rowAction("danger")} onClick={remove} disabled={busy}>
+              <button type="button" data-danger className={rowAction("danger")} onClick={remove} disabled={busy}>
                 {question.hasAnswers ? (
                   <>
                     <Lock className="h-3 w-3" aria-hidden />
@@ -222,7 +223,7 @@ export function QuestionRow({
                   "Delete"
                 )}
               </button>
-            </div>
+            </ActionGroup>
           ) : null}
         </div>
       )}

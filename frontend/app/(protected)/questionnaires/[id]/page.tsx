@@ -81,6 +81,7 @@ import {
   type QFormKind,
   type QFormUploadReport
 } from "@/lib/questionnaireForms";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * "The read has not answered, or it failed", as ONE stable array.
@@ -359,14 +360,14 @@ export default function QuestionnaireDetailPage() {
     // back on the next load with no error anywhere.
     const next = await run(
       () => patchQuestionnaire(id, { designWorkshopId: designWorkshopId || null }),
-      "Unable to change the workshop this questionnaire is attached to"
+      "Couldn't change the workshop"
     );
     if (next) {
       setForm(next);
       setNotice(
         designWorkshopId
           ? "Attached to the design workshop."
-          : "Detached from its design workshop. The questionnaire and every answer recorded against it are untouched."
+          : "Detached. Answers are kept."
       );
     }
   }
@@ -393,8 +394,8 @@ export default function QuestionnaireDetailPage() {
       setForm(next);
       setNotice(
         kind
-          ? `Filed as ${questionnaireKindLabel(kind)}. The report puts its answers under that stage.`
-          : "Kind cleared. The report leaves its answers unfiled until a kind is chosen."
+          ? `Filed as ${questionnaireKindLabel(kind)}.`
+          : "Kind cleared."
       );
     }
   }
@@ -434,11 +435,11 @@ export default function QuestionnaireDetailPage() {
     const ok = await confirm(
       deleteConfirm(
         "Take this questionnaire out of use?",
-        `"${form.title}" disappears from every list and every dropdown, and no new answers can be recorded against it.`,
+        `"${form.title}" is hidden and takes no new answers.`,
         // Said plainly because it is the whole reason there is no delete here: the answers are
         // somebody's fieldwork, and a designer who reads "delete" will hesitate over something that
         // destroys nothing.
-        "Nothing is erased. Every answer already recorded stays in the record and the questionnaire can be brought back."
+        "Answers are kept. You can bring it back."
       )
     );
     if (!ok) return;
@@ -498,7 +499,7 @@ export default function QuestionnaireDetailPage() {
         title={form.title}
         description={
           form.description ??
-          "Sections and questions, editable here. Questions that already have answers keep their wording — the answers recorded against them say what they say."
+          "Sections and questions."
         }
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
         actions={
@@ -581,8 +582,7 @@ export default function QuestionnaireDetailPage() {
       ) : null}
       {!form.isActive ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-          This questionnaire has been taken out of use. It is hidden from the lists and no new answers can be recorded
-          against it — the answers already recorded are still here and still exportable.
+          Out of use. Existing answers are kept and exportable.
         </div>
       ) : null}
       {/*
@@ -595,9 +595,7 @@ export default function QuestionnaireDetailPage() {
       */}
       {form.isShared ? (
         <div className="mb-4 rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-sm leading-6 text-purple-900">
-          This is the <strong className="font-semibold">standard questionnaire</strong>, published by an administrator
-          for every designer. You can record answers against it exactly as you would your own; its wording belongs to
-          whoever published it.
+          The <strong className="font-semibold">standard questionnaire</strong>. You can record answers but not edit it.
         </div>
       ) : null}
       {/* The post's refusal, for an owner or admin who holds one on the attached workshop — mounted
@@ -607,7 +605,7 @@ export default function QuestionnaireDetailPage() {
           !owns
             ? null
             : typeof attachedHold === "string"
-              ? `This questionnaire is attached to a design workshop you hold a post on, so it cannot be changed here. ${attachedHold}`
+              ? `Read-only: attached to a workshop you oversee. ${attachedHold}`
               : attachedHold
         }
         sayPending
@@ -634,8 +632,8 @@ export default function QuestionnaireDetailPage() {
         <div className="mb-4 flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           <Lock className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
           <span>
-            This form belongs to another designer, so its questions cannot be changed here. You can record answers
-            against it, download the <span className="font-medium text-ink-900">question set</span>, or{" "}
+            Another designer&apos;s form. You can record answers, download the{" "}
+            <span className="font-medium text-ink-900">question set</span>, or{" "}
             <button
               type="button"
               className="font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2 hover:text-purple-800 dark:hover:text-purple-200"
@@ -656,8 +654,7 @@ export default function QuestionnaireDetailPage() {
       {reused ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           <span>
-            <span className="font-medium text-ink-900">&ldquo;{reused.title}&rdquo;</span> now carries these questions and no
-            recorded answers. This questionnaire and every sitting against it are untouched.
+            <span className="font-medium text-ink-900">&ldquo;{reused.title}&rdquo;</span> now has these questions, without answers.
           </span>
           <Link className={rowAction("edit")} href={`/questionnaires/${reused.id}`}>
             Open the copy
@@ -755,7 +752,7 @@ export default function QuestionnaireDetailPage() {
               label="Kind"
               hint={
                 <p className="mt-1 text-xs leading-5 text-ink-500">
-                  Decides which stage of the report this questionnaire&rsquo;s answers are filed under.
+                  Where the report files its answers.
                 </p>
               }
             >
@@ -781,7 +778,7 @@ export default function QuestionnaireDetailPage() {
             defaultValue={form.description ?? ""}
             explainWhenUnavailable={false}
           />
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button className="field-button" disabled={busy}>
               Save details
             </button>
@@ -820,7 +817,7 @@ export default function QuestionnaireDetailPage() {
               </button>
             ) : null}
             {form.isActive ? (
-              <button type="button" className="field-danger" onClick={deactivate} disabled={busy}>
+              <button type="button" data-danger className="field-danger" onClick={deactivate} disabled={busy}>
                 Take out of use
               </button>
             ) : (
@@ -836,7 +833,7 @@ export default function QuestionnaireDetailPage() {
                 Bring back into use
               </button>
             )}
-          </div>
+          </ActionGroup>
         </form>
       ) : null}
 
@@ -886,7 +883,7 @@ export default function QuestionnaireDetailPage() {
               title="No sections yet"
               body={
                 mayEdit
-                  ? "Add a section above, or upload a filled-in pro-forma — a questionnaire can have as many sections as it needs."
+                  ? "Add a section above, or upload a pro-forma."
                   : "This questionnaire has no sections yet."
               }
             />
@@ -914,7 +911,7 @@ export default function QuestionnaireDetailPage() {
                 )}
                 <p className="mt-1 text-xs text-ink-500">
                   Code {section.code}
-                  {!section.isActive ? " · retired, kept because answers were recorded under it" : ""}
+                  {!section.isActive ? " · retired" : ""}
                 </p>
               </div>
               {mayEdit ? (
@@ -997,8 +994,7 @@ export default function QuestionnaireDetailPage() {
           <div>
             <h2 className="font-display text-lg font-bold text-ink-900">Recorded sittings</h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              One sitting is one filled-in copy of this questionnaire. Answers that arrived on the uploaded spreadsheet and
-              answers typed in the app are treated alike; each sitting just notes where it came from.
+              Each sitting is one filled-in copy.
             </p>
           </div>
           <Link className="field-button-secondary" href={`/questionnaires/${id}/answer`}>
@@ -1007,8 +1003,7 @@ export default function QuestionnaireDetailPage() {
         </div>
         {form.entries.length === 0 ? (
           <p className="text-sm text-ink-500">
-            Nothing recorded yet. &ldquo;Record answers&rdquo; starts a sitting — it works whether or not the uploaded sheet
-            had any answers in it.
+            Nothing recorded yet. Use &ldquo;Record answers&rdquo; to start.
           </p>
         ) : (
           <ul className="grid gap-2">
@@ -1074,7 +1069,7 @@ export default function QuestionnaireDetailPage() {
           toast({
             tone: "success",
             title: "Questionnaire reused",
-            description: `"${result.questionnaire.title}" carries ${result.questionnaire.questionCount} questions and none of the answers recorded here.`
+            description: `"${result.questionnaire.title}" has ${result.questionnaire.questionCount} questions, without answers.`
           });
         }}
       />

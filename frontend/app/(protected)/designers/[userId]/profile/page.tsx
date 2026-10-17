@@ -129,8 +129,8 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
           notFound
             ? undefined
             : mayEdit
-              ? "The details every report this designer generates is signed with. Only they and admins can edit them."
-              : "The details every report this designer generates is signed with. Read only from this account."
+              ? "Their details for workshop reports."
+              : "Their details for workshop reports. Read-only."
         }
         icon={<IdCard className="h-5 w-5" aria-hidden />}
         actions={
@@ -150,7 +150,7 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
         <RestrictedPanel
           title="No profile to show"
           body={
-            "This profile does not exist, or you do not have access to it. If a colleague sent you this link, ask an admin to open it."
+            "Profile not found, or you don't have access."
           }
         />
       ) : profile === null ? (
@@ -190,8 +190,7 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
                   `DocumentPreview` — which carries its own "No CV on file." — before the blank test
                   the other twenty fall through. This clause said "twenty-one" for a few minutes on
                   2026-08-26, renumbered by a sweep that was right about every other sentence. */}
-              {displayName} has not filled in a designer profile yet. Until they do, a workshop they start is created with
-              nothing but the name on their account.
+              {displayName} hasn&rsquo;t filled in a profile yet.
             </section>
           ) : (
             <DesignerProfileView profile={profile} />

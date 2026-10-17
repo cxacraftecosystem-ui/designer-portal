@@ -56,6 +56,7 @@ import { AlertTriangle, CheckCircle2, HelpCircle, Plus, X } from "lucide-react";
 
 import { Field, TextInput } from "@/components/FormControls";
 import { formatSanctionAmount, type SanctionImportPreview, type SanctionImportRow } from "@/lib/sanctionOrders";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** One designer as the officer has resolved them. Name and address, because that is all an order needs. */
 type Pair = { name: string; email: string };
@@ -211,7 +212,7 @@ export function SanctionImportReview({
             decision · {preview.refused.length} cannot be recorded
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <ActionGroup className="shrink-0">
           <button type="button" className="field-button-secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
@@ -220,7 +221,7 @@ export function SanctionImportReview({
               ? "Recording…"
               : `Record ${willRecord} order${willRecord === 1 ? "" : "s"}`}
           </button>
-        </div>
+        </ActionGroup>
       </div>
 
       {outstanding > 0 ? (

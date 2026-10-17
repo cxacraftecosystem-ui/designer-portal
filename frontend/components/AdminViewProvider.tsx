@@ -154,7 +154,7 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
   {
     path: "/admin",
     label: "The settings hub",
-    blurb: "It gathers reviews, recovered recordings, feedback, tool assignment and user management in one place."
+    blurb: "Admin tools."
   },
   {
     // Nested under /admin and therefore already chrome — listed, like the roster below, so the
@@ -162,7 +162,7 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     path: "/admin/analytics",
     label: "Cross-workshop analytics",
     blurb:
-      "Adoption, survival, cost-to-price and the design opportunities that recur, compared across every workshop in the archive.",
+      "Outcomes compared across workshops.",
     // No `alternative`. The nearest ordinary-user page is /design-workshops, and sending somebody
     // there would imply it answers a smaller version of this question — it does not. It lists the
     // workshops an account may open, one at a time, which is the thing this page exists because
@@ -176,7 +176,7 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     // when they typed this URL; the longest matching rule wins, so this one answers instead.
     path: "/admin/designers",
     label: "The designer roster",
-    blurb: "Who the institution recognises as a designer, and therefore who may sign in as one at all.",
+    blurb: "Designers who may sign in.",
     // No `alternative`: there is no ordinary-user half of this page. A designer's own standing is
     // not something they can look up, by design, so offering them a substitute route would be
     // offering them a page that does not exist.
@@ -189,7 +189,7 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     path: "/admin/access",
     label: "Who may sign in",
     blurb:
-      "The list of every address allowed into this application, and the queue of people waiting for an administrator to approve them.",
+      "Who may sign in, and who is waiting.",
     // No `alternative`. There is no ordinary-user half of this page and there must not be: it is a
     // list of named people who tried to get in, and the person who most wants to read it is the one
     // whose own request is in it. Somebody waiting is told they are waiting, on the sign-in screen,
@@ -212,7 +212,7 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     path: "/workshop-access/manage",
     label: "Workshop access administration",
     blurb:
-      "The cross-workshop request queue, each workshop's roster and access levels, and which designers may see a design & prototype workshop.",
+      "Requests, rosters and access levels.",
     // /workshop-access itself is NOT chrome: it belongs to every account, and an admin with the
     // toggle off is sent to the request page there exactly as an ordinary user is. Only the console
     // is chrome, so this is the one path listed.
@@ -221,7 +221,7 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
   {
     path: "/settings/tasks",
     label: "The task assignment board",
-    blurb: "Handing documentation work to the people below you, then holding it to account.",
+    blurb: "Assign and track documentation work.",
     alternative: { href: "/tasks", label: "Go to my tasks" }
   },
   {
@@ -232,7 +232,7 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     // no person at all — the two are deliberately distinct rows here for the reader comparing them.
     path: "/settings/usage",
     label: "Usage",
-    blurb: "Which screens are reached, how often, how fast, and how often broken — aggregated across every account.",
+    blurb: "Screen usage, speed and errors.",
     // No `alternative`: an account's own trail (`GET /usage/me`) has no UI yet, so there is nothing
     // ordinary-user to send a refused visitor to.
     alternative: undefined

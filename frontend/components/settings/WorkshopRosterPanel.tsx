@@ -34,6 +34,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * One workshop's roster: everybody with a row on it, at what level, in what state.
@@ -395,7 +396,7 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
                     <RowActions>
                       {row.status === "GRANTED" ? (
                         <button
-                          className={rowAction("danger")}
+                          data-danger className={rowAction("danger")}
                           disabled={busy === row.id}
                           onClick={() => setConfirmRevoke(row.id)}
                           type="button"
@@ -413,19 +414,19 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
                         <p className="text-xs text-ink-700">
                           Revoke {personName(row.user)}? They lose access to this workshop; the entry is kept as a record.
                         </p>
-                        <div className="mt-2 flex justify-end gap-2">
+                        <ActionGroup align="end" className="mt-2">
                           <button className={rowAction("neutral")} onClick={() => setConfirmRevoke(null)} type="button">
                             Cancel
                           </button>
                           <button
-                            className={rowAction("danger")}
+                            data-danger className={rowAction("danger")}
                             disabled={busy === row.id}
                             onClick={() => revoke(row)}
                             type="button"
                           >
                             {busy === row.id ? "Revoking…" : "Revoke"}
                           </button>
-                        </div>
+                        </ActionGroup>
                       </div>
                     ) : null}
                   </td>

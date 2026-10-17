@@ -251,7 +251,7 @@ export default function ArtisansPage() {
                           Discuss
                         </button>
                         {adminMode ? (
-                          <button className={rowAction("danger")} onClick={() => remove(artisan.id)}>
+                          <button data-danger className={rowAction("danger")} onClick={() => remove(artisan.id)}>
                             Delete
                           </button>
                         ) : null}

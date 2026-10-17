@@ -38,6 +38,7 @@ import {
   type TwoFactorSetup,
   type TwoFactorStatus
 } from "@/lib/twoFactor";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** Which part of the conversation is on screen. */
 type Step =
@@ -248,7 +249,7 @@ export function TwoStepVerificationCard() {
                 You are running out of recovery codes. Make new ones so you can still get in without your phone.
               </p>
             ) : null}
-            <div className="flex flex-wrap gap-2">
+            <ActionGroup>
               <button
                 type="button"
                 className="field-button-secondary"
@@ -256,10 +257,10 @@ export function TwoStepVerificationCard() {
               >
                 Make new recovery codes
               </button>
-              <button type="button" className="field-danger rounded-md px-4 py-2 text-sm font-medium" onClick={() => go({ kind: "confirm", action: "disable" })}>
+              <button type="button" data-danger className="field-danger rounded-md px-4 py-2 text-sm font-medium" onClick={() => go({ kind: "confirm", action: "disable" })}>
                 Turn off
               </button>
-            </div>
+            </ActionGroup>
           </div>
         ) : (
           <div className="mt-3">
@@ -307,14 +308,14 @@ export function TwoStepVerificationCard() {
             </li>
           </ol>
           {codeField("6-digit code", "Codes change every 30 seconds. Type the one on screen now.", false)}
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="submit" className="field-button" disabled={busy || !code.trim()}>
               {busy ? "Checking…" : "Turn on"}
             </button>
             <button type="button" className="field-button-secondary" onClick={() => go({ kind: "status" })}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </form>
       ) : step.kind === "codes" ? (
         <div className="mt-3 grid gap-3">
@@ -330,7 +331,7 @@ export function TwoStepVerificationCard() {
               <li key={recovery}>{recovery}</li>
             ))}
           </ul>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button
               type="button"
               className="field-button-secondary"
@@ -353,7 +354,7 @@ export function TwoStepVerificationCard() {
             >
               I&rsquo;ve saved them
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : (
         <form onSubmit={submitCode} className="mt-3 grid gap-3">
@@ -364,7 +365,7 @@ export function TwoStepVerificationCard() {
                 true
               )
             : codeField("6-digit code", "Enter the code from your authenticator app. Your old recovery codes will stop working.", false)}
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button
               type="submit"
               className={step.action === "disable" ? "field-danger rounded-md px-4 py-2 text-sm font-medium" : "field-button"}
@@ -375,7 +376,7 @@ export function TwoStepVerificationCard() {
             <button type="button" className="field-button-secondary" onClick={() => go({ kind: "status" })}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </form>
       )}
     </section>

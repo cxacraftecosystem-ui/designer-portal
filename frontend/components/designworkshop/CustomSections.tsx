@@ -75,8 +75,8 @@ function RetiredAnswer({ label, answer, replaced }: { label: string; answer: str
           <p className="mt-1 wrap-break-word text-sm text-ink-900">{answer}</p>
           <p className="mt-1 text-xs leading-5 text-ink-500">
             {replaced
-              ? "This question was reworded. Its original wording and the answer given under it are kept — an answer means what it meant when it was given."
-              : "No longer asked. The answer recorded against it stays in the record and prints in the report."}
+              ? "Reworded — the original wording and answer are kept."
+              : "No longer asked. The answer is kept and still prints."}
           </p>
         </div>
       </div>
@@ -183,9 +183,7 @@ export function CustomSectionsForm({
           {/* Colour never carries this on its own — the icon is decorative and the sentence says it. */}
           <HelpCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <p className="text-xs leading-5">
-            This workshop&apos;s own questions haven&apos;t been loaded on this device yet, so none are shown below.
-            Open this stage once with a connection and they are kept here for every later visit, including offline
-            ones. Anything you fill in on the rest of this form is unaffected.
+            Open this stage once online to load this workshop&apos;s own questions.
           </p>
         </div>
       </section>
@@ -219,9 +217,7 @@ export function CustomSectionsForm({
 
       {stale ? (
         <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          This workshop&apos;s own questions have changed since they were last loaded on this device, so what is
-          shown here may be out of date. Reload this stage with a connection to get the current questions.
-          Answers already recorded are not affected.
+          Questions have changed — reload online to update them.
         </div>
       ) : null}
 
@@ -230,8 +226,7 @@ export function CustomSectionsForm({
         // looking at is not a detail, and saying so is the difference between "this stage does not ask
         // for that" and "this browser has not been told about it".
         <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">
-          Couldn&apos;t connect, so the questions below are the copy saved on this device the last time it was
-          online.
+          Offline — showing saved questions.
         </div>
       ) : null}
 
@@ -275,9 +270,7 @@ export function CustomSectionsForm({
                   {section.retired ? "No longer asked" : "No longer asked in this section"}
                 </h3>
                 <p className="mt-1 text-xs leading-5 text-ink-500">
-                  {retiredHere.length === 1 ? "This question is" : "These questions are"} not asked any more.
-                  What was recorded against {retiredHere.length === 1 ? "it" : "them"} is kept, counts towards
-                  nothing, and prints in the report under the wording it was asked as.
+                  No longer asked. Answers are kept and still print.
                 </p>
                 <ul className="mt-3 grid gap-2">
                   {retiredHere.map((field) => (

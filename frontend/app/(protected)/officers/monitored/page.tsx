@@ -54,6 +54,7 @@ import {
   oversightEmptyState,
   oversightRefusalMeansNoPosts
 } from "../oversight";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 20;
 
@@ -149,14 +150,14 @@ export default function WorkshopsIMonitorPage() {
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
           </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <ActionGroup className="mt-7">
             <Link href="/dashboard" className="field-button">
               Back to dashboard
             </Link>
             <Link href="/design-workshops" className="field-button-secondary">
               Design workshops
             </Link>
-          </div>
+          </ActionGroup>
         </section>
       </div>
     );

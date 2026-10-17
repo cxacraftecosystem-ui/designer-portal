@@ -196,7 +196,7 @@ const TILE_GROUPS = [
   {
     id: "designers" as const,
     title: "For designers",
-    note: "Running a design & prototype workshop, and the two halves of it reached without one in hand.",
+    note: "Design & prototype workshops, sketches and reviews.",
     // Purple, because this group is what the app is FOR. Every other group is a supporting cast and
     // wears a hue that is deliberately not the product's own.
     tone: "purple" as MegaTone,
@@ -205,21 +205,21 @@ const TILE_GROUPS = [
   {
     id: "records" as const,
     title: "Records",
-    note: "The repository a workshop draws on — the people, the things they make, and how they make them.",
+    note: "Artisans, products, processes and tools.",
     tone: "archive" as MegaTone,
     icon: Boxes
   },
   {
     id: "misc" as const,
     title: "Miscellaneous",
-    note: "Reading what is already recorded, and the errands around it.",
+    note: "Browse, map, scan and share.",
     tone: "errand" as MegaTone,
     icon: Layers
   },
   {
     id: "admin" as const,
     title: "Admin",
-    note: "Who may do what, and how the app is set up.",
+    note: "Users, access and settings.",
     tone: "steward" as MegaTone,
     icon: Settings
   }
@@ -849,8 +849,7 @@ function DashboardView() {
                        a permanent empty slot in a two-column grid for a branch that has never fired.
                        If it ever DOES fire, the tiles it is reporting are in this same card. */
                     <p className="mt-3 text-xs leading-5 text-ink-500">
-                      {visible.length - seen.size} of your entries could not be shown under a heading.
-                      Every one of them is still in the navigation menu.
+                      {visible.length - seen.size} more are in the menu.
                     </p>
                   ) : null}
                 </MegaCard>
@@ -864,13 +863,11 @@ function DashboardView() {
           tier comes from, rather than leaving a volunteer to assume the app is broken. */}
       {!creator ? (
         <p className="mt-4 rounded-md border border-line-200 bg-surface-50 px-4 py-3 text-sm leading-6 text-ink-500">
-          You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>. That covers
-          answering existing interviews, uploading media and commenting — find an entry through{" "}
+          You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>. You can answer interviews, upload media and comment — find entries in{" "}
           <Link href="/search" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
             Browse records
-          </Link>{" "}
-          and add to it. Opening a new artisan, product, process or tool needs Researcher access — ask an admin to
-          change your role.{" "}
+          </Link>
+          . Creating records needs Researcher access.{" "}
           <Link href="/guide" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
             Open the walkthrough
           </Link>

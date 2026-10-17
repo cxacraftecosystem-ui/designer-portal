@@ -157,9 +157,9 @@ export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>
   // by the GET itself, so a great many hold no name at all), but a required box whose help text
   // offers leaving it blank as an option is copy arguing with the control above it, and the reader
   // believes the copy.
-  displayName: "Printed as “Designer” on the cover of every report you generate.",
-  localName: "Printed verbatim, in whatever script you type it in.",
-  institution: "Printed as “Designer’s institution” on the report cover.",
+  displayName: "Printed as “Designer” on report covers.",
+  localName: "Printed as typed.",
+  institution: "Printed on report covers.",
   // ONE SENTENCE FOR THE PAIR, because it is one control with two boxes — `experienceMonths` is
   // deliberately given no help line of its own, or the panel would carry two paragraphs about one
   // answer. The last clause is the honest half and must not be dropped: the months are stored and
@@ -167,8 +167,8 @@ export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>
   // registry field yet (see this file's header). Promising a report line the document will not
   // contain is the mistake `cvMediaId` and `signatureMediaId` below each had to have corrected.
   experienceYears:
-    "Years 0 to 70 and months 0 to 11, chosen separately — leave a box on “Not recorded” rather than answering 0, which means something different. Reports print the years; the months are kept on your profile.",
-  biography: "The paragraph that appears as “Designer’s profile” in stage 3 of every report.",
+    "Leave “Not recorded” rather than 0. Reports print the years.",
+  biography: "Printed as “Designer’s profile” in reports.",
   // ── ADDED 2026-08-30, WITH THE EDITOR, AND EVERY CLAUSE OF IT IS CHECKED CODE ──────────────────
   //
   // §17 ("claims about the report — copy written from copy") is the reason this sentence is short
@@ -184,8 +184,8 @@ export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>
   // The handset says the same thing from the other side — that editing a formatted address there
   // replaces it — so the two clients describe one behaviour rather than each describing its half.
   addressLine:
-    "Printed on the report cover as plain text, on one line. Formatting and line breaks are kept on your profile and are not carried into the document.",
-  pincode: "Six digits. Optional, and never guessed for you.",
+    "Printed on one line on report covers.",
+  pincode: "Six digits. Optional.",
   photoMediaId: "One photograph. Attaching another replaces it.",
   // ⚠ "for the report's signature block" WAS FALSE, and it is the second false promise this one
   // sentence pair carried. `report_model.SignatureBlock` holds `signatories: tuple[tuple[str, str]]`
@@ -195,7 +195,7 @@ export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>
   // photographs under its own heading. The registry's own help says exactly that; this now agrees
   // with it instead of promising a block the model cannot express.
   signatureMediaId:
-    "One image of your signature. It prints with the report’s photographs, under its own heading. Attaching another replaces it.",
+    "One image. Prints with the report’s photographs.",
   cvMediaId:
   // ⚠ THIS SENTENCE ENDED "It reaches your reports as an annexure." AND THAT WAS FALSE.
   //
@@ -210,8 +210,8 @@ export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>
   // Three surfaces carried this same promise: here, the registry's `designerCv` help, and the
   // Android profile screen. All three now say the true thing, which is also the more useful thing:
   // it tells the designer to send the file alongside the report.
-  "One document — PDF, .docx or .odt. A PDF is shown on this page as soon as it uploads; other formats can be downloaded. Reports name the CV without including it, so send the file with the report.",
-  empanelmentDate: "The date on the empanelment order, if the order carries one."
+  "PDF, .docx or .odt. Reports name it but don’t include it — send it with the report.",
+  empanelmentDate: "As on the empanelment order."
 };
 
 /**
@@ -264,7 +264,7 @@ export const DESIGNER_PROFILE_GROUPS: DesignerProfileGroup[] = [
   {
     key: "biography",
     title: "Designer’s profile",
-    blurb: "The paragraph a report prints about the designer who ran the workshop.",
+    blurb: "Printed in reports about you.",
     fields: ["biography"]
   },
   { key: "contact", title: "Contact", fields: ["phone", "email", "website"] },
@@ -278,7 +278,7 @@ export const DESIGNER_PROFILE_GROUPS: DesignerProfileGroup[] = [
   {
     key: "empanelment",
     title: "Empanelment",
-    blurb: "The identifiers a government report is expected to carry. These are separate from the designer roster entry that lets you sign in.",
+    blurb: "Identifiers for government reports.",
     fields: ["empanelmentNo", "empanelmentDate"]
   },
   // THE CV JOINS THE IMAGES GROUP RATHER THAN GETTING ONE OF ITS OWN, and the group is retitled to
@@ -299,6 +299,4 @@ export const DESIGNER_PROFILE_GROUPS: DesignerProfileGroup[] = [
  * ticket: editing the profile does not touch a workshop that already exists.
  */
 export const DESIGNER_PROFILE_COPY_NOTICE =
-  "These details are copied into a design workshop’s stages when the workshop is created. Changes here apply to " +
-  "workshops you start from now on; a workshop already under way keeps the details it started with. To change those, " +
-  "edit the stage itself.";
+  "Copied into new workshops. Existing workshops keep their details — edit those on the stage.";

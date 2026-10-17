@@ -123,7 +123,7 @@ const EVERYWHERE_GROUP = "Every other place a photograph can go";
 function destinationOptions(destinations: Destination[], proposed: Destination[]): DropdownOption[] {
   const proposedKeys = new Set(proposed.map((destination) => destination.key));
   return [
-    { value: "", label: "Leave out — I will attach this one myself" },
+    { value: "", label: "Leave out" },
     ...proposed.map((destination) => ({
       value: destination.key,
       label: destination.label,
@@ -189,7 +189,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
           // device. Saying which of the two it is, is the whole difference between "empty" and
           // "unread" that the stage index already draws.
           setLoadError(
-            "This workshop has not been downloaded to this device yet. Open its stages once with a connection, then come back — the dates it records are what these photographs are matched against."
+            "Not on this device yet. Open its stages once online, then come back."
           );
         }
       } catch {
@@ -540,7 +540,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
       if (attached) {
         setNotice(
           `${attached} photograph${attached === 1 ? "" : "s"} attached on this device across ${touched.size} stage${touched.size === 1 ? "" : "s"}. ` +
-            "They'll upload when this laptop is next online, and the copy here is kept until each one has uploaded."
+            "They upload when you're online."
         );
       }
       /*
@@ -565,7 +565,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
       const complaints: string[] = [];
       if (missed.length) {
         complaints.push(
-          `${missed.length} could not be placed because the entry they were headed for is no longer in this workshop: ${missed.join(", ")}. Pick them again and choose another destination.`
+          `${missed.length} not placed — their entry is gone: ${missed.join(", ")}. Choose another destination.`
         );
       }
       if (full.length) {
@@ -584,13 +584,13 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
         complaints.push(
           `${full.length} ${one ? "was" : "were"} not attached because the field ${one ? "it was" : "they were"} headed for ${because}: ` +
             `${full.map((entry) => `${entry.file} (${entry.label})`).join(", ")}. ` +
-            `Remove something already attached there, or choose another destination, then confirm ${one ? "it" : "them"} again — ${one ? "it is" : "they are"} still in the list below.`
+            `Free space there or choose another destination, then confirm again.`
         );
       }
       if (complaints.length) setProblem(complaints.join(" "));
     } catch {
       setProblem(
-        "Nothing could be written to this device's storage. If the browser is in private mode or its storage is full, the photographs cannot be kept here — free some space and try again."
+        "Couldn't save to this device. Leave private mode or free some space."
       );
     } finally {
       setConfirming(false);
@@ -606,7 +606,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
     <>
       <PageHeader
         title="Bulk photo import"
-        description="Match a camera dump against the dates this workshop already records, then confirm where each photograph belongs."
+        description="Sort camera photos into stages by date."
         icon={<Images className="h-5 w-5" aria-hidden />}
         actions={
           <Link href={`/design-workshops/${id}`} className="field-button-secondary">
@@ -636,21 +636,16 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
       <div className="panel mb-5 p-4">
         <h2 className="font-display text-base font-semibold text-ink-900">How the dates are read</h2>
         <p className="mt-2 text-sm leading-6 text-ink-700">
-          Each photograph&rsquo;s capture time is read from the file itself and taken to be{" "}
-          <strong>{timeZone}</strong> — the clock the camera was set to. Nothing in the file is changed, and no
-          photograph is attached until you press Confirm.
+          Capture times are read as <strong>{timeZone}</strong>. Nothing is attached until you confirm.
         </p>
         <p className="mt-2 text-sm leading-6 text-ink-muted">
           {datedAnchors > 0 ? (
             <>
-              This workshop records {datedAnchors} dated {datedAnchors === 1 ? "entry" : "entries"} to match against —
-              its start and end dates, its schedule days, its daily prototype logs and its closing. The more of those
-              that are filled in, the more precise each proposal is.
+              Matching against {datedAnchors} dated {datedAnchors === 1 ? "entry" : "entries"}.
             </>
           ) : (
             <>
-              This workshop has no dates recorded yet, so nothing can be proposed. Fill in the start and end dates on
-              stage 1 — and the daily logs on stage 13 — and these photographs will place themselves.
+              No dates yet. Fill in dates on stage 1 and daily logs on stage 13.
             </>
           )}
         </p>
@@ -672,7 +667,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
           className="mt-2 block w-full text-sm text-ink-700 file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-purple-700 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-purple-800"
         />
         <p className="mt-2 text-xs leading-5 text-ink-500">
-          Nothing is uploaded by choosing files. They are read on this device, and stay on it until you confirm.
+          Nothing uploads until you confirm.
         </p>
         {reading ? (
           <p role="status" className="mt-3 text-sm text-ink-700">
@@ -822,7 +817,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
                         ) : line.row.refusal ? (
                           <span className="text-amber-800">{line.row.refusal}</span>
                         ) : line.choice ? (
-                          <span>Chosen by hand — no capture date was used.</span>
+                          <span>Chosen by hand.</span>
                         ) : (
                           <span>{line.row.proposals[0]?.evidence ?? "Nothing proposed."}</span>
                         )}

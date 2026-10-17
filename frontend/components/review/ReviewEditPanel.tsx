@@ -21,6 +21,7 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { INTERVIEW_LANGUAGE_PLACEHOLDER, interviewLanguageOptions } from "@/lib/interviewLanguages";
 import { readableError } from "@/components/review/reviewErrors";
 import { RequiredMark } from "@/components/ui/RequiredMark";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * Fix a pending record's field values from inside the review queue, instead of bouncing it back to
@@ -277,7 +278,7 @@ export function ReviewEditPanel({
             />
           </label>
           {feedback}
-          <div className="flex flex-wrap items-center gap-2">
+          <ActionGroup>
             {/* Both Saves are held for a post holder, and name the reason while it is on screen. */}
             <button
               type="button"
@@ -304,7 +305,7 @@ export function ReviewEditPanel({
             <button type="button" className="field-button-secondary h-9 min-h-0 px-3 text-xs" disabled={busy} onClick={onClose}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </>
       )}
     </div>

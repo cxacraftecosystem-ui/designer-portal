@@ -38,17 +38,17 @@ import { formatWorkshopCodeForPrint } from "@/lib/workshopCodes";
 
 /** What the card says about itself — the handset's `designWorkshopJoinCardPurposeMessage`, verbatim. */
 export const JOIN_CARD_PURPOSE =
-  "This card lets ONE person onto this workshop, straight away and with no administrator involved. Treat it like a key: hand it to the person it is for, do not photograph it or send it in a message, and do not leave it where it can be copied. Once somebody has used it, it will not let anybody else in, and it stops working after a few weeks.";
+  "Lets one person join this workshop. Treat it like a key — don't photograph or forward it. It expires after use or in a few weeks.";
 
 /** The same purpose, for an admin's card good for several people. */
 function purposeFor(card: JoinCard): string {
   if (card.maxUses === 1) return JOIN_CARD_PURPOSE;
   const who = card.maxUses === null ? "any number of people" : `up to ${card.maxUses} people`;
-  return `This card lets ${who} onto this workshop, straight away and with no administrator involved. Treat it like a key: hand it only to the people it is for, do not photograph it or send it in a message, and do not leave it where it can be copied. It stops working on the date it runs out.`;
+  return `Lets ${who} join this workshop. Treat it like a key — don't photograph or forward it. It expires on its date.`;
 }
 
 export const JOIN_CARD_SHOWN_ONCE =
-  "This is the only time this card will be shown. No copy of it is kept — only the last four characters, so a card in somebody's hand can be matched against the list. Print it or write it down now; if you lose it, cancel it below and print another.";
+  "Shown only once. Print or write it down now.";
 
 type CardSymbol = { path: string; extent: number; printed: string } | null;
 
@@ -203,9 +203,7 @@ export function JoinCardsPanel({
             Join cards
           </h2>
           <p className="mt-0.5 text-xs leading-5 text-ink-500">
-            A join card puts one person on this workshop the moment they scan it — no administrator, no waiting. Print one
-            for the person in front of you, hand it over, and it stops working once they have used it. They can scan it on
-            their phone, or on Scan a code here.
+            Print a card; one scan adds that person to this workshop.
           </p>
         </div>
       </div>
@@ -213,14 +211,11 @@ export function JoinCardsPanel({
       <div className="grid gap-3 border-t border-line-200 p-3">
         {notIssuer ? (
           <p className="text-sm leading-6 text-ink-700">
-            Join cards for this workshop are printed by its designers and by administrators. Ask one of them for a card if
-            somebody needs to join.
+            Ask a designer or admin to print a join card.
           </p>
         ) : !shareable ? (
           <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-            This workshop has not been shared yet, so a join card cannot be printed for it. A card is made and checked
-            against the shared workshop — it is a key rather than something this browser can invent. Connect and let the
-            workshop sync first.
+            Sync this workshop before printing a join card.
           </p>
         ) : (
           <>
@@ -232,7 +227,7 @@ export function JoinCardsPanel({
                   value={label}
                   maxLength={200}
                   onChange={(event) => setLabel(event.target.value)}
-                  placeholder="A name, so the card can be told apart in the list"
+                  placeholder="Label (optional)"
                 />
               </label>
               {admin ? (
@@ -273,8 +268,7 @@ export function JoinCardsPanel({
             </div>
             {admin ? (
               <p className="text-xs leading-5 text-ink-500">
-                As an administrator you can make one card good for several people — a sheet for a whole group. Anybody else
-                prints cards for one person at a time.
+                Admins can make one card for a group.
               </p>
             ) : null}
           </>
@@ -302,8 +296,7 @@ export function JoinCardsPanel({
               </svg>
             ) : (
               <p className="text-sm text-amber-800 dark:text-amber-100">
-                The card was made but its symbol could not be drawn. The line of characters below is the whole card and can be
-                typed in instead.
+                Couldn&apos;t draw the symbol — the characters below work instead.
               </p>
             )}
             <p className="font-mono text-sm tracking-wide text-ink-900">{symbol?.printed ?? formatWorkshopCodeForPrint(minted.code)}</p>
@@ -317,7 +310,7 @@ export function JoinCardsPanel({
                 className="field-button-secondary"
                 onClick={() => {
                   if (!printCard(minted, symbol, workshopTitle)) {
-                    setNotice("The browser blocked the print window. Allow pop-ups for this site and press Print again, or write the characters down.");
+                    setNotice("Print window blocked. Allow pop-ups and try again.");
                   }
                 }}
               >
@@ -333,8 +326,7 @@ export function JoinCardsPanel({
             <h3 className="text-xs font-medium text-ink-700">Cards printed for this workshop</h3>
             {truncated ? (
               <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-                There are more cards than this list can show, so some are not here. Cancel the ones you can see that are no
-                longer needed, and ask an administrator to review the rest.
+                Not all cards are shown. Cancel unused ones.
               </p>
             ) : null}
             <ul className="grid gap-2">

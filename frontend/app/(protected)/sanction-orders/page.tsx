@@ -105,6 +105,7 @@ import {
 import { SanctionImportReport } from "./SanctionImportReport";
 import { SanctionImportReview } from "./SanctionImportReview";
 import { UploadSanctionDialog } from "./UploadSanctionDialog";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 25;
 
@@ -348,7 +349,7 @@ export default function SanctionOrdersPage() {
       */
       if (typedName && !typedEmail) {
         setError(
-          `“${typedName}” has no address beside it. Fill in “Their Gmail ID”, or clear the name — this register identifies a designer by their Gmail address, and a name on its own cannot be recorded.`
+          `Add a Gmail ID for “${typedName}”, or clear the name.`
         );
         setSaving(false);
         return;
@@ -359,7 +360,7 @@ export default function SanctionOrdersPage() {
         // its sentence is about `designerEmail` being required — a field name, on a screen that no
         // longer has a box called that. This one names the two controls that are on it.
         setError(
-          "This order names nobody. Tick a designer above, or type the name and Gmail address of the designer it was issued to."
+          "Choose a designer, or enter their name and Gmail."
         );
         setSaving(false);
         return;
@@ -416,7 +417,7 @@ export default function SanctionOrdersPage() {
       } else if (issuedNow.length === 0) {
         const names = created.sanctionOrder.designers.map((designer) => designer.designerName);
         setLinkNotice(
-          `${names.join(", ") || "That designer"} already ${names.length === 1 ? "has an account" : "have accounts"} — they sign in as they always do, and the workshop is on their list now.`
+          `${names.join(", ") || "That designer"} already ${names.length === 1 ? "has an account" : "have accounts"}; the workshop is on their list.`
         );
       }
       setPage(1);
@@ -460,7 +461,7 @@ export default function SanctionOrdersPage() {
     <>
       <PageHeader
         title="Sanction orders"
-        description="The ministry's sanction register — number, date, amount and the designers it names. Recording one opens the workshop, creates any account it needs and issues the first sign-in links."
+        description="Recording an order opens its workshop and invites its designers."
         icon={<FileSignature className="h-5 w-5" aria-hidden />}
         actions={
           <>
@@ -535,7 +536,7 @@ export default function SanctionOrdersPage() {
                 onFocus={(event) => event.currentTarget.select()}
                 className="field-input min-w-0 flex-1 font-mono text-xs"
               />
-              <button
+              <ActionGroup className="max-sm:w-full"><button
                 type="button"
                 className="field-button-secondary"
                 onClick={() => copy(entry.link.link, `link:${entry.link.id}`)}
@@ -574,7 +575,7 @@ export default function SanctionOrdersPage() {
                 }}
               >
                 Done
-              </button>
+              </button></ActionGroup>
             </div>
 
             {/* THE PREWRITTEN MESSAGE — the one thing the users screen does not have, and the reason
@@ -607,8 +608,7 @@ export default function SanctionOrdersPage() {
                 so is the difference between an officer who forwards it and a designer who waits for a
                 message that is never coming. */}
             <p className="text-xs leading-5 text-ink-500">
-              Send this to them yourself, by email or message. The link is shown only once, works
-              once, and expires {formatLinkExpiry(entry.link.expiresAt)}.
+              Send it yourself. Shown once; expires {formatLinkExpiry(entry.link.expiresAt)}.
             </p>
           </div>
         );
@@ -744,14 +744,14 @@ export default function SanctionOrdersPage() {
           />
         </div>
         <div className="md:col-span-6 grid gap-3 md:grid-cols-2">
-          <Field label="Or a designer who is not on the list yet — their name">
+          <Field label="Or a new designer's name">
             <TextInput name="designerName" maxLength={160} />
             {/* UNDER THE CONTROL AND NOT IN A `hint` PROP: `Field` in this codebase takes `label`,
                 `children` and `required` and nothing else, and the sentence is load-bearing — it is
                 what tells an officer that typing an unknown address here is the ORDINARY act rather
                 than a workaround. */}
             <p className="mt-1 text-xs leading-5 text-ink-500">
-              The order creates their account, empanels them and issues their first sign-in link.
+              Their account and sign-in link are created.
             </p>
           </Field>
           <Field label="Their Gmail ID">
@@ -763,11 +763,11 @@ export default function SanctionOrdersPage() {
             <TextArea name="notes" maxLength={2000} rows={2} />
           </Field>
         </div>
-        <div className="flex items-end">
+        <ActionGroup>
           <button type="submit" className="field-button w-full" disabled={saving}>
             {saving ? "Recording…" : "Record sanction order"}
           </button>
-        </div>
+        </ActionGroup>
       </form>
 
       <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -800,7 +800,7 @@ export default function SanctionOrdersPage() {
       ) : items.length === 0 ? (
         <EmptyState
           title="No sanction orders here"
-          body="Record one above and the workshop, the designer's account and their sign-in link are all created together."
+          body="Record one above."
         />
       ) : (
         <div className="panel overflow-hidden">
@@ -923,8 +923,7 @@ export default function SanctionOrdersPage() {
                      report cover is doing something legitimate; what an officer needs is to SEE
                      that the document about to be printed says something the register does not. */
                   <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
-                    The report cover says something different from this order. The cover comes from
-                    the designer&apos;s stage&nbsp;1; this order is the register&apos;s record.
+                    The report cover (stage&nbsp;1) differs from this order.
                   </p>
                 ) : null}
                 {order.notes ? <p className="text-xs leading-5 text-ink-500">{order.notes}</p> : null}

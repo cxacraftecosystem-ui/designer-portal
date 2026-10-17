@@ -22,6 +22,7 @@ import {
 } from "@/lib/workshopOptions";
 import { handleFormEnter } from "@/lib/formNav";
 import type { UserRole } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The assignment builder — one scope, many people, one POST.
@@ -529,7 +530,7 @@ export function AssignmentBuilder({
 
       {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
 
-      <div className="flex flex-wrap items-center gap-3">
+      <ActionGroup>
         <button type="submit" className="field-button" disabled={!canSubmit}>
           <Send className="h-4 w-4" aria-hidden />
           {busy
@@ -539,7 +540,7 @@ export function AssignmentBuilder({
         <button type="button" className="field-button-secondary" onClick={reset} disabled={busy}>
           Reset
         </button>
-      </div>
+      </ActionGroup>
     </form>
   );
 }

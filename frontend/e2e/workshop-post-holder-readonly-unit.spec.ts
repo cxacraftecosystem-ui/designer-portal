@@ -480,14 +480,14 @@ test("a stored workshop holds the record — Save, Delete and the picker; a chos
   expect(stored.recordHeld).toBe(true);
   expect(stored.saveHeld).toBe(true);
   expect(stored.notice).toBe(
-    `This artisan is filed under a design workshop you hold a post on, so it cannot be changed or deleted here. ${REFUSAL}`
+    `This artisan belongs to a workshop you oversee, so it can't be changed or deleted. ${REFUSAL}`
   );
 
   const chosen = recordFilingHold(null, REFUSAL, "product");
   expect(chosen.recordHeld, "the picker stays live: choosing another workshop is the way out").toBe(false);
   expect(chosen.saveHeld).toBe(true);
   expect(chosen.notice).toBe(
-    `The workshop chosen for this product is one you hold a post on, so it cannot be filed there — choose another. ${REFUSAL}`
+    `You oversee that workshop, so this product can't be filed there — choose another. ${REFUSAL}`
   );
 
   // Still asking holds exactly what an answer would, and says it as pending, not as a refusal.
@@ -499,7 +499,7 @@ test("a stored workshop holds the record — Save, Delete and the picker; a chos
   });
   expect(recordFilingHold(null, undefined, "tool")).toEqual({ recordHeld: false, saveHeld: true, notice: undefined, stored: null });
   // The stored workshop's refusal wins the sentence: it is the one the reader cannot choose away.
-  expect(recordFilingHold(REFUSAL, REFUSAL, "process").notice).toMatch(/^This process is filed under/);
+  expect(recordFilingHold(REFUSAL, REFUSAL, "process").notice).toMatch(/^This process belongs to a workshop you oversee/);
   // Nothing held, nothing said.
   expect(recordFilingHold(null, null, "interview")).toEqual({ recordHeld: false, saveHeld: false, notice: null, stored: null });
 
@@ -595,7 +595,7 @@ test("a questionnaire attached to a held workshop is read, answered and download
   // `null` and nothing else is "none known": still asking holds the controls too.
   expect(page).toContain("const mayEdit = owns && attachedHold === null;");
   expect(page).toContain(
-    "This questionnaire is attached to a design workshop you hold a post on, so it cannot be changed here."
+    "Read-only: attached to a workshop you oversee."
   );
   // The colleague's-form notice is for somebody who does not own it, not for a holder who does.
   expect(page).toMatch(/\{!owns \? \(\s*\/\*/);
@@ -657,7 +657,7 @@ test("a list says the server's sentence once above itself, and marks each held f
   const other = "You are this workshop's Regional Director, so you can read it but not change it.";
   const notice = mediaListNotice([REFUSAL, null, REFUSAL, other, undefined], "deleted or re-transcribed");
   expect(notice).toContain(`Files marked “${MEDIA_HELD_LABEL}”`);
-  expect(notice).toContain("cannot be deleted or re-transcribed here.");
+  expect(notice).toContain("can't be deleted or re-transcribed.");
   expect(notice!.split(REFUSAL).length - 1, "each sentence once").toBe(1);
   expect(notice).toContain(other);
   expect(mediaListNotice([null, undefined], "removed"), "still asking").toBeUndefined();
@@ -771,7 +771,7 @@ const MEDIA_SCREENS: ReadonlyArray<{ screen: string; path: string[]; must: strin
       'onClick={() => void decide(entry.mediaId, "DISCARD")}',
       'onClick={() => void decide(entry.mediaId, "STORE")}',
       // The refusal is the server's sentence, after the state the record is left in.
-      "still stored on this record. ${error.message}`"
+      "the photo is still stored. ${error.message}`"
     ]
   }
 ];
@@ -890,14 +890,14 @@ test("the /media upload is held on the workshop chosen and on what the files han
   expect(mediaUploadHold(null, undefined), "still asking about the linked record's").toBeUndefined();
   const chosen = mediaUploadHold(REFUSAL, null);
   expect(chosen).toBe(
-    `The design workshop chosen for these files is one you hold a post on, so they cannot be filed under it — choose another, or none. ${REFUSAL}`
+    `You oversee that workshop, so these files can't be filed under it — choose another, or none. ${REFUSAL}`
   );
   expect(mediaUploadHold(null, REFUSAL)).toBe(
-    `The record chosen for these files is filed under a design workshop you hold a post on, so they cannot be attached to it — choose another. ${REFUSAL}`
+    `That record belongs to a workshop you oversee, so these files can't be attached to it — choose another. ${REFUSAL}`
   );
   // A held post known beats an answer still out, and the workshop chosen speaks first when both are.
   expect(mediaUploadHold(REFUSAL, undefined)).toBe(chosen);
-  expect(mediaUploadHold(undefined, REFUSAL)).toMatch(/^The record chosen for these files/);
+  expect(mediaUploadHold(undefined, REFUSAL)).toMatch(/^That record belongs to a workshop you oversee/);
   expect(mediaUploadHold(REFUSAL, REFUSAL)).toBe(chosen);
 });
 
@@ -905,10 +905,10 @@ test("a questionnaire is held on the workshop it would be attached to, and the p
   expect(attachHold(null, "this questionnaire")).toBeNull();
   expect(attachHold(undefined, "the copy"), "still asking").toBeUndefined();
   expect(attachHold(REFUSAL, "this questionnaire")).toBe(
-    `The design workshop chosen for this questionnaire is one you hold a post on, so this questionnaire cannot be attached to it — choose another, or leave it unattached. ${REFUSAL}`
+    `You oversee that workshop, so this questionnaire can't be attached to it — choose another, or none. ${REFUSAL}`
   );
   expect(attachHold(REFUSAL, "the copy")).toMatch(
-    /^The design workshop chosen for the copy is one you hold a post on, so the copy cannot be attached to it/
+    /^You oversee that workshop, so the copy can't be attached to it/
   );
 });
 
@@ -932,10 +932,10 @@ test("the review queue's edit is held on the workshop its record or file names, 
   expect(reviewEditHold(null, "artisan")).toBeNull();
   expect(reviewEditHold(undefined, "artisan"), "still asking").toBeUndefined();
   expect(reviewEditHold(REFUSAL, "artisan")).toBe(
-    `This artisan is filed under a design workshop you hold a post on, so its fields cannot be edited here — approving it, rejecting it or sending it back for revision is still yours. ${REFUSAL}`
+    `This artisan belongs to a workshop you oversee, so its fields can't be edited — you can still approve, reject or send it back. ${REFUSAL}`
   );
-  expect(reviewEditHold(REFUSAL, "questionnaire")).toMatch(/^This interview is filed under a design workshop/);
-  expect(reviewEditHold(REFUSAL, "media")).toMatch(/^This file is part of a design workshop you hold a post on, so its fields/);
+  expect(reviewEditHold(REFUSAL, "questionnaire")).toMatch(/^This interview belongs to a workshop you oversee/);
+  expect(reviewEditHold(REFUSAL, "media")).toMatch(/^This file belongs to a workshop you oversee, so its fields/);
 });
 
 /**

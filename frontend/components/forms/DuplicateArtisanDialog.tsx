@@ -80,7 +80,7 @@ export function DuplicateArtisanDialog({
           <button type="button" ref={keepEditingRef} className="field-button-secondary" onClick={onKeepEditing}>
             Keep editing
           </button>
-          <button type="button" className="field-danger" onClick={onDiscard}>
+          <button type="button" data-danger className="field-danger" onClick={onDiscard}>
             Discard this entry
           </button>
           {/* Only offered when the server named the record — a link to nowhere is worse than no link. */}

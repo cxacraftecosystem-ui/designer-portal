@@ -327,7 +327,7 @@ export function StageDocumentPreview({
           setBaseError({ message: readableError(error, "The document could not be built just now."), offline: false });
         } else if (!nextDraft || !nextRegistry) {
           setBaseError({
-            message: "This workshop is not saved on this device, so its document cannot be built here.",
+            message: "This workshop isn't on this device.",
             offline: error ? isUnreachable(error) : offline
           });
         } else {
@@ -512,8 +512,8 @@ export function StageDocumentPreview({
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface-50 px-3 py-2">
                 <p className="min-w-0 flex-1 text-xs leading-5 text-ink-500">
                   {shown?.live
-                    ? "Updates as you type — the same document the .docx and .pdf are written from."
-                    : "The same document the .docx and .pdf are written from, as last saved."}
+                    ? "Updates as you type."
+                    : "As last saved."}
                 </p>
                 <button
                   type="button"
@@ -534,7 +534,7 @@ export function StageDocumentPreview({
               {baseError && !shown ? (
                 <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {baseError.offline
-                    ? "The document couldn't be built just now. Everything captured is safe, and it will be built again on the next save."
+                    ? "Couldn't build the preview. It retries on the next save."
                     : baseError.message}
                 </p>
               ) : null}
@@ -544,8 +544,7 @@ export function StageDocumentPreview({
                   {shown.warnings.length ? (
                     <details className="mb-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
                       <summary className="cursor-pointer font-semibold">
-                        {shown.warnings.length} thing{shown.warnings.length === 1 ? "" : "s"} the report can&rsquo;t print
-                        as it stands — across the whole document, not only this stage
+                        {shown.warnings.length} report warning{shown.warnings.length === 1 ? "" : "s"} (whole document)
                       </summary>
                       <ul className="mt-1 ml-5 list-disc space-y-0.5">
                         {shown.warnings.map((warning, index) => (
@@ -553,16 +552,14 @@ export function StageDocumentPreview({
                         ))}
                       </ul>
                       <p className="mt-2 text-xs leading-5">
-                        Most of them name the stage they came from. They are not printed in the .docx or the .pdf.
+                        Not printed in the files.
                       </p>
                     </details>
                   ) : null}
 
                   {range === null ? (
                     <p className="mb-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-                      This stage has no heading of its own in the document yet — usually because nothing in it has been
-                      filled in, or because the chosen template words the heading differently. The whole document is
-                      shown instead.
+                      This stage isn&rsquo;t in the document yet, so the whole document is shown.
                     </p>
                   ) : (
                     <div className="mb-3 flex flex-wrap items-center gap-3">

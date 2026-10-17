@@ -344,7 +344,7 @@ export function WorkshopDesignerPicker({
               setFeatureMissing(true);
               return;
             }
-            setLoadError("Unable to load the designers this workshop could be for.");
+            setLoadError("Couldn't load designers.");
           });
       },
       // No debounce on the first, empty read: it is one request on open, and making an admin wait
@@ -463,7 +463,7 @@ export function WorkshopDesignerPicker({
     online: !deviceLooksOffline(),
     // True as written here, and unusually so: the hint below says in as many words that the field
     // may be left empty and stage 1 will carry whoever creates the workshop.
-    reassurance: "Nothing you have entered is at risk — the workshop can be started without it."
+    reassurance: "You can start the workshop without it."
   };
 
   /**
@@ -472,9 +472,9 @@ export function WorkshopDesignerPicker({
    * about pagination on every visit is padding, and silence is the common and correct answer.
    */
   const notice = offline
-    ? "There is no connection, so the list of designers cannot be read. Start the workshop now and name its designers once this device is back online — nothing is lost by leaving it."
+    ? "Offline — add designers later."
     : featureMissing
-      ? "The designer list isn't available right now. The workshop can still be started; stage 1 will carry whoever created it."
+      ? "Designer list unavailable. You can add them later."
       : loadError
         ? loadError
         : searching && searchTerm
@@ -495,7 +495,7 @@ export function WorkshopDesignerPicker({
               `eligible`, which may hold only the excluded reader — an empty offer all the same.
             */
             !searchTerm && !truncated && eligible !== null && offerable.length === 0
-            ? "No one can be named as this workshop's designer yet. A designer has to be empanelled on the roster before a workshop can be opened for them; this one can still be started, and stage 1 will carry whoever creates it."
+            ? "No empanelled designers yet. You can add them later."
             : eligibleViewerNotice({
                 truncated,
                 offered: offerable.length,
@@ -507,11 +507,7 @@ export function WorkshopDesignerPicker({
       label="Designers this workshop is for"
       hint={
         <p className="text-xs leading-5 text-ink-500">
-          Everybody named here can open this workshop and fill in its stages — a design workshop is
-          visible only to the designers on it, and to admins. One of them, named below, is the one whose
-          designer profile is copied into stage 1 and stage 3 and whose name the report carries. Leave it
-          empty if you do not know yet — stage 1 then carries whoever creates the workshop, and designers
-          can be added later from &ldquo;Designers on a workshop&rdquo;.
+          Only these designers (and admins) can open it. Optional — add more later.
         </p>
       }
     >
@@ -551,7 +547,7 @@ export function WorkshopDesignerPicker({
           disabled={disabled || offline}
           emptyLabel={
             eligibleList.kind === "ok"
-              ? "No one can be named as this workshop's designer."
+              ? "No designers available."
               : workshopEmptyLabel(eligibleList, eligibleVoice)
           }
           onChange={(next) => {
@@ -575,7 +571,7 @@ export function WorkshopDesignerPicker({
           // And therefore this sentence: `searchable={false}` does not switch the RENDER CAP off, so
           // on a real repository the cap notice fires here and its default last clause would tell an
           // admin to type into a filter box this control deliberately does not have.
-          capHint="Use the search box above to find the rest — it searches every eligible account."
+          capHint="Search above to find the rest."
           values={values}
         />
         {atCap ? (
@@ -583,8 +579,7 @@ export function WorkshopDesignerPicker({
           // its own over the page canvas it is unreadable in dark mode. §3.5 — inside a tinted card,
           // `amber-100` with `amber-800`, and the pair travels together.
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-            {MAX_NAMED_DESIGNERS} designers is the most one workshop can be opened for, so nothing further is
-            kept. Anybody else can be added afterwards from &ldquo;Designers on a workshop&rdquo;.
+            Up to {MAX_NAMED_DESIGNERS} designers. Add more later from &ldquo;Designers on a workshop&rdquo;.
           </p>
         ) : null}
         {/*
@@ -601,9 +596,8 @@ export function WorkshopDesignerPicker({
         {resolved.lead ? (
           <div className="grid gap-1 rounded-md border border-line-200 bg-surface-50 px-3 py-2">
             <p className="text-xs leading-5 text-ink-700">
-              Stage 1, stage 3 and the report will carry{" "}
-              <span className="font-medium text-ink-900">{nameOf(seen, resolved.lead)}</span> — their designer
-              profile is the one copied in. Everyone ticked can open the workshop.
+              The report names{" "}
+              <span className="font-medium text-ink-900">{nameOf(seen, resolved.lead)}</span>.
             </p>
             {resolved.team.length > 1 ? (
               <Dropdown

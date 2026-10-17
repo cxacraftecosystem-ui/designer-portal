@@ -1,4 +1,5 @@
 import { BackButton } from "@/components/BackButton";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 export function PageHeader({
   title,
@@ -51,7 +52,7 @@ export function PageHeader({
           {description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">{description}</p> : null}
         </div>
       </div>
-      {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+      {actions ? <ActionGroup align="end">{actions}</ActionGroup> : null}
     </div>
   );
 }

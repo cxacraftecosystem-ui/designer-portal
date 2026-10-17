@@ -171,9 +171,9 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     icon: LayoutDashboard,
     href: "/ministry-dashboard",
     summary:
-      "One register of workshops — ongoing, completed and newly registered — with each designer's progress through the stages, and lists to download.",
+      "Every workshop and each designer's progress, with downloads.",
     why:
-      "Every workshop's progress in one place. See which workshops are moving, which have stalled and which are finished; the downloads come from the same register, so the figures always agree.",
+      "See which workshops are moving, stalled or finished. Downloads use the same figures.",
     // Read off `app/(protected)/ministry-dashboard/page.tsx` in screen order. The type switch is two
     // buttons rather than a dropdown, so it is named as the pair it draws; the standing switch is
     // the same shape. The downloads are actions and are named in `watch` rather than here.
@@ -184,12 +184,12 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Refresh now — beside the line saying when the register was last read"
     ],
     watch: [
-      "What you see depends on your post. A Ministry Admin sees every workshop; an Assistant Director or Regional Director sees the workshops they have been named on. The line under the heading says which you are seeing.",
+      "A Ministry Admin sees every workshop; Assistant and Regional Directors see the ones they're named on.",
       "Ongoing, Completed and Newly registered each group several standings, and the page lists which. A workshop's own standing is the badge on its entry.",
-      "Progress is the share of required fields answered across all stages — the same figure the designer sees. Stages done and fields outstanding are shown too, so you can tell one missing date from an unopened stage.",
+      "Progress is the share of required fields answered — the same figure the designer sees.",
       "A blank progress cell is not 0%. If a workshop's progress couldn't be read, the cell says so in words.",
-      "The register refreshes itself while the page is open, and the line above the table says when it was last updated. Use Refresh now to update it straight away. If an update fails, the workshops stay on screen and the line says so.",
-      "“Download workshops” saves the register as you see it: each workshop, where and when, its designer, standing and progress. It doesn't include stage answers, photographs, recordings or consent decisions — exporting those is done by an Admin.",
+      "The register refreshes while open; use Refresh now to update immediately.",
+      "“Download workshops” saves this table, without stage content.",
       "“Download beneficiaries” is the whole artisan list, not only the workshops shown here. Identity numbers in it show only their last four characters.",
       "Every download says whether it holds the whole list. If it was cut short, the file says so as well as the screen."
     ]
@@ -208,7 +208,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     summary:
       "The ministry's directory of the workshops planned for the year — uploaded as one spreadsheet, corrected by uploading it again.",
     why:
-      "Each entry is a planned workshop, not a running one: its number, date, state, district and venue. You can correct the plan all year without affecting workshops that are already open, and see at a glance which are planned, opened or withdrawn.",
+      "Planned workshops, not running ones. Correct the plan any time without affecting open workshops.",
     // Read off `app/(protected)/annual-plan/page.tsx` in screen order (the filter row, which is the
     // only labelled form on the page), then the two controls inside `UploadPlanDialog.tsx`, then the
     // one inside `PromoteDialog.tsx`. The three header buttons are named in `watch` rather than
@@ -229,12 +229,12 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Designers this workshop is for — on Open workshop, with the lead chooser under it once two are ticked"
     ],
     watch: [
-      "Uploading, exporting, opening a workshop from an entry, withdrawing and reinstating are for a Ministry Admin, an Admin or the Master Admin. A Regional Director sees only the entries for the states a Ministry Admin has assigned them, under “Regional Directors' states”, and can correct the remarks on those entries. An Assistant Director can't open the annual plan.",
-      "Upload the whole sheet every time. Workshops already in the plan are updated and new ones are added; uploading the same sheet again changes nothing. The upload report lists every change, from what to what.",
-      "The tickbox marks every planned workshop the sheet leaves out as withdrawn. Nothing is deleted, and a withdrawn workshop returns as soon as a later sheet includes it. Leave it unticked when the sheet is only a partial correction.",
-      "Open workshop can be used once per entry. It copies the entry into the new workshop's stage 1, and you can name the designers as you open it: each gets access, and the lead's profile fills stages 1 and 3.",
+      "Uploading, opening and withdrawing are for Ministry Admins and admins. Regional Directors see and edit remarks for their states.",
+      "Upload the whole sheet each time. Existing entries update; new ones are added. The report lists every change.",
+      "The tickbox withdraws entries missing from the sheet; they return if a later sheet lists them. Leave it off for partial corrections.",
+      "Open workshop works once per entry. It fills stage 1, and you can name the designers as you open it.",
       "You can also name nobody now and add designers later on Workshop oversight, the next card.",
-      "Once a workshop is open, correcting the plan doesn't change the workshop — the upload report names the workshops affected. Fix details such as a wrong venue on the workshop itself.",
+      "Plan corrections don't change an open workshop — fix it on the workshop itself.",
       "A workshop that has already been opened is never withdrawn, whatever the sheet says."
     ]
   },
@@ -249,9 +249,9 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     icon: FileSignature,
     href: "/sanction-orders",
     summary:
-      "The ministry's sanction register. Recording an order opens the workshop, creates the designer's account and issues their sign-in link, in one step.",
+      "Recording an order opens the workshop and invites its designer.",
     why:
-      "A sanction order is where a designer's work begins: a name and a Gmail address on a signed document. Recording it does everything at once — it admits the address, empanels the designer, creates their account if they don't have one, opens the workshop in their name and issues a one-time sign-in link.",
+      "Recording an order admits and empanels the designer, creates their account if needed, opens the workshop and issues a sign-in link.",
     // Read off `app/(protected)/sanction-orders/page.tsx` in screen order. `Field required` renders
     // the red asterisk, so "(required)" here is the same fact the box shows.
     //
@@ -276,16 +276,16 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     ],
     watch: [
       "Assistant Directors, Regional Directors and Ministry Admins can all record orders and read the register.",
-      "When an order creates an account, its sign-in link appears on screen with a ready-written message to copy. Send each link to its designer while it is on screen — a link is shown only once, works once, and expires at the time shown.",
-      "Re-issue, on an order's entry, gives a designer the order named a new sign-in link — the lead or any co-designer. For someone who now signs in with Google, or who has been promoted to your role or above, ask an administrator on Manage users.",
-      "An order can name several designers, and the first is the lead. Everyone named is admitted and given access to the workshop, but only the lead's profile fills stages 1 and 3 and appears on the report. Once two are ticked, the picker shows the lead and lets you change it.",
-      "Pro-forma downloads a blank workbook for the office's orders. Upload a sheet shows every order it found and any it couldn't read, and nothing is recorded until you confirm — you can correct the sheet and upload it again as often as you need.",
-      "An import gives every new account its sign-in link, shown above the import's report with a message to send it in. Copy them before you leave the page, and use Re-issue on the register for any you missed.",
+      "New accounts get a sign-in link with a ready message. Send each one now — it's shown once and expires.",
+      "Re-issue gives a named designer a new link. For Google users or senior roles, ask an admin on Manage users.",
+      "The first designer named is the lead; their profile fills stages 1 and 3 and appears on the report.",
+      "Download the pro-forma, then upload. Nothing is recorded until you confirm.",
+      "Copy every sign-in link before leaving the page; use Re-issue for any you miss.",
       "If a designer already has an account, no link is needed. They sign in as usual and find the new workshop on their list.",
-      "You can't fill in a workshop your own order opened. You can read every stage and generate its report, but you can't save its stages — the work belongs to the designer the order names. This applies only to orders you recorded yourself.",
+      "You can read and report on workshops your own orders opened, but not save their stages.",
       "You can't name yourself as a designer on an order you record.",
       "Recorded orders stay on the register. If one is wrong, record the correct order.",
-      "The workshop opens with a placeholder title taken from the order. The designer fills in the starred fields on Workshop Setup — State, District, Craft, Cluster, Venue and the dates — and the order's entry shows which are still missing."
+      "The workshop opens with a placeholder title. The designer fills in Workshop Setup; the entry shows what's missing."
     ]
   },
   {
@@ -301,7 +301,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     summary:
       "One workshop at a time: who it is for, who supervises and inspects it, and who is on its artisan list.",
     why:
-      "Until a designer is named, the designer's work on a workshop can't begin; until its Assistant Director and Regional Director are named, nobody is supervising it. The artisan list on the same screen records the people the workshop is for.",
+      "Work starts once a designer is named; supervision once both directors are named.",
     // NOT the real form labels: this screen's only labelled text boxes are search boxes, and
     // everything that changes anything is a picker with a button under it. So the rows are the FIVE
     // panel headings and the control that commits each — every one of them a thing a reader can
@@ -323,12 +323,12 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     watch: [
       "Only a Ministry Admin, an Admin or the Master Admin can name a workshop's designers, officers and inspectors, or upload its artisan list.",
       "Nobody names themselves, so you won't appear in your own pickers. A Ministry Admin, an Admin or the Master Admin can be named as an officer or inspector by someone else.",
-      "One person holds one post per workshop, and nobody supervises or inspects a workshop they have worked on as a designer (opening it doesn't count). If a choice breaks these rules, you'll see why and nothing changes.",
-      "While you supervise or inspect a workshop, you can't change it — its stages, details, artisan list or designers. You can still read it, name other people to its posts and generate its report. If you need to work on it, ask whoever appointed you to remove you from the post.",
-      "Naming a designer gives them access and copies their profile — name, institution, biography, experience and contact details — into stages 1 and 3, without overwriting anything else there. Ask designers to complete their profile first, or those fields stay empty.",
+      "One post per person per workshop, and no one supervises or inspects a workshop they designed.",
+      "While you hold a post on a workshop it's read-only to you. Ask whoever appointed you to remove you if you need to edit it.",
+      "Naming a designer gives access and copies their profile into stages 1 and 3. Ask them to complete their profile first.",
       "An Assistant Director or Regional Director reads every stage of the workshop on Workshops I monitor, but can't edit it.",
-      "The filled-in artisan pro-forma contains Aadhaar numbers. Don't email it or leave it in a shared folder, and delete it once the upload is confirmed — the portal keeps only the upload summary, not the file.",
-      "Nobody is added twice. An artisan already in the records is linked to the workshop and their record is left as it is, even where the sheet differs. The upload report shows how many were added and how many were linked."
+      "The filled pro-forma contains Aadhaar numbers. Don't email or share it; delete it after uploading. The file isn't stored.",
+      "Existing artisans are linked, not duplicated. The upload report shows how many of each."
     ]
   },
   {
@@ -344,7 +344,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     summary:
       "The workshops you can open, and the 22-stage form inside each one. You can fill these in, not only read them.",
     why:
-      "Ministry posts can fill in workshop stages too. You can save stages, add custom sections, record consent and generate the report, just as the designer can. The workshop is still the designer's, so most of your work here is finishing, correcting or standing in.",
+      "Ministry posts can fill in stages, add sections, record consent and generate the report.",
     // The registry exception, identical to `design-workshop-stages` in `steps.ts`: the stage form is
     // built from the schema the server publishes, so its boxes are hundreds of labels across 22
     // stages and are not this file's to copy. These rows name the parts of the screen instead.
@@ -357,16 +357,16 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     ],
     watch: [
       "Professors and Inspector / Reviewers don't fill in workshops. An inspector reviews the stages instead.",
-      "Your workshops start from the two screens above: a Ministry Admin opens a planned workshop on Annual plan, and a sanction order opens one too. Starting a blank workshop with “New workshop” is for Admins, so you won't see that button.",
-      "If you recorded the sanction order that opened a workshop, you can read it and generate its report but can't save its stages. Signing for the work and doing it are two different people's jobs.",
+      "Workshops start from the annual plan or a sanction order. “New workshop” is for admins.",
+      "You can't save stages of a workshop your own order opened.",
       // WHO IS TOLD, AND WHERE, DIFFERS BY TIER — and this said "the page says so above the stages" to
       // all three until 2026-10-09. The notice above the stages asks the staffing reads, which are the
       // appointers' (`readHeldWorkshopPosts`): a Ministry Admin sees it, an Assistant or Regional
       // Director never does and learns it from the refused save — and, on a workshop their own
       // sanction order opened, from the sanction-order sentence, which the server checks first.
-      "Being named a workshop's Assistant Director or Regional Director doesn't add it here — you'll find it on Workshops I monitor. Workshops appear here when you created them or were added to them.",
+      "Workshops you supervise are on Workshops I monitor, not here.",
       "A workshop you supervise or inspect is read-only to you here. As a Ministry Admin, you'll see a note saying so above the stages.",
-      "Choosing a record in a stage copies its values onto the stage, and the report prints that copy. Correcting the record later doesn't change the stage or a report already generated, so make the correction on the stage too."
+      "Choosing a record copies its values; the report prints that copy. Later edits to the record don't change the stage."
     ]
   },
   {
@@ -383,7 +383,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     summary:
       "The workshops you were named on as Assistant Director or Regional Director: every stage to read, nothing to edit.",
     why:
-      "Supervising means reading the designers' work and knowing what is in it. Every value shows who wrote it, exactly as the designer sees it on their own form.",
+      "Every value shows who wrote it.",
     // No form and no labels of its own — it draws a workshop it did not author. These are the four
     // summary captions the page prints above the stages, plus the two sections below them. Same
     // exception, same reason, as `design-workshop-inspection` in `steps.ts`.
@@ -397,10 +397,10 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "All 22 stages, read-only, with who wrote each field and the answers to the workshop's own questions"
     ],
     watch: [
-      "A Ministry Admin, an Admin or the Master Admin can also be named to these posts by someone else, and then sees those workshops here — only the ones they were named on.",
+      "Ministry Admins and admins named to these posts see those workshops here too.",
       "If you haven't been named on any workshop yet, the page says so. If the list couldn't be loaded, it says that instead.",
       "You can open the photographs, recordings, videos and attachments, but not change them. If a file stops opening, select Refresh files.",
-      "This page is read-only. If a stage is wrong, ask its designers to correct it. Approving the report and handing it on to the office are the Ministry Admin's, on Reports to approve."
+      "Read-only. Ask the designers to fix errors. Approval is on Reports to approve."
     ]
   },
   {
@@ -416,9 +416,9 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     icon: Stamp,
     href: "/design-workshop-approvals",
     summary:
-      "Every report its designers have handed in, waiting for the Ministry Admin's decision: approve it or send it back with a reason, then hand the approved report on to the office.",
+      "Reports handed in by designers, waiting for your decision.",
     why:
-      "The inspecting officers read a report and ask for corrections; somebody then has to say it is finished and send it on. That is the sanctioning authority's decision, and here it is the Ministry Admin's — and the master admin's — because the report is the ministry's. An Assistant or Regional Director post is for reading a workshop and following its progress; it does not sign the report off.",
+      "Inspectors ask for corrections; the Ministry Admin signs the report off and sends it on.",
     // The screen's own controls, in screen order: the four lists, then the report and the register it
     // is read with, then what each decision asks for.
     fields: [
@@ -430,10 +430,10 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Hand on to the office — the office, a note, and the exported report file that went"
     ],
     watch: [
-      "YOU DO NOT DECIDE ON A REPORT YOU WORKED ON OR INSPECT. If you hold designer access to the workshop, have written its stages, or inspect it, the decisions are switched off on its screen and the sentence beside them says why. Opening the workshop from the annual plan or a sanction order is not working on it.",
-      "AN APPROVED REPORT CAN NO LONGER BE CHANGED. Its stages lock for everybody the moment it is approved. If something needs correcting, withdraw the approval with a reason: the report goes back to its designers as Needs revision and has to be approved again.",
-      "A REPORT THAT CHANGED AFTER YOU OPENED IT IS NOT APPROVED. If its designers save a stage while you are reading, the approval is refused and the screen asks you to reload and read it again.",
-      "HANDING ON IS RECORDED, NOT SENT. The product sends nothing to the office itself: it records who handed the report on, when, to which office and which exported file. Download the report on the same screen and send it the way that office receives reports.",
+      "YOU CAN'T DECIDE ON A REPORT YOU WORKED ON OR INSPECT. The decisions are switched off with the reason.",
+      "APPROVED REPORTS ARE LOCKED. To correct one, withdraw the approval with a reason.",
+      "IF A REPORT CHANGES WHILE YOU READ IT, approval is refused — reload and read it again.",
+      "HANDING ON IS RECORDED, NOT SENT. Download the report and send it to the office yourself.",
       "A REPORT HANDED ON CAN STILL BE RETURNED, with a reason, if the office sends it back. The approval and the hand-on before it stay on the record."
     ]
   }

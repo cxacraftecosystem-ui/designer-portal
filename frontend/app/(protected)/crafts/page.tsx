@@ -39,6 +39,7 @@ import { saveOrQueue } from "@/lib/offline";
 import { canManageCrafts } from "@/lib/permissions";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
 import type { Craft, PageResult } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** Section id the craft media batch publishes under, so the page-level tray can aggregate it. */
 const MEDIA_SECTION = "craft-media";
@@ -354,9 +355,7 @@ function CraftsPageBody() {
             `${stranded.length} of ${mediaFiles.length} file(s) failed to upload: ${stranded
               .map((outcome) => outcome.file.name)
               .join(", ")}. ` +
-              "The craft was saved and the rest are attached. The files that did not go up are still in the capture " +
-              "card above, but only in this browser: leaving this form or opening another craft discards them. " +
-              "Re-open the craft to attach them again — anything captured here and saved nowhere else has to be taken again."
+              "The craft was saved. Retry them before leaving this form, or they're lost."
           );
           setSaving(false);
           return;
@@ -389,7 +388,7 @@ function CraftsPageBody() {
       deleteConfirm(
         "Delete this craft?",
         "This permanently deletes the craft. This action cannot be undone.",
-        "Artisans, products and tools that reference it keep their craft name as text — they are not deleted and they are not left blank."
+        "Linked records keep the craft name as text."
       )
     );
     if (!ok) return;
@@ -578,7 +577,7 @@ function CraftsPageBody() {
             />
           </div>
         ) : null}
-        <div className="flex gap-2 md:col-span-2 lg:col-span-4">
+        <ActionGroup className="md:col-span-2 lg:col-span-4">
           <button className="field-button" disabled={saving}>
             {saving ? "Saving..." : editing ? "Update craft" : "Create craft"}
           </button>
@@ -587,11 +586,11 @@ function CraftsPageBody() {
               Cancel edit
             </button>
           ) : null}
-        </div>
+        </ActionGroup>
       </form>
       ) : (
         <div className="panel mb-5 p-4 text-sm text-ink-muted">
-          Browse the craft vocabulary below. Ask the master admin for craft creation access to add or edit crafts.
+          Adding or editing crafts needs Professor access.
         </div>
       )}
       {/* The craft's own code, drawn live for the craft in the form. A craft is edited INLINE on this
@@ -660,7 +659,7 @@ function CraftsPageBody() {
                           Discuss
                         </button>
                         {adminMode ? (
-                          <button className={rowAction("danger")} onClick={() => remove(craft.id)}>
+                          <button data-danger className={rowAction("danger")} onClick={() => remove(craft.id)}>
                             Delete
                           </button>
                         ) : null}

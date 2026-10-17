@@ -436,14 +436,14 @@ export function DesignerProfileForm({
       */
       if (strandedPhotos.length || strandedSignatures.length || strandedCvs.length) {
         markDirty();
-        troubles.push("Press Save again to retry — nothing will be duplicated.");
+        troubles.push("Press Save to retry.");
       }
       setBackPromptOpen(false);
       onSaved(saved);
       setNotice(
         troubles.length
           ? `Profile saved. ${troubles.join(" ")}`
-          : "Profile saved. New design workshops will be created with these details."
+          : "Profile saved."
       );
     } catch (err) {
       // `apiFetch` has already turned FastAPI's 422 list into a sentence naming the field, so this
@@ -899,8 +899,7 @@ export function DesignerProfileForm({
             is missing it, so this is the one surface that gains it.
           */}
           <p className="mb-3 text-sm leading-6 text-ink-muted">
-            The four boxes above are the postal address printed on your reports. This card holds the district, the village
-            and the map point. Neither one fills the other in, so fill in both.
+            District, village and map point. Fill in the postal address above as well.
           </p>
           <LocationFields initial={profile.location ?? null} onDirty={markDirty} subjectLabel="the designer" />
         </div>
@@ -948,8 +947,7 @@ export function DesignerProfileForm({
         */}
         {profile.empanelmentNo && profile.signInByEmpanelmentNo === false ? (
           <p className="text-xs leading-5 text-amber-800 dark:text-amber-100 md:col-span-2">
-            Another designer already holds this number, so you cannot sign in with it. Use your
-            email.
+            Another designer uses this number. Sign in with your email.
           </p>
         ) : null}
         {/* Not `Field`, which is a `<label>`: `DateField` carries a calendar button, and a wrapping
@@ -1401,7 +1399,7 @@ function MediaSlot({
         title={mediaId ? `Replace ${label.toLowerCase()}` : `Attach ${label.toLowerCase()}`}
         description={
           help ??
-          "One image. It uploads as soon as it is attached; saving the profile then adds it to your profile."
+          "One image. Save the profile to keep it."
         }
         allowedTypes={["IMAGE"]}
         allowDocuments={false}
@@ -1488,7 +1486,7 @@ function DocumentSlot({
         title={mediaId ? `Replace ${label}` : `Attach ${label}`}
         description={
           help ??
-          "One document. It uploads as soon as it is attached; saving the profile then adds it to your profile."
+          "One document. Save the profile to keep it."
         }
         /*
           ALL THREE TOKENS ARE LOAD-BEARING AND `PDF` IS THE ONE THAT BITES.
@@ -1612,7 +1610,7 @@ async function uploadOne(
       troubles.push(
         `The ${subject} did not upload (${stranded
           .map((outcome) => outcome.file.name)
-          .join(", ")}), so the one already on file was kept and the new one is still attached below.`
+          .join(", ")}). The old one was kept.`
       );
     }
     return {
@@ -1621,7 +1619,7 @@ async function uploadOne(
     };
   } catch (err) {
     troubles.push(
-      `The ${subject} did not upload (${err instanceof Error ? err.message : "the transfer failed"}), so the one already on file was kept and the new one is still attached below.`
+      `The ${subject} didn't upload (${err instanceof Error ? err.message : "transfer failed"}). The old one was kept.`
     );
     // A THROW FROM `uploadMediaBatch` MEANS NOTHING LANDED, so every file handed in is still owed a
     // retry and every one of them goes back to the caller.

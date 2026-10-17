@@ -41,6 +41,7 @@ import {
 } from "@/lib/aadhaar";
 import { readSecureQrFromImage } from "@/lib/aadhaarQrImage";
 import { isAdmin } from "@/lib/permissions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 type Step = "status" | "consent" | "method" | "qr" | "zip" | "otp";
 
@@ -135,7 +136,7 @@ export function AadhaarVerifyPanel({
     setNotice(
       result.status === "VERIFIED"
         ? "Verified with Aadhaar."
-        : "UIDAI's signature checked out, but the name UIDAI holds is not the name on this record. An administrator will compare the two and decide."
+        : "Signature valid, but the name differs. An admin will review it."
     );
     if (subject.kind === "self") await refreshMe();
   }
@@ -166,11 +167,11 @@ export function AadhaarVerifyPanel({
     setBusy(false);
     if (!text) {
       setError(
-        "No Aadhaar QR code could be read in that picture. Use a sharp, straight-on photograph or screenshot with the whole large QR code in it."
+        "No Aadhaar QR code found. Use a sharp, straight-on picture of the large QR code."
       );
       return;
     }
-    await run(() => verifySecureQr(subject, text), "The QR code could not be verified. Try again.");
+    await run(() => verifySecureQr(subject, text), "Couldn't verify the QR code. Try again.");
   }
 
   async function sendOtp() {
@@ -210,13 +211,13 @@ export function AadhaarVerifyPanel({
     methods.push({
       key: "qr",
       label: "A picture of the Aadhaar QR code",
-      note: "A photograph or screenshot of the large QR code on the Aadhaar letter, PVC card or e-Aadhaar.",
+      note: "The large QR code on the letter, card or e-Aadhaar.",
       icon: QrCode
     });
     methods.push({
       key: "zip",
       label: "The offline e-KYC file",
-      note: "The ZIP file downloaded from UIDAI's website (Aadhaar Paperless Offline e-KYC), and the share code chosen while downloading it.",
+      note: "The ZIP from UIDAI and its share code.",
       icon: FileArchive
     });
   }
@@ -224,7 +225,7 @@ export function AadhaarVerifyPanel({
     methods.push({
       key: "otp",
       label: "A one-time code from UIDAI",
-      note: "UIDAI sends a code to the mobile number registered with the Aadhaar.",
+      note: "Sent to the Aadhaar-linked mobile.",
       icon: KeyRound
     });
   }
@@ -261,11 +262,11 @@ export function AadhaarVerifyPanel({
           ) : (
             <p className="text-sm leading-6 text-ink-700">
               {subject.kind === "self"
-                ? "Confirm that this account belongs to you by checking it against your Aadhaar."
-                : "Confirm this artisan's identity against their Aadhaar."}
+                ? "Verify this account with your Aadhaar."
+                : "Verify this artisan with their Aadhaar."}
             </p>
           )}
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="button" className="field-button" disabled={busy} onClick={() => setStep("consent")}>
               <ShieldCheck className="h-4 w-4" aria-hidden />
               {summary?.status ? "Verify again" : "Verify with Aadhaar"}
@@ -285,7 +286,7 @@ export function AadhaarVerifyPanel({
                 </button>
               </>
             ) : null}
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
 
@@ -306,14 +307,14 @@ export function AadhaarVerifyPanel({
             />
             <span>{consentStatement(subject)}</span>
           </label>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="button" className="field-button" disabled={!agreed} onClick={() => setStep("method")}>
               Continue
             </button>
             <button type="button" className="field-button-secondary" onClick={() => reset()}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
 
@@ -345,8 +346,7 @@ export function AadhaarVerifyPanel({
       {step === "qr" ? (
         <div className="mt-3 grid gap-3">
           <p className="text-sm leading-6 text-ink-700">
-            Choose a photograph or screenshot of the large QR code. The picture is read on this device and only the
-            code inside it is sent.
+            Read on this device; only the code is sent.
           </p>
           <label className={`file-trigger ${busy ? "pointer-events-none opacity-60" : ""}`}>
             <QrCode className="h-4 w-4" aria-hidden />
@@ -404,8 +404,7 @@ export function AadhaarVerifyPanel({
             />
           </label>
           <p className="text-xs leading-5 text-ink-500">
-            Optional: type the mobile number or e-mail registered with the Aadhaar and it will be checked against the
-            file too. Neither is kept.
+            Optional: the linked mobile or email, to check too. Not kept.
           </p>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="grid gap-1">
@@ -417,14 +416,14 @@ export function AadhaarVerifyPanel({
               <input className="field-input" type="email" autoComplete="off" value={email} onChange={(event) => setEmail(event.target.value)} />
             </label>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="submit" className="field-button" disabled={busy || !zip || !shareCode.trim()}>
               {busy ? "Checking…" : "Verify"}
             </button>
             <button type="button" className="field-button-secondary" disabled={busy} onClick={() => reset()}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </form>
       ) : null}
 
@@ -452,8 +451,7 @@ export function AadhaarVerifyPanel({
               required
             />
             <span className="text-xs leading-5 text-ink-500">
-              A 16-digit Virtual ID is better: it can be generated from UIDAI&apos;s website or app and keeps the Aadhaar
-              number itself private. Neither is kept.
+              A 16-digit Virtual ID keeps the number private. Not kept.
             </span>
           </label>
           {issued ? (
@@ -469,14 +467,14 @@ export function AadhaarVerifyPanel({
               />
             </label>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="submit" className="field-button" disabled={busy || !uid.trim() || (!!issued && !otp.trim())}>
               {busy ? "Please wait…" : issued ? "Verify" : "Send the code"}
             </button>
             <button type="button" className="field-button-secondary" disabled={busy} onClick={() => reset()}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </form>
       ) : null}
 

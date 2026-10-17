@@ -186,7 +186,7 @@ export function AiVerbReviewDialog({
       // The annexure's own words for this kind, so the person signing recognises what they signed
       // for when they meet it again in the .docx a year later.
       title={layerKindLabel(kind)}
-      description="Nothing has been put in any document yet. Read it, then decide whether it stands in your name."
+      description="Read it, then decide whether to accept it in your name."
       tone="warning"
       // Three ways forward, and an X would have to silently mean one of them — but this dialog's
       // "close" IS the third way (leave it for now, the layer stays listed and inert), so the X is
@@ -233,10 +233,7 @@ export function AiVerbReviewDialog({
           <p className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
             <AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden />
             <span>
-              This passage was written by a machine from your short note, which is quoted below as its source. Anything
-              in it that is not in that note — a detail, a reason, a connection between two things — was supplied by the
-              model and was not recorded in the field. Treat the note as the record and this as a reading of it, and
-              check any specific claim against the workshop&apos;s own material before quoting it.
+              AI-written from your note (below). Anything not in the note was added by the model — check it before quoting.
             </span>
           </p>
         ) : null}
@@ -255,13 +252,11 @@ export function AiVerbReviewDialog({
           </section>
         ) : layer.source?.kind === "MEDIA" ? (
           <p className="text-sm leading-6 text-ink-500">
-            Made from a file attached to this workshop. Check the sentence against the photograph or the recording
-            itself, which is the evidence it stands on — it is on the stage this file is attached to.
+            Made from a workshop file. Check it against the file.
           </p>
         ) : layer.source?.kind === "LAYER" ? (
           <p className="text-sm leading-6 text-ink-500">
-            Made from another layer of this workshop. Both are drawn together, one inside the other, on the AI layers
-            screen.
+            Made from another AI layer.
           </p>
         ) : null}
 
@@ -276,7 +271,7 @@ export function AiVerbReviewDialog({
             </div>
           ) : (
             <p className="text-sm leading-6 text-ink-500">
-              This layer carries no prose of its own — its content is the structured data below.
+              No text — data below.
             </p>
           )}
         </section>
@@ -288,8 +283,7 @@ export function AiVerbReviewDialog({
           // correctness. It travels so a designer deciding whether to accept can see it, and it
           // travels labelled so nobody builds a gate on it.
           <p className="text-xs leading-5 text-ink-500">
-            The model rated its own confidence in this description at {confidence}. That is only its own estimate, not a
-            check of whether the sentence is right — compare it with the photograph.
+            Model&apos;s own confidence: {confidence}. Compare with the photo.
           </p>
         ) : null}
 
@@ -351,9 +345,7 @@ export function AiVerbReviewDialog({
                   onChange={(event) => setSpeakers(event.target.checked)}
                 />
                 <span>
-                  Put the speaker label in front of each line. <strong className="font-semibold">The labels are the
-                  engine&apos;s own guess</strong> — it can merge two quiet voices or split one person who moved away
-                  from the microphone. A .vtt file includes this caution; a .srt file carries the labels alone.
+                  Label speakers on each line. <strong className="font-semibold">Labels are a best guess.</strong>
                 </span>
               </label>
             ) : null}
@@ -376,8 +368,7 @@ export function AiVerbReviewDialog({
                 acceptance first would mean accepting subtitles nobody has watched, which is the
                 opposite of what acceptance is for. */}
             <p className="text-xs leading-5 text-ink-500">
-              You can download and watch these against the recording before deciding. Downloading changes nothing and
-              does not accept anything.
+              Downloading doesn&apos;t accept anything.
             </p>
           </section>
         ) : null}
@@ -394,8 +385,7 @@ export function AiVerbReviewDialog({
             {languages ? ` · From ${languages.from} into ${languages.into}` : ""}
           </p>
           <p className="text-xs leading-5 text-ink-500">
-            Accepting records your name and the moment against this {layerKindNoun(kind)}. Until somebody does, it is
-            listed on the AI layers screen and no report will print it.
+            Not printed until accepted. Accepting records your name.
           </p>
         </section>
 

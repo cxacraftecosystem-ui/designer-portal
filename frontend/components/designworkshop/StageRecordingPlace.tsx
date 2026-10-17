@@ -41,6 +41,7 @@ import { MapPointPicker, mapPickerAvailable } from "@/components/forms/MapPointP
 import { Dropdown } from "@/components/ui/Dropdown";
 import type { DwGeoValue } from "@/lib/designWorkshops";
 import type { AddressReference } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** Everything this card hands to an upload, in `uploadMediaBatch`'s own vocabulary. */
 export type StageRecordingPlace = {
@@ -166,7 +167,7 @@ export function StageRecordingPlaceCard({
 
   function captureFix() {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setProblem("This browser cannot report a location. Point at the place on the map instead.");
+      setProblem("No location from this browser. Use the map.");
       return;
     }
     setBusy(true);
@@ -190,10 +191,10 @@ export function StageRecordingPlaceCard({
         setBusy(false);
         setProblem(
           failure.code === failure.PERMISSION_DENIED
-            ? "Location permission was refused for this site. Allow it in the address-bar permissions, or point at the place on the map."
+            ? "Location blocked. Allow it for this site, or use the map."
             : failure.code === failure.POSITION_UNAVAILABLE
-              ? "The device has no location to give — check that location services are switched on."
-              : "The device could not get a fix in time. Try again outdoors, or point at the place on the map."
+              ? "No location — turn on location services."
+              : "No fix in time. Try outdoors, or use the map."
         );
       },
       { enableHighAccuracy: true, timeout: FIX_TIMEOUT_MS, maximumAge: 0 }
@@ -215,7 +216,7 @@ export function StageRecordingPlaceCard({
     ? `${value.point.lat.toFixed(5)}, ${value.point.lon.toFixed(5)}${
         value.point.accuracy !== undefined ? ` (±${Math.round(value.point.accuracy)} m)` : ""
       }`
-    : "Not captured — media from this stage will be uploaded without a location";
+    : "No location yet";
 
   return (
     <section className="panel p-4" aria-labelledby={headingId}>
@@ -237,15 +238,13 @@ export function StageRecordingPlaceCard({
       {open ? (
         <div className="mt-4 grid gap-4">
           <p className="text-sm leading-6 text-ink-muted">
-            Every photograph, recording and file attached anywhere on this stage is stamped with this place and time. It
-            is captured only when you ask for it — a stage filled in at a desk a week later would otherwise stamp the
-            desk onto photographs taken in a courtyard.
+            Stamped on every file in this stage. Captured only when you ask.
           </p>
 
           {/* CAPTURED AT — a measurement of where the device is. */}
           <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
             <p className="field-label">Captured at — the device&apos;s own reading</p>
-            <div className="flex flex-wrap items-center gap-2">
+            <ActionGroup>
               <button type="button" className="field-button-secondary" disabled={disabled || busy} onClick={captureFix}>
                 <LocateFixed className="h-4 w-4" aria-hidden />
                 {busy ? "Getting a fix…" : value.point ? "Capture again" : "Use current GPS"}
@@ -272,7 +271,7 @@ export function StageRecordingPlaceCard({
                   Clear
                 </button>
               ) : null}
-            </div>
+            </ActionGroup>
             {mapOpen ? (
               <MapPointPicker
                 lat={value.point?.lat ?? null}
@@ -284,8 +283,8 @@ export function StageRecordingPlaceCard({
                   // the only honest answer available.
                   setPoint({ lat: Number(lat), lon: Number(lon) }, new Date().toISOString())
                 }
-                onFailure={() => setProblem("The map could not be loaded. Use the GPS button instead.")}
-                ariaLabel="Click the map to say where this stage is being recorded"
+                onFailure={() => setProblem("Map didn't load. Use GPS instead.")}
+                ariaLabel="Click the map to set the location"
               />
             ) : null}
             {problem ? <p className="text-xs font-medium leading-5 text-error-600">{problem}</p> : null}
@@ -334,7 +333,7 @@ export function StageRecordingPlaceCard({
                   // Said rather than left blank: 795 districts cannot be bundled, so an empty list
                   // means the reference fetch has not landed, not that the state has no districts.
                   <p className="text-xs leading-5 text-ink-500">
-                    The district list has not arrived — it needs a connection. The rest of the card still works.
+                    Districts need a connection.
                   </p>
                 ) : null}
               </div>
@@ -378,8 +377,7 @@ export function StageRecordingPlaceCard({
             </div>
             {!value.point && (stateName || district || village || pincode) ? (
               <p className="rounded-md border border-amber-500 bg-amber-100 px-2 py-1 text-xs leading-5 text-amber-800">
-                These are stored alongside the coordinates, so they need a captured point above before they can be saved
-                with the media. Capture a fix or drop a pin, or clear these boxes.
+                Capture a location or drop a pin first, or clear these.
               </p>
             ) : null}
           </div>

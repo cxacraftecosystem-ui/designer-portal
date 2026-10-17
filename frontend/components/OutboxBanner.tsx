@@ -151,7 +151,7 @@ export function outboxOutcome(result: SyncResult): {
       kind: "refused",
       tone: "error",
       title: `${result.failed} ${result.failed === 1 ? "entry" : "entries"} couldn't be saved`,
-      description: "Nothing has been thrown away. Each one is listed below with what it needs."
+      description: "Nothing was lost. See what each needs below."
     };
   }
   if (result.stoppedOffline) {
@@ -159,7 +159,7 @@ export function outboxOutcome(result: SyncResult): {
       kind: "offline",
       tone: "error",
       title: "Still no connection",
-      description: "Everything is still waiting on this device. Try again once you have signal."
+      description: "Still waiting. Try again with signal."
     };
   }
   if (result.declined) {
@@ -167,7 +167,7 @@ export function outboxOutcome(result: SyncResult): {
       kind: "busy",
       tone: "info",
       title: "Another tab is sending these",
-      description: `Another tab is already sending these. ${result.remaining} still waiting — leave that tab open until it finishes.`
+      description: `${result.remaining} still waiting. Keep that tab open.`
     };
   }
   if (result.storeUnreadable) {
@@ -176,7 +176,7 @@ export function outboxOutcome(result: SyncResult): {
       tone: "error",
       title: "Couldn't read the work saved on this device",
       description:
-        "Some saved work may still be waiting here, so don't assume nothing is. Reload the page, and don't clear this browser's data."
+        "Some work may still be waiting. Reload, and don't clear browser data."
     };
   }
   /*
@@ -320,7 +320,7 @@ function RepickDialog({
         a picker is that nothing was deleted. Tersened with the whole outbox family, and with
         Android's, so one queue is not described in two voices.
       */
-      description="Choose one that still exists and this entry will send. Nothing was deleted."
+      description="Choose one that still exists to send it."
       footer={
         <>
           <button type="button" className="field-button-secondary" onClick={onClose} disabled={saving}>
@@ -440,7 +440,7 @@ export function OutboxBanner() {
       id: "outbox-queued",
       tone: "info",
       title: `${added === 1 ? "Entry" : `${added} entries`} saved on this device`,
-      description: "You're offline, so it's listed below and will upload when you're back online."
+      description: "It uploads when you're online."
     });
   }, [queuedHere, toast]);
 
@@ -476,8 +476,8 @@ export function OutboxBanner() {
           title: "Couldn't finish sending",
           description:
             error instanceof Error && error.message
-              ? `${error.message} Nothing has been thrown away — reload the page and try again.`
-              : "Nothing has been thrown away — reload the page and try again."
+              ? `${error.message} Nothing was lost — reload and try again.`
+              : "Nothing was lost — reload and try again."
         });
       } finally {
         setSyncing(false);
@@ -589,8 +589,8 @@ export function OutboxBanner() {
           <h2 className="font-display text-sm font-bold">This browser&rsquo;s storage isn&rsquo;t responding</h2>
           <p className="mt-0.5 text-xs text-ink-700">
             {health.writeFailedAt
-              ? "Your latest record may not have been saved on this device, and the list of work waiting to upload may be incomplete. This usually means the disk is full or you're using a private window. Free some space, then reload the page before typing anything else."
-              : "Records saved on this device couldn't be read, so we can't show what's still waiting to upload. Don't clear this browser's data or hand the laptop on — your work may still be recoverable. Reload the page, and if this keeps happening, contact your administrator."}
+              ? "Your latest record may not be saved — storage is full or this is a private window. Free space and reload before typing more."
+              : "Couldn't read saved records. Don't clear browser data — reload, and contact an admin if it persists."}
           </p>
         </div>
       </div>
@@ -664,9 +664,9 @@ export function OutboxBanner() {
             */}
             <p className="mt-0.5 text-xs text-ink-700">
               {waiting
-                ? "They'll upload when you're back online. Until then they're only in this browser, so don't clear its data or hand the laptop on."
+                ? "They upload when you reconnect. Don't clear browser data."
                 : rejected.length
-                  ? "Nothing is waiting for a connection. The entries below couldn't be saved and need your attention."
+                  ? "These couldn't be saved and need attention."
                   : // Nothing waiting and nothing refused leaves exactly one reason the queue is not
                     // empty, and the line below states it. The refusal sentence would be a lie here:
                     // the server never saw these entries.
@@ -813,7 +813,7 @@ export function OutboxBanner() {
                         id: "outbox-discard",
                         tone: "error",
                         title: "That entry couldn't be discarded",
-                        description: "It's still here and nothing has been deleted. Reload the page and try again."
+                        description: "It's still here. Reload and try again."
                       })
                     )
                   }

@@ -83,10 +83,12 @@ import {
   translateDesignWorkshopText,
   translationTargetRefusal,
   verbAllowanceRefusal,
-  verbWorkshopRefusal,
+    verbWorkshopRefusal,
+  CONSENT_LINK_LABEL,
   type DwAiVerbAllowanceState,
   type DwAiVerbResult
 } from "@/lib/aiVerbs";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The three items, worded as what the designer is asking for rather than as the kind that results.
@@ -324,13 +326,12 @@ export function AiVerbSelectionMenu({ workshopId, disabled, selectionChars, read
               in nineteen and several of them (Marwari, Garhwali) have no code to name, so a list
               would refuse the exact languages this system exists to record. */}
           <p className="text-xs leading-5 text-ink-500">
-            A name or a code — “Odia”, “or”, “English”. The original stays exactly where it is; a translation is added
-            beside it.
+            A name or code, e.g. “Odia”. The original is kept.
           </p>
           {translationTargetRefusal(target) && target.trim() ? (
             <p className="text-xs leading-5 text-error-600">{translationTargetRefusal(target)}</p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button
               type="button"
               className="field-button"
@@ -342,7 +343,7 @@ export function AiVerbSelectionMenu({ workshopId, disabled, selectionChars, read
             <button type="button" className="field-button-secondary" disabled={running} onClick={() => setTarget(null)}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
 
@@ -355,10 +356,9 @@ export function AiVerbSelectionMenu({ workshopId, disabled, selectionChars, read
           {consent.ready && !granted ? (
             <>
               {" "}
-              <Link href={`/design-workshops/${workshopId}`} className="font-medium text-purple-700 dark:text-purple-300 underline">
-                Open the workshop&apos;s own screen
+              <Link href={`/design-workshops/${workshopId}#consent`} className="font-medium text-purple-700 dark:text-purple-300 underline">
+                {CONSENT_LINK_LABEL}
               </Link>
-              .
             </>
           ) : null}
         </p>

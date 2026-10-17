@@ -283,8 +283,8 @@ test.describe("the progress sentence", () => {
     // screen to say so — is the summary contradicting its own rows.
     expect(unclassifiedSentence(0)).toBeNull();
     expect(unclassifiedSentence(-1)).toBeNull();
-    expect(unclassifiedSentence(1)).toContain("1 workshop has a status that isn't in any group");
-    expect(unclassifiedSentence(3)).toContain("3 workshops have a status that isn't in any group");
+    expect(unclassifiedSentence(1)).toContain("1 workshop has an ungrouped status");
+    expect(unclassifiedSentence(3)).toContain("3 workshops have ungrouped statuses");
     expect(unclassifiedSentence(3)).toContain("Everything");
   });
 });
@@ -537,14 +537,14 @@ test.describe("the downloads say what they hold", () => {
     // ONE LINE, WHATEVER THE FORMATTER DID TO IT. This sentence is JSX text and is wrapped wherever
     // it fits, so a raw substring check would be asserting the formatter's line breaks rather than
     // the copy.
-    expect(PAGE.replace(/\s+/g, " ")).toContain("not only the artisans of the workshops listed here");
+    expect(PAGE.replace(/\s+/g, " ")).toContain("“Download beneficiaries” exports every artisan");
   });
 
   test("the page states what the workshop file does NOT contain, beside the button", () => {
     // SAY IT ON SCREEN, NEVER 403 A BUTTON — `can_export_design_workshop_data`'s standing rule. The
     // question a reader has about a file they are about to send somewhere is what is in it.
     const flat = PAGE.replace(/\s+/g, " ");
-    expect(flat).toContain("and no stage content: no answers, no photographs");
-    expect(flat).toContain("masked to its last four characters");
+    expect(flat).toContain("with no stage content");
+    expect(flat).toContain("masked to the last four characters");
   });
 });

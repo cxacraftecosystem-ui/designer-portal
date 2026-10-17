@@ -76,6 +76,7 @@ import {
   workshopScopeFromSearchParams
 } from "@/components/WorkshopScopeSelect";
 import { apiFetch, buildQuery } from "@/lib/api";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const SCOPE_COPY: Record<MapPointsResponse["scope"], string> = {
   all: "Every record",
@@ -103,7 +104,7 @@ const SCOPE_COPY: Record<MapPointsResponse["scope"], string> = {
 const LEVEL_COPY: Record<AdminLevel, { label: string; hint: string }> = {
   NATION: {
     label: "Nation",
-    hint: "Every placed record as one point, inside the international border."
+    hint: "All records as one point."
   },
   STATE: {
     label: "State",
@@ -111,7 +112,7 @@ const LEVEL_COPY: Record<AdminLevel, { label: string; hint: string }> = {
   },
   DISTRICT: {
     label: "District",
-    hint: "One point per district, with district borders drawn — the finest unit an address can name."
+    hint: "One point per district."
   }
 };
 
@@ -401,7 +402,7 @@ export default function MapPage() {
     <div>
       <PageHeader
         title="Where the work comes from"
-        description="Every documented record placed on the map twice over: where the craft is from, and where the recording was actually made. The two are not the same place, and the map says which is which."
+        description="Where crafts are from, and where they were recorded."
         icon={<MapPin className="h-5 w-5" aria-hidden />}
         actions={
           <Link
@@ -458,7 +459,7 @@ export default function MapPage() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <ActionGroup>
           <button type="button" onClick={apply} className="field-button">
             Update map
           </button>
@@ -482,7 +483,7 @@ export default function MapPage() {
               Show everything
             </button>
           ) : null}
-        </div>
+        </ActionGroup>
       </div>
 
       {error ? (
@@ -513,8 +514,7 @@ export default function MapPage() {
                 {data.focus.inScope === false ? (
                   <span className="text-amber-800">
                     {" "}
-                    It falls outside your current filters, so no pin is ringed. Choose{" "}
-                    <span className="font-semibold">All records</span> above to bring it in.
+                    Outside your filters — choose <span className="font-semibold">All records</span>.
                   </span>
                 ) : null}
               </span>
@@ -580,8 +580,8 @@ export default function MapPage() {
               {points.length === 0 ? (
                 <p className="px-2 py-12 text-center text-sm text-ink-500">
                   {scope.workshopIds.length
-                    ? "No records with a mapped address in the chosen workshops. Widen the workshop scope, or choose All records."
-                    : "No records with a mapped address match these filters."}
+                    ? "No mapped records in these workshops."
+                    : "No mapped records match."}
                 </p>
               ) : (
                 <IndiaMap
@@ -597,8 +597,7 @@ export default function MapPage() {
 
               {points.length ? (
                 <p className="mt-2 text-[11px] leading-4 text-ink-500">
-                  Point at a pin to read its number, and choose one to bring its entry in the list beside
-                  this map into view.
+                  Choose a pin to find it in the list.
                 </p>
               ) : null}
             </section>
@@ -651,22 +650,20 @@ export default function MapPage() {
                   <p className="mt-3 flex gap-2 text-[11px] leading-4 text-ink-500">
                     <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
                     <span>
-                      The two counts overlap and do not add up: one record can be both from Bagru and
-                      recorded at a workshop in Kharagpur.
+                      The counts overlap.
                       {summary.originExcludes.length ? (
                         <>
                           {" "}
                           {/* The bucket names arrive lower-case from the API, and this is the start
                               of a sentence — "media carry no place" read as a broken line. */}
                           <span className="capitalize">{summary.originExcludes.join(", ")}</span>{" "}
-                          have no place of their own, so they are placed only by the address of the
-                          location they were captured at.
+                          are placed where they were captured.
                         </>
                       ) : null}
                       {summary.captureTruncated ? (
                         <>
                           {" "}
-                          More GPS fixes matched than this map can show; the busiest are shown.
+                          Showing the busiest GPS points.
                         </>
                       ) : null}
                       {summary.clusterKilometres ? (
@@ -691,8 +688,7 @@ export default function MapPage() {
                       </p>
                       {summary.address.withDistrict < summary.address.locations ? (
                         <p className="mt-1 text-[11px] leading-4 text-ink-500">
-                          Records with no district are drawn at their state&rsquo;s seat and say so.
-                          Filling in the district on the record moves the pin.
+                          Records without a district sit at the state capital.
                         </p>
                       ) : null}
                       {typeof summary.anchoredDistricts === "number" ? (
@@ -712,18 +708,14 @@ export default function MapPage() {
                   {(data.level ?? level) === "DISTRICT" && borrowedOutlines.length ? (
                     <p className="mt-2 rounded-md border border-line-200 bg-surface-50 px-2.5 py-2 text-[11px] leading-4 text-ink-500">
                       {borrowedOutlines.length === 1
-                        ? `${borrowedOutlines[0]} has no outline of its own in the published boundary data.`
-                        : `${borrowedOutlines.length} districts here have no outline of their own in the published boundary data.`}{" "}
-                      The pins are placed from the address as usual. The border drawn around them is the
-                      parent district each was carved from — or, where the parentage is not on record,
-                      their state.
+                        ? `${borrowedOutlines[0]} has no published outline; its parent district or state is drawn.`
+                        : `${borrowedOutlines.length} districts have no published outline; their parent district or state is drawn.`}
                     </p>
                   ) : null}
 
                   {placeFilterMissesMedia ? (
                     <p className="mt-2 rounded-md bg-amber-100/50 px-2.5 py-2 text-[11px] leading-4 text-amber-800">
-                      A place filter cannot narrow media — a photograph has no place of its own — so
-                      media here is every file matching your other filters.
+                      Place filters don&rsquo;t apply to media.
                     </p>
                   ) : null}
                 </section>
@@ -742,8 +734,7 @@ export default function MapPage() {
                   Every place, as a list
                 </h2>
                 <p className="mb-3 mt-1 text-xs text-ink-500">
-                  The same information as the map, at the same detail level, numbered to match the pins.
-                  Choose a place to see the records there
+                  Numbered to match the pins. Choose a place to see its records
                   {data.childLevel
                     ? `, or open a row for the ${data.childLevel.toLowerCase()}s inside it`
                     : ""}

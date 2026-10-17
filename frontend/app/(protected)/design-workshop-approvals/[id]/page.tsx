@@ -79,13 +79,14 @@ import {
 import { formatDate, formatDateTime } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canApproveDesignWorkshops } from "@/lib/permissions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 function describeFailure(error: unknown): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so this report could not be read. Nothing was loaded at all.";
+    return "No connection — couldn't load this report.";
   }
   if (error.status === 404) {
-    return "This report could not be found. It may have been deleted, or the link may be wrong — the list of reports to approve shows every one that has been handed in.";
+    return "Report not found. Check Reports to approve.";
   }
   return error.message;
 }
@@ -114,8 +115,7 @@ function ReadField({
       <span className="field-label">{field.label}</span>
       {reading.kind === "media" ? (
         <span className="text-sm text-ink-500">
-          {reading.count} file{reading.count === 1 ? "" : "s"} recorded here. This read does not carry photographs,
-          recordings or attachments; the report file below prints the photographs.
+          {reading.count} file{reading.count === 1 ? "" : "s"}. Photos print in the report file below.
         </span>
       ) : (
         <span className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{reading.text}</span>
@@ -204,7 +204,7 @@ function ReadStage({
       {nothingRecorded ? (
         <p className="pt-3 text-sm text-ink-500">
           Nothing has been recorded on this stage.
-          {stage.optionalStage ? " The source document marks it as one a workshop may legitimately skip." : ""}
+          {stage.optionalStage ? " (Optional stage.)" : ""}
         </p>
       ) : (
         <div className="grid gap-4 pt-3">
@@ -296,7 +296,7 @@ function DecisionPanel({
 
   function fail(err: unknown, what: string) {
     if (isUnreachable(err)) {
-      setProblem(`The repository could not be reached, so nothing was ${what}. What you typed is still here; try again when you have a connection.`);
+      setProblem(`No connection — nothing was ${what}. Your text is kept.`);
       setStale(false);
       return;
     }
@@ -314,15 +314,14 @@ function DecisionPanel({
       body: (
         <>
           <span className="block">
-            The report is approved as you have read it — round {detail.submissionRound ?? 0}. Its stages can no longer be
-            changed by anybody unless the approval is withdrawn.
+            Approves round {detail.submissionRound ?? 0} as you read it. It is then locked unless withdrawn.
           </span>
           <span className="mt-2 block">
-            Handing it on to the office is a separate step, taken afterwards on this screen.
+            Handing it on to the office is a separate step.
           </span>
         </>
       ),
-      note: "The approval is recorded with your name and the date. It can be withdrawn later, with a reason, which sends the report back to its designers."
+      note: "Recorded under your name. You can withdraw it later with a reason."
     });
     if (!agreed) return;
     setBusy("approve");
@@ -340,8 +339,8 @@ function DecisionPanel({
       setOpen(null);
       setOutcome(
         answer.alreadyApproved
-          ? `This report was already approved, so nothing more was recorded. ${signOffLines(answer).join(" ")}`
-          : "Approved. The report can no longer be changed, and it is ready to be handed on to the office."
+          ? `Already approved. ${signOffLines(answer).join(" ")}`
+          : "Approved. Ready to hand on to the office."
       );
       void refreshAwaitingApprovalCount();
     } catch (err) {
@@ -361,7 +360,7 @@ function DecisionPanel({
       tone: "warning",
       confirmLabel: copy.confirm,
       body: copy.body,
-      note: "Your sentence is recorded with your name against this round, and the designers read it as written. It cannot be edited afterwards."
+      note: "Recorded under your name. It can't be edited afterwards."
     });
     if (!agreed) return;
     setBusy("revise");
@@ -394,16 +393,14 @@ function DecisionPanel({
         <>
           <span className="block">
             The approved report is recorded as handed on to {to}
-            {exportId ? ", as the report file named below" : ""}. Nothing is sent from here: send the file the way that
-            office receives reports.
+            {exportId ? ", as the file named below" : ""}. Nothing is sent from here — send the file yourself.
           </span>
           <span className="mt-2 block">
-            After this the report stays as it is. If the office sends it back, it can be returned to its designers with a
-            reason.
+            If the office sends it back, you can return it to its designers.
           </span>
         </>
       ),
-      note: "The hand-on is recorded with your name, the date and the office."
+      note: "Recorded under your name."
     });
     if (!agreed) return;
     setBusy("handOn");
@@ -436,7 +433,7 @@ function DecisionPanel({
       // WARNINGS TRAVEL BESIDE THE DOWNLOAD, NEVER INSIDE THE DOCUMENT — the report page's rule.
       setDownloadNotice(
         file.warningCount > 0
-          ? `Downloaded ${file.fileName}. ${file.warningCount} thing${file.warningCount === 1 ? " was" : "s were"} noted while it was made: ${file.warnings.join("; ")}`
+          ? `Downloaded ${file.fileName}. Notes: ${file.warnings.join("; ")}`
           : `Downloaded ${file.fileName}.`
       );
       // The new export is what a hand-on names, so the read is taken again to see it.
@@ -531,10 +528,10 @@ function DecisionPanel({
             id="approve-note"
             maxLength={MAX_DECISION_NOTE_CHARS}
             onChange={(event) => setApproveNote(event.target.value)}
-            placeholder="Anything you want on the record beside the approval — a condition, a reference."
+            placeholder="Optional note"
             value={approveNote}
           />
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button className="field-button" disabled={busy !== null} onClick={() => void approve()} type="button">
               {busy === "approve" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
               Approve this report
@@ -542,7 +539,7 @@ function DecisionPanel({
             <button className="field-button-secondary" disabled={busy !== null} onClick={() => setOpen(null)} type="button">
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
 
@@ -575,7 +572,7 @@ function DecisionPanel({
               </option>
             ))}
           </select>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button
               className="field-button"
               disabled={busy !== null || reason.trim().length === 0}
@@ -588,7 +585,7 @@ function DecisionPanel({
             <button className="field-button-secondary" disabled={busy !== null} onClick={() => setOpen(null)} type="button">
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
 
@@ -612,7 +609,7 @@ function DecisionPanel({
             id="hand-on-note"
             maxLength={MAX_DECISION_NOTE_CHARS}
             onChange={(event) => setHandOnNote(event.target.value)}
-            placeholder="How it went, or the reference it went under."
+            placeholder="Optional reference"
             value={handOnNote}
           />
           <div className="grid gap-1 text-sm leading-6 text-ink-700">
@@ -633,12 +630,11 @@ function DecisionPanel({
               </label>
             ) : (
               <p>
-                No report file has been made since the approval, so none can be named as the one that went. Download one
-                below and it is offered here.
+                No file since the approval. Download one below to name it.
               </p>
             )}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button className="field-button" disabled={busy !== null} onClick={() => void handOn()} type="button">
               {busy === "handOn" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
               Hand it on
@@ -646,20 +642,20 @@ function DecisionPanel({
             <button className="field-button-secondary" disabled={busy !== null} onClick={() => setOpen(null)} type="button">
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2 border-t border-line-200 pt-3">
         <span className="text-sm text-ink-700">Download the report:</span>
-        <button className="field-button-secondary" disabled={busy !== null} onClick={() => void download("DOCX")} type="button">
+        <ActionGroup className="max-sm:w-full"><button className="field-button-secondary" disabled={busy !== null} onClick={() => void download("DOCX")} type="button">
           {busy === "download" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Download className="h-4 w-4" aria-hidden />}
           .docx
         </button>
         <button className="field-button-secondary" disabled={busy !== null} onClick={() => void download("PDF")} type="button">
           <Download className="h-4 w-4" aria-hidden />
           .pdf
-        </button>
+        </button></ActionGroup>
       </div>
       {downloadNotice ? <p className="text-xs leading-5 text-ink-500">{downloadNotice}</p> : null}
 
@@ -737,7 +733,7 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
       .catch(() => {
         if (cancelled) return;
         setRegistryError(
-          "The field list could not be loaded, so the stages below cannot be named or labelled. The report itself was read; try again."
+          "Couldn't load field names. Try again."
         );
       });
     return () => {
@@ -759,7 +755,7 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
           detail
             ? [detail.workshopCode, detail.craftName, detail.clusterName, detail.district, detail.state]
                 .filter(Boolean)
-                .join(" · ") || "No workshop code yet — stage 1 has not been saved."
+                .join(" · ") || "No workshop code yet"
             : undefined
         }
         icon={<Stamp className="h-5 w-5" aria-hidden />}
@@ -850,7 +846,7 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-ink-700">No decision has been taken on this report yet.</p>
+              <p className="text-sm text-ink-700">No decisions yet.</p>
             )}
           </section>
 
@@ -882,7 +878,7 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
                 </div>
               ))
             ) : (
-              <p className="text-sm text-ink-700">No correction has been asked for on this report.</p>
+              <p className="text-sm text-ink-700">No corrections requested.</p>
             )}
           </section>
 

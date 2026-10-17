@@ -328,8 +328,7 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
         // something to paper over: the designer must not walk away believing a fortnight of work
         // has been filed when it has not.
         setError(
-          "The workshop couldn't be moved, and nothing has been lost. Try again. If it keeps failing, don't " +
-            "clear this browser's data — everything you captured is still in it — and contact your administrator."
+          "Couldn't move it; nothing was lost. Try again, and don't clear browser data."
         );
         return;
       }
@@ -363,7 +362,7 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
       onClose={onClose}
       busy={busy}
       title="Move this workshop into an existing one"
-      description={`“${title}” was started on this device and has never been sent.`}
+      description={`“${title}” is only on this device.`}
       icon={<FolderInput className="h-4 w-4" aria-hidden />}
       className="max-w-lg"
       footer={

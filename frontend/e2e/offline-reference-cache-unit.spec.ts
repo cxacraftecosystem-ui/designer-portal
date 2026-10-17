@@ -436,7 +436,7 @@ test.describe("what a cached stage list says about itself", () => {
     );
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("on this device");
-    expect(lines[1]).toContain("Only the first 50 matches are listed");
+    expect(lines[1]).toContain("First 50 matches");
   });
 });
 

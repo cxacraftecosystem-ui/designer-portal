@@ -623,9 +623,9 @@ export function dwPatchableFrom(status: string, options?: { handedOn?: boolean }
  * say the same thing.
  */
 export const DW_FROZEN_APPROVED =
-  "This report has been approved, so it can no longer be changed. If something in it needs correcting, ask the Ministry Admin to withdraw the approval; it then comes back to its designers to correct and hand in again.";
+  "Approved and locked. To change it, ask the Ministry Admin to withdraw the approval.";
 export const DW_FROZEN_HANDED_ON =
-  "This report has been approved and handed on to the office, so it can no longer be changed. If something in it needs correcting, ask the Ministry Admin to return it to its designers.";
+  "Handed on to the office and locked. To change it, ask the Ministry Admin to return it.";
 
 /**
  * IS THIS REPORT SIGNED OFF, AND SO NO LONGER WRITABLE? APPROVED, or a SUBMITTED row that was handed
@@ -2995,26 +2995,19 @@ export function dictationConsentSentence(consent: string | null | undefined): st
   const token = (consent ?? "").trim().toUpperCase();
   if (token === "GRANTED") {
     return (
-      "Recordings and material from this workshop may be sent out to be written down and worked on. " +
-      "Dictation here uses the craft-aware transcription — the one that writes “dabu” rather than " +
-      "“double” — and the AI verbs on the stages are available."
+      "Material may be sent for transcription and AI tools."
     );
   }
   if (token === "REFUSED") {
     return (
-      "Recordings and material from this workshop may not be sent out — that is the answer on " +
-      "record. Nothing from it is sent to a transcription service or to a writing model, so " +
-      "dictation, proofreading, translation, captions and subtitles are all unavailable here. " +
-      "Recording a new answer of “they agreed” is what re-opens them."
+      "Nothing is sent out. Dictation and AI tools are off."
     );
   }
   // NOT the same sentence as REFUSED, and the difference is the entire reason this is three states:
   // one is an answer and the other is the absence of one. Both close the gate; only this one is
   // answered by somebody asking.
   return (
-    "Nobody has answered this for this workshop yet, so nothing from it is sent out. Dictation, " +
-    "proofreading, translation, captions and subtitles are all unavailable until somebody puts the " +
-    "question to the artisan and records what they say."
+    "Not answered yet. Dictation and AI tools are off until you record the artisan's answer."
   );
 }
 
@@ -3037,12 +3030,8 @@ export function dictationConsentSentence(consent: string | null | undefined): st
  * record — the one claim a consent screen cannot afford to get wrong.
  */
 export const DW_CONSENT_QUESTION =
-  "May recordings and dictation from this workshop leave this device to be written down by a " +
-  "transcription service outside it? The recording is sent online to the service that turns it into " +
-  "words. A passage dictated into a field is not kept afterwards — only the words come back, and no " +
-  "audio is stored; a recording attached to this workshop as audio " +
-  "is kept with the workshop, because it is there to be listened to again. Ask the artisan whose " +
-  "voice it is, and record their answer here.";
+  "May recordings and dictation be sent to an online transcription service? Dictated audio is not " +
+  "kept — only the words. Attached recordings stay with the workshop. Ask the artisan and record their answer.";
 
 /** Android's `DW_CONSENT_ROW_TITLE`, so somebody told "it is on the workshop screen" can find it. */
 export const DW_CONSENT_ROW_TITLE = "Sending recordings out to be written down";
@@ -3136,14 +3125,14 @@ export function dictationAnswerSentence(result: DwDictationResult): string {
   const message = (result.message ?? "").trim();
   const promisesARetry = /will retry automatically/i.test(message);
   if (status === "RATE_LIMITED" || promisesARetry) {
-    return "The transcription service is busy just now and could not take this recording. Wait a moment and dictate it again, or type the answer in — nothing is queued, so it will not arrive later.";
+    return "Transcription is busy. Try again shortly, or type the answer.";
   }
   if (status === "FAILED") {
-    return "That recording couldn't be transcribed. Try again, or type the answer in — and if it keeps failing, contact your administrator.";
+    return "Couldn't transcribe that. Try again, or type the answer.";
   }
   // EMPTY, or a status this build has not heard of. The round trip worked and there were no words in
   // it, so the next move is about the microphone and the room rather than about the connection.
-  return "The recording came back with no words in it. Speak closer to the microphone, away from the loom if you can, and try again — or type the answer in.";
+  return "No words heard. Speak closer to the microphone, or type the answer.";
 }
 
 /**

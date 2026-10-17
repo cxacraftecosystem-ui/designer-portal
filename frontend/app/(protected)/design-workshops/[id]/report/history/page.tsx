@@ -108,7 +108,7 @@ function Checksum({ value, onDevice }: { value: string | null; onDevice: boolean
   if (!value) {
     return (
       <span className="text-xs text-ink-500">
-        No checksum recorded — this file cannot be matched to a copy by its contents.
+        No checksum recorded.
         {/* THE HANDSET DOES SEND ONE. `ReportScreen.kt` passes `checksumSha256` on every export it
             records, so a phone-made row without a checksum was written by a build that predates
             that — which is an old ROW, not a missing capability. The sentence has to say which,
@@ -116,7 +116,7 @@ function Checksum({ value, onDevice }: { value: string | null; onDevice: boolean
             handset's own copy of this sentence (`DwReportHistoryScreen.kt`) already says the row is
             old. Two clients describing one archive must not disagree about what the archive holds. */}
         {onDevice
-          ? " Reports made on the phone app normally record one."
+          ? " Made by an older phone app."
           : ""}
       </span>
     );
@@ -289,7 +289,7 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
     <>
       <PageHeader
         title="Report history"
-        description="Every file generated from this workshop, and what changed in the record between any two of them."
+        description="Every file generated, and what changed between them."
         icon={<FileClock className="h-5 w-5" aria-hidden />}
       />
 
@@ -299,16 +299,13 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
 
       {localOnly ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          This workshop was created on this device without a connection and hasn&rsquo;t been uploaded yet, so no
-          report has been generated from it. It will upload automatically when you&rsquo;re back online, and reports
-          generated from then on are listed here. Nothing you have captured is affected.
+          Not uploaded yet — reports appear here once it is.
         </div>
       ) : null}
 
       {offline ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          You&rsquo;re offline, so the history can&rsquo;t be shown. Connect to the internet to see it. Everything you
-          have captured is still here.
+          You&rsquo;re offline. Connect to see the history.
         </div>
       ) : null}
 
@@ -319,7 +316,7 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
       {history && ordered.length === 0 ? (
         <EmptyState
           title="No report has been generated yet"
-          body="Generate a .docx or a .pdf from the report page and it will be recorded here — with its checksum, its size and who made it — including files a phone produces with no network."
+          body="Files you generate from the report page are listed here."
         />
       ) : null}
 
@@ -491,8 +488,7 @@ function ExportCard({
 
       {staleStages ? (
         <p className="mt-2 rounded-md bg-amber-100 px-2.5 py-1.5 text-xs leading-5 text-amber-800">
-          {staleStages} stage{staleStages === 1 ? " has" : "s have"} been written to since this file was generated, so any
-          copy already sent may no longer match the record.
+          {staleStages} stage{staleStages === 1 ? "" : "s"} changed since this file was made.
         </p>
       ) : null}
 
@@ -563,7 +559,7 @@ function DiffPanel({
 
       {ordered.length < 2 ? (
         <p className="mt-1 text-sm leading-6 text-ink-muted">
-          Only one file has been generated, so there is nothing to compare it with yet.
+          Only one file so far — nothing to compare.
         </p>
       ) : (
         <>
@@ -623,10 +619,10 @@ function DiffPanel({
                 </strong>
                 {": "}
                 {touched.length === 0
-                  ? "no stage of the workshop was written to between these two files."
-                  : `${touched.length} stage${touched.length === 1 ? " was" : "s were"} written to between these two files.`}{" "}
+                  ? "no stage changed."
+                  : `${touched.length} stage${touched.length === 1 ? "" : "s"} changed.`}{" "}
                 {diff.timelineComplete && untouched.length
-                  ? `${untouched.length} other stage${untouched.length === 1 ? "" : "s"} carried identical data in both.`
+                  ? `${untouched.length} unchanged.`
                   : null}
               </p>
 
@@ -639,14 +635,12 @@ function DiffPanel({
                   "Not written" is a genuine proof and is worth saying plainly. */}
               {diff.headerRowWritten === false ? (
                 <p className="mt-3 text-sm leading-6 text-ink-700" data-testid="header-verdict">
-                  The cover details — title, craft, cluster and dates — were not written at all between these two
-                  files, so both carry the same ones.
+                  Cover details are unchanged.
                 </p>
               ) : null}
               {diff.headerRowWritten === true ? (
                 <p className="mt-3 text-sm leading-6 text-ink-500" data-testid="header-verdict">
-                  The workshop&apos;s details were saved in this window. Saving any stage does that too, so on its own
-                  this doesn&rsquo;t mean the cover details changed.
+                  Details were saved in between; cover details may not have changed.
                 </p>
               ) : null}
 
@@ -663,8 +657,7 @@ function DiffPanel({
                       {stage.rowsRemoved ? <Chip tone="warn">{stage.rowsRemoved} removed</Chip> : null}
                       {stage.rowsTransient ? (
                         <span className="text-xs text-ink-500">
-                          {stage.rowsTransient} {stage.rowsTransient === 1 ? "entry" : "entries"} added and removed again
-                          between the two files, so neither document contains {stage.rowsTransient === 1 ? "it" : "them"}
+                          {stage.rowsTransient} {stage.rowsTransient === 1 ? "entry" : "entries"} added and removed in between
                         </span>
                       ) : null}
                     </li>
@@ -674,8 +667,7 @@ function DiffPanel({
 
               {touched.length ? (
                 <p className="mt-2 text-xs leading-5 text-ink-500">
-                  A stage is saved whole, so every entry in it counts as written even when only one answer was
-                  corrected. &ldquo;Rewritten&rdquo; counts entries saved, not answers that differ.
+                  &ldquo;Rewritten&rdquo; counts entries saved, not answers changed.
                 </p>
               ) : null}
 
@@ -684,7 +676,7 @@ function DiffPanel({
                   <h3 className="text-sm font-medium text-ink-900">
                     {diff.timelineComplete
                       ? "Identical in both files"
-                      : "Nothing written (only part of the history was checked — see below)"}
+                      : "Nothing written (history partly checked)"}
                   </h3>
                   <ul className="mt-2 grid gap-1.5" data-testid="untouched-stages">
                     {untouched.map((stage) => (
@@ -728,7 +720,7 @@ function StageCompleteness({
   if (!score || !stage.currentReflectsBoth) return null;
   return (
     <span className="text-xs text-ink-500">
-      {score.percent}% of its required fields, in both files and still today
+      {score.percent}% of required fields
     </span>
   );
 }
@@ -740,14 +732,13 @@ function FileFacts({ diff, templateName }: { diff: ReportDiff; templateName: (id
   if (diff.identicalFile) {
     facts.push(
       <>
-        <strong className="text-ink-900">These two files are byte-for-byte identical.</strong> Their SHA-256 checksums
-        match, so whatever else differs about the record, the documents themselves are the same file.
+        <strong className="text-ink-900">The two files are identical.</strong>
       </>
     );
   } else if (diff.checksumComparable) {
-    facts.push(<>The two files differ — their checksums are not the same.</>);
+    facts.push(<>The two files differ.</>);
   } else {
-    facts.push(<>One of these files recorded no checksum, so the documents cannot be compared by their contents.</>);
+    facts.push(<>One file has no checksum, so contents can&rsquo;t be compared.</>);
   }
 
   if (diff.formatDiffers) {
@@ -769,8 +760,7 @@ function FileFacts({ diff, templateName }: { diff: ReportDiff; templateName: (id
   if (diff.schemaVersionChanged) {
     facts.push(
       <>
-        The form changed between these two files, so a field may have been added, removed or changed. Entry counts
-        can still be compared; the fields in each entry may differ.
+        The form changed between these files, so fields may differ.
       </>
     );
   }
@@ -812,31 +802,25 @@ function Limits({ diff, history }: { diff: ReportDiff; history: DwReportHistory 
       <h3 className="text-sm font-medium text-ink-900">What this comparison doesn&rsquo;t show</h3>
       <ul className="mt-2 grid list-disc gap-1.5 pl-5 text-xs leading-5 text-ink-500">
         <li>
-          <strong className="text-ink-700">Which field changed, or what it changed from.</strong> Each report keeps
-          its checksum, size, pages and template, so a changed entry is shown as rewritten.
+          <strong className="text-ink-700">Which field changed.</strong>
         </li>
         <li>
-          <strong className="text-ink-700">Whether a rewritten entry&apos;s answers actually differ.</strong> A stage
-          is saved as a whole. A stage that nobody saved is identical in both files.
+          <strong className="text-ink-700">Whether a rewritten entry&apos;s answers differ.</strong>
         </li>
         <li>
-          An entry saved twice between these two files counts once.
+          Repeat saves count once.
         </li>
         <li>
-          Records this workshop points at — an artisan&apos;s name, a linked product, a photograph&apos;s caption — are
-          not covered. They live outside the workshop and carry their own timestamps.
+          Changes to linked records (artisans, products, photos).
         </li>
         {diff.deviceClockInvolved ? (
           <li>
-            <strong className="text-ink-700">One of these files was made on a phone with no network</strong>, so its
-            time comes from that phone&apos;s clock. If the phone&apos;s clock was wrong, this comparison is out by the
-            same amount.
+            <strong className="text-ink-700">Exact timing</strong> — one file used an offline phone&apos;s clock.
           </li>
         ) : null}
         {!diff.timelineComplete ? (
           <li>
-            <strong className="text-ink-700">Only part of the stage history could be checked</strong>, so no stage
-            above can be called identical — only &ldquo;nothing written that we can see&rdquo;.
+            <strong className="text-ink-700">Full history</strong> — only part could be checked.
           </li>
         ) : null}
         {history.exportsTruncated ? (
@@ -846,8 +830,8 @@ function Limits({ diff, history }: { diff: ReportDiff; history: DwReportHistory 
                 defect this payload no longer has. `dwReportHistoryLimits` splits the same two
                 cases with the same two sentences. */}
             {generationsAreAbsolute(history)
-              ? "Only the most recent 100 files are listed. The generation numbers are the workshop’s own, so an older file is simply not shown rather than renumbered."
-              : "Only the most recent 100 files are listed, and the generation numbers above count only those hundred — an older file made before them is not generation 0, it is simply not here."}
+              ? "Files older than the latest 100."
+              : "Files older than the latest 100 (numbering counts only these)."}
           </li>
         ) : null}
       </ul>

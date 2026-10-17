@@ -189,9 +189,7 @@ export function MarketFindingsPanel({
         <Heading />
         <p className="text-sm leading-6 text-ink-700">
           {remoteFailed
-            ? "Stage 8 hasn't been downloaded to this device, and couldn't be loaded without a connection. " +
-              "Open stage 8 once with a connection and these findings are computed here from then on, with or " +
-              "without one."
+            ? "Open stage 8 once online to see findings here."
             : "Reading the market survey…"}
         </p>
       </section>
@@ -240,9 +238,7 @@ export function MarketFindingsPanel({
               nobody in the survey used these words, which is a reason to cite the evidence in the
               row's own Evidence box, not proof that the claim is false. */}
           <p className="text-xs leading-5">
-            No survey response shares wording with {unsupported.length === 1 ? "it" : "them"}, and no evidence was
-            cited in the row. That is a search result, not a verdict — if the claim is sound, naming its source in
-            the Evidence column is what a reviewer will look for.
+            No survey response or evidence supports {unsupported.length === 1 ? "it" : "them"}. Add a source in Evidence.
           </p>
         </div>
       ) : null}
@@ -253,12 +249,8 @@ export function MarketFindingsPanel({
           designer reading a verdict on a band they typed two minutes ago has to know which. */}
       <p className="text-xs leading-5 text-ink-500">
         {source === "local"
-          ? `Computed on this device from ${findings.observations} price observation(s) in stage 8 and the rows ` +
-            "on this page. Nothing here is written to stage 9 — these are findings beside your answers, not " +
-            "instead of them."
-          : `Computed online from ${findings.observations} price observation(s), because stage 8 has ` +
-            "not been downloaded to this device. It only counts what has been saved, so anything typed above and " +
-            "not yet uploaded is not counted."}
+          ? `From ${findings.observations} price observation(s). Not saved to stage 9.`
+          : `From ${findings.observations} saved price observation(s). Unsaved edits aren't counted.`}
       </p>
 
       {findings.bands.length ? (

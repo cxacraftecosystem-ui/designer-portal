@@ -83,6 +83,7 @@ import {
   type DwRow,
   type DwValue
 } from "@/lib/designWorkshops";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** Per-field messages for one record, as the save response's `errors` map holds them. */
 export type FieldErrors = Record<string, string> | undefined;
@@ -1529,9 +1530,7 @@ export function CollectionTable({
               .slice(0, DROPPED_NAMES_SHOWN)
               .map((option) => option.label)
               .join(", ")}` +
-            `${refused > DROPPED_NAMES_SHOWN ? ` and ${refused - DROPPED_NAMES_SHOWN} more` : ""}. Delete rows on ` +
-            `this stage and choose ${refused === 1 ? "it" : "them"} again, or record ${refused === 1 ? "it" : "them"} ` +
-            `on another stage.`
+            `${refused > DROPPED_NAMES_SHOWN ? ` and ${refused - DROPPED_NAMES_SHOWN} more` : ""}. Delete rows to make room.`
     );
   }
 
@@ -1814,13 +1813,10 @@ export function CollectionTable({
       ? null
       : capState === "over"
         ? `Stage over the ${STAGE_ROW_CAP}-entry save limit — ${stageHeld} held: ${capBreakdown}. ` +
-          `${stageFloor > STAGE_ROW_CAP ? "Saves will fail" : "Saves may fail"} until rows here or on this ` +
-          `stage's other lists are deleted, or moved to another stage. Nothing recorded is lost.`
+          `${stageFloor > STAGE_ROW_CAP ? "Saves will fail" : "Saves may fail"} until you delete rows.`
         : capState === "full"
-          ? `Stage full — ${stageHeld} of ${STAGE_ROW_CAP} entries: ${capBreakdown}. It still saves; one more row does ` +
-            `not. Delete a row on this stage, or record the rest on another.`
-          : `${stageHeld} of ${STAGE_ROW_CAP} entries on this stage — ${capBreakdown}. Room for ${stageRoom} more ` +
-            `row${stageRoom === 1 ? "" : "s"} anywhere on it; over the limit the whole stage stops saving.`;
+          ? `Stage full — ${stageHeld} of ${STAGE_ROW_CAP} entries: ${capBreakdown}.`
+          : `${stageHeld} of ${STAGE_ROW_CAP} entries — ${capBreakdown}. ${stageRoom} left.`;
 
   /**
    * The two sentences this table's status region carries, newest fact first.
@@ -1937,7 +1933,7 @@ export function CollectionTable({
 
       {rows.length === 0 ? (
         <p className="rounded-md border border-dashed border-line-200 bg-surface-50 px-4 py-6 text-center text-sm text-ink-muted">
-          No {entity.title.toLowerCase()} yet. Add one when there is something to record.
+          No {entity.title.toLowerCase()} yet.
         </p>
       ) : (
         <ol className="grid gap-2">
@@ -2034,7 +2030,7 @@ export function CollectionTable({
                       {Object.keys(rowErrors).length} to fix
                     </span>
                   ) : null}
-                  <div className="flex shrink-0 items-center gap-1">
+                  <ActionGroup className="shrink-0">
                     {/*
                       THE GRIP ANSWERS THE KEYBOARD TOO, even though the two arrows beside it already
                       do. It is the affordance that LOOKS like reordering, so a reader who finds it
@@ -2097,7 +2093,7 @@ export function CollectionTable({
                     >
                       <Trash2 className="h-4 w-4" aria-hidden />
                     </button>
-                  </div>
+                  </ActionGroup>
                 </div>
                 {/*
                   ON THE CARD, AND NOT INSIDE THE PANEL. A row-level refusal is about the whole row —
@@ -2199,7 +2195,7 @@ export function CollectionTable({
           when something was actually deleted. */}
       {rows.length ? (
         <p className="mt-3 text-xs text-ink-500">
-          Reordering and deleting take effect when the stage is saved. Nothing is written until then.{" "}
+          Changes apply when you save.{" "}
           {/* THE SECOND SENTENCE IS WHY THE CONTROLS EXIST, and it is a claim that was read end to
               end before it was made — see the reorder block above for the four hops from this array
               to the printed table. Telling a designer the order matters when it did not would be the
@@ -2207,8 +2203,7 @@ export function CollectionTable({
               The third sentence names the three ways in, because a grip is only obvious to somebody
               who already knows it is there: the owner asked for all three affordances, and a designer
               on a laptop reaches for a different one than a designer on a touchscreen. */}
-          The order here is the order these rows print in the report. Use the up and down arrows, the
-          arrow keys, or drag a row by its handle.
+          Rows print in this order — drag or use the arrows to reorder.
         </p>
       ) : null}
     </section>

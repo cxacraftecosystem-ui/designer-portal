@@ -319,8 +319,7 @@ export function StageAddressField({
           onChange={(event) => onChange(event.target.value || null)}
         />
         <p className="text-xs text-ink-500">
-          The district list has not loaded — it needs a connection, unlike the states. Type the district for now and
-          re-pick it from the list when there is signal.
+          Districts need a connection. Type it for now.
         </p>
       </div>
     );

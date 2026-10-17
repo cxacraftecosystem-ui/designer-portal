@@ -83,6 +83,7 @@ import {
   updateWorkshopType,
   type WorkshopTypeOption
 } from "@/lib/workshopTypes";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The two answers the "Where a workshop saves" control offers, as words rather than as a checkbox.
@@ -176,7 +177,7 @@ export default function WorkshopTypesPage() {
   const header = (
     <PageHeader
       title="Types of workshop"
-      description="The first dropdown on every record form, and which kind of workshop each type lists."
+      description="Options for “Type of workshop”."
       icon={<Tags className="h-5 w-5" aria-hidden />}
     />
   );
@@ -196,7 +197,7 @@ export default function WorkshopTypesPage() {
         {header}
         <RestrictedPanel
           title="Admin access required"
-          body="Types of workshop are shared by everyone — renaming one renames it for everybody — so admins and the master admin manage them."
+          body="Admins only."
         />
       </>
     );
@@ -299,8 +300,8 @@ export default function WorkshopTypesPage() {
       const updated = await updateWorkshopType(type.id, { isActive: !type.isActive });
       setNotice(
         updated.isActive
-          ? `“${updated.label}” is offered again. Every workshop filed under it is unchanged.`
-          : `“${updated.label}” is retired — it has left every “Type of workshop” dropdown. Every workshop filed under it keeps its type and its label.`
+          ? `“${updated.label}” is offered again.`
+          : `“${updated.label}” retired. Existing workshops keep it.`
       );
       await load();
     } catch (err) {
@@ -314,11 +315,11 @@ export default function WorkshopTypesPage() {
     if (busy) return;
     const ok = await confirm({
       title: `Delete “${type.label}”?`,
-      body: "It leaves every “Type of workshop” dropdown and is gone from this list.",
+      body: "It's removed from every dropdown.",
       // The note is where the refusal is announced BEFORE it happens, so an administrator with
       // twelve workshops under this type learns the rule from the dialog rather than from a red
       // banner after pressing the red button.
-      note: "A type with workshops filed under it cannot be deleted, and you will be told how many there are. Retire it instead to take it out of the dropdowns.",
+      note: "Types in use can't be deleted — retire them instead.",
       confirmLabel: "Delete",
       tone: "danger"
     });
@@ -355,13 +356,11 @@ export default function WorkshopTypesPage() {
       <section className="panel mb-5 p-4">
         <h2 className="font-display text-base font-bold text-ink-900">How a type decides which workshops are listed</h2>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-500">
-          A record form asks for a type first, then for a workshop of that type. One type is normally
-          marked <strong>Design &amp; prototype workshop</strong>: it lists the 22-stage design
-          workshops. Every other type lists field-documentation workshops.
+          The type marked <strong>Design &amp; prototype workshop</strong> lists design workshops; others list field
+          workshops.
         </p>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-500">
-          A type&rsquo;s <strong>code</strong> can&rsquo;t be changed once created. Only the label can
-          be changed afterwards.
+          The <strong>code</strong> is fixed once created.
         </p>
       </section>
 
@@ -393,7 +392,7 @@ export default function WorkshopTypesPage() {
                   // before the request does, and `title` is what it prints — so the two refusals say
                   // the same thing rather than one of them being a regular expression.
                   pattern="[A-Z][A-Z0-9_]*"
-                  title="Capital letters, digits and underscores, starting with a letter — for example DESIGN_PROTOTYPE_DEVELOPMENT."
+                  title="Capitals, digits and underscores, starting with a letter."
                   placeholder="DESIGN_PROTOTYPE_DEVELOPMENT"
                 />
               </Field>
@@ -404,8 +403,7 @@ export default function WorkshopTypesPage() {
                   <code className="rounded bg-surface-50 px-1.5 py-1 text-xs">{draft.key}</code>
                 </p>
                 <p className="text-xs leading-5 text-ink-500">
-                  The code can&rsquo;t be changed once created. To use a different one, add a new type
-                  and retire this one.
+                  Fixed once created.
                 </p>
               </div>
             )}
@@ -443,20 +441,19 @@ export default function WorkshopTypesPage() {
             <span>
               Offer this type in the &ldquo;Type of workshop&rdquo; dropdown.
               <span className="block text-xs leading-5 text-ink-500">
-                Unticking retires it. It leaves every dropdown and every workshop already filed under
-                it keeps its type and its label.
+                Untick to retire it. Existing workshops keep it.
               </span>
             </span>
           </label>
 
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="submit" className="field-button" disabled={busy}>
               {busy ? "Saving…" : editing === "new" ? "Add type" : "Save changes"}
             </button>
             <button type="button" className="field-button-secondary" onClick={cancel} disabled={busy}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </form>
       ) : (
         <div className="mb-5">
@@ -470,8 +467,7 @@ export default function WorkshopTypesPage() {
         <div className="border-b border-line-200 px-4 py-3">
           <h2 className="font-display font-bold text-ink-900">The list, in the order a form draws it</h2>
           <p className="text-sm text-ink-500">
-            Use the arrows to reorder. Retired types stay here, greyed, so an administrator can see
-            what has been taken out of the dropdowns and put it back.
+            Use the arrows to reorder. Retired types are greyed.
           </p>
         </div>
 
@@ -480,7 +476,7 @@ export default function WorkshopTypesPage() {
         ) : rows.length === 0 ? (
           <EmptyState
             title="No types of workshop"
-            body="There are no workshop types. Add one so records can be filed."
+            body="Add one so records can be filed."
           />
         ) : (
           <div className="overflow-x-auto">
@@ -514,7 +510,7 @@ export default function WorkshopTypesPage() {
                     className={`border-b border-line-200 last:border-0 ${type.isActive ? "" : "bg-surface-50"}`}
                   >
                     <td className="px-4 py-3 align-top">
-                      <div className="flex gap-1">
+                      <ActionGroup>
                         <button
                           type="button"
                           className={rowAction("neutral")}
@@ -533,7 +529,7 @@ export default function WorkshopTypesPage() {
                         >
                           <ArrowDown className="h-3.5 w-3.5" aria-hidden />
                         </button>
-                      </div>
+                      </ActionGroup>
                     </td>
                     <td className="px-4 py-3 align-top font-medium text-ink-900">{type.label}</td>
                     <td className="px-4 py-3 align-top">
@@ -589,7 +585,7 @@ export default function WorkshopTypesPage() {
                         </button>
                         <button
                           type="button"
-                          className={rowAction("danger")}
+                          data-danger className={rowAction("danger")}
                           onClick={() => void remove(type)}
                           disabled={busy}
                         >

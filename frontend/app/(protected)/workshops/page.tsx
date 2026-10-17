@@ -63,6 +63,7 @@ import type {
   WorkshopAssignment,
   WorkshopType
 } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 // The API includes the workshop's linked crafts (not yet in the Workshop TS type); used to pre-fill
 // the "Crafts covered" selection when editing.
@@ -505,10 +506,7 @@ function WorkshopsPageBody() {
             `${stranded.length} of ${mediaFiles.length} file(s) failed to upload: ${stranded
               .map((outcome) => outcome.file.name)
               .join(", ")}. ` +
-              "The workshop was saved and the rest are attached. The files that did not go up are still in the " +
-              "capture card above, but only in this browser: leaving this form or opening another workshop discards " +
-              "them. Re-open the workshop to attach them again — anything captured here and saved nowhere else has " +
-              "to be taken again."
+              "The workshop was saved. Retry them before leaving this form, or they're lost."
           );
           setSaving(false);
           return;
@@ -535,8 +533,8 @@ function WorkshopsPageBody() {
     const ok = await confirm(
       deleteConfirm(
         "Delete this workshop?",
-        "This permanently deletes the workshop. This action cannot be undone.",
-        "Researcher assignments to it go too. Records documented during the workshop are kept."
+        "The workshop and its assignments are deleted. Its records are kept.",
+        "This can't be undone."
       )
     );
     if (!ok) return;
@@ -599,7 +597,7 @@ function WorkshopsPageBody() {
     <>
       <PageHeader
         title="Workshops"
-        description="Create field workshop records, link artisans and store date, place, notes and GPS context."
+        description="Field workshops: dates, place, artisans and notes."
         icon={<MapPinned className="h-5 w-5" aria-hidden />}
       />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
@@ -676,8 +674,7 @@ function WorkshopsPageBody() {
             ariaLabel="Kind of workshop"
           />
           <p className="text-xs leading-5 text-ink-500">
-            A design &amp; prototype workshop can be chosen on the Design workshops page to fill in a
-            22-stage record&apos;s cover details. Anything else stays out of that list.
+            Only design &amp; prototype workshops can start a 22-stage record.
           </p>
         </Field>
 
@@ -828,7 +825,7 @@ function WorkshopsPageBody() {
           initial={editing ? ((editing as Workshop & { location?: LocationInitialValues | null }).location ?? null) : undefined}
           onDirty={() => setDirty(true)}
         />
-        <div className="flex gap-2">
+        <ActionGroup>
           <button className="field-button" disabled={saving}>
             {saving ? "Saving..." : editing ? "Update workshop" : "Create workshop"}
           </button>
@@ -837,7 +834,7 @@ function WorkshopsPageBody() {
               Cancel edit
             </button>
           ) : null}
-        </div>
+        </ActionGroup>
       </form>
       ) : (
         /*
@@ -865,16 +862,11 @@ function WorkshopsPageBody() {
         <div className="panel mb-5 p-4 text-sm text-ink-muted">
           {allowManage ? (
             <>
-              Workshops are opened by the ministry — a Ministry Admin, an admin or the master admin.
-              You can still correct any workshop below: press Edit on its row and every field on this
-              form opens for it.
+              The ministry opens workshops. Use Edit on a row to correct one.
             </>
           ) : (
             <>
-              Browse workshops below. Workshops are created by the ministry — a Ministry Admin, an
-              admin or the master admin. Ask them to open the one for your cluster; it appears in
-              this list as soon as you are added to it, and every record you make can then be filed
-              against it.
+              The ministry opens workshops. Ask a Ministry Admin to add yours.
             </>
           )}
         </div>
@@ -956,7 +948,7 @@ function WorkshopsPageBody() {
                           </button>
                         ) : null}
                         {adminMode ? (
-                          <button className={rowAction("danger")} onClick={() => remove(workshop.id)}>
+                          <button data-danger className={rowAction("danger")} onClick={() => remove(workshop.id)}>
                             Delete
                           </button>
                         ) : null}

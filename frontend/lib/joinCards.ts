@@ -88,28 +88,28 @@ export function decodeJoinCard(input: string | null | undefined): JoinCardDecode
     return {
       ok: false,
       message:
-        "That is not a workshop join card. Join cards begin “DPW”; a shop barcode, a payment code or a web address will not let you into a workshop."
+        "Not a join card. Join cards begin “DPW”."
     };
   }
   const versionText = parts[0].slice(WORKSHOP_CODE_NAMESPACE.length);
   if (!/^\d+$/.test(versionText)) {
     return {
       ok: false,
-      message: "That is not a workshop join card. Join cards begin “DPW” followed by a version number."
+      message: "Not a join card. Join cards begin “DPW”."
     };
   }
   if (parts[1] !== JOIN_LETTER) {
     return {
       ok: false,
       message:
-        "That code belongs to this application but is not a join card — it names a record. Scan the join card you were handed, the one printed to let somebody in."
+        "That's a record code, not a join card."
     };
   }
   if (Number(versionText) !== JOIN_CODE_VERSION) {
     return {
       ok: false,
       message:
-        "That join card was printed in a newer format. Reload the page to update the app, or ask an administrator to add you from the workshop's viewers screen."
+        "Printed in a newer format. Reload to update the app."
     };
   }
 
@@ -117,7 +117,7 @@ export function decodeJoinCard(input: string | null | undefined): JoinCardDecode
   if (body.split(".").length !== 2) {
     return {
       ok: false,
-      message: "This join card is damaged or was typed incompletely. Check it against the card, character by character."
+      message: "Incomplete or damaged. Check each character."
     };
   }
   const [idText, secretText] = body.split(".");
@@ -126,13 +126,13 @@ export function decodeJoinCard(input: string | null | undefined): JoinCardDecode
     return {
       ok: false,
       message:
-        "That card names a workshop that had not been shared yet when it was printed — it only ever meant anything on the device that made it. Ask whoever created the workshop to sync their device and print a fresh card."
+        "Printed before the workshop synced. Ask for a fresh card."
     };
   }
   if (!ID_PATTERN.test(workshopId)) {
     return {
       ok: false,
-      message: "This join card is damaged or was typed incompletely — the identifier in it is not a whole one. Check it against the card."
+      message: "Incomplete or damaged. Check each character."
     };
   }
   const secret = fold(secretText);
@@ -140,7 +140,7 @@ export function decodeJoinCard(input: string | null | undefined): JoinCardDecode
     return {
       ok: false,
       message:
-        "This join card is damaged or was typed incompletely — the part after the full stop is not a whole one. Read it off the card again, character by character."
+        "Incomplete or damaged. Check each character."
     };
   }
   const typedCheck = fold(parts[3]);
@@ -148,7 +148,7 @@ export function decodeJoinCard(input: string | null | undefined): JoinCardDecode
   if (typedCheck.length !== CHECK_LENGTH || typedCheck !== workshopCodeCheck(prefix)) {
     return {
       ok: false,
-      message: "This join card does not check out, so one of its characters is wrong. Read it off the card again, character by character."
+      message: "This card does not check out — a character is wrong. Check each one."
     };
   }
   return { ok: true, workshopId, code: `${prefix}:${typedCheck}` };
@@ -181,15 +181,15 @@ export type JoinRedemption = { outcome: string; reason?: string | null; workshop
 
 /** Said when there is no connection, by every card action alike. */
 export const JOIN_CARD_OFFLINE_MESSAGE =
-  "There is no connection, so this cannot be done right now. A join card is made and checked online — it is a key, not something this browser can invent — so try again when you are back online.";
+  "Join cards need a connection. Try again online.";
 
 /** Said for a redemption with no connection. Nothing was spent: the card is still good. */
 export const JOIN_CARD_REDEEM_OFFLINE_MESSAGE =
-  "There is no connection, so the card was not used and you are not on the workshop yet. Keep the card and scan it again when you are back online — it has not been spent.";
+  "No connection — the card wasn't used. Scan it again online.";
 
 /** Shown only when a refusal arrives with no sentence of its own. Names no workshop. */
 const FALLBACK_REFUSAL =
-  "That join card cannot be used. It may have been cancelled, or it may have run out of date. Ask whoever runs the workshop for a fresh card, or ask an administrator to add you from the workshop's viewers screen.";
+  "This card can't be used — it may be cancelled or expired. Ask for a fresh one.";
 
 export type JoinCardFailure = { kind: "refused"; message: string } | { kind: "offline"; message: string };
 
@@ -203,7 +203,7 @@ export function joinCardFailure(error: unknown, offlineMessage = JOIN_CARD_OFFLI
   if (verdict.kind === "transient") {
     // Not the card's fault and not a verdict on it: a seat taken mid-failure is given back, so the
     // same card works on the next try.
-    return { kind: "refused", message: "That could not be done just now. Try again in a moment — nothing has been used up." };
+    return { kind: "refused", message: "Try again in a moment." };
   }
   return { kind: "refused", message: serverSentence(error) ?? FALLBACK_REFUSAL };
 }
@@ -261,13 +261,13 @@ export function joinOutcomeSentence(answer: JoinRedemption): string {
   if (answer.detail && answer.detail.trim()) return answer.detail;
   switch (answer.outcome) {
     case "FULL":
-      return "You are on this workshop. The card has been used up, so it will not let anybody else in.";
+      return "You're on this workshop. The card is now used up.";
     case "ALREADY_A_MEMBER":
-      return "You are already on this workshop, so the card was not used up. Somebody else can still use it.";
+      return "You're already on this workshop. The card wasn't used.";
     case "PROVISIONAL":
-      return "You are not on the workshop yet, but nothing you record is lost — an administrator can see that you scanned the card, and once they confirm you everything you have recorded is already in place. Until then you will not see anybody else's stages.";
+      return "Waiting for an admin to confirm you. Anything you record is kept.";
     default:
-      return "The card was read, but the answer could not be understood. Check your workshop list, and ask an administrator if you cannot see the workshop.";
+      return "Card read, but the reply was unclear. Check your workshop list.";
   }
 }
 
@@ -280,15 +280,15 @@ export function joinCardState(card: JoinCard, now: number = Date.now()): string 
   const by = issuer ? ` Printed by ${issuer}.` : "";
   const label = card.label?.trim() ? ` ${card.label.trim()}.` : "";
   if (card.revokedAt) {
-    return `Cancelled. It will not let anybody else in — anybody it already admitted is still on the workshop, and taking that away is the viewers screen.${by}${label}`;
+    return `Cancelled.${by}${label}`;
   }
   const ceiling = card.maxUses;
   if (ceiling !== null && card.usesConsumed >= ceiling) {
-    return `Used up. Somebody has already joined with it, so it will not let anybody else in.${by}${label}`;
+    return `Used up.${by}${label}`;
   }
   const expires = card.expiresAt ? Date.parse(card.expiresAt) : Number.NaN;
   if (Number.isFinite(expires) && expires <= now) {
-    return `Out of date. Somebody scanning it now will not be let straight in, though a scan taken before it lapsed can still reach an administrator.${by}${label}`;
+    return `Expired.${by}${label}`;
   }
   const remaining = ceiling === null ? "any number of people" : `${ceiling - card.usesConsumed} more ${ceiling - card.usesConsumed === 1 ? "person" : "people"}`;
   return `Still good for ${remaining}.${by}${label}`;

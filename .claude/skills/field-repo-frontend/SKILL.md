@@ -46,6 +46,10 @@ traps — check it before "simplifying" anything that looks redundant.
    dropdown twice.
 10. **Truncation, caps and skipped work must be stated on screen.** A list that quietly stops is
     indistinguishable from a place with no records — the single most repeated bug class in this repo.
+11. **Copy says only what the person needs to act — one short sentence, often a few words.** No
+    explanations of how the software works, no rationale, no hedging, no internal terms. §19.1.
+12. **Every row of buttons goes through `ActionGroup`** (`components/ui/ActionGroup.tsx`). One button is
+    centred, two share one line, three or more stack on a phone and become pills above `sm`. §19.2.
 
 ---
 
@@ -2562,3 +2566,57 @@ think to check are the ones that have shipped as "the feature is still not there
 - [ ] platform differences are commented, not paraphrased
 - [ ] `npm run typecheck && npm run lint` (frontend) · `ruff check app && pytest -q` (backend) ·
       `./gradlew.bat :app:compileDebugKotlin` (Android)
+
+---
+
+## 19. Copy and button rows (owner ruling, 2026-10-17)
+
+> "there is a lot of useless verbosity in the help text and subtext … keep it concise … The
+> applications' ui and design choices should be elegant, premium, and conscious."
+
+### 19.1 Concise copy
+
+Every help line, hint, subtext, empty state, banner, dialog body, toast and card description says
+**only what the person needs to act**: one short sentence, often a few words, or nothing when the
+label already says it. Calm and plain — a careful product designer, not a chatbot.
+
+- **Remove:** how the software works, history and rationale, hedging, repeating the label,
+  multi-sentence paragraphs, internal terms ("the server", "this device's store", endpoints, record
+  ids), and gap admissions. The reasoning belongs in a code comment, not on the screen.
+- **Keep, tightened:** legally or operationally required wording (Aadhaar, dictation and recording
+  consent, data handling), validation messages (short and specific), the numbers and dates a person
+  needs, and the *meaning* of any warning that prevents data loss.
+- **Offer the next step as a control, not a paragraph.** A refusal that names a fix gets a link or a
+  button with that fix as its label.
+- Rule 10 still holds — a cap or a truncation is stated — in a few words ("Showing the latest 200.").
+
+| Before | After |
+|---|---|
+| Not captured — media from this stage will be uploaded without a location | No location yet |
+| Nobody has recorded yet whether material from this workshop may be sent out, so nothing here can be proofread, written out, translated, described or subtitled. Open the workshop's own screen and record the artisan's answer … | Needs the artisan's sharing consent first. + link **Record consent** |
+| You're offline, so this stage shows what's saved on this device. Anything you change is kept here and will upload when you're back online. | Offline — changes are saved here and upload when you reconnect. |
+| Either no such workshop exists, or it belongs to another designer and hasn't been shared with you. If a colleague sent you this link, ask them to add you … | It doesn't exist or hasn't been shared with you. Ask its designer or an admin to add you. |
+| Reordering and deleting take effect when the stage is saved. Nothing is written until then. | Changes apply when you save. |
+
+### 19.2 Button rows — `ActionGroup`
+
+`components/ui/ActionGroup.tsx` (layout rule in `components/ui/actionGroupLayout.ts`, pinned by
+`e2e/action-group-unit.spec.ts`). It counts its rendered children (fragments looked through, `null`
+and `false` ignored) and lays them out:
+
+| Buttons | Phone (< `sm`, 640px) | `sm` and up |
+|---|---|---|
+| 1 | centred (`fill` spans the line — a pinned form primary) | centred |
+| 2 | one line, equal halves; a label wraps inside its button, never past it | one line, content width, at `align` |
+| 3+ | stacked one under another, full width | one row of pills (`rounded-full`), wrapping only when it must |
+
+- **Destructive actions go last and set apart:** mark the child `data-danger` (every
+  `rowAction("danger")` and `field-danger` button carries it). The group orders it last and spaces it.
+- `align` (`start` · `center` · `end`) places a group of two or more from `sm` up; a lone button is
+  always centred. `PageHeader` actions, `RowActions` and `FieldDialog` footers already route through
+  it with `align="end"` — never hand-style a button row on a screen.
+- In a row that also holds a status line, wrap only the buttons:
+  `<ActionGroup className="max-sm:w-full">…</ActionGroup>` and keep the status outside it.
+- Not a button row, and left alone: a single button aligned to the bottom of a form grid cell
+  (`flex items-end`), toolbars, toggles, selects, segmented tabs and the calendar.
+- Android's twin is `ActionRow` (window size class), with the same three rules.

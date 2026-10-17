@@ -57,9 +57,7 @@ export const CHOOSER_NO_WORKSHOPS_TITLE = "No design workshops to open yet";
 
 /** The body of the same state: why there is no way to start one here, who to ask, what follows. */
 export const CHOOSER_NO_WORKSHOPS_BODY =
-  "Sketches and prototypes belong to a workshop, and the workshops you have access to will appear" +
-  " in the chooser here. Starting a new one is done by an admin or the master admin — ask them to" +
-  " create it for your cluster and give you access, and it will show up ready for all 22 stages.";
+  "Your workshops appear here. Ask an admin to create one and add you.";
 
 /**
  * COULD NOT ASK, with no signal — `isUnreachable`'s half of the split.

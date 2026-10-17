@@ -71,6 +71,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * "The read has not answered, or it failed", as ONE stable array.
@@ -392,8 +393,7 @@ export default function QuestionnairesPage() {
         // the entry and where it lives; this says the one thing that banner cannot, which is what
         // happens to this particular questionnaire next.
         setNotice(
-          `“${title}” is saved on this device and will upload when you're back online. You can add its ` +
-            "sections and questions once it has uploaded."
+          `“${title}” saved on this device. Add questions once it uploads.`
         );
         return;
       }
@@ -410,7 +410,7 @@ export default function QuestionnairesPage() {
     <>
       <PageHeader
         title="Questionnaires"
-        description="Questionnaires you built yourself. Download the pro-forma, type your questions into it in Excel, upload it back, and record the answers here — the sheet may arrive with answers already in it or with none at all."
+        description="Your own questionnaires. Build them from the pro-forma."
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
         actions={
           <>
@@ -496,12 +496,11 @@ export default function QuestionnairesPage() {
         the API would in fact allow" failure this change was asked to remove.
       */}
       <p className="mb-5 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-        Looking for the shared artisan questionnaire — the standard one, with its sections and questions already
-        in place? It is separate from the ones on this page and it lives on{" "}
+        The shared artisan questionnaire is on{" "}
         <Link href="/questionnaire" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
           Take interview
         </Link>
-        , where every signed-in account can answer it. The questionnaires below are the ones you built yourself.
+        .
       </p>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -563,8 +562,7 @@ export default function QuestionnairesPage() {
           <div>
             <h2 className="font-display text-lg font-bold text-ink-900">Start a questionnaire by hand</h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              Sections and questions are added on the next screen. Most designers download the pro-forma above and type
-              their questions in Excel instead.
+              Add questions on the next screen, or use the pro-forma above.
             </p>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
@@ -634,7 +632,7 @@ export default function QuestionnairesPage() {
               label="Kind"
               hint={
                 <p className="mt-1 text-xs leading-5 text-ink-500">
-                  Decides which stage of the report this questionnaire&rsquo;s answers are filed under.
+                  Where the report files its answers.
                 </p>
               }
             >
@@ -663,7 +661,7 @@ export default function QuestionnairesPage() {
           <DictationUnavailableNotice />
           {/* Why Create is held, beside it — see `createHold`. */}
           <HeldPostNotice refusal={createHold} id={createHoldId} className="" sayPending />
-          <div className="flex gap-2">
+          <ActionGroup>
             <button
               className="field-button"
               disabled={creating || writesHeld(createHold)}
@@ -674,7 +672,7 @@ export default function QuestionnairesPage() {
             <button type="button" className="field-button-secondary" onClick={() => setFormOpen(false)}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </form>
       ) : null}
 
@@ -720,7 +718,7 @@ export default function QuestionnairesPage() {
           <div className="p-4">
             <EmptyState
               title="No questionnaires yet"
-              body="Download the pro-forma, type your questions into it, and upload it back. You can record the answers here afterwards, whether or not the sheet already has any in it."
+              body="Download the pro-forma, add your questions and upload it."
             />
           </div>
         ) : (
@@ -905,7 +903,7 @@ export default function QuestionnairesPage() {
             toast({
               tone: "success",
               title: "Questionnaire reused",
-              description: `"${result.questionnaire.title}" carries ${result.questionnaire.questionCount} questions and no recorded answers. Open it to record its own.`
+              description: `"${result.questionnaire.title}" has ${result.questionnaire.questionCount} questions, without answers.`
             });
           }}
         />

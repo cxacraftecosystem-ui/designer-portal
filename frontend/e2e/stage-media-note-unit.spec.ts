@@ -380,7 +380,7 @@ test("the three states a fetched list has are each answered in words", () => {
   // NOTHING ATTACHED: said out loud, and with the FK-versus-tag disagreement named rather than left
   // as an inexplicable blank beside a filled box.
   expect(source).toContain("No files are listed against the");
-  expect(source).toContain("some of the ones it counted are not shown in this list");
+  expect(source).toContain("The box text is from the last save and may be out of date.");
   // AND A FAILED FETCH IS NOT AN EMPTY LIST. "This record has no media" and "we could not ask" are
   // different facts and only one is a reason to stop looking.
   expect(source).toContain("could not be listed, so this is a plain box");
@@ -396,7 +396,7 @@ test("the hydrated value is always editable and is never stranded", () => {
   expect(source).toContain("maxLength={field.maxLength || undefined}");
   // And a later visit is told what cannot be recovered: WHICH files an earlier clause named is stored
   // nowhere, so ticking replaces the clause rather than adding to it.
-  expect(source).toContain("so ticking here replaces that part of it rather than");
+  expect(source).toContain("Ticking replaces the files already named.");
 });
 
 test("the fetch is guarded against its own late answers and against the endpoint's page ceiling", () => {
@@ -409,5 +409,5 @@ test("the fetch is guarded against its own late answers and against the endpoint
   // past the cap the control says the listing is truncated instead of printing a page size as a total.
   expect(source).toContain("const PAGE_SIZE = 100");
   expect(source).toContain("const MAX_PAGES = 3");
-  expect(source).toContain("most recent of {total} attached files");
+  expect(source).toContain("Showing the latest {rows.length} of {total}.");
 });

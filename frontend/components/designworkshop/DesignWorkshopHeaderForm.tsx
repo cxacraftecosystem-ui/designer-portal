@@ -107,6 +107,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * How long a keystroke in the link picker's box waits before it becomes a request.
@@ -248,13 +249,11 @@ function readRefusal(err: unknown): Refusal {
 function describeSaveRefusal(err: unknown, serverSaid: string): string {
   const status = err instanceof ApiError ? err.status : 0;
   if (status === 403) {
-    return `${serverSaid || "You don't have permission to edit this design workshop."} Nothing was sent and nothing was changed.`;
+    return `${serverSaid || "You can't edit this workshop."} Nothing was changed.`;
   }
   if (status === 404) {
     return (
-      "You no longer have access to this workshop, so nothing was changed. It may have been removed, " +
-      "or your access may have been withdrawn. Ask an administrator, or the designer who shared it " +
-      "with you, to add you as a viewer of the workshop again."
+      "You no longer have access to this workshop. Nothing was changed."
     );
   }
   if (status === 409) {
@@ -264,9 +263,8 @@ function describeSaveRefusal(err: unknown, serverSaid: string): string {
       // to a screen spelled differently from the one they are looking at is a remedy they conclude
       // does not exist — and this refusal's whole value is that it has a one-click fix by a person
       // the designer can go and ask by name.
-      `${serverSaid || "This workshop is deleted. Restore it before editing."} An administrator can ` +
-      "restore it from Deleted workshops on the admin page; everything you have typed here is still " +
-      "on screen and can be saved once they have."
+      `${serverSaid || "This workshop is deleted. Restore it before editing."} An admin can restore it from ` +
+      "Deleted workshops."
     );
   }
   return serverSaid
@@ -712,7 +710,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
     if (next.trim().length > TITLE_MAX_LENGTH) {
       setFieldProblem((current) => ({
         ...current,
-        title: `That name is ${next.trim().length} characters and the longest allowed is ${TITLE_MAX_LENGTH}. Shorten it and try again.`
+        title: `Too long — ${next.trim().length} of ${TITLE_MAX_LENGTH} characters.`
       }));
       return;
     }
@@ -970,9 +968,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           rules exist against.
         */
         setProblem(
-          "Couldn't connect, so nothing was saved and the workshop is unchanged. Changes to the " +
-            "workshop's details need a connection. Everything you have typed is still on this form — " +
-            "press Save again when you are online."
+          "No connection — nothing was saved. Save again when you're online."
         );
         return;
       }
@@ -1062,9 +1058,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
         <div>
           <h2 className="font-display text-lg font-bold text-ink-900">Workshop details</h2>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
-            The workshop&apos;s own record — what it is called, which report it produces, where and when it ran, and the
-            workshop it is filed against. The 22 stages, the photographs and the report are all edited from the workshop
-            page; nothing here touches them.
+            Name, report type, place, dates and linked workshop.
           </p>
         </div>
 
@@ -1117,7 +1111,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
                   </p>
                 ) : null}
                 <p id={titleScopeId} className="text-xs leading-5 text-ink-500">
-                  Names from workshops you can open. Type a new one if it is not here.
+                  Pick a name or type a new one.
                 </p>
               </>
             }
@@ -1126,7 +1120,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
               value={title.trim()}
               onChange={commitTitle}
               options={titleOptions}
-              placeholder="Type the name, or pick one already on record"
+              placeholder="Type or pick a name"
               /*
                 NEVER STOOD DOWN, on an empty list or a failed one. R2 — a field may only be
                 mandatory where it is answerable — is satisfied without disabling anything, because
@@ -1299,14 +1293,11 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           This form has to carry it too, because this is the screen where somebody types into them.
         */}
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-          Craft, cluster, state, district and the dates are also asked in{" "}
+          The report uses these from{" "}
           <Link href={stageOneHref} className="font-medium underline">
             stage 1, Workshop Setup &amp; Cover Information
           </Link>
-          , and stage 1 is what the report reads. Correcting one here is real and takes effect at once — but the next
-          time stage 1 is saved with that box empty, the stage&apos;s answer wins and this one is cleared. If the value is
-          wrong on the report, correct it in stage 1; correct it here to fix how the workshop is listed and searched
-          today.
+          . Edits here only change how the workshop is listed.
         </p>
 
         {/*
@@ -1354,11 +1345,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
               <CappedListNotice id={linkCutId} cuts={[link.cut]} />
               {repointsLink ? (
                 <p className="mt-1 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-                  Changing this link strands the records already filed under the old one. Five of the pickers inside the
-                  stages — the artisan and product on an existing product, a prototype&apos;s product, and the process on a
-                  process step or a traditional process — only offer records filed against the linked workshop, so
-                  anything created from them under the old link will not appear in those lists again. The records
-                  themselves are unchanged.
+                  Records filed under the old link will no longer appear in this workshop&apos;s pickers.
                 </p>
               ) : null}
               {fieldProblem.workshopId ? (
@@ -1455,8 +1442,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           <div>
             <h3 className="text-sm font-medium text-ink-900">Filled in from stage 1</h3>
             <p className="mt-1 text-xs leading-5 text-ink-500">
-              These are the workshop&apos;s cover values. They are filled in from stage 1 and can only be changed
-              there.
+              Set in stage 1.
             </p>
           </div>
           <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1494,16 +1480,15 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           the failure — the designer roster in particular has a screen, and it is not on this page.
         */}
         <p className="text-xs leading-5 text-ink-500">
-          The workshop&apos;s <strong>status</strong> is set on the{" "}
+          <strong>Status</strong> is set on the{" "}
           <Link href={recordHref} className="font-medium text-purple-700 dark:text-purple-300 underline">
             workshop page
           </Link>
-          , under Submission — Mark complete, Submit and Reopen each write one status and say what it means. The{" "}
-          <strong>designers on this workshop</strong> are granted from &ldquo;Designers on a workshop&rdquo; on the{" "}
+          . <strong>Designers</strong> are added from the{" "}
           <Link href="/design-workshops" className="font-medium text-purple-700 dark:text-purple-300 underline">
             design workshops list
           </Link>
-          , which an administrator opens with admin view on.
+          .
         </p>
 
         {/*
@@ -1522,19 +1507,18 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
         ) : null}
         {nothingToSend ? (
           <div role="status" className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-            Nothing on this form differs from what is stored, so nothing was sent and the workshop is unchanged. Change
-            something and press Save again, or press Cancel to go back to the workshop.
+            No changes to save.
           </div>
         ) : null}
 
-        <div className="flex justify-end gap-2">
+        <ActionGroup align="end">
           <button type="button" className="field-button-secondary" onClick={cancel} disabled={saving}>
             Cancel
           </button>
           <button className="field-button" disabled={saving}>
             {saving ? "Saving…" : "Save details"}
           </button>
-        </div>
+        </ActionGroup>
       </form>
 
       <UnsavedChangesDialog

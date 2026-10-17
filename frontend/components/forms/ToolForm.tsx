@@ -51,6 +51,7 @@ import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
 import { makerOptions, traditionOptions } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /*
   ── THE LINKED-ARTISAN LABEL MOVED, IT WAS NOT DROPPED ──────────────────────────────────────────
@@ -1539,7 +1540,7 @@ export function ToolForm({
         });
         setUploadProgress(null);
         if (failed.length) {
-          setError(`${failed.length} of ${mediaFiles.length} file(s) failed to upload: ${failed.map((f) => f.name).join(", ")}. The record was saved; re-open it to retry those files.`);
+          setError(`Saved, but these didn't upload: ${failed.map((f) => f.name).join(", ")}. Reopen to retry.`);
           setSaving(false);
           /*
             ── THE RECORD IS REPORTED FIRST, THE UPLOAD FAILURE SECOND ────────────────────────
@@ -1993,8 +1994,7 @@ export function ToolForm({
             </span>
           </div>
           <p className="text-xs leading-5 text-ink-500">
-            This asks AI to read the inches off the photograph. It is an <strong>estimate</strong>, not a
-            measurement. Use the panel above whenever the grid or a ruler is in the photo.
+            An AI <strong>estimate</strong>. Prefer the panel above when a grid or ruler is in the photo.
           </p>
           {/*
             THE MARKER THIS ONE CARRIES IS THE SERVER'S OWN, ECHOED BACK UNCHANGED. `POST
@@ -2145,7 +2145,7 @@ export function ToolForm({
             markDirty();
           }}
           title="Tool media"
-          description="Attach or capture tool images, videos, audio notes, and documents. Photo details (date, place, camera) are kept and summarised in remarks."
+          description="Photos, video, audio and documents."
         />
         <LocationFields initial={initialLocation} onDirty={markDirty} />
         {uploadProgress ? <UploadProgress progress={uploadProgress} files={[...stageFiles, ...mediaFiles]} /> : null}
@@ -2159,7 +2159,7 @@ export function ToolForm({
         {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
         {/* Why Save is held, beside it — see `filing`. */}
         <HeldPostNotice refusal={filing.notice} id={filingNoticeId} className="" sayPending />
-        <div className="flex justify-end gap-2">
+        <ActionGroup align="end">
           <button type="button" className="field-button-secondary" onClick={handleBack}>
             Cancel
           </button>
@@ -2170,7 +2170,7 @@ export function ToolForm({
           >
             {saving ? "Saving..." : initial ? "Update tool" : "Save tool"}
           </button>
-        </div>
+        </ActionGroup>
       </form>
       <UnsavedChangesDialog
         open={backPromptOpen}

@@ -196,14 +196,11 @@ export default function DesignWorkshopProvenancePage({ params }: { params: Promi
               </h2>
             </div>
             <p className="mt-2 text-sm leading-6 text-ink-500">
-              A workshop keeps what the designer saw on the day, so a value that differs from the
-              shared record today is <strong>not an error</strong> — an artisan who moved village
-              after the workshop makes every entry that names them differ, and every one of those entries
-              is right. This page exists so the difference can be seen and explained, not corrected.
+              The workshop keeps what was true on the day, so a difference is <strong>not an error</strong>.
             </p>
             {tally.fields === 0 ? (
               <p className="mt-2 text-sm leading-6 text-ink-500">
-                Every value this workshop copied from a shared record still matches that record.
+                Everything still matches.
               </p>
             ) : null}
           </section>

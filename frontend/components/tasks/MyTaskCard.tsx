@@ -6,6 +6,7 @@ import { CheckCheck, Play, RotateCcw } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
 import { DueBadge, ProgressGapMeter, ScopeChips, TaskKindBadge, TaskStatusPill } from "@/components/tasks/TaskPrimitives";
 import type { FieldTask, TaskStatus } from "@/components/tasks/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * One task as the person who has to do it sees it.
@@ -113,7 +114,7 @@ export function MyTaskCard({
       </div>
 
       {editable ? (
-        <div className="mt-auto flex flex-wrap gap-2 border-t border-line-200 pt-3">
+        <ActionGroup className="mt-auto border-t border-line-200 pt-3">
           {task.status === "OPEN" ? (
             <button type="button" className="field-button-secondary" disabled={busy} onClick={() => onStatus("IN_PROGRESS")}>
               <Play className="h-4 w-4" aria-hidden />
@@ -132,7 +133,7 @@ export function MyTaskCard({
               Reopen
             </button>
           ) : null}
-        </div>
+        </ActionGroup>
       ) : null}
     </article>
   );

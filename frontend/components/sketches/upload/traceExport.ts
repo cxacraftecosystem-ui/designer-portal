@@ -354,8 +354,7 @@ export function exportSvgFile(
  * does not depend on the connection coming back.
  */
 const WRITER_UNAVAILABLE =
-  "That format couldn't be prepared — check your connection and reload the page. The SVG " +
-  "download works either way.";
+  "Couldn't prepare that format. Reload the page — SVG still works.";
 
 /**
  * Write the traced geometry as a PDF, an EPS or a DXF.
@@ -398,7 +397,7 @@ export async function exportVectorFile(
   const entry = EXPORT_FORMATS.find((candidate) => candidate.id === format);
   // Unreachable through the panel, which only ever passes an id it read off the table. Answered
   // rather than thrown, because the alternative is a caller holding a stale id crashing a render.
-  if (entry === undefined) return { reason: `${String(format)} is not a format this panel can write.` };
+  if (entry === undefined) return { reason: `Can't write ${String(format)}.` };
 
   try {
     const { documentFrom } = await import("./geometryToDocument");
@@ -441,9 +440,9 @@ export async function exportVectorFile(
     }
     return {
       reason:
-        `The drawing was traced but the ${entry.label} could not be written` +
+        `Couldn't write the ${entry.label}` +
         (error instanceof Error && error.message ? `: ${error.message}. ` : ". ") +
-        "The SVG download is unaffected."
+        "SVG still works."
     };
   }
 }
@@ -482,14 +481,14 @@ export async function exportPngFile(
 
   const canvas = createCanvas(width, height);
   if (canvas === null) {
-    return { reason: "This browser would not give the page a drawing surface, so a PNG cannot be made here. The SVG can." };
+    return { reason: "This browser can't make a PNG. Use the SVG." };
   }
   const context = canvas.getContext("2d") as
     | CanvasRenderingContext2D
     | OffscreenCanvasRenderingContext2D
     | null;
   if (context === null) {
-    return { reason: "This browser would not give the page a drawing surface, so a PNG cannot be made here. The SVG can." };
+    return { reason: "This browser can't make a PNG. Use the SVG." };
   }
 
   paintGeometry(context, input, scale);
@@ -498,14 +497,13 @@ export async function exportPngFile(
   if (blob === null) {
     return {
       reason:
-        "The drawing was traced but this browser could not turn it into a PNG — usually because the " +
-        "image is very large. Attach the SVG instead, or lower “Trace resolution” and try again."
+        "Couldn't make a PNG — the image may be too large. Use the SVG, or lower “Trace resolution”."
     };
   }
   const name = derivedFileName(sourceName, "png", naming.suffix ?? ATTACH_SUFFIX);
   const note =
     scale < 1
-      ? `The PNG is ${width}x${height}, reduced from ${Math.round(sourceWidth)}x${Math.round(sourceHeight)} so it stays printable on a phone. The SVG beside it has no such limit.`
+      ? `PNG reduced to ${width}x${height}. The SVG is full size.`
       : null;
   return { file: new File([blob], name, { type: "image/png" }), note };
 }

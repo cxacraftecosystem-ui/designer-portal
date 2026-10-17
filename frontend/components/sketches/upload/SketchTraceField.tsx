@@ -229,6 +229,7 @@ import {
   type TraceRuntime,
   type Tracer
 } from "./traceRuntime";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The long edge the live preview is traced at.
@@ -812,7 +813,7 @@ export function SketchTraceField({
         if (runtimeUp) {
           // The engine is up and only the presets failed. Say so where it is true rather than
           // disabling a panel that works.
-          setNotice("The style and subject presets could not be loaded, so only the individual controls are available.");
+          setNotice("Presets didn't load — individual controls still work.");
           return;
         }
         setPhase({
@@ -1138,7 +1139,7 @@ export function SketchTraceField({
         setProblem(
           error instanceof Error && error.message
             ? error.message
-            : "That photograph could not be traced. Try another, or a lower trace resolution."
+            : "Couldn't trace that photo. Try another, or a lower resolution."
         );
         return null;
       } finally {
@@ -1466,9 +1467,9 @@ export function SketchTraceField({
         : tracing
           ? progress ?? "Tracing…"
           : problem !== null
-            ? "The trace did not finish, so there is nothing to compare. The reason is above."
+            ? "The trace didn't finish."
             : result === null
-              ? "The comparison appears as soon as the first trace finishes."
+              ? "Appears when the trace finishes."
               : "Preparing the comparison…";
 
   /* ──────────────────────────────────────────────────────────────────────────
@@ -1629,7 +1630,7 @@ export function SketchTraceField({
       */
       if (pick !== pickRef.current || goneRef.current) return;
       if (latest === null) {
-        setProblem("The trace did not finish, so there is nothing to attach yet.");
+        setProblem("The trace didn't finish.");
         return;
       }
       const input = inputFrom(latest);
@@ -1705,16 +1706,16 @@ export function SketchTraceField({
       setDone(
         `${outcome.file.name} was added to “${targetLabel}”.` +
           (source === "filed"
-            ? ` The photograph ${file.name} was filed alongside it, exactly as it is.`
+            ? ` ${file.name} was filed with it.`
             : source === "already"
-              ? ` The photograph ${file.name} was already filed and is untouched.`
+              ? ` ${file.name} was already filed.`
               : source === "refused"
                 // THE ONE OUTCOME WHERE THE TWO HALVES DISAGREE: the line art was taken and the
                 // photograph was not. Naming it is the only honest answer — the host has printed
                 // WHY beside the picker, and " The photograph itself is untouched." would read as a
                 // deliberate choice rather than as a file that did not land.
-                ? ` The photograph ${file.name} was NOT filed — see the message beside the picker.`
-                : " The photograph itself is untouched.") +
+                ? ` ${file.name} was NOT filed — see the picker.`
+                : "") +
           (outcome.note ? ` ${outcome.note}` : "")
       );
       setOpen(false);
@@ -1781,7 +1782,7 @@ export function SketchTraceField({
       */
       if (pick !== pickRef.current || goneRef.current) return;
       if (latest === null) {
-        setProblem("The trace did not finish, so there is nothing to download yet.");
+        setProblem("The trace didn't finish.");
         return;
       }
       const input = inputFrom(latest);
@@ -1822,8 +1823,7 @@ export function SketchTraceField({
       }
       saveBlobToDisk(outcome.file, outcome.file.name);
       setSaved(
-        `${outcome.file.name} was saved to this device. Nothing was filed on the record and nothing was ` +
-          `uploaded.` +
+        `Saved ${outcome.file.name} to this device.` +
           // §10 of the frontend skill: a cap that reduced the file is stated on screen, never swallowed.
           // `exportPngFile` reports its 2048px ceiling and `buildSvg` its shape ceiling this way, and a
           // download that quietly dropped the sentence would be the one place the ceiling is invisible.
@@ -1982,8 +1982,8 @@ export function SketchTraceField({
     setProblem(null);
     setDone(
       source === "filed"
-        ? `${file.name} was filed exactly as it is. No line art was added.`
-        : `${file.name} was already filed. No line art was added.`
+        ? `${file.name} filed, without line art.`
+        : `${file.name} already filed, without line art.`
     );
     setOpen(false);
   }
@@ -2011,7 +2011,7 @@ export function SketchTraceField({
    * already committed to opening it. Its neighbour states its own rule while closed, and now so does
    * this one.
    */
-  const CARD_DESCRIPTION = `Everything below is computed on this device — the photograph is not sent anywhere to be traced. The original stays exactly as it is; only the drawing is added to “${targetLabel}”.`;
+  const CARD_DESCRIPTION = `Traced on this device. The drawing is added to “${targetLabel}”; the photo is unchanged.`;
 
   if (phase.status === "unavailable") {
     /*
@@ -2212,16 +2212,10 @@ export function SketchTraceField({
       ))}
     </ul>
     <p className="mt-2 max-w-prose text-xs leading-5 text-ink-500">
-      Every one of these is re-traced at full resolution when you press it, so none of them is the
-      smaller preview above. None of them is filed on the record, none is uploaded, and none reaches
-      the report: the ministry document prints the sketch photograph, and a drawing downloaded here is
-      a copy for you, your printer or your CAD operator. Attaching to the record is the “Add the line
-      art” button below this section.
+      Full-resolution copies for you. They aren&apos;t filed or uploaded — use “Add the line art” to attach.
     </p>
     <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
-      Nothing here is stored: the trace lives only while this panel is open, so closing it, choosing
-      another photograph or reloading the page discards it, and a download after that means tracing
-      again.
+      The trace is lost when you close this panel.
     </p>
     {/*
       WHAT IS WRITTEN INSIDE THE FILE ABOUT WHO MADE IT — the handset's
@@ -2246,8 +2240,7 @@ export function SketchTraceField({
       `grep -rn "includeMetadata" android/app/src/main/java`.
     */}
     <p className="mt-1 max-w-prose text-xs leading-5 text-ink-500">
-      The PDF and the EPS name Offline Tracer, the tracing software used on this device, as the program
-      that made them.
+      PDF and EPS files name Offline Tracer as their creator.
     </p>
     {/* Mounted whether or not anything has been saved, so the sentence is a CHANGE to a region
         already in the document — the same reason the success sentence at the bottom of this
@@ -2267,10 +2260,7 @@ export function SketchTraceField({
     */}
     {edited !== null ? (
       <p className="mt-2 max-w-prose text-xs leading-5 text-amber-800 dark:text-amber-100">
-        The frame you chose is written into the SVG&apos;s provenance note, the PDF&apos;s title and
-        the EPS&apos;s header, so those three say how they were made. The PNG and the DXF have
-        nowhere to carry it: saved on their own, neither records that the drawing was cropped or
-        sharpened.
+        SVG, PDF and EPS record your crop and sharpening; PNG and DXF don&apos;t.
       </p>
     ) : null}
     <p aria-live="polite" aria-atomic="true" className="mt-1 text-xs leading-5 text-ink-500">
@@ -2410,7 +2400,7 @@ export function SketchTraceField({
                       itself, in its own words, at the moment it is in force. A sentence that is true
                       in every state beats a shorter one that is true in most.
                     */}
-                    {" Chosen in “Photograph of the sketch” above. The measuring panel below starts from the same one, unless it has been pointed at a different photograph — it says so on its own card when it has."}
+                    {" Chosen in “Photograph of the sketch” above."}
                   </>
                 ) : (
                   /*
@@ -2425,8 +2415,7 @@ export function SketchTraceField({
                   <span className="flex items-start gap-2">
                     <ImageIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-500" aria-hidden />
                     <span>
-                      No photograph has been chosen yet. Choose one in “Photograph of the sketch” above — it is the
-                      same photograph this panel traces and the panel below measures.
+                      Choose a photo in “Photograph of the sketch” above.
                     </span>
                   </span>
                 )}
@@ -2454,7 +2443,7 @@ export function SketchTraceField({
               // KEPT WORD FOR WORD IN STEP WITH `SharedPhotoField`'s copy of this card, which is the
               // one a designer normally meets; this branch draws only where that picker is absent.
               // Both were shortened together on 2026-09-03 under the owner's one-line copy rule.
-              acceptSentence={`${TRACEABLE_IMAGE_TYPES}. Anything over ${DECODE_MAX_EDGE_PX}px on the long edge is reduced before tracing.`}
+              acceptSentence={`${TRACEABLE_IMAGE_TYPES}. Larger than ${DECODE_MAX_EDGE_PX}px is reduced.`}
               disabled={disabled}
               /*
                 THE RULE, NOT THE FILTER. `accept="image/*"` is what the dialog offers and a drop ignores
@@ -2470,10 +2459,10 @@ export function SketchTraceField({
               */
               validate={(candidate) => {
                 if (candidate.type === "image/svg+xml") {
-                  return "an SVG is already vector art — attach it with the ordinary picker instead.";
+                  return "an SVG is already vector art — attach it directly.";
                 }
                 if (candidate.type === "" || candidate.type.startsWith("image/")) return null;
-                return `this is ${candidate.type}, not a photograph. A drawing has to be traced from an image.`;
+                return `this is ${candidate.type}, not an image.`;
               }}
               onFiles={(files) => {
                 const chosen = files[0];
@@ -2659,8 +2648,7 @@ export function SketchTraceField({
               ) : null}
               {result && result.workingWidth < result.width ? (
                 <p className="mt-2 text-xs text-ink-500">
-                  This is a preview at a smaller working size. Attaching or downloading re-traces at full
-                  resolution first.
+                  Preview. Attaching or downloading uses full resolution.
                 </p>
               ) : null}
             </div>
@@ -2781,17 +2769,10 @@ export function SketchTraceField({
                     for the same reason: the handset says its own two out loud under its own frame.
                   */}
                   <p className="mt-2 text-xs leading-5 text-ink-500">
-                    The drawing is shown first. Drag the handle — or focus it and use the arrow keys, Home and
-                    End — to reveal the photograph underneath. Press and hold the picture to see the photograph,
-                    and let go to come back: the seam stays where you left it. Hold Ctrl (or ⌘) and scroll to
-                    magnify up to {COMPARE_MAX_ZOOM}×, or press + and − with the frame focused and 0 to go back
-                    to fit; magnified, dragging moves the picture instead of the seam. The comparison paints the
-                    drawing on white so it is visible over the photograph; the file that is attached or
-                    downloaded keeps whatever background you chose.
+                    Drag the handle (or use arrow keys) to compare. Hold to see the photo. Ctrl/⌘ + scroll or + / − zooms up
+                    to {COMPARE_MAX_ZOOM}×; 0 resets.
                     {compare.reduced
-                      ? ` Both pictures here are ${compare.width}x${compare.height}, reduced from ${
-                          result ? `${Math.round(result.width)}x${Math.round(result.height)}` : "the traced size"
-                        } for the comparison only.`
+                      ? ` Shown at ${compare.width}x${compare.height}.`
                       : ""}
                   </p>
                   {/*
@@ -2866,7 +2847,7 @@ export function SketchTraceField({
                 />
                 <p id={`${panelId}-style-hint`} className="text-xs text-ink-500">
                   {styles.find((s) => s.id === styleId)?.description ??
-                    "A style sets every control at once. Pick one, then adjust."}
+                    "Sets every control at once."}
                 </p>
               </div>
 
@@ -2933,7 +2914,7 @@ export function SketchTraceField({
                       row while choosing, and under the control afterwards, because the row is gone by
                       the time a designer wonders what they picked. */}
                   {subjects.find((subject) => subject.id === subjectId)?.hint ??
-                    "A subject nudges the settings for the material in front of the camera. It leaves the style alone and can be applied more than once without compounding."}
+                    "Tunes settings for the material."}
                 </p>
               </div>
             </div>
@@ -2960,7 +2941,7 @@ export function SketchTraceField({
           {suggestedStyle !== null ? (
             <div aria-live="polite" className="mb-3 rounded-md border border-line-200 bg-field-100 px-3 py-2">
               <p className="text-xs leading-5 text-ink-700">
-                Looking at this photograph, the engine suggests the “{suggestedStyle.name}” style.{" "}
+                Suggested: “{suggestedStyle.name}”.{" "}
                 {suggestedStyle.description}
               </p>
               <button
@@ -3060,9 +3041,7 @@ export function SketchTraceField({
 
               {!advancedOpen ? (
                 <p className="mt-2 text-xs leading-5 text-ink-500">
-                  Inside: the part of the photograph to trace, the {ADVANCED_COUNT} settings that are
-                  not above, and the formats you can download a copy in. Nothing in there is required —
-                  the trace runs on the settings shown above.
+                  Crop, {ADVANCED_COUNT} more settings and download formats. All optional.
                 </p>
               ) : null}
 
@@ -3163,9 +3142,7 @@ export function SketchTraceField({
               `grep -n "_image_sources\|_render_media_annexure" backend/app/services/report_builder.py`.
             */}
             <p className="text-xs leading-5 text-ink-500">
-              Either form is filed as an attachment on the sketch, and the choice does not change what the
-              ministry report shows: the report prints the sketch photograph, names the attached file and
-              does not carry it. The file is in the workshop record for whoever opens it there.
+              Filed as an attachment. The report prints the photo, not this file.
             </p>
             {/* A CAP STATED WHERE IT BITES. The SVG carries the frame in its provenance note (see
                 `provenanceFor`); a PNG has no channel for it, so a cropped or sharpened trace filed as
@@ -3173,8 +3150,7 @@ export function SketchTraceField({
                 out loud, and this is skipped work in a file rather than on a list. */}
             {format === "png" && edited !== null ? (
               <p className="text-xs leading-4 text-amber-800 dark:text-amber-100">
-                The frame you chose is written into the SVG&apos;s provenance note. A PNG has nowhere to
-                carry it, so a reviewer holding only the PNG cannot tell it was cropped or sharpened.
+                SVG records your crop and sharpening; PNG doesn&apos;t.
               </p>
             ) : null}
           </div>
@@ -3189,7 +3165,7 @@ export function SketchTraceField({
             </p>
           ) : null}
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <ActionGroup className="mt-3">
             <button
               type="button"
               className="field-button"
@@ -3223,15 +3199,15 @@ export function SketchTraceField({
                 Keep the photograph only
               </button>
             )}
-          </div>
+          </ActionGroup>
           <p className="mt-2 text-xs text-ink-500">
             {onAttachSource
               ? // BOTH CLOSE CONTROLS ARE NAMED, since this panel gained the one at its foot. The
                 // sentence used to say "the ×" and mean "any way out of here", which was true while
                 // there was only one — and a designer who put the panel away from the bottom would
                 // have been told nothing about what that did.
-                "Nothing is filed until one of these is pressed. “Attach the photograph only” files the photograph exactly as it was taken and stops there; adding the line art files both, the photograph unaltered beside the drawing. Closing this panel — with the × above or “Collapse” below — files neither."
-              : "Declining costs nothing: the photograph you attached stays exactly as it is, and a drawing can be traced from it later."}
+                "Nothing is filed until you choose. Closing files neither."
+              : "You can trace it later."}
           </p>
 
         </>

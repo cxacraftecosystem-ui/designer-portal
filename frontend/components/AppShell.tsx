@@ -21,6 +21,7 @@ import { PageSelvedge } from "@/components/PageSelvedge";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { isAdmin, ministrySurface, roleLabel, routeGuardFor } from "@/lib/permissions";
 import { mustChangePassword } from "@/lib/signIn";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, loading, logout, markPasswordChanged } = useAuth();
@@ -328,14 +329,14 @@ function RouteLocked({ title, message, role }: { title: string; message: string;
       <p className="mt-3 text-xs text-ink-500">
         You are signed in as <span className="font-medium text-ink-700">{role}</span>. An admin can raise your access.
       </p>
-      <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+      <ActionGroup className="mt-7">
         <Link href="/dashboard" className="field-button">
           Back to dashboard
         </Link>
         <Link href="/guide" className="field-button-secondary">
           Open the walkthrough
         </Link>
-      </div>
+      </ActionGroup>
     </section>
   );
 }
@@ -364,7 +365,7 @@ function AdminViewHidden({ route, onEnable }: { route: AdminChromeRoute; onEnabl
       <p className="mt-3 text-xs text-ink-500">
         Your access has not changed — this is your own setting.
       </p>
-      <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+      <ActionGroup className="mt-7">
         <button type="button" onClick={onEnable} className="field-button">
           Turn admin view back on
         </button>
@@ -376,7 +377,7 @@ function AdminViewHidden({ route, onEnable }: { route: AdminChromeRoute; onEnabl
         <Link href="/dashboard" className="field-button-secondary">
           Back to dashboard
         </Link>
-      </div>
+      </ActionGroup>
     </section>
   );
 }

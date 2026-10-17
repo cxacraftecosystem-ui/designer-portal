@@ -106,7 +106,7 @@ export default function DesignWorkshopAiLayersPage({ params }: { params: Promise
     <>
       <PageHeader
         title="AI layers"
-        description="Everything a model produced from this workshop's recordings and photographs — what it was made from, which machine ran it, and whether a person has put their name to it."
+        description="AI text from this workshop, and who accepted it."
         icon={<Layers className="h-5 w-5" aria-hidden />}
         actions={
           <Link href={`/design-workshops/${id}`} className="field-button-secondary">

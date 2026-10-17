@@ -53,6 +53,7 @@ import { ApiError } from "@/lib/api";
 import { getDesignWorkshop, type DwSummary } from "@/lib/designWorkshops";
 import { isLocalWorkshopId, loadDraft } from "@/lib/designWorkshopStore";
 import { isUnreachable } from "@/lib/offline";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** What the load settled on. `null` while it is still running. */
 type LoadState =
@@ -152,7 +153,7 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
         description={
           state?.kind === "loaded"
             ? state.record.title
-            : "The workshop's own record — its title, its report template, where and when it ran, its notes and the workshop it is filed against."
+            : "Workshop details"
         }
         icon={<DraftingCompass className="h-5 w-5" aria-hidden />}
         actions={
@@ -170,11 +171,11 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
           {postRefusal === null ? (
             <DesignWorkshopHeaderForm initial={state.record} />
           ) : postRefusal ? (
-            <div className="flex flex-wrap gap-2">
+            <ActionGroup>
               <Link href={recordHref} className="field-button-secondary">
                 Back to the workshop
               </Link>
-            </div>
+            </ActionGroup>
           ) : null}
         </>
       ) : null}
@@ -195,14 +196,12 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
         <section className="panel grid gap-3 p-4">
           <h2 className="text-sm font-medium text-ink-900">You&rsquo;re offline</h2>
           <p className="text-sm leading-6 text-ink-700">
-            The workshop&apos;s own details — its title, report template, craft, cluster, place, dates, notes and linked
-            workshop — can only be changed while you&rsquo;re online.
+            Details can only be changed online.
           </p>
           <p className="text-sm leading-6 text-ink-700">
-            Everything else on this workshop still works offline: the 22 stages, the photographs and the
-            workshop&apos;s own questions are kept on this device and upload when you&rsquo;re back online.
+            Stages and photos still work offline.
           </p>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="button" className="field-button" onClick={retry}>
               <RefreshCw className="h-4 w-4" aria-hidden />
               Try again
@@ -210,7 +209,7 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
             <Link href={recordHref} className="field-button-secondary">
               Back to the workshop
             </Link>
-          </div>
+          </ActionGroup>
         </section>
       ) : null}
 
@@ -228,18 +227,16 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
         <section className="panel grid gap-3 p-4">
           <h2 className="text-sm font-medium text-ink-900">This workshop is still only on this device</h2>
           <p className="text-sm leading-6 text-ink-700">
-            It was created here and hasn&rsquo;t been uploaded yet, so its details can&rsquo;t be changed here. Everything
-            you have typed is saved on this device and nothing is at risk. Sync it from the design workshops list — then
-            you can change the details.
+            Not uploaded yet. Sync it from the workshops list to edit details.
           </p>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <Link href="/design-workshops" className="field-button">
               All design workshops
             </Link>
             <Link href={recordHref} className="field-button-secondary">
               Back to the workshop
             </Link>
-          </div>
+          </ActionGroup>
         </section>
       ) : null}
 
@@ -254,12 +251,10 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
         */
         <section className="panel grid gap-3 p-4">
           <h2 className="text-sm font-medium text-ink-900">
-            There is no design workshop at this address that you can open
+            Workshop not found
           </h2>
           <p className="text-sm leading-6 text-ink-700">
-            Either no such workshop exists, or it belongs to another designer and hasn&rsquo;t been shared with you. If a
-            colleague sent you this link, ask them to add you as a viewer of their workshop — an administrator can also
-            do it — and then open the link again.
+            It doesn&rsquo;t exist or hasn&rsquo;t been shared with you. Ask its designer or an admin to add you.
           </p>
           <Link href="/design-workshops" className="field-button-secondary">
             All design workshops
@@ -280,7 +275,7 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
           >
             {state.message}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="button" className="field-button-secondary" onClick={retry}>
               <RefreshCw className="h-4 w-4" aria-hidden />
               Try again
@@ -288,7 +283,7 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
             <Link href={recordHref} className="field-button-secondary">
               Back to the workshop
             </Link>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
     </>

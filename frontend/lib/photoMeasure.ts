@@ -622,16 +622,16 @@ export function measureBySameScale(input: SameScaleInput): MeasureResult {
   const referenceLengthSigma = input.referenceLengthSigma ?? 0;
 
   if (!pointsFinite([reference.from, reference.to, target.from, target.to])) {
-    return { ok: false, reason: "One of the marks has no position. Place all four marks again." };
+    return { ok: false, reason: "Place all four marks again." };
   }
   if (!finite(reference.length, markSigmaPx, referenceLengthSigma) || markSigmaPx < 0 || referenceLengthSigma < 0) {
-    return { ok: false, reason: "The reference length is not a number this can measure against." };
+    return { ok: false, reason: "Enter a valid reference length." };
   }
   if (LENGTH_UNITS[reference.unit] === undefined) {
     return { ok: false, reason: `“${reference.unit}” is not a length unit this can convert.` };
   }
   if (reference.length <= 0) {
-    return { ok: false, reason: "The reference must have a real length greater than zero." };
+    return { ok: false, reason: "The reference length must be above zero." };
   }
 
   const referencePixels = distanceBetween(reference.from, reference.to);
@@ -640,13 +640,12 @@ export function measureBySameScale(input: SameScaleInput): MeasureResult {
     return {
       ok: false,
       reason:
-        `The reference is only ${Math.round(referencePixels)} pixels long in this photograph, which is too ` +
-        `short to measure against — the error bar would be wider than the answer. Zoom in and place the two ` +
-        `marks further apart, or photograph the object closer to the scale.`
+        `The reference is only ${Math.round(referencePixels)} px — too short to measure against. Zoom in or move ` +
+        `the marks apart.`
     };
   }
   if (targetPixels === 0) {
-    return { ok: false, reason: "The two marks on the object are in the same place, so there is nothing to measure." };
+    return { ok: false, reason: "The two object marks overlap." };
   }
 
   const value = (reference.length * targetPixels) / referencePixels;
@@ -660,7 +659,7 @@ export function measureBySameScale(input: SameScaleInput): MeasureResult {
   );
   const uncertainty = relative * value;
   if (!finite(value, relative, uncertainty)) {
-    return { ok: false, reason: "These marks do not produce a measurement that can be stood behind." };
+    return { ok: false, reason: "These marks don't give a reliable measurement." };
   }
 
   return {
@@ -698,26 +697,25 @@ export function measureByRectification(input: RectificationInput): MeasureResult
   const markSigmaPx = input.markSigmaPx ?? DEFAULT_MARK_SIGMA_PX;
 
   if (!pointsFinite(corners) || !pointsFinite([target.from, target.to])) {
-    return { ok: false, reason: "One of the marks has no position. Place the corners and the two ends again." };
+    return { ok: false, reason: "Place the corners and both ends again." };
   }
   if (!finite(rectangle.width, rectangle.height, markSigmaPx) || markSigmaPx < 0) {
-    return { ok: false, reason: "The rectangle's size is not a pair of numbers this can measure against." };
+    return { ok: false, reason: "Enter a valid rectangle size." };
   }
   if (LENGTH_UNITS[rectangle.unit] === undefined) {
     return { ok: false, reason: `“${rectangle.unit}” is not a length unit this can convert.` };
   }
   if (rectangle.width <= 0 || rectangle.height <= 0) {
-    return { ok: false, reason: "The rectangle must have a real width and height greater than zero." };
+    return { ok: false, reason: "Width and height must be above zero." };
   }
   if (distanceBetween(target.from, target.to) === 0) {
-    return { ok: false, reason: "The two marks on the object are in the same place, so there is nothing to measure." };
+    return { ok: false, reason: "The two object marks overlap." };
   }
   if (!isSimpleConvexQuad(corners)) {
     return {
       ok: false,
       reason:
-        "Those four corners cross over one another, so they do not enclose the rectangle. Mark them in " +
-        "order around it — each corner next to the one before it — rather than in reading order."
+        "The corners cross. Mark them in order around the edge."
     };
   }
 
@@ -789,13 +787,11 @@ export function measureByRectification(input: RectificationInput): MeasureResult
     return {
       ok: false,
       reason:
-        "Those four corners cannot be used to straighten the photo — three of them are in a straight line, " +
-        "or an end of the object falls where the surface runs out of view. Re-mark the corners of the " +
-        "rectangle, and keep both ends of the object on it."
+        "Can't use these corners. Re-mark them, with both ends of the object on the rectangle."
     };
   }
   if (value === 0) {
-    return { ok: false, reason: "Both ends of the object rectify to the same place, so there is nothing to measure." };
+    return { ok: false, reason: "The two object marks overlap." };
   }
 
   const uncertainty = propagateUncertainty(coordinates, markSigmaPx, evaluate);
@@ -806,8 +802,7 @@ export function measureByRectification(input: RectificationInput): MeasureResult
     return {
       ok: false,
       reason:
-        "These marks are too close to an arrangement this cannot measure for an error bar to be worked out, " +
-        "and a measurement is not offered without one. Photograph the rectangle less edge-on and mark it again."
+        "Too edge-on to measure. Photograph the rectangle more squarely."
     };
   }
 
@@ -821,7 +816,7 @@ export function measureByRectification(input: RectificationInput): MeasureResult
 
   const relativeUncertainty = uncertainty / value;
   if (!finite(value, uncertainty, relativeUncertainty, referencePixels, targetPixels, uncorrectedValue, tiltCorrection)) {
-    return { ok: false, reason: "These marks do not produce a measurement that can be stood behind." };
+    return { ok: false, reason: "These marks don't give a reliable measurement." };
   }
 
   return {

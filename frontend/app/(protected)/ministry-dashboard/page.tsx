@@ -99,6 +99,7 @@ import {
 } from "@/lib/ministryDashboard";
 import { isUnreachable } from "@/lib/offline";
 import { canSeeMinistryDashboard, roleLabel } from "@/lib/permissions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 20;
 
@@ -138,12 +139,12 @@ const PEOPLE_ICONS = { designers: Users, officers: UserCog, inspectors: ShieldCh
  */
 function describeFailure(error: unknown): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "Couldn't connect, so the register couldn't be loaded. Check your connection and try again.";
+    return "No connection — couldn't load the register.";
   }
   if (error.status === 403) {
     return error.message;
   }
-  return `${error.message} The register couldn't be loaded. Please try again.`;
+  return `${error.message} Couldn't load the register.`;
 }
 
 export default function MinistryDashboardPage() {
@@ -332,7 +333,7 @@ export default function MinistryDashboardPage() {
           manualRefresh.current = false;
           // The FAILURE is announced too. A button that says nothing when it fails is worse than one
           // that says nothing at all, because the silence reads as success.
-          setRefreshNote("The register couldn't be refreshed. See the message above.");
+          setRefreshNote("The register couldn't be refreshed.");
         }
       });
 
@@ -491,7 +492,7 @@ export default function MinistryDashboardPage() {
         setDownloadError(
           err instanceof ApiError
             ? err.message
-            : "The download could not be started. Check the connection and try again."
+            : "Couldn't start the download. Try again."
         );
       } finally {
         setBusyDownload(null);
@@ -527,14 +528,14 @@ export default function MinistryDashboardPage() {
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
           </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <ActionGroup className="mt-7">
             <Link href="/dashboard" className="field-button">
               Back to dashboard
             </Link>
             <Link href="/design-workshops" className="field-button-secondary">
               Design workshops
             </Link>
-          </div>
+          </ActionGroup>
         </section>
       </div>
     );
@@ -553,7 +554,7 @@ export default function MinistryDashboardPage() {
     <div>
       <PageHeader
         title="Ministry dashboard"
-        description="Every workshop the platform holds — ongoing, completed and newly registered — with each designer's progress through the stages."
+        description="Every workshop and each designer's progress."
         icon={<LayoutDashboard className="h-5 w-5" aria-hidden />}
       />
 
@@ -737,9 +738,8 @@ export default function MinistryDashboardPage() {
           */}
           {readAt ? (
             <>
-              Updated at <span className="font-medium text-ink-700">{formatDateTime(readAt)}</span>. This
-              register refreshes itself while this tab is open{error ? ", but the last refresh failed" : ""}.
-              {switching ? " The table below is still the other register — the one you asked for is loading." : ""}
+              Updated at <span className="font-medium text-ink-700">{formatDateTime(readAt)}</span>.{error ? " Last refresh failed." : ""}
+              {switching ? " Loading…" : ""}
             </>
           ) : (
             "Loading the register…"
@@ -764,7 +764,7 @@ export default function MinistryDashboardPage() {
           {refreshNote}
         </p>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <ActionGroup>
           <button
             type="button"
             className="field-button-secondary"
@@ -787,7 +787,7 @@ export default function MinistryDashboardPage() {
             <Download className="h-4 w-4" aria-hidden />
             {busyDownload === "beneficiaries" ? "Preparing…" : "Download beneficiaries"}
           </button>
-        </div>
+        </ActionGroup>
       </section>
 
       {/*
@@ -798,11 +798,8 @@ export default function MinistryDashboardPage() {
         reader has about a file they are about to send somewhere.
       */}
       <p className="mb-4 text-xs leading-5 text-ink-500">
-        “Download workshops” has what is on this screen — the workshop, where and when, its
-        designer, its status and its progress — and no stage content: no answers, no photographs, no
-        recordings, no consent decisions. It takes the filters above with it and says so inside the
-        file. “Download beneficiaries” is the whole artisan list, not only the artisans of the
-        workshops listed here, and every identity number in it is masked to its last four characters.
+        “Download workshops” exports this table, with no stage content. “Download beneficiaries” exports every
+        artisan, with identity numbers masked to the last four characters.
         {entitlements && !entitlements.beneficiaries ? (
           <span className="mt-1 block font-medium text-ink-700">{entitlements.beneficiariesRefusal}</span>
         ) : null}
@@ -830,8 +827,7 @@ export default function MinistryDashboardPage() {
             timer means the first read can fail on its own.
           */
           <div className="p-4 text-sm text-ink-700">
-            The register couldn&apos;t be loaded. It will try again on its own, or select
-            “Refresh now”.
+            Couldn&apos;t load the register. It retries, or use “Refresh now”.
           </div>
         ) : data === null ? (
           <div className="p-4 text-sm text-ink-700">Loading…</div>
@@ -845,7 +841,7 @@ export default function MinistryDashboardPage() {
               }
               body={
                 applied || standing
-                  ? "Only the workshops described above are searched. Clear the filters to see them all."
+                  ? "No matches. Clear the filters to see all."
                   : "There are no workshops here yet."
               }
             />
@@ -1007,8 +1003,7 @@ function PeoplePanel({
       ) : null}
       {data.unpostedAccountsTruncated ? (
         <p className="text-xs leading-5 text-ink-500">
-          Not every account could be checked, so someone with no workshops here may be missing from
-          this list.
+          Some accounts couldn&apos;t be checked.
         </p>
       ) : null}
 
@@ -1144,7 +1139,7 @@ function DesignTable({ rows }: { rows: DesignRegisterPage["items"] }) {
                 with nobody on it on the day it opens is honestly 0 and prints 0. */}
             <td className="px-4 py-3 tabular-nums text-ink-700">
               {row.beneficiaries === null ? (
-                <span className="text-ink-500" title="The artisan roster could not be read for this workshop.">
+                <span className="text-ink-500" title="Couldn't read the roster.">
                   not read
                 </span>
               ) : (

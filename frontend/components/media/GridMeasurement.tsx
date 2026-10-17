@@ -17,6 +17,7 @@ import {
   type MeasurementMethodMarker
 } from "@/components/media/gridProposal";
 import { analyzeMeasurementImage } from "@/lib/media";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 export type { GridDimension, GridGroup } from "@/components/media/gridProposal";
 export type GridFiles = Partial<Record<GridGroup, File>>;
@@ -290,7 +291,7 @@ export function GridMeasurement({
                     </>
                   ) : null}
                 </p>
-                <div className="flex flex-wrap gap-2">
+                <ActionGroup>
                   <button type="button" className="field-button" onClick={() => accept(group)}>
                     <Check className="h-4 w-4" aria-hidden />
                     {gridAcceptLabel(proposal)}
@@ -306,7 +307,7 @@ export function GridMeasurement({
                     <X className="h-4 w-4" aria-hidden />
                     Discard this reading
                   </button>
-                </div>
+                </ActionGroup>
               </div>
             ) : null}
           </div>

@@ -50,9 +50,9 @@ const SEARCH_MAX = 120;
 
 function describeFailure(error: unknown): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so this list could not be loaded. It is not empty — nothing was read at all. Check the connection and try again.";
+    return "No connection — couldn't load the list.";
   }
-  return `${error.message} This list could not be loaded, which is not the same as having nothing to approve.`;
+  return `${error.message} Couldn't load the list.`;
 }
 
 /** The one line under a row that says where its report stands, in this tab's terms. */
@@ -116,7 +116,7 @@ export default function ReportsToApprovePage() {
     <div>
       <PageHeader
         title="Reports to approve"
-        description="Every design & prototype workshop report its designers have handed in. Open one to read it, approve it or send it back with a reason, and hand an approved report on to the office."
+        description="Reports handed in by designers."
         icon={<Stamp className="h-5 w-5" aria-hidden />}
       />
 
@@ -167,7 +167,7 @@ export default function ReportsToApprovePage() {
               title={applied ? "No report matches that search" : tab.empty}
               body={
                 applied
-                  ? `Nothing in ${tab.label.toLowerCase()} matches “${applied}”. Clear the search to see the whole list.`
+                  ? `Nothing matches “${applied}”.`
                   : undefined
               }
             />

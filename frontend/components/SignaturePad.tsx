@@ -68,6 +68,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Eraser, PenLine, Undo2 } from "lucide-react";
 
 import { mediaTimestamp } from "@/lib/media";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** A point on the pad, as a fraction of its box. See the header for why these are not pixels. */
 export type SignaturePoint = { x: number; y: number };
@@ -389,7 +390,7 @@ export function SignaturePad({
         onLostPointerCapture={endStroke}
       />
 
-      <div className="flex flex-wrap gap-2">
+      <ActionGroup>
         <button type="button" className="field-button" disabled={disabled || empty} onClick={attach}>
           Attach signature
         </button>
@@ -411,7 +412,7 @@ export function SignaturePad({
           <Eraser className="h-4 w-4" aria-hidden />
           Clear
         </button>
-      </div>
+      </ActionGroup>
 
       {/* The accessible alternative, stated rather than implied. See the header. */}
       <p id={hintId} className="text-xs leading-5 text-ink-500">

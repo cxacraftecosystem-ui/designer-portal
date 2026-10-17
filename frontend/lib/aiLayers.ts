@@ -497,37 +497,30 @@ export function layerKindNoun(kind: string | null | undefined): string {
 }
 
 const KIND_NOTES: Record<DwAiLayerKind, string> = {
-  RAW_TRANSCRIPT: "The words a transcription model produced from the recording, as it produced them.",
+  RAW_TRANSCRIPT: "The transcript as the model produced it.",
   CLEANED_TRANSCRIPT:
-    "The transcript rewritten as a readable dialogue. The rewrite is usually translated into English " +
-    "too, so this may not be the language the artisan spoke. Who made the rewrite is not recorded — it " +
-    "may include a person's own corrections.",
-  SUMMARY: "Prose a model wrote about the transcript. It is the model's words, not the artisan's.",
+    "Rewritten as readable dialogue, often in English.",
+  SUMMARY: "The model's summary — not the artisan's words.",
   OCR_TEXT: "The text a model read off the photograph.",
-  STRUCTURED_TEXT: "Named fields a model picked out of the text read off the photograph.",
-  TAGS: "Tags a model suggested from the text — a suggestion to accept or to decline.",
+  STRUCTURED_TEXT: "Fields picked out of the photo's text.",
+  TAGS: "Suggested tags.",
   METADATA: "Details a model picked out of the text.",
   /* Each of the five names what the machine WAS and WAS NOT allowed to change, because that is the
      question somebody about to quote the passage actually has. */
   PROOFREAD:
-    "Spelling, grammar and punctuation only. The model was not allowed to translate, restructure or " +
-    "shorten, and it was given the craft vocabulary to leave alone, so that “dabu” is not “corrected” " +
-    "to “double”. The original is unchanged and stays beside this.",
+    "Spelling, grammar and punctuation only. The original is kept.",
   EXPANDED:
     "A machine wrote these sentences from a short note the designer made. It is the only kind here " +
-    "that invents: anything in it that is not in the note — a detail, a reason, a connection " +
-    "between two things — was supplied by the model and was not recorded in the field. Treat the " +
-    "note as the record and this as a reading of it, and check any specific claim against the " +
-    "workshop's own material before quoting it. Nothing can be made from an expansion.",
+      "that invents: anything in it that is not in the note — a detail, a reason, a connection " +
+      "between two things — was supplied by the model and was not recorded in the field. Treat the " +
+      "note as the record and this as a reading of it, and check any specific claim against the " +
+      "workshop's own material before quoting it. Nothing can be made from an expansion.",
   TRANSLATION:
-    "A translation added beside the original, never replacing it, so the artisan's own words are " +
-    "kept. It records the language it came from and the language it went into, so it can be checked.",
+    "Added beside the original, never replacing it.",
   CAPTION:
-    "One sentence a model wrote about the photograph or video — for the media annexure, and for a " +
-    "screen reader. Check it against the picture, which is the evidence it stands on.",
+    "A one-line description. Check it against the picture.",
   SUBTITLES:
-    "Timed captions, with a start and an end for every line. Any speaker labels are the AI's own " +
-    "guess at who was speaking."
+    "Timed captions. Speaker labels are a guess."
 };
 
 /** The sentence under a kind's heading, or null for a kind this build does not know. */
@@ -551,14 +544,11 @@ const TIER_LABELS: Record<DwAiTier, string> = {
 
 const TIER_SENTENCES: Record<DwAiTier, string> = {
   TIER_1:
-    "Produced by a model running on the device itself. This is the only tier that works in a courtyard " +
-    "with no signal, and the recording never left the handset.",
+    "Ran on the phone. Works offline; nothing left the device.",
   TIER_2:
-    "Produced by a small language model running on the handset. Nothing left the device, and what a " +
-    "given handset can run depends on the handset.",
+    "A small model on the phone. Nothing left the device.",
   TIER_3:
-    "Produced by a provider in the cloud. This is the only tier that carries the craft vocabulary — " +
-    "the list that stops “dabu” being written as “double” — and the audio left the device to reach it."
+    "Ran in the cloud, with the craft vocabulary."
 };
 
 export function tierLabel(tier: string | null | undefined): string {
@@ -1032,7 +1022,7 @@ export function aiLayerProblem(error: unknown, fallback: string): string {
     if (isUnreachable(error)) return NO_CONNECTION;
     return (
       "Something went wrong, and it isn't clear whether your change was saved. Press Reload to check " +
-      "before trying again."
+        "before trying again."
     );
   }
   if (isUnreachable(error)) return NO_CONNECTION;

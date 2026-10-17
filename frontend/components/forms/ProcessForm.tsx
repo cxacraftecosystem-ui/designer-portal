@@ -52,6 +52,7 @@ import {
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, ExtraMetadata, MediaFile, ProductDocumentation, RecordStatus, User, Workshop } from "@/lib/types";
 import { useConfirm } from "@/components/dialogs";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 // ---------------------------------------------------------------------------
 // Types for the /processes endpoints (hydrated detail: media on the process =
@@ -182,7 +183,7 @@ function SavedMediaList({
     const ok = await confirm({
       title: "Remove this file?",
       body: `"${media.caption || media.originalFilename}" will be removed from this step.`,
-      note: "The file is permanently deleted from storage. This cannot be undone.",
+      note: "This can't be undone.",
       confirmLabel: "Remove file",
       tone: "danger"
     });
@@ -783,7 +784,7 @@ export function ProcessForm({
       if (outcome.source === "none") {
         setArtisanProducts([]);
         setProductLoadError(
-          "Couldn't load this artisan's products. Check your connection and tap the artisan again to retry."
+          "Couldn't load products. Tap the artisan again to retry."
         );
         return;
       }
@@ -1191,7 +1192,7 @@ export function ProcessForm({
       setUploadNote(null);
       if (failures.length) {
         setError(
-          `The process was saved, but ${failures.length} media file(s) failed to upload: ${failures.join(", ")}. Re-open the process from the list to retry those files.`
+          `Saved, but these didn't upload: ${failures.join(", ")}. Reopen to retry.`
         );
         setGuardOpen(false);
         /*
@@ -1278,8 +1279,7 @@ export function ProcessForm({
           Only the heading was a claim about the screen.
         */}
         <p className="mt-1 text-xs text-ink-500">
-          Capture how a product is made, step by step. Each process is tied to a product; multiple people can document the same
-          product&apos;s processes.
+          How a product is made, step by step.
         </p>
       </div>
       {initial ? <FieldProvenance extraMetadata={initial.extraMetadata} /> : null}
@@ -1480,7 +1480,7 @@ export function ProcessForm({
         {productsLoading ? <p className="mt-1 text-xs text-ink-500">Loading this artisan&apos;s products…</p> : null}
         {!productsLoading && productLoadError ? <p className="mt-1 text-xs text-error-600">{productLoadError}</p> : null}
         {!productsLoading && !productLoadError && artisanId && artisanProducts.length === 0 ? (
-          <p className="mt-1 text-xs text-ink-500">No products found for this artisan yet. Create a product for them first, then return here.</p>
+          <p className="mt-1 text-xs text-ink-500">No products yet. Create one first.</p>
         ) : null}
         {/* The count and the cut are one statement, never two: "12 product(s) available" printed
             above "Showing 100 of 143" is the screen contradicting itself, and the count is the half
@@ -1524,7 +1524,7 @@ export function ProcessForm({
         name="notes"
         label="What happens in this process"
         defaultValue={initial?.notes ?? ""}
-        helper="The sequence in your own words. This is what the design-workshop report prints under “What happens”, both in the traditional-process table and above it."
+        helper="In your own words. Printed under “What happens”."
         className="md:col-span-2"
         onValueChange={setNotes}
         // Said once at the top of this form by `DictationUnavailableNotice`; a copy under
@@ -1550,12 +1550,12 @@ export function ProcessForm({
             onRemoved={(id) => setExistingPreMedia((current) => current.filter((media) => media.id !== id))}
             onError={setError}
           />
-          <p className="text-xs font-medium text-amber-800 dark:text-amber-100">🎥 Video is the preferred format here — capture the action as it happens.</p>
+          <p className="text-xs font-medium text-amber-800 dark:text-amber-100">Video works best here.</p>
           <MediaCaptureField
             files={preFiles}
             onFilesChange={setPreFiles}
             title="Attach media"
-            description="Photos, video, audio and files link to this record automatically. Audio is queued for transcription after upload."
+            description="Audio is transcribed after upload."
             /*
               A STAGING OWNER THAT OUTLIVES THIS CARD, because this card is the one media control in
               the four record forms that can go away while the files it attached stay.
@@ -1681,12 +1681,12 @@ export function ProcessForm({
                   onChange={(value) => updateStep(step.key, { notes: value })}
                 />
               ) : null}
-              <p className="text-xs font-medium text-amber-800 dark:text-amber-100">🎥 Video is the preferred format here — capture the action as it happens.</p>
+              <p className="text-xs font-medium text-amber-800 dark:text-amber-100">Video works best here.</p>
               <MediaCaptureField
                 files={step.files}
                 onFilesChange={(files) => updateStep(step.key, { files })}
                 title="Attach media"
-                description="Photos, video, audio and files link to this record automatically. Audio is queued for transcription after upload."
+                description="Audio is transcribed after upload."
               />
             </div>
           ))}
@@ -1735,13 +1735,12 @@ export function ProcessForm({
             {isEdit ? <StatusBadge status={String(initial?.status ?? "PENDING")} /> : <StatusBadge status="PENDING" />}
             <Lock className="h-3.5 w-3.5 text-ink-500" aria-hidden />
           </div>
-          <p className="mt-1 text-xs text-ink-500">New records await review; a professor or admin sets the final status.</p>
+          <p className="mt-1 text-xs text-ink-500">New records are reviewed by a professor or admin.</p>
         </div>
       )}
 
       <div className="rounded-xl bg-[#2A2520] p-3 text-xs text-[#E0C9B0]">
-        Note: Different users may contribute to processes created by others. Even when documenting the same process, it is recommended
-        that each researcher documents it individually, so that different perspectives on the same process are preserved.
+        Document processes yourself, even if someone else has — each perspective is kept.
       </div>
 
       {/*
@@ -1758,7 +1757,7 @@ export function ProcessForm({
 
       <div className="flex items-center justify-end gap-2">
         {uploadNote ? <span className="mr-auto text-xs text-ink-500">{uploadNote}</span> : null}
-        <button type="button" className="field-button-secondary" onClick={requestCancel}>
+        <ActionGroup className="max-sm:w-full"><button type="button" className="field-button-secondary" onClick={requestCancel}>
           Cancel
         </button>
         {/* Closed once the write has landed, not merely while it is in flight. The only way this
@@ -1773,7 +1772,7 @@ export function ProcessForm({
           type="submit"
         >
           {saving ? "Saving..." : committed ? "Saved" : isEdit ? "Update process" : "Save process"}
-        </button>
+        </button></ActionGroup>
       </div>
 
       <UnsavedChangesDialog

@@ -132,13 +132,13 @@ const TABS: ReadonlyArray<SketchTab<SketchesTab>> = [
     key: "upload",
     label: "Upload",
     icon: Upload,
-    hint: "Add the drawings, photographs and 3D models of a piece to the record it belongs to."
+    hint: "Add drawings, photos and 3D models."
   },
   {
     key: "review",
     label: "Review",
     icon: Star,
-    hint: "Rate the other designers' work, say what you would change, and settle the order the pieces stand in."
+    hint: "Rate and rank the pieces."
   }
 ];
 

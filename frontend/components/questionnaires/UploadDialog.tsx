@@ -153,8 +153,8 @@ export function UploadDialog({
       title={editing ? "Upload an edited copy of this questionnaire" : "Upload a filled-in pro-forma"}
       description={
         editing
-          ? "The workbook you downloaded from this questionnaire, with your edits. Questions are matched by the Question ID column, so rows you changed are edited rather than added again."
-          : "The .xlsx pro-forma with your questions typed into it. It may already contain answers, or none at all — both work."
+          ? "Your edited workbook. Rows are matched by Question ID."
+          : "The .xlsx pro-forma with your questions, with or without answers."
       }
       icon={<FileSpreadsheet className="h-5 w-5" aria-hidden />}
       footer={
@@ -184,9 +184,7 @@ export function UploadDialog({
           // answered question is going to get a new question next to the old one; discovering that
           // in the change report, after the fact, reads as the import having duplicated their form.
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-            Questions that already have answers keep their wording. If you have reworded one, the original and its answers
-            are kept and your new wording is added as a new question — nothing is overwritten and nothing is lost. The
-            report afterwards names every question this happened to.
+            Reworded questions that have answers are added as new questions; nothing is overwritten.
           </p>
         ) : (
           // THE THREE FILES THIS DOOR ACCEPTS, named before one is chosen, because the third of them
@@ -195,20 +193,16 @@ export function UploadDialog({
           // are ALREADY recorded here under the names of the people who recorded them, and writing
           // them again would duplicate somebody's fieldwork with a new author stamped on the copy.
           <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-            <p className="font-medium text-ink-900">Three files work here, and one of them behaves differently.</p>
+            <p className="font-medium text-ink-900">You can upload:</p>
             <ul className="mt-1 grid gap-1">
               <li>
-                <span className="font-medium text-ink-900">The blank pro-forma</span>, with your questions typed into it —
-                and your own answers too, if you ran the interviews on paper. Both are imported.
+                <span className="font-medium text-ink-900">The pro-forma</span> — questions and any answers are imported.
               </li>
               <li>
-                <span className="font-medium text-ink-900">A question set another designer sent you</span> — you get their
-                questions in a new questionnaire of your own, ready for your own fieldwork.
+                <span className="font-medium text-ink-900">A shared question set</span> — becomes your own questionnaire.
               </li>
               <li>
-                <span className="font-medium text-ink-900">A workbook downloaded out of the app</span> — its questions are
-                imported and its answers are not. They are already recorded here, under the names of the people who
-                recorded them.
+                <span className="font-medium text-ink-900">A downloaded workbook</span> — questions only; answers are already here.
               </li>
             </ul>
           </div>
@@ -230,7 +224,7 @@ export function UploadDialog({
             />
           </label>
           <p className="mt-1 text-xs leading-5 text-ink-500">
-            {file ? file.name : "Excel workbooks only. Save As → Excel Workbook (.xlsx) if yours is an older .xls."}
+            {file ? file.name : ".xlsx only."}
           </p>
         </FieldBlock>
 
@@ -239,7 +233,7 @@ export function UploadDialog({
             value={title}
             maxLength={220}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder={editing ? "Leave blank to keep the current title" : "Leave blank to use the title on the Details sheet"}
+            placeholder={editing ? "Keep current title" : "Use the title in the workbook"}
           />
         </Field>
 
@@ -269,7 +263,7 @@ export function UploadDialog({
                   // The caller said nothing, so this says the one thing that is true whatever the
                   // reason: absence from this list is never a refusal. It is the same route out the
                   // reuse dialog offers, and it asks the server the identical question.
-                  "If the workshop you want is not here, leave this unattached and attach the questionnaire from its own page afterwards."}
+                  "Not listed? Leave it unattached and attach it later."}
               </p>
             }
           >
@@ -325,7 +319,7 @@ export function UploadDialog({
             label="Kind"
             hint={
               <p className="mt-1 text-xs leading-5 text-ink-500">
-                Decides which stage of the report this questionnaire&rsquo;s answers are filed under.
+                Where the report files its answers.
               </p>
             }
           >

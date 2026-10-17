@@ -347,10 +347,7 @@ function submissionScope(stagesTotal: number | null): string {
       ? "Every stage stays editable"
       : `All ${stagesTotal} stages stay editable`;
   return (
-    `Marking a workshop complete or handing it in does not lock it. ${stages} until the Ministry Admin ` +
-    "approves the report; from then on it can no longer be changed unless the approval is withdrawn. " +
-    "Nothing is sent anywhere by this step: the .docx or .pdf is made on the Report screen, and the " +
-    "approved report is handed on to the office by the Ministry Admin."
+    `${stages} until the Ministry Admin approves the report.`
   );
 }
 
@@ -374,9 +371,7 @@ function submissionScope(stagesTotal: number | null): string {
  * approved report cannot be archived either until it has been handed on or the approval withdrawn.
  */
 const SUBMISSION_IS_REVERSIBLE =
-  "Handing the report in can be withdrawn from this card while nobody has acted on it. What is not undone " +
-  "here: an inspector sending the report back, and the Ministry Admin approving it, withdrawing an approval " +
-  "or handing the approved report on to the office — each is recorded with a name and a note.";
+  "You can withdraw it until someone acts on it.";
 
 /** The eight members of `DesignWorkshopStatus`, in the order a workshop travels through them. */
 const DW_STATUSES: DwStatus[] = [
@@ -414,7 +409,7 @@ const MARK_COMPLETE: SubmissionAction = {
   status: "COMPLETE",
   label: "Mark complete",
   icon: BadgeCheck,
-  meaning: "The fieldwork is finished — nothing more is expected to be added.",
+  meaning: "Fieldwork is finished.",
   primary: false
 };
 
@@ -434,7 +429,7 @@ const SEND_FOR_REVIEW: SubmissionAction = {
   label: "Hand in for inspection",
   icon: Send,
   meaning:
-    "The inspecting officers can read it and file correction suggestions. It can be handed in before every field is filled in.",
+    "Officers read it and suggest corrections. Empty fields are fine.",
   primary: true
 };
 
@@ -452,7 +447,7 @@ const HAND_BACK_IN: SubmissionAction = {
   label: "Hand it back in",
   icon: Send,
   meaning:
-    "Say the corrections are done. Saving a stage with a change does this by itself — this is for corrections made outside the stages.",
+    "Corrections are done. Saving a changed stage does this for you.",
   primary: true
 };
 
@@ -466,7 +461,7 @@ const WITHDRAW: SubmissionAction = {
   status: "IN_PROGRESS",
   label: "Withdraw from inspection",
   icon: Undo2,
-  meaning: "Take it back off the officers' list while you work on it. You can hand it in again.",
+  meaning: "Take it back while you work on it.",
   primary: false
 };
 
@@ -474,7 +469,7 @@ const REOPEN: SubmissionAction = {
   status: "IN_PROGRESS",
   label: "Reopen for editing",
   icon: Undo2,
-  meaning: "Back to In progress, so the record does not claim to be finished while it is being worked on.",
+  meaning: "Back to In progress.",
   primary: false
 };
 
@@ -573,8 +568,8 @@ function noActionsReason(status: string, signOff: string[] = [], handedOn = fals
   // A REPORT HANDED ON TO THE OFFICE IS FINAL: no header edit moves it, so the card has nothing to
   // offer and says who signed it off and what to do if it is wrong.
   if (handedOn && status === "SUBMITTED") {
-    const said = signOff.length ? `${signOff.join(" ")} ` : "This report has been handed on to the office. ";
-    return `${said}It can no longer be edited; if something needs correcting, ask the Ministry Admin to return it.`;
+    const said = signOff.length ? `${signOff.join(" ")} ` : "Handed on to the office. ";
+    return `${said}To change it, ask the Ministry Admin to return it.`;
   }
   if (actionsFor(status).length > 0) return null;
   // A THIRD reason exists since the mirror started filtering (2026-09-14) and it must not be read as
@@ -587,20 +582,15 @@ function noActionsReason(status: string, signOff: string[] = [], handedOn = fals
   // empty candidate list too.
   if (candidatesFor(status).length > 0) {
     return (
-      "There's no next step available from this status right now. Reload the page to update the app, " +
-      "then try again."
+      "No next step from this status. Reload and try again."
     );
   }
   if (status === "APPROVED") {
-    const said = signOff.length ? `${signOff.join(" ")} ` : "This report has been approved. ";
-    return (
-      `${said}It can no longer be edited; if something needs correcting, ask the Ministry Admin to withdraw ` +
-      "the approval."
-    );
+    const said = signOff.length ? `${signOff.join(" ")} ` : "Approved. ";
+    return `${said}To change it, ask the Ministry Admin to withdraw the approval.`;
   }
   return (
-    "There's no next step available from this workshop's status. Reload the page to update the app, then " +
-    "try again."
+    "No next step from this status. Reload and try again."
   );
 }
 
@@ -651,9 +641,7 @@ function InspectionFeedbackPanel({
            in, because the EDIT is the resubmission — a stage save that changes something does it.
            Without this, a designer who has fixed everything sits looking for a button. */
         <p className="text-sm leading-6 text-ink-700">
-          This report was sent back. Correct the stages the suggestions name and save them — saving a stage with a
-          change hands the report back in by itself. If the correction was somewhere else entirely, Hand it back in on
-          the card above says so.
+          Sent back. Fix and save the stages named below — that hands it back in.
         </p>
       ) : null}
       {rounds.map((group) => (
@@ -671,7 +659,7 @@ function InspectionFeedbackPanel({
                   {row.actorName?.trim() || "An officer no longer named"}
                   {row.byApprovingAuthority ? " · the Ministry Admin" : ""}
                   {row.stageKey ? ` · about ${row.stageKey}` : " · about the report as a whole"}
-                  {row.sentBack ? " · this is the one that sent the report back" : ""}
+                  {row.sentBack ? " · sent it back" : ""}
                 </p>
               </li>
             ))}
@@ -680,8 +668,7 @@ function InspectionFeedbackPanel({
       ))}
       {truncated ? (
         <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
-          This is the most recent part of a longer correspondence — older suggestions are on the record and are not
-          shown here.
+          Older suggestions are not shown.
         </p>
       ) : null}
     </section>
@@ -823,12 +810,10 @@ function SubmissionCard({
     */
     const shortfall =
       outstanding === null
-        ? "The number of required fields still outstanding couldn't be counted on this device. It will be " +
-          "recorded either way."
+        ? "Couldn't count outstanding required fields."
         : outstanding === 0
           ? "No required field is outstanding."
-          : `${outstanding} required field${outstanding === 1 ? " is" : "s are"} still outstanding, and this ` +
-            "workshop will be recorded that way. That's allowed.";
+          : `${outstanding} required field${outstanding === 1 ? " is" : "s are"} still empty. That's allowed.`;
 
     /*
       SUBMITTING OVER WORK THE REPOSITORY HAS NEVER SEEN IS ALLOWED AND MUST NOT BE SILENT.
@@ -849,10 +834,9 @@ function SubmissionCard({
     const unsent =
       goingBack || unsentStages === 0
         ? null
-        : `${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} saved on this device only, and this ` +
-          `doesn't upload ${unsentStages === 1 ? "it" : "them"}. Everyone else will see this workshop as ` +
-          `${action.status.replace(/_/g, " ").toLowerCase()} while that work is still only on this device. ` +
-          "You can go ahead anyway. The banner at the top of this page lists that work, with Sync now to upload it.";
+        : `${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} not uploaded yet — others will see this workshop as ` +
+          `${action.status.replace(/_/g, " ").toLowerCase()} without ${unsentStages === 1 ? "it" : "them"}. ` +
+          "Use Sync now in the banner above.";
 
     const agreed = await confirm({
       title: withdrawing
@@ -881,13 +865,9 @@ function SubmissionCard({
       tone: goingBack ? "neutral" : "warning",
       confirmLabel: action.label,
       body: withdrawing ? (
-        "The report comes off the inspecting officers' list and goes back to In progress. Nothing is " +
-        "deleted, no stage changes, and any correction suggestions already filed stay on the record — " +
-        "you can hand it in again when you are ready."
+        "It goes back to In progress. Nothing is deleted, and you can hand it in again."
       ) : goingBack ? (
-        "The workshop goes back to In progress, so the record stops claiming to be finished while it is " +
-        "still being worked on. Nothing is deleted, no stage changes, and Mark complete and Hand in for " +
-        "inspection both stay available."
+        "It goes back to In progress. Nothing is deleted."
       ) : (
         <>
           <span className="block">{shortfall}</span>
@@ -925,16 +905,15 @@ function SubmissionCard({
       const stillHere =
         unsentStages === 0
           ? ""
-          : ` ${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} still saved on this device only and ` +
-            `${unsentStages === 1 ? "hasn't" : "haven't"} been uploaded.`;
+          : ` ${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} not uploaded yet.`;
       setOutcome(
         (withdrawing
-          ? "Withdrawn. The report is off the officers' list and back to In progress."
+          ? "Withdrawn — back to In progress."
           : goingBack
-          ? "Reopened. The workshop is back to In progress."
-          : `Saved. This workshop now reads ${(updated.status ?? "")
+          ? "Reopened."
+          : `Saved — now ${(updated.status ?? "")
               .replace(/_/g, " ")
-              .toLowerCase()}. Every stage is still editable.`) + stillHere
+              .toLowerCase()}.`) + stillHere
       );
     } catch (err) {
       /*
@@ -952,8 +931,7 @@ function SubmissionCard({
       */
       if (isUnreachable(err)) {
         setProblem(
-          "Couldn't connect, so the status hasn't changed. Changing the status needs a connection. " +
-            "Everything you've typed is still saved on this device — try again when you have signal."
+          "No connection — status unchanged. Your work is saved on this device."
         );
       } else {
         // `apiFetch` has already run FastAPI's `detail` through `describeApiDetail`, so `message` is a
@@ -991,8 +969,7 @@ function SubmissionCard({
         // RULE 10: the count is missing, so the screen says the count is missing. Rendering nothing
         // here would read as "there is nothing outstanding", which is the one wrong answer.
         <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
-          What&rsquo;s still outstanding couldn&rsquo;t be counted. The buttons below still work. Reload the page to see
-          the count.
+          Couldn&rsquo;t count what&rsquo;s outstanding. Reload to try again.
         </p>
       )}
 
@@ -1033,8 +1010,7 @@ function SubmissionCard({
         // A status from a newer server. Say what is on the record, and that this build has no step to
         // offer from it — a card with no buttons and no sentence reads as broken.
         <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
-          There&rsquo;s no next step available from this workshop&apos;s status. Reload the page to update the app,
-          then try again.
+          No next step from this status. Reload and try again.
         </p>
       ) : neverSent ? (
         // A workshop created offline that has never reached the repository. There is no row to PATCH,
@@ -1042,9 +1018,7 @@ function SubmissionCard({
         // control, for the reason `DictationConsentCard` gives: a greyed control refuses a press
         // without saying why, which is how somebody concludes the app is broken.
         <p className="text-sm leading-6 text-ink-700">
-          This workshop was created on this device and hasn&rsquo;t been uploaded yet, so it can&rsquo;t be marked
-          complete or submitted. Everything you&rsquo;ve typed is saved here. Sync it from the workshops list first —
-          then you can set the status.
+          Not uploaded yet. Sync it from the workshops list to change its status.
         </p>
       ) : readOnlyReason ? (
         // THE POST, NOT THE ROLE, AND IT GETS ITS OWN SENTENCE. The one below says "or an
@@ -1056,8 +1030,7 @@ function SubmissionCard({
         // The affordance, matching the server's own `_require_designer` set. Not the boundary: the
         // route refuses this account whether or not this button is drawn.
         <p className="text-sm leading-6 text-ink-700">
-          Only the designers running this workshop, or an administrator, can mark it complete or submit it. You can
-          read it and its stages; ask whoever is running it to record the submission.
+          Only this workshop&rsquo;s designers or an admin can change its status.
         </p>
       ) : (
         <>
@@ -1108,8 +1081,7 @@ function SubmissionCard({
         // Stated BEFORE the press rather than only in the failure, because the press costs the
         // designer a confirmation dialog they can already be told is going to fail.
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-          You&rsquo;re offline. Changing the status needs a connection, so it won&rsquo;t work until you&rsquo;re back
-          online.
+          You&rsquo;re offline. Status changes need a connection.
         </p>
       ) : null}
 
@@ -1127,10 +1099,8 @@ function SubmissionCard({
           nothing here is refused.
         */
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-          {unsentStages} stage{unsentStages === 1 ? " is" : "s are"} saved on this device only. Marking this workshop
-          complete or submitting it doesn&rsquo;t upload that work, so everyone else would see the workshop as finished
-          while those answers are still only on this device. You can still go ahead; the banner at the top of this
-          page lists that work and uploads it.
+          {unsentStages} stage{unsentStages === 1 ? " is" : "s are"} not uploaded yet — others would see the workshop as
+          finished without {unsentStages === 1 ? "it" : "them"}. Sync from the banner above first.
         </p>
       ) : null}
 
@@ -1140,8 +1110,7 @@ function SubmissionCard({
         // background read cannot overwrite an unsent edit, which also means it does not refresh the
         // status. Silence would let the chip quietly contradict the repository.
         <p className="text-xs leading-5 text-ink-500">
-          This device has edits to this workshop&apos;s title or notes that haven&rsquo;t been uploaded yet, so the
-          status above may be out of date. It will refresh once those edits are uploaded.
+          Title or notes not uploaded yet — the status may be out of date.
         </p>
       ) : null}
 
@@ -1302,8 +1271,8 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         // is empty.
         setError(
           err instanceof Error
-            ? `The list of stages couldn't be loaded, and there's no copy saved on this device: ${err.message}`
-            : "The list of stages couldn't be loaded, and there's no copy saved on this device."
+            ? `Couldn't load the stages: ${err.message}`
+            : "Couldn't load the stages."
         );
         return;
       }
@@ -1387,7 +1356,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         if (isUnreachable(err)) {
           // A workshop already drawn from the local copy must not be replaced by an error box.
           setOffline(true);
-          if (!local) setError("You're offline and this workshop isn't saved on this device.");
+          if (!local) setError("You're offline and this workshop isn't on this device.");
           return;
         }
         // A 404 over a draft this browser has never reconciled means the record was FABRICATED by
@@ -1525,12 +1494,10 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         />
         <section className="panel grid gap-3 p-4">
           <p className="text-sm font-medium text-ink-900">
-            There is no design workshop at this address that you can open.
+            Workshop not found.
           </p>
           <p className="text-sm leading-6 text-ink-700">
-            Either no such workshop exists, or it belongs to another designer and hasn&rsquo;t been shared with you. If
-            a colleague sent you this link, ask them to add you as a viewer of their workshop — an administrator can
-            also do it — and then open the link again.
+            It doesn&rsquo;t exist or hasn&rsquo;t been shared with you. Ask its designer or an admin to add you.
           </p>
         </section>
       </>
@@ -1544,7 +1511,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         description={
           detail
             ? [detail.craftName, detail.clusterName, detail.state].filter(Boolean).join(" · ") ||
-              "Craft, cluster and place are filled in from stage 1."
+              "Craft, cluster and place come from stage 1."
             : "Loading the workshop record…"
         }
         icon={<DraftingCompass className="h-5 w-5" aria-hidden />}
@@ -1699,11 +1666,11 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         // whether anything here has yet to reach it.
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
           {offline
-            ? "You're offline, so this is the copy saved on this device. You can keep working — everything you change is kept here."
+            ? "Offline — changes are saved on this device."
             : null}
           {offline && unsentStages ? " " : null}
           {unsentStages
-            ? `${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} saved on this device only and ${unsentStages === 1 ? "has" : "have"} not been uploaded yet.`
+            ? `${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} not uploaded yet.`
             : null}
         </div>
       ) : null}
@@ -1788,9 +1755,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           </div>
           {/* The two things that go stale silently, both stated rather than assumed. */}
           <p className="text-xs leading-5 text-ink-500">
-            Progress counts Basic fields only — the ones the report needs. A stage with no required fields counts as
-            complete. Craft, cluster, dates and the workshop code above come from stage 1 and stay blank until it is
-            saved.
+            Progress counts required fields only. Craft, cluster, dates and code come from stage 1.
           </p>
           {/*
             ── WHERE THIS WORKSHOP CAME FROM ─────────────────────────────────────────────────────
@@ -1822,10 +1787,10 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           */}
           {registerProvenance.sanctionOrder !== undefined ? (
             <div className="grid gap-1 border-t border-line-200 pt-4">
-              <h2 className="text-sm font-medium text-ink-900">Where this workshop came from</h2>
+              <h2 className="text-sm font-medium text-ink-900">Source</h2>
               {registerProvenance.sanctionOrder ? (
                 <p className="text-sm leading-6 text-ink-700">
-                  The ministry&rsquo;s sanction register names this workshop on order{" "}
+                  Sanction order{" "}
                   <span className="font-medium text-ink-900">
                     {registerProvenance.sanctionOrder.sanctionOrderNo}
                   </span>
@@ -1839,7 +1804,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
                 // an admin, is not sanctioned through this register) and is worth a sentence rather
                 // than a blank, because a blank here reads as "this screen does not do provenance".
                 <p className="text-sm leading-6 text-ink-700">
-                  No sanction order in the ministry&rsquo;s register names this workshop.
+                  No sanction order.
                 </p>
               )}
             </div>
@@ -1895,9 +1860,8 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
       {detail && !neverSent && canApproveDesignWorkshops(user) ? (
         <p className="mb-5 text-sm leading-6 text-ink-700">
           <Link className="font-medium text-purple-700 dark:text-purple-300 underline" href={`/design-workshop-approvals/${draft?.remoteId ?? id}`}>
-            Open this report on Reports to approve
-          </Link>{" "}
-          to approve it, send it back or hand it on to the office.
+            Review this report
+          </Link>
         </p>
       ) : null}
 
@@ -1994,8 +1958,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         // designer who sees a new box appear on a stage they finished last week deserves to know
         // why rather than assuming they missed it.
         <p className="mt-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-          The form has changed since this workshop was last saved. Stages may now ask for new fields; opening and saving
-          a stage brings it up to date.
+          The form has new fields since this workshop was last saved.
         </p>
       ) : null}
     </>

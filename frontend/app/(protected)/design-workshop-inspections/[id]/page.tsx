@@ -119,6 +119,7 @@ import { signOffLines } from "@/lib/designWorkshopApprovals";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
 import type { User } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The failures this page can suffer, told apart in words.
@@ -132,18 +133,18 @@ import type { User } from "@/lib/types";
  */
 function describeFailure(error: unknown, user: User | null | undefined): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "Couldn't connect, so this workshop couldn't be loaded. Check your connection and try again.";
+    return "No connection. Try again.";
   }
   if (inspectionRefusalMeansNoPosts(error, user)) {
     // An administering tier the server will not yet show this surface to holds no inspection posts
     // anywhere — so none here either. Said as that, not as the server's door-shaped sentence.
-    return "You haven't been appointed to inspect any workshop, so this one isn't open to you. A Ministry Admin, an Admin or the Master Admin appoints inspectors on Workshop oversight.";
+    return "You aren't appointed to inspect any workshop.";
   }
   if (error.status === 403) {
     return error.message;
   }
   if (error.status === 404) {
-    return "This workshop isn't open to you. You may not have been appointed to inspect it, or it may have been deleted. A Ministry Admin, an Admin or the Master Admin appoints inspectors on Workshop oversight.";
+    return "This workshop isn't open to you.";
   }
   return error.message || "This workshop couldn't be loaded.";
 }
@@ -360,12 +361,12 @@ function ReadStage({
  */
 function closedInspectionSentence(status: string, handedOnAt: string | null): string {
   if (status === "APPROVED") {
-    return "This report has been approved, so its inspection is over and nothing more can be filed against it. If something in it is wrong, the Ministry Admin can withdraw the approval and send it back to its designers.";
+    return "Approved — inspection is closed.";
   }
   if (status === "SUBMITTED" && handedOnAt) {
-    return "This report has been handed on to the office, so its inspection is over and nothing more can be filed against it.";
+    return "Handed on to the office — inspection is closed.";
   }
-  return "This report has not been handed in for inspection yet, so there is nothing to comment on. Its designers hand it in from the workshop's own screen; the box opens then.";
+  return "Not handed in for inspection yet.";
 }
 
 /**
@@ -432,16 +433,14 @@ function FeedbackPanel({
         body: (
           <>
             <span className="block">
-              The report moves to Needs revision and its designers are the ones who act on it next. Your suggestion is
-              recorded with your name against this submission round, and it stays on the record afterwards.
+              The report moves to Needs revision for its designers.
             </span>
             <span className="mt-2 block">
-              They hand it back in by correcting the stages — saving a stage with a change does it — at which point it
-              returns to Pre-submission for a fresh pass.
+              Saving a corrected stage hands it back in.
             </span>
           </>
         ),
-        note: "Suggestions cannot be edited or withdrawn afterwards. An officer who changes their mind files another one."
+        note: "Recorded under your name. It can't be edited afterwards."
       });
       if (!agreed) return;
     }
@@ -459,17 +458,17 @@ function FeedbackPanel({
       setStageKey("");
       setOutcome(
         kind === "send"
-          ? "Sent back. The report now reads Needs revision and your suggestion is on the record."
-          : "Filed. Your suggestion is on the record against this submission round."
+          ? "Sent back for revision."
+          : "Suggestion filed."
       );
     } catch (err) {
       if (isUnreachable(err)) {
-        setProblem("Couldn't send your note. Check your connection and try again — your text is still in the box.");
+        setProblem("No connection — not sent. Your text is kept.");
       } else {
         setProblem(
           err instanceof Error && err.message.trim()
             ? `Nothing was filed: ${err.message}`
-            : "Something went wrong, so nothing was filed. Please try again."
+            : "Nothing was filed. Try again."
         );
       }
     } finally {
@@ -530,7 +529,7 @@ function FeedbackPanel({
             className="field-input min-h-24"
             id="dw-inspection-note"
             onChange={(event) => setNote(event.target.value)}
-            placeholder="Name what is wrong and what it should say. This goes to the designers as written."
+            placeholder="What's wrong and what it should say"
             value={note}
           />
           <label className="field-label" htmlFor="dw-inspection-stage">
@@ -551,7 +550,7 @@ function FeedbackPanel({
               </option>
             ))}
           </select>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button
               className="field-button-secondary"
               disabled={busy !== null || note.trim().length === 0}
@@ -570,10 +569,9 @@ function FeedbackPanel({
               {busy === "send" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
               Send the report back
             </button>
-          </div>
+          </ActionGroup>
           <p className="text-xs leading-5 text-ink-500">
-            Filing a suggestion leaves the report where it is. Sending it back moves it to Needs revision, which is what
-            puts it on its designers&apos; desks. Neither can be edited or withdrawn afterwards.
+            Sending back moves it to Needs revision. Neither can be undone.
           </p>
         </div>
       )}
@@ -641,7 +639,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
         // A SEPARATE FAILURE FROM THE WORKSHOP READ, because it means something different: the
         // answers are in hand and the field list that names them is not. Folding it into the error
         // above would tell an inspector the workshop could not be read when it was.
-        setRegistryError("The form couldn't be loaded. Check your connection and try again.");
+        setRegistryError("Couldn't load the form. Try again.");
       });
     return () => {
       cancelled = true;
@@ -672,9 +670,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
             Inspector / Reviewer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Only someone appointed to inspect a workshop can open it here: an Inspector / Reviewer, a Ministry
-            Admin, an Admin or the Master Admin. Designers open their design &amp; prototype workshops from Design
-            workshops.
+            Only appointed inspectors can open it here.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
@@ -711,7 +707,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
           detail
             ? [detail.workshopCode, detail.craftName, detail.clusterName, detail.district, detail.state]
                 .filter(Boolean)
-                .join(" · ") || "No workshop code yet — stage 1 has not been saved."
+                .join(" · ") || "No workshop code yet"
             : undefined
         }
         icon={<FileSearch className="h-5 w-5" aria-hidden />}
@@ -731,9 +727,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
           Save on it looks the same as a screen whose Save has not loaded yet. */}
       {detail && readOnly ? (
         <p className="mb-4 rounded-md border border-purple-300 bg-purple-50 px-3 py-2 text-xs leading-5 text-ink-700">
-          <span className="font-semibold text-purple-700 dark:text-purple-300">Read-only.</span> Every stage below is shown as the designers
-          recorded it, with who wrote each field. Nothing here can be edited, submitted or deleted, including the
-          photographs, recordings and attachments.
+          <span className="font-semibold text-purple-700 dark:text-purple-300">Read-only.</span> Shown as the designers recorded it.
         </p>
       ) : null}
 

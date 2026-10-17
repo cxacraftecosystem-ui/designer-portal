@@ -1158,7 +1158,7 @@ export function DynamicIslandNav() {
                   <div className="font-medium text-ink-900">{user.name}</div>
                   <div className="text-ink-500">{roleLabel(user.role)}</div>
                 </div>
-                <button onClick={handleLogout} className="field-danger">
+                <button onClick={handleLogout} data-danger className="field-danger">
                   <LogOut className="h-4 w-4" aria-hidden />
                   Logout
                 </button>

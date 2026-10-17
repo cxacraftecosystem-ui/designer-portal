@@ -28,6 +28,7 @@ import {
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
 import type { Artisan, Craft, ToolDocumentation } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * "Assign a tool to multiple artisans": the same documented tool can be mapped to several artisans
@@ -521,11 +522,11 @@ export function ToolAssignmentSection() {
         </Field>
       </div>
 
-      <div className="flex items-center gap-3">
+      <ActionGroup>
         <button type="button" className="field-button" onClick={assign} disabled={busy || !toolId || artisanIds.length === 0}>
           {busy ? "Assigning…" : `Assign tool to ${artisanIds.length || ""} artisan${artisanIds.length === 1 ? "" : "s"}`.trim()}
         </button>
-      </div>
+      </ActionGroup>
 
       {toolId ? (
         <div className="grid gap-2">
