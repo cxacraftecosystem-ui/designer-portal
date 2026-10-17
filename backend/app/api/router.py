@@ -18,6 +18,7 @@ from app.api.routes import (
     design_ratings,
     design_workshop_access,
     design_workshop_approvals,
+    design_workshop_copy,
     design_workshop_inspections,
     design_workshop_oversight,
     design_workshop_roster,
@@ -117,6 +118,8 @@ api_router.include_router(design_workshops.router)
 # The designer's own artisan-list import (C11), /design-workshops/{id}/roster/*. Every path is two
 # segments under the workshop id, so GET /{workshop_id} above cannot swallow it.
 api_router.include_router(design_workshop_roster.router)
+# C9: what a designer may start a stage from. Three segments under the workshop id.
+api_router.include_router(design_workshop_copy.router)
 # The peer/pool rating ledger, /api/design-ratings. ITS OWN PREFIX, and deliberately not nested
 # under /design-workshops, for two reasons that both point the same way. The prefix above is already
 # shared by two routers and carries GET /{workshop_id}, which swallows any literal path mounted

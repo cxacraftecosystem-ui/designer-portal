@@ -60,6 +60,7 @@ from app.services import (
     dictation_consent,
     entry_provenance,
     rich_text,
+    workshop_copy,
 )
 from app.services.address import DISTRICTS_BY_STATE
 from app.services.concurrency import gather_reads
@@ -5563,6 +5564,17 @@ async def save_stage(
     # every `PendingEntry` keeps the dataclass about one entry.
     await hydrate_entries(pending, workshop_id=workshop_id)
 
+    # C9: TEXT COPIED FROM THE DESIGNER'S OWN EARLIER WORKSHOP, verified against its source before
+    # it is marked. Only the singleton can carry a copy; see ``services/workshop_copy``.
+    copied_marks: dict[str, dict[str, Any]] = {}
+    confirm_copied = [str(key) for key in (getattr(payload, "confirmCopied", None) or [])]
+    copied_from = dict(getattr(payload, "copiedFrom", None) or {})
+    singleton_item = pending_singletons.get(spec.singleton.key) if spec.singleton else None
+    if copied_from and singleton_item is not None:
+        copied_marks = await workshop_copy.verified_copies(
+            copied_from, spec, singleton_item.data, workshop_id, user
+        )
+
     for item in pending:
         # COMPUTED AFTER HYDRATION AND BEFORE THE WRITE, which is the only window in which both
         # halves of the answer exist: `item.hydrated` is populated by the pass above and `item.data`
@@ -5575,6 +5587,10 @@ async def save_stage(
             hydrated=item.hydrated,
             user=user,
         )
+        if item is singleton_item and (copied_marks or confirm_copied):
+            field_provenance = workshop_copy.mark_provenance(
+                field_provenance, copied_marks, confirm_copied, user
+            )
         # THE SEARCHABLE RENDERING, COMPUTED FROM THE SAME `item.data` THE ROW IS ABOUT TO STORE and
         # written in the SAME statement — which is the whole of the answer to §6.1's objection to
         # this design ("a second copy of every answer, which can disagree with `data` the moment a
@@ -6658,7 +6674,10 @@ def workshop_completeness(entries: list[Any], *, definition: Any = None) -> dict
         if row.entityKey == custom_sections.CUSTOM_ENTITY_KEY:
             custom_values[row.stageKey] = data
         elif cardinality.get(row.entityKey) is Cardinality.SINGLETON:
-            singletons[row.stageKey] = data
+            # C9: copied text the designer has not yet edited or confirmed is not an answer yet.
+            singletons[row.stageKey] = workshop_copy.counted_data(
+                row.stageKey, row.entityKey, data, getattr(row, "fieldProvenance", None)
+            )
         else:
             collections.setdefault(row.stageKey, {}).setdefault(row.entityKey, []).append(data)
 

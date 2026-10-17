@@ -349,6 +349,15 @@ export type DwDraftStage = {
    */
   removedFrom: string[];
   /**
+   * C9: singleton field key -> the designer's own earlier workshop its text was copied from, sent
+   * with the next push as `copiedFrom` so the server can mark it. A key leaves as soon as the
+   * designer edits that box. Re-sending is harmless: the server marks only text that still equals
+   * the source's.
+   *
+   * **OPTIONAL, AND EVERY READ MUST DEFAULT IT** — no migration rung, the rule `custom` states.
+   */
+  copiedFrom?: Record<string, string>;
+  /**
    * Answers to this workshop's designer-defined questions for this stage. Mirrors the server's
    * `_custom` row one for one: flat, keyed by the designer's own field keys.
    *
@@ -1853,6 +1862,8 @@ export async function putDraftStage(
      * draws between no `_custom` entry and an empty one.
      */
     custom?: DwEntryData;
+    /** C9: omitted means "unchanged"; `{}` clears every copy mark. */
+    copiedFrom?: Record<string, string>;
   }
 ): Promise<DwDraft | null> {
   // A REFERENCE THAT HAS SINCE BEEN CONFIRMED IS SUBSTITUTED ON THE WAY IN, and this is not
@@ -1898,6 +1909,7 @@ export async function putDraftStage(
             // has to reach the server, and the next autosave from a form that has forgotten about it
             // would otherwise disarm the sweep and leave the row alive for ever.
             removedFrom: Array.from(new Set([...previous.removedFrom, ...(data.removedFrom ?? [])])),
+            ...(data.copiedFrom !== undefined ? { copiedFrom: data.copiedFrom } : {}),
             // REPLACED WHEN THE CALLER SENT ONE, KEPT WHEN IT DID NOT — see the note on the parameter.
             // Not merged into the previous bucket, because a designer clearing one answer has to be
             // able to clear it: a merge would make every custom answer permanently un-erasable, which
@@ -5306,7 +5318,8 @@ async function runSync(): Promise<DwSyncResult> {
             // entries at all, so it names itself nowhere. `removedFrom` is exactly that list — minus
             // what this browser has not earned the right to say.
             emptiedEntities: sweep.emptiedEntities,
-            submit: false
+            submit: false,
+            ...copyMarksBody(stage)
           });
         } catch (error) {
           /*
@@ -5697,4 +5710,13 @@ export async function retryDraft(id: string): Promise<void> {
   }).catch(() => {
     noteStoreFailure("write");
   });
+}
+
+/**
+ * C9: the `copiedFrom` part of a stage PUT, or nothing. Only a non-empty map is sent, so a stage
+ * with no copies sends the body every server has always accepted.
+ */
+export function copyMarksBody(stage: DwDraftStage | undefined): { copiedFrom?: Record<string, string> } {
+  const marks = stage?.copiedFrom ?? {};
+  return Object.keys(marks).length ? { copiedFrom: marks } : {};
 }

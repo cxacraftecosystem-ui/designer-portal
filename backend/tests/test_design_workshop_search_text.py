@@ -305,6 +305,10 @@ _KNOWN_STAGE_ENTRY_WRITERS = frozenset(
         # as they were, so its rendered copy is still correct and rewriting it would be busywork on
         # the one statement that already touches many rows.
         "services/design_workshops.py:save_stage.write_everything",
+        # C9's "Keep as is" (2026-10-17). Writes `fieldProvenance` ONLY — a copied field's stamp
+        # turned into the designer's own — and never `data`, so the rendered `searchText` copy is
+        # still exactly right and owes nothing.
+        "api/routes/design_workshop_copy.py:confirm_copied_fields",
     }
 )
 

@@ -86,6 +86,8 @@ import {
 import { StagePendingMediaProvider } from "@/components/designworkshop/FieldInput";
 import { LinkedWorkshopProvider } from "@/components/designworkshop/LinkedWorkshop";
 import { COSTING_STAGE, CostFindingsPanel } from "@/components/designworkshop/CostFindingsPanel";
+import { PARTICIPANTS_STAGE, RosterImportPanel } from "@/components/designworkshop/RosterImportPanel";
+import { CopyFromEarlierPanel } from "@/components/designworkshop/CopyFromEarlierPanel";
 import { ANALYSIS_STAGE, MarketFindingsPanel } from "@/components/designworkshop/MarketFindingsPanel";
 import {
   EMPTY_RECORDING_PLACE,
@@ -104,9 +106,12 @@ import { UploadTray } from "@/components/media/UploadTray";
 import { UploadsProvider } from "@/lib/uploads";
 import { ApiError } from "@/lib/api";
 import {
+  DW_COPYABLE_STAGES,
+  confirmCopiedFields,
   dwFrozenReason,
   getDesignWorkshopStage,
   saveDesignWorkshopStage,
+  unconfirmedCopies,
   type DwEntity,
   type DwEntryData,
   type DwRegistry,
@@ -126,6 +131,7 @@ import {
 import {
   adoptServerStage,
   buildStageEntries,
+  copyMarksBody,
   customFieldsFor,
   emptyStage,
   ensureDraft,
@@ -600,6 +606,11 @@ function DesignWorkshopStagePageBody({
    * banner can name what a save is about to sweep.
    */
   const [removedFrom, setRemovedFrom] = useState<string[]>([]);
+  /** C9: boxes filled from the designer's own earlier workshop, key -> source workshop id. */
+  const [copiedFrom, setCopiedFrom] = useState<Record<string, string>>({});
+  /** C9: singleton keys edited since the stage was opened — their server "copied" mark is moot. */
+  const [editedKeys, setEditedKeys] = useState<Set<string>>(() => new Set());
+  const [confirmingCopies, setConfirmingCopies] = useState(false);
 
   /**
    * The local draft's own id, and the stage's sync state as the store holds it.
@@ -720,8 +731,17 @@ function DesignWorkshopStagePageBody({
     // The designer's own required questions are counted here for the same reason the registry's are: this
     // is the number a designer reads in a courtyard to decide whether they can pack up, and a bar that
     // ignored half the form would say a stage was finished that Save will refuse.
-    () => (stage ? scoreStageData(stage, singleton, collections, customFields, custom) : null),
-    [stage, singleton, collections, customFields, custom]
+    // C9: copied text not yet edited or kept is not counted — the server's rule, shown here too.
+    () => {
+      if (!stage) return null;
+      const hidden = new Set(Object.keys(copiedFrom));
+      for (const key of unconfirmedCopies(provenance?.singleton)) if (!editedKeys.has(key)) hidden.add(key);
+      const counted = hidden.size
+        ? Object.fromEntries(Object.entries(singleton).filter(([key]) => !hidden.has(key)))
+        : singleton;
+      return scoreStageData(stage, counted, collections, customFields, custom);
+    },
+    [stage, singleton, collections, customFields, custom, copiedFrom, provenance, editedKeys]
   );
 
   /* ── Load ────────────────────────────────────────────────────────────── */
@@ -770,6 +790,8 @@ function DesignWorkshopStagePageBody({
       // No completeness to seed: the bar is derived from the setters above, so it is already
       // right for this stage the moment the boxes are.
       setRemovedFrom(removed);
+      setCopiedFrom(draftStage?.copiedFrom ?? {});
+      setEditedKeys(new Set());
       // The baseline the autosave compares against, written in the same breath as the setters it
       // describes. Until this is set, no autosave can run at all — which is what makes seeding
       // unable to mark a stage edited. See {@link banked}.
@@ -1097,7 +1119,7 @@ function DesignWorkshopStagePageBody({
     // `custom` travels ALONGSIDE `splitSingletons`' result and never through it: that function copies
     // across only the keys the registry declares and drops everything else, so a custom answer handed to
     // it would be silently gone before the write.
-    const payload = { singletons: splitSingletons(stage, singleton), collections, custom, removedFrom };
+    const payload = { singletons: splitSingletons(stage, singleton), collections, custom, removedFrom, copiedFrom };
     setLocalPending(true);
     /*
       ONE WRITE PER EDIT, WHOEVER ASKS FOR IT.
@@ -1167,7 +1189,7 @@ function DesignWorkshopStagePageBody({
     flushRef.current = write;
     const timer = window.setTimeout(() => void write(), AUTOSAVE_MS);
     return () => window.clearTimeout(timer);
-  }, [singleton, collections, custom, removedFrom, stage, stageKey]);
+  }, [singleton, collections, custom, removedFrom, copiedFrom, stage, stageKey]);
 
   /**
    * Run the pending write now. Awaited before every navigation and before every push.
@@ -1226,9 +1248,21 @@ function DesignWorkshopStagePageBody({
 
   /* ── Edit ────────────────────────────────────────────────────────────── */
 
+  /** C9: an edited box is the designer's own again, so its copy mark goes. */
+  const dropCopyMarks = useCallback((keys: string[]) => {
+    setEditedKeys((current) => (keys.every((key) => current.has(key)) ? current : new Set([...current, ...keys])));
+    setCopiedFrom((current) => {
+      if (!keys.some((key) => key in current)) return current;
+      const next = { ...current };
+      for (const key of keys) delete next[key];
+      return next;
+    });
+  }, []);
+
   const patchSingleton = useCallback((key: string, value: DwValue) => {
     setSingleton((current) => ({ ...current, [key]: value }));
-  }, []);
+    dropCopyMarks([key]);
+  }, [dropCopyMarks]);
 
   /**
    * Several keys of the singleton in one commit.
@@ -1241,7 +1275,77 @@ function DesignWorkshopStagePageBody({
   const patchSingletonMany = useCallback((values: Record<string, DwValue>) => {
     if (!Object.keys(values).length) return;
     setSingleton((current) => ({ ...current, ...values }));
-  }, []);
+    dropCopyMarks(Object.keys(values));
+  }, [dropCopyMarks]);
+
+  /**
+   * C9: the boxes holding copied text that is not counted yet — copied on this device and not yet
+   * sent, or marked by the server and not edited since the stage opened.
+   */
+  const pendingCopies = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const entity of stage?.entities ?? []) {
+      if (entity.cardinality !== "SINGLETON") continue;
+      for (const field of entity.fields) labels.set(field.key, field.label);
+    }
+    const keys = new Set<string>(Object.keys(copiedFrom));
+    for (const key of unconfirmedCopies(provenance?.singleton)) if (!editedKeys.has(key)) keys.add(key);
+    return [...keys].filter((key) => labels.has(key)).map((key) => ({ key, label: labels.get(key)! }));
+  }, [stage, copiedFrom, provenance, editedKeys]);
+
+  /** C9 "Keep as is": an unsent copy simply loses its mark; a sent one is confirmed on the server. */
+  const keepCopies = useCallback(
+    async (keys: string[]) => {
+      const local = keys.filter((key) => key in copiedFrom);
+      if (local.length) {
+        setCopiedFrom((current) => {
+          const next = { ...current };
+          for (const key of local) delete next[key];
+          return next;
+        });
+      }
+      const remote = keys.filter((key) => !(key in copiedFrom));
+      if (!remote.length || !serverId) return;
+      setConfirmingCopies(true);
+      try {
+        const answer = await confirmCopiedFields(serverId, stageKey, remote);
+        setProvenance((current) => ({ ...(current ?? {}), singleton: answer.provenance }));
+      } catch (error) {
+        setNotice(error instanceof ApiError && error.message ? error.message : "Couldn't keep the copied text. Try again.");
+      } finally {
+        setConfirmingCopies(false);
+      }
+    },
+    [copiedFrom, serverId, stageKey]
+  );
+
+  /**
+   * C9: fill EMPTY boxes from the designer's own earlier workshop, and mark them copied. A box that
+   * already holds an answer is never overwritten. Answers how many boxes were filled.
+   */
+  const copyIntoEmpty = useCallback(
+    (sourceWorkshopId: string, values: Record<string, DwValue>): number => {
+      const filled: Record<string, DwValue> = {};
+      for (const [key, value] of Object.entries(values)) {
+        const current = singleton[key];
+        const empty =
+          current === undefined ||
+          current === null ||
+          (typeof current === "string" && !current.trim()) ||
+          (Array.isArray(current) && current.length === 0);
+        if (empty) filled[key] = value;
+      }
+      const keys = Object.keys(filled);
+      if (!keys.length) return 0;
+      setSingleton((current) => ({ ...current, ...filled }));
+      setCopiedFrom((current) => ({
+        ...current,
+        ...Object.fromEntries(keys.map((key) => [key, sourceWorkshopId]))
+      }));
+      return keys.length;
+    },
+    [singleton]
+  );
 
   /**
    * One custom answer, into the stage's own `_custom` bucket.
@@ -1566,7 +1670,8 @@ function DesignWorkshopStagePageBody({
         // what the payload names, and a collection whose LAST row was deleted contributes no
         // entries, so this is the only place it is named.
         emptiedEntities: sweep.emptiedEntities,
-        submit
+        submit,
+        ...copyMarksBody(draftStage)
       });
 
       /*
@@ -2328,6 +2433,24 @@ function DesignWorkshopStagePageBody({
           */}
           {stageKey === COSTING_STAGE ? (
             <CostFindingsPanel workshopId={id} collections={collections} />
+          ) : null}
+
+          {/* Stage 3: the designer's own artisan-list import (C11). Needs the server's copy of the
+              workshop — a workshop only this device holds has nowhere to import into yet. */}
+          {DW_COPYABLE_STAGES.includes(stageKey) && serverId ? (
+            <CopyFromEarlierPanel
+              workshopId={serverId}
+              stageKey={stageKey}
+              disabled={locked}
+              onCopy={copyIntoEmpty}
+              pendingKeys={pendingCopies}
+              confirming={confirmingCopies}
+              onConfirm={(keys) => void keepCopies(keys)}
+            />
+          ) : null}
+
+          {stageKey === PARTICIPANTS_STAGE && serverId ? (
+            <RosterImportPanel workshopId={serverId} disabled={locked} />
           ) : null}
 
           {/*
