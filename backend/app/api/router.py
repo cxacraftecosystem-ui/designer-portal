@@ -20,6 +20,7 @@ from app.api.routes import (
     design_workshop_approvals,
     design_workshop_inspections,
     design_workshop_oversight,
+    design_workshop_roster,
     design_workshop_viewers,
     design_workshops,
     designers,
@@ -113,6 +114,9 @@ api_router.include_router(questionnaire_forms.router)
 # FastAPI matches in registration order, so the literal path has to be mounted first.
 api_router.include_router(design_workshop_viewers.router)
 api_router.include_router(design_workshops.router)
+# The designer's own artisan-list import (C11), /design-workshops/{id}/roster/*. Every path is two
+# segments under the workshop id, so GET /{workshop_id} above cannot swallow it.
+api_router.include_router(design_workshop_roster.router)
 # The peer/pool rating ledger, /api/design-ratings. ITS OWN PREFIX, and deliberately not nested
 # under /design-workshops, for two reasons that both point the same way. The prefix above is already
 # shared by two routers and carries GET /{workshop_id}, which swallows any literal path mounted
