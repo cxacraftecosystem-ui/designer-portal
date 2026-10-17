@@ -994,7 +994,7 @@ function SubmissionCard({
         <p className="text-sm leading-6 text-ink-700">
           {WORKSHOP_STATUS_IS}{" "}
           <Link href={`/design-workshops/${workshopId}/readiness`} className="font-medium text-purple-700 dark:text-purple-300 underline">
-            See the {outstanding} outstanding
+            See {outstanding} outstanding field{outstanding === 1 ? "" : "s"}
           </Link>
         </p>
       ) : null}

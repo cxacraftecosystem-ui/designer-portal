@@ -49,22 +49,51 @@ def test_every_help_line_is_one_short_sentence() -> None:
     assert newlines == []
 
 
+def _details() -> list[tuple[str, str]]:
+    return [
+        (f"{entity.key}.{field.key}", field.details)
+        for _stage, entity in all_entities()
+        for field in entity.fields
+        if field.details
+    ]
+
+
 def test_help_never_explains_the_software() -> None:
-    """The phrases the old copy used to narrate the app itself, refused by name."""
+    """The phrases the old copy used to narrate the app itself, refused by name — on the line
+    under the box AND behind the "i", which is still copy a person reads."""
     banned = (
         "this device",
         "the server",
         "is stored on this entry",
         "previewable in the app",
+        "previews in the app",
         "before it uploads",
+        "before upload",
+        "vision model",
+        "older rows",
+        "saved since",
+        "when the stage is saved",
+        "typed here earlier",
+        "doesn’t change that record",
     )
+    texts = _helps() + _details()
+    assert len(_details()) > 20
     hits = [
         (path, phrase)
-        for path, text in _helps()
+        for path, text in texts
         for phrase in banned
         if phrase in text.lower()
     ]
     assert hits == []
+
+
+def test_the_reference_note_is_one_short_clause() -> None:
+    """The sentence every hydrated field carries behind its "i" says only what changes the
+    reader's action: where the value came from, and that editing it here is local."""
+    from app.services.stage_definitions import FROM_REF
+
+    assert len(FROM_REF) <= 80
+    assert not _SENTENCE_BREAK.search(FROM_REF)
 
 
 def test_details_reach_the_wire_only_when_declared() -> None:
@@ -93,3 +122,14 @@ def test_the_aadhaar_box_keeps_its_privacy_meaning() -> None:
     assert "last four digits" in spec.help
     assert "XXXX XXXX" in spec.details
     assert "Pehchan" in spec.details
+
+
+def test_every_stage_opens_with_one_line() -> None:
+    """A stage's ``purpose`` is the line under its title — one sentence, not a paragraph above the
+    first box (it ran to 237 characters, six lines at 390px)."""
+    stages = registry_to_dict()["stages"]
+    assert len(stages) > 20
+    long = {s["key"]: len(s["purpose"]) for s in stages if len(s["purpose"]) > 100}
+    assert long == {}
+    multi = [s["key"] for s in stages if _SENTENCE_BREAK.search(s["purpose"].strip())]
+    assert multi == []

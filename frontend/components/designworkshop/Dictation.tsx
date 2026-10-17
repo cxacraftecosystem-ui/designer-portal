@@ -631,7 +631,7 @@ function LanguageMenu({ value, onChoose }: { value: string; onChoose: (next: str
             onClick={() => onChoose(entry.value)}
             className={
               checked
-                ? "flex min-h-11 items-center gap-2 rounded-md bg-purple-50 px-3 text-left text-sm font-medium text-purple-800"
+                ? "flex min-h-11 items-center gap-2 rounded-md bg-purple-50 px-3 text-left text-sm font-medium text-purple-800 dark:bg-purple-900/60 dark:text-purple-200"
                 : "flex min-h-11 items-center gap-2 rounded-md px-3 text-left text-sm text-ink-900 hover:bg-surface-50"
             }
           >

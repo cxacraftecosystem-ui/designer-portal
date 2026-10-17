@@ -403,6 +403,7 @@ fun FieldRenderer(
                     enabled = enabled,
                     label = fieldLabel(field),
                     help = field.help,
+                    helpRow = { FieldCaption(field) },
                     // A BULLETS field IS a list — its help says "One deliverable per line" and the
                     // report prints it as one — so open inside a numbered item rather than making
                     // the designer type "1. " to get the behaviour the label already promised.
@@ -657,6 +658,7 @@ fun FieldRenderer(
                 DwGeoField(
                     label = fieldLabel(field),
                     help = field.help,
+                    helpRow = { FieldCaption(field) },
                     required = field.required,
                     value = value,
                     repository = services.repository,

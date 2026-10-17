@@ -73,6 +73,48 @@ class DwStageHelpDictateTest {
         assertEquals(2, Regex("FieldCaption\\(field\\)").findAll(reference).count())
     }
 
+    /**
+     * Every field type that carries `details` in the shipped asset must reach [FieldCaption], or its
+     * "i" is unreachable on the handset while the web shows it. Read off the renderer's `when (type)`:
+     * a branch either draws the caption itself, hands it to a widget as `helpRow`, or calls a helper
+     * whose own body draws it.
+     */
+    @Test
+    fun `every field type with details reaches FieldCaption`() {
+        val renderer = source("ui/designworkshop/FieldRenderer.kt").replace("\r\n", "\n")
+        val start = renderer.indexOf("            DwFieldType.RICH_TEXT -> {")
+        assertTrue("the renderer's type switch moved", start > 0)
+        val end = renderer.indexOf("\n        }\n", start)
+        val switch = renderer.substring(start, end)
+        val heads = Regex("(?m)^ {12}((?:DwFieldType\\.[A-Z_]+,?\\s*)+)->").findAll(switch).toList()
+        val branches = mutableMapOf<String, String>()
+        heads.forEachIndexed { i, head ->
+            val body = switch.substring(head.range.first, heads.getOrNull(i + 1)?.range?.first ?: switch.length)
+            Regex("DwFieldType\\.([A-Z_]+)").findAll(head.groupValues[1]).forEach { branches[it.groupValues[1]] = body }
+        }
+        val sources = source("ui/designworkshop/FieldRenderer.kt") + source("ui/designworkshop/DwReferenceField.kt")
+        fun helperDrawsCaption(name: String): Boolean {
+            val at = sources.indexOf("fun $name(")
+            if (at < 0) return false
+            val next = Regex("\\n(?:private |internal )?fun ").find(sources, at + 1)?.range?.first ?: sources.length
+            return sources.substring(at, next).contains("FieldCaption(field")
+        }
+        val helpers = listOf(
+            "ScalarInput", "DateField", "BoolField", "TagsField", "GeoField", "MediaField",
+            "DwNumberedPointsInput", "DwWorkshopNameField", "DwReferenceSelectField",
+        )
+        helpers.forEach { assertTrue("$it no longer draws FieldCaption", helperDrawsCaption(it)) }
+        fun reaches(body: String) = body.contains("FieldCaption(field") || helpers.any { body.contains("$it(") }
+        val withDetails = fields.map { it.second }.filter { DwFieldDetails.has(it) }.map { it.type }.toSet()
+        assertTrue(withDetails.containsAll(listOf("RICH_TEXT", "GEO")))
+        val missing = withDetails.filter { type -> branches[type]?.let(::reaches) != true }
+        assertEquals("these types drop the \"i\"", emptyList<String>(), missing)
+        // The two widgets that draw their own help take the caption in its place.
+        assertTrue(source("ui/designworkshop/RichTextEditor.kt").contains("helpRow()"))
+        assertTrue(source("ui/designworkshop/DwLocationField.kt").contains("helpRow()"))
+        assertEquals(2, Regex("helpRow = \\{ FieldCaption\\(field\\) \\}").findAll(renderer).count())
+    }
+
     @Test
     fun `the microphone is named Dictate, is 48dp, and fills while it records`() {
         assertEquals(48, DwDictationAdornment.TARGET_DP)

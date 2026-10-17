@@ -34,8 +34,8 @@ export function InfoToggle({
       onClick={onToggle}
       className={
         expanded
-          ? "relative inline-grid h-5 w-5 shrink-0 place-items-center rounded-full bg-purple-100 text-purple-700 transition after:absolute after:-inset-3 after:content-['']"
-          : "relative inline-grid h-5 w-5 shrink-0 place-items-center rounded-full text-ink-500 transition hover:bg-purple-50 hover:text-purple-700 after:absolute after:-inset-3 after:content-['']"
+          ? "relative inline-grid h-5 w-5 shrink-0 place-items-center rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-200 transition after:absolute after:-inset-3 after:content-['']"
+          : "relative inline-grid h-5 w-5 shrink-0 place-items-center rounded-full text-ink-500 transition hover:bg-purple-50 hover:text-purple-700 dark:hover:bg-purple-950 dark:hover:text-purple-200 after:absolute after:-inset-3 after:content-['']"
       }
     >
       <Info className="h-4 w-4" aria-hidden />
