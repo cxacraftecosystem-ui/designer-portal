@@ -79,6 +79,8 @@ import com.designprototype.workshop.data.AppScope
 import com.designprototype.workshop.data.CUSTOM_ENTITY_KEY
 import com.designprototype.workshop.data.ConnectivityObserver
 import com.designprototype.workshop.data.DW_COPYABLE_STAGES
+import com.designprototype.workshop.data.DW_PARTICIPANTS_STAGE
+import com.designprototype.workshop.data.dwCopiesAfterPush
 import com.designprototype.workshop.data.dwCopyIntoEmpty
 import com.designprototype.workshop.data.dwPendingCopies
 import com.designprototype.workshop.data.DW_ROW_KEY_SEPARATOR
@@ -972,6 +974,12 @@ private fun StageScreenBody(
         }) {
             is StagePush.Sent -> {
                 saveState = SaveState.SYNCED
+                // C9: the server now holds the copy marks this push carried. Settled on screen by the
+                // rule `recordStageSent` applied to the draft, so the next local write does not put
+                // them back and "Keep as is" confirms them on the server at the first press.
+                dwCopiesAfterPush(state.copiedFrom, state.provenance, push.copiedFrom)?.let { (marks, stamps) ->
+                    state = state.copy(copiedFrom = marks, provenance = stamps)
+                }
                 /*
                   THE TWO DELETION RECORDS, RE-READ FROM DISK BECAUSE THE SERVER HAS JUST
                   ACKNOWLEDGED SOME OF THEM AND THIS SCREEN'S COPY HAS NOT HEARD.
@@ -1615,6 +1623,44 @@ private fun StageScreenBody(
                             copiedFrom = current.copiedFrom - local,
                             provenance = if (stamps != null) current.provenance.copy(singleton = stamps) else current.provenance,
                         )
+                    }
+                },
+            )
+        }
+
+        // C11: stage 3 — the designer imports their own workshop's artisan list (online only). After an
+        // import the new participant rows are folded in from the server: the fold only ADDS what this
+        // device does not hold, so nothing typed here is replaced.
+        if (spec.key == DW_PARTICIPANTS_STAGE) {
+            DwRosterImportCard(
+                context = appContext,
+                repository = repository,
+                serverId = syncId,
+                online = ConnectivityObserver.isOnline(appContext),
+                enabled = true,
+                onImported = reload@{
+                    val id = syncId ?: return@reload
+                    if (saveState == SaveState.PENDING || saveState == SaveState.SAVING) {
+                        onMessage("Wait for this stage to save, then reload.")
+                        return@reload
+                    }
+                    scope.launch {
+                        val remote = runCatching { repository.designWorkshopStage(id, spec.key) }.getOrNull()
+                        if (remote == null) {
+                            onMessage("Couldn't reload this stage. Try again.")
+                            return@launch
+                        }
+                        val local = WorkshopDraftStore.load(appContext, workshopId)?.stages?.get(spec.key)
+                        val fold = dwFoldServerStage(spec, local, remote, spec.key)
+                        WorkshopDraftStore.updateBookkeeping(appContext, workshopId) { draft ->
+                            draft.copy(stages = draft.stages + (spec.key to fold.draft))
+                        }
+                        state = fromDraft(spec, fold.draft)
+                        seen = true
+                        fold.notice?.let {
+                            noteTitle = "This stage has been updated"
+                            downloadNote = it
+                        }
                     }
                 },
             )

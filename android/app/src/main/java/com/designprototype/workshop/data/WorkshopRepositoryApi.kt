@@ -1367,6 +1367,22 @@ interface WorkshopRepositoryApi {
         @Path("stageKey") stageKey: String
     ): DwCopySourcesDto
 
+    // C11: the designer's own artisan-list import on stage 3 — the pro-forma naming this workshop,
+    // the upload (read once by the server, never stored) and the workshop's accepted uploads.
+    @Streaming
+    @GET("design-workshops/{id}/roster/pro-forma")
+    suspend fun rosterProForma(@Path("id") id: String): Response<ResponseBody>
+
+    @Multipart
+    @POST("design-workshops/{id}/roster/upload")
+    suspend fun uploadRoster(
+        @Path("id") id: String,
+        @Part file: okhttp3.MultipartBody.Part,
+    ): DwArtisanImportReportDto
+
+    @GET("design-workshops/{id}/roster/imports")
+    suspend fun rosterImports(@Path("id") id: String): DwArtisanImportListDto
+
     // C9 "Keep as is": copied boxes the designer has checked now count as their answer.
     @POST("design-workshops/{id}/stages/{stageKey}/confirm-copied")
     suspend fun confirmCopiedFields(

@@ -61,6 +61,31 @@ fun dwPendingCopies(
 ): Set<String> =
     copiedFrom.keys + stamps.filter { (key, stamp) -> stamp.source == DW_COPIED_SOURCE && key !in edited }.keys
 
+/**
+ * C9: what a stage's copy marks become once the server has ACCEPTED a push that carried [sent] —
+ * the web's `copiesAfterPush`, rule for rule.
+ *
+ * The marks then live in the server's stamp, so they leave the draft: kept, the first "Keep as is"
+ * only dropped the local mark and left the server's `copied` stamp standing, and every later save
+ * re-sent the mark. A key leaves only when the draft still holds the SAME source it sent. Each one
+ * acknowledged is mirrored into [provenance] as a `copied` stamp (unless it already carries one), so
+ * the box stays out of completeness and "Keep as is" confirms it on the server. Null when nothing
+ * the push carried is still marked here.
+ */
+fun dwCopiesAfterPush(
+    copiedFrom: Map<String, String>,
+    provenance: DwStageProvenanceDto,
+    sent: Map<String, String>,
+): Pair<Map<String, String>, DwStageProvenanceDto>? {
+    val acknowledged = sent.filter { (key, source) -> copiedFrom[key] == source }
+    if (acknowledged.isEmpty()) return null
+    val stamps = provenance.singleton.toMutableMap()
+    for (key in acknowledged.keys) {
+        if (stamps[key]?.source != DW_COPIED_SOURCE) stamps[key] = DwFieldStampDto(source = DW_COPIED_SOURCE)
+    }
+    return (copiedFrom - acknowledged.keys) to provenance.copy(singleton = stamps)
+}
+
 /** Whether a stored answer is empty — the only boxes a copy may fill. */
 fun dwIsEmptyValue(value: JsonElement?): Boolean = when (value) {
     null, JsonNull -> true

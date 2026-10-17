@@ -136,7 +136,7 @@ internal fun DwCopyFromEarlierCard(
                         }
                     }
                     if (found.reference.isNotEmpty()) {
-                        Text("Other designers in this cluster", fontWeight = FontWeight.Bold)
+                        Text("Other designers, same cluster or craft", fontWeight = FontWeight.Bold)
                         Text("Read only. Write your own in the boxes below.", fontSize = 12.sp)
                         found.reference.forEach { source -> DwCopySourceBlock(source, fieldLabels) }
                     }
