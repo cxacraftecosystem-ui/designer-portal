@@ -3215,6 +3215,7 @@ internal fun buildStageBody(
             // deletion while disclaiming the knowledge that justifies one.
             emptiedEntities = if (authoritative) emptied else emptyList(),
             submit = false,
+            copiedFrom = stored?.copiedFrom.orEmpty(),
         ),
         unresolved.toList(),
         // Only the keys this stage's bucket ACTUALLY held. A key named in a stale refusal but no

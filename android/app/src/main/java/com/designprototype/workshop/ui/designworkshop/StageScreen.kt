@@ -78,6 +78,9 @@ import com.designprototype.workshop.data.DwFieldStampDto
 import com.designprototype.workshop.data.AppScope
 import com.designprototype.workshop.data.CUSTOM_ENTITY_KEY
 import com.designprototype.workshop.data.ConnectivityObserver
+import com.designprototype.workshop.data.DW_COPYABLE_STAGES
+import com.designprototype.workshop.data.dwCopyIntoEmpty
+import com.designprototype.workshop.data.dwPendingCopies
 import com.designprototype.workshop.data.DW_ROW_KEY_SEPARATOR
 import com.designprototype.workshop.data.DW_ROW_REFUSAL_KEY
 import com.designprototype.workshop.data.DraftMedia
@@ -243,7 +246,21 @@ private data class StageState(
      * every answer on it.
      */
     val customSeen: Boolean = false,
+    /** C9: boxes filled from the designer's own earlier workshop, key -> source workshop id. */
+    val copiedFrom: Map<String, String> = emptyMap(),
+    /** C9: singleton keys edited since the stage opened — their server "copied" mark is moot. */
+    val editedKeys: Set<String> = emptySet(),
 )
+
+/** C9: the singleton with every copied, not-yet-checked box left out — what the scorer counts. */
+private fun StageState.countedSingleton(): Map<String, JsonElement> {
+    val hidden = dwPendingCopies(copiedFrom, provenance.singleton, editedKeys)
+    return if (hidden.isEmpty()) singleton else singleton.filterKeys { it !in hidden }
+}
+
+/** C9: drop the copy marks of keys the designer has just edited, and remember them as edited. */
+private fun StageState.edited(keys: Collection<String>): StageState =
+    copy(copiedFrom = copiedFrom - keys.toSet(), editedKeys = editedKeys + keys)
 
 /** What the status line under the header is currently able to promise. */
 private enum class SaveState { CLEAN, PENDING, SAVING, ON_DEVICE, SYNCED }
@@ -1564,6 +1581,45 @@ private fun StageScreenBody(
             onMessage = onMessage,
         )
 
+        // C9: start stages 2, 4, 5 and 7 from the designer's own earlier workshop. Copies fill EMPTY
+        // boxes only, and a copied box counts once it is edited or kept.
+        if (spec.key in DW_COPYABLE_STAGES) {
+            val labels = spec.singleton?.liveFields.orEmpty().associate { it.key to it.label }
+            DwCopyFromEarlierCard(
+                repository = repository,
+                serverId = syncId,
+                stageKey = spec.key,
+                online = ConnectivityObserver.isOnline(appContext),
+                enabled = true,
+                labels = labels,
+                pending = dwPendingCopies(state.copiedFrom, state.provenance.singleton, state.editedKeys)
+                    .filter { it in labels }
+                    .toSet(),
+                localMarks = state.copiedFrom.keys,
+                onCopy = { sourceId, values ->
+                    val filled = dwCopyIntoEmpty(state.singleton, values.filterKeys { it in labels })
+                    if (filled.isNotEmpty()) {
+                        edit { current ->
+                            current.copy(
+                                singleton = current.singleton.putAll(filled),
+                                copiedFrom = current.copiedFrom + filled.keys.associateWith { sourceId },
+                                editedKeys = current.editedKeys - filled.keys,
+                            )
+                        }
+                    }
+                    filled.size
+                },
+                onKept = { local, stamps ->
+                    edit { current ->
+                        current.copy(
+                            copiedFrom = current.copiedFrom - local,
+                            provenance = if (stamps != null) current.provenance.copy(singleton = stamps) else current.provenance,
+                        )
+                    }
+                },
+            )
+        }
+
         spec.singleton?.let { entity ->
             EntitySection(
                 entity = entity,
@@ -1579,7 +1635,7 @@ private fun StageScreenBody(
                 showAdvanced = showAdvanced,
                 onToggleAdvanced = { showAdvanced = !showAdvanced },
                 onValueChange = { key, value ->
-                    edit { current -> current.copy(singleton = current.singleton.put(key, value)) }
+                    edit { current -> current.copy(singleton = current.singleton.put(key, value)).edited(listOf(key)) }
                 },
                 stamps = state.provenance.singleton,
                 onPatch = { patch ->
@@ -1588,7 +1644,7 @@ private fun StageScreenBody(
                     // transform — but it does NOT work for a collection row, and having the two
                     // paths differ is how a bug arrives in only one of them. See `onPatch` on
                     // [FieldRenderer].
-                    edit { current -> current.copy(singleton = current.singleton.putAll(patch)) }
+                    edit { current -> current.copy(singleton = current.singleton.putAll(patch)).edited(patch.keys) }
                 }
             )
         }
@@ -3184,6 +3240,7 @@ private fun fromDraft(stage: StageDto, draft: StageDraft): StageState = StageSta
     // Carried through rather than re-derived: this branch reads no server copy, so it can neither
     // earn the fact nor honestly disclaim one the draft already recorded.
     customSeen = draft.customSeen,
+    copiedFrom = draft.copiedFrom,
     collections = stage.collections.associate { entity ->
         entity.key to draft.rowsFor(entity.key).map { row ->
             CollectionRow(
@@ -3414,6 +3471,8 @@ private suspend fun persistLocally(
             // save after a screen whose download failed — a reading of the server's container that
             // an earlier session had actually made.
             customSeen = state.customSeen || existing?.customSeen == true,
+            // C9: the screen's own marks — written wholesale, seeded from disk by `fromDraft`.
+            copiedFrom = state.copiedFrom,
             // The rows on screen, plus the ones this registry can no longer draw — see
             // [dwStageRowsToStore], which is where the whole argument for the second half is.
             rows = dwStageRowsToStore(
@@ -3524,7 +3583,8 @@ private fun computeStageCompletenessFor(
 ) =
     computeStageCompleteness(
         stage = stage,
-        singleton = state.singleton,
+        // C9: copied text not yet edited or kept is not counted — the server's rule, shown here too.
+        singleton = state.countedSingleton(),
         collections = state.collections.mapValues { (_, rows) -> rows.map { it.values } },
         customFields = customFieldsForStage(definition, stage.key),
         customValues = state.custom,

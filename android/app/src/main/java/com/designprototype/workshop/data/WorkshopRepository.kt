@@ -1178,6 +1178,14 @@ class WorkshopRepository(
     suspend fun designWorkshopStage(id: String, stageKey: String): StageBucketDto =
         api.designWorkshopStage(id, stageKey)
 
+    /** C9: see [WorkshopRepositoryApi.stageCopySources]. */
+    suspend fun stageCopySources(id: String, stageKey: String): DwCopySourcesDto =
+        api.stageCopySources(id, stageKey)
+
+    /** C9: see [WorkshopRepositoryApi.confirmCopiedFields]. */
+    suspend fun confirmCopiedFields(id: String, stageKey: String, fields: List<String>): DwConfirmCopiedDto =
+        api.confirmCopiedFields(id, stageKey, DwConfirmCopiedBody(fields))
+
     /**
      * One workshop's custom definition, straight off the wire and NOT cached here.
      *
