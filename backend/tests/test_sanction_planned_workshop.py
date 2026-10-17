@@ -85,6 +85,27 @@ def world() -> Any:
                 }
             )
             facts["officer"] = officer
+            # A Regional Director answering for Odisha only — the plan's own scope rule.
+            director_email = f"c1-director-{stamp}@example.org"
+            director = await db.user.create(
+                data={
+                    "email": director_email,
+                    "name": f"C1 director {stamp}",
+                    "role": "REGIONAL_DIRECTOR",
+                    "passwordHash": hash_password("c1-director-password"),
+                }
+            )
+            await db.accessroster.create(
+                data={
+                    "email": director_email,
+                    "status": "ACTIVE",
+                    "admitRole": "REGIONAL_DIRECTOR",
+                    "joinedAt": datetime.now(UTC),
+                    "notes": "Seeded by tests/test_sanction_planned_workshop.py.",
+                }
+            )
+            await db.regionaldirectorstate.create(data={"userId": director.id, "state": "Odisha"})
+            facts["director"] = director
             base = {
                 "craftName": "Ajrakh",
                 "clusterName": "Ajrakhpur",
@@ -132,11 +153,32 @@ def world() -> Any:
                     **base,
                 }
             )
+            gujarat_no = f"C1/{stamp}/003"
+            facts["gujarat"] = await db.annualplanentry.create(
+                data={
+                    "planYear": 2099,
+                    "workshopNo": gujarat_no,
+                    "workshopNoKey": gujarat_no.upper(),
+                    **base,
+                }
+            )
+            odisha_no = f"C1/{stamp}/004"
+            facts["odisha"] = await db.annualplanentry.create(
+                data={
+                    "planYear": 2099,
+                    "workshopNo": odisha_no,
+                    "workshopNoKey": odisha_no.upper(),
+                    **base, "state": "Odisha", "district": "Bargarh",
+                }
+            )
         finally:
             await db.disconnect()
 
     asyncio.run(seed())
     headers = {"Authorization": f"Bearer {create_access_token(subject=facts['officer'].id)}"}
+    director_headers = {
+        "Authorization": f"Bearer {create_access_token(subject=facts['director'].id)}"
+    }
 
     def body(no: str, **extra: Any) -> dict[str, Any]:
         return {
@@ -187,6 +229,21 @@ def world() -> Any:
             params={"planYear": 2099, "search": stamp, "pageSize": 100},
             headers=headers,
         )
+        facts["director_lookup_other_state"] = client.get(
+            "/api/sanction-orders/planned-workshops",
+            params={"workshopNo": f"C1/{stamp}/003"},
+            headers=director_headers,
+        )
+        facts["director_lookup_own_state"] = client.get(
+            "/api/sanction-orders/planned-workshops",
+            params={"workshopNo": f"C1/{stamp}/004"},
+            headers=director_headers,
+        )
+        facts["director_claim_other_state"] = client.post(
+            "/api/sanction-orders",
+            json=body(f"SO-C1-{stamp}-E", annualPlanEntryId=facts["gujarat"].id),
+            headers=director_headers,
+        )
 
     async def observe() -> None:
         await db.connect()
@@ -200,6 +257,19 @@ def world() -> Any:
                     where={"sanctionOrderNo": {"startswith": f"SO-C1-{stamp}"}}
                 )
             }
+            facts["gujarat_after"] = await db.annualplanentry.find_unique(
+                where={"id": facts["gujarat"].id}
+            )
+            # A seed that writes nothing (a workshop id that does not exist) reads back as failed.
+            ghost = type("Ghost", (), {"id": f"c1-ghost-{stamp}"})()
+            facts["ghost_seeded"] = await sanction_orders._seed_the_report_copy(
+                ghost,
+                facts["officer"],
+                facts["officer"].id,
+                f"SO-C1-{stamp}-G",
+                datetime(2099, 1, 2, tzinfo=UTC).date(),
+                amount=None,
+            )
             created = facts["orders"].get(f"SO-C1-{stamp}-A")
             if created is not None:
                 facts["workshop"] = await db.designworkshop.find_unique(
@@ -264,6 +334,28 @@ def test_stage_one_is_filled_from_the_plan_and_carries_the_amount(world: Any) ->
     assert workshop.title == f"Ajrakh prototypes {world['stamp']}"
     assert workshop.craftName == "Ajrakh"
     assert workshop.district == "Kachchh"
+
+
+def test_the_create_response_says_stage_one_was_filled(world: Any) -> None:
+    assert world["created"].json()["reportCopySeeded"] is True
+    assert world["plain"].json()["reportCopySeeded"] is True
+
+
+def test_a_seed_that_wrote_nothing_is_reported_as_failed(world: Any) -> None:
+    assert world["ghost_seeded"] is False
+
+
+def test_a_regional_director_cannot_find_or_claim_another_states_row(world: Any) -> None:
+    other = world["director_lookup_other_state"]
+    assert other.status_code == 200, other.text
+    assert other.json()["items"] == []
+    own = world["director_lookup_own_state"].json()["items"]
+    assert [item["id"] for item in own] == [world["odisha"].id]
+    claim = world["director_claim_other_state"]
+    assert claim.status_code == 422, claim.text
+    assert claim.json()["detail"] == annual_plan.SANCTION_PICK_UNKNOWN
+    assert world["gujarat_after"].designWorkshopId is None
+    assert f"SO-C1-{world['stamp']}-E" not in world["orders"]
 
 
 def test_one_plan_row_is_one_workshop(world: Any) -> None:

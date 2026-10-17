@@ -512,7 +512,7 @@ async def list_sanction_designers(
 @router.get("/planned-workshops")
 async def find_planned_workshops(
     workshopNo: str = Query(..., min_length=1, max_length=120),
-    _: Any = Depends(require_sanction_recorder),
+    officer: Any = Depends(require_sanction_recorder),
 ) -> dict[str, Any]:
     """The annual-plan rows whose number is EXACTLY ``workshopNo`` — the sanction form's picker.
 
@@ -522,7 +522,9 @@ async def find_planned_workshops(
     back with ``pickable: false`` and the reason, so the form says why rather than finding nothing.
     Literal path, declared before ``/{sanction_id}``.
     """
-    return await annual_plan.sanction_candidates(workshopNo)
+    return await annual_plan.sanction_candidates(
+        workshopNo, scope=await annual_plan.sanction_pick_scope(officer)
+    )
 
 
 @router.get("/pro-forma.xlsx")

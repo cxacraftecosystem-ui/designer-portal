@@ -97,6 +97,7 @@ import {
   recordSanctionOrder,
   revokeSanctionCredentialLink,
   sanctionMessageFor,
+  SANCTION_SEED_FAILED_NOTE,
   type SanctionImportPreview,
   type SanctionImportReport as ImportReport,
   type SanctionOrder,
@@ -420,13 +421,17 @@ export default function SanctionOrdersPage() {
         setCopied(null);
       }
       const problems = links.map((entry) => entry.problem).filter(Boolean) as string[];
+      // Said first: the plan row is spent either way, so the officer has to know now.
+      const seedNote = created.reportCopySeeded === false ? `${SANCTION_SEED_FAILED_NOTE} ` : "";
       if (problems.length > 0) {
-        setLinkNotice(problems.join(" "));
+        setLinkNotice(seedNote + problems.join(" "));
       } else if (issuedNow.length === 0) {
         const names = created.sanctionOrder.designers.map((designer) => designer.designerName);
         setLinkNotice(
-          `${names.join(", ") || "That designer"} already ${names.length === 1 ? "has an account" : "have accounts"}; the workshop is on their list.`
+          `${seedNote}${names.join(", ") || "That designer"} already ${names.length === 1 ? "has an account" : "have accounts"}; the workshop is on their list.`
         );
+      } else if (seedNote) {
+        setLinkNotice(seedNote.trim());
       }
       setPage(1);
       await refresh();

@@ -250,7 +250,16 @@ export type SanctionOrderCreated = {
    * in, with no screen in the product able to say so.
    */
   credentialLinks: SanctionOrderCredential[];
+  /**
+   * False when Workshop Setup could not be filled from the order (and its plan row) after the
+   * commit. Absent on servers that predate it, which reads as filled.
+   */
+  reportCopySeeded?: boolean;
 };
+
+/** The sentence the register shows when stage 1 was not filled from the order. */
+export const SANCTION_SEED_FAILED_NOTE =
+  "Workshop Setup was not filled from this order. Ask the designer to enter the sanction details in stage 1.";
 
 export type SanctionOrderPage = {
   items: SanctionOrder[];

@@ -1067,13 +1067,36 @@ def sanction_candidate_payload(row: Any) -> dict[str, Any]:
     }
 
 
-async def sanction_candidates(workshop_no: str) -> dict[str, Any]:
-    """Every plan row whose number is EXACTLY this one, newest plan year first."""
+async def sanction_pick_scope(user: Any) -> list[str] | None:
+    """The states whose plan rows this sanction recorder may find and claim; ``None`` is all.
+
+    A Regional Director answers for the states a Ministry Admin assigned them, and the plan's own
+    routes already narrow them to those rows (:func:`plan_scope`) — the sanction picker must not
+    be a second door onto the rest of the estate. Everybody else who may record an order (the
+    Assistant Director and the managers) finds by exact number across the whole plan: the picker
+    shows nothing to browse, only the row whose number the officer already holds on the order.
+    """
+    if role_value(user) == REGIONAL_PLAN_ROLE:
+        return await plan_scope(user)
+    return None
+
+
+async def sanction_candidates(
+    workshop_no: str, *, scope: list[str] | None = None
+) -> dict[str, Any]:
+    """Every plan row whose number is EXACTLY this one, newest plan year first.
+
+    ``scope`` narrows to those states (:func:`sanction_pick_scope`); a row outside it is simply not
+    found, so a director cannot learn that another state planned a workshop under that number.
+    """
     key = fold_workshop_no(workshop_no)
-    if not key:
+    if not key or scope == []:
         return {"items": [], "truncated": False}
+    where: dict[str, Any] = {"workshopNoKey": key}
+    if scope is not None:
+        where["state"] = {"in": list(scope)}
     rows = await db.annualplanentry.find_many(
-        where={"workshopNoKey": key},
+        where=where,
         order=[{"planYear": "desc"}, {"id": "asc"}],
         take=SANCTION_CANDIDATE_TAKE + 1,
     )
@@ -1083,10 +1106,13 @@ async def sanction_candidates(workshop_no: str) -> dict[str, Any]:
     }
 
 
-async def plan_row_for_sanction(entry_id: str) -> Any:
-    """The picked row, or the refusal an officer can act on. Asked BEFORE the order's transaction."""
+async def plan_row_for_sanction(entry_id: str, *, scope: list[str] | None = None) -> Any:
+    """The picked row, or the refusal an officer can act on. Asked BEFORE the order's transaction.
+
+    A row outside ``scope`` answers exactly as a row that does not exist, as the plan routes do.
+    """
     row = await db.annualplanentry.find_unique(where={"id": entry_id})
-    if row is None:
+    if row is None or not in_scope(row, scope):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=SANCTION_PICK_UNKNOWN
         )

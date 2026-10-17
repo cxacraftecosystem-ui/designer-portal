@@ -137,6 +137,7 @@ and this module never calls ``jsonable_encoder`` on a sanction row.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import secrets
@@ -1315,7 +1316,13 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
     # workshop: a row already opened or withdrawn is refused before anything is written, and the
     # row is stamped inside the transaction below so a race leaves one workshop or none.
     planned_id = getattr(payload, "annualPlanEntryId", None)
-    planned = await annual_plan.plan_row_for_sanction(planned_id) if planned_id else None
+    planned = (
+        await annual_plan.plan_row_for_sanction(
+            planned_id, scope=await annual_plan.sanction_pick_scope(officer)
+        )
+        if planned_id
+        else None
+    )
 
     team: list[NamedDesigner] = []
     for name, address in named_team_of(payload):
@@ -1656,7 +1663,7 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
     # the OOXML core-properties part cannot express as a list. Looping it would have each designer
     # overwrite the one before, and the name on the ministry's document would be decided by whichever
     # of them the loop reached last. Several people may OPEN it; one name is ON it.
-    await _seed_the_report_copy(
+    report_copy_seeded = await _seed_the_report_copy(
         workshop,
         officer,
         lead.userId,
@@ -1714,6 +1721,11 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
         # re-issue button beside each designer on the row is the remedy, keyed on the order AND the
         # person, which is why this list carries the designer each link belongs to.
         "credentialLinks": credential_links_out,
+        # ── WHETHER STAGE 1 WAS FILLED FROM THE ORDER (and the plan row, when one was picked) ──
+        # Additive. The seed runs after the commit and never fails the create, so a failure used
+        # to be invisible: the plan row was already stamped as opened and could not be picked
+        # again, and Workshop Setup was empty. False tells the officer to have it filled by hand.
+        "reportCopySeeded": report_copy_seeded,
     }
 
 
@@ -1726,8 +1738,11 @@ async def _seed_the_report_copy(
     *,
     amount: Any = None,
     planned: Mapping[str, Any] | None = None,
-) -> None:
+) -> bool:
     """Put the sanction number and date into stage 1, ONCE, as the report's own copy.
+
+    Answers whether stage 1 now holds the order's number — the seed swallows its own failures, so
+    the answer is read back rather than inferred from the absence of an exception.
 
     OUTSIDE THE TRANSACTION ON PURPOSE — ``seed_designer_prefill``'s own docstring says prefill
     never fails the create, and it is a dozen writes behind a blanket ``except``. A never-fail block
@@ -1757,6 +1772,33 @@ async def _seed_the_report_copy(
         )
     except Exception:  # pragma: no cover - the seed's own contract is that it never fails a create
         log.exception("sanction order %s: stage-1 prefill failed", stored_no)
+        return False
+    try:
+        entry = await db.dwstageentry.find_first(
+            where={
+                "designWorkshopId": workshop.id,
+                "stageKey": "WORKSHOP_SETUP",
+                "entityKey": "workshopSetup",
+            }
+        )
+    except Exception:  # pragma: no cover - a read failing here is not the officer's problem either
+        log.exception("sanction order %s: could not read back the stage-1 seed", stored_no)
+        return False
+    data = getattr(entry, "data", None) if entry is not None else None
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except ValueError:
+            data = None
+    seeded = isinstance(data, Mapping) and bool(data.get("sanctionOrderNo"))
+    if not seeded:
+        log.warning(
+            "sanction order %s: stage 1 of workshop %s was not filled from the order%s",
+            stored_no,
+            getattr(workshop, "id", None),
+            " or its plan row" if planned else "",
+        )
+    return seeded
 
 
 async def _issue_first_credential(

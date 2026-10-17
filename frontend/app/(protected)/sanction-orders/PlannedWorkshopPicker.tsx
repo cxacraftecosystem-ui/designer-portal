@@ -35,6 +35,11 @@ export function plannedRowSummary(row: PlannedWorkshopCandidate): string {
     .join(" · ");
 }
 
+/** One pickable exact match, and nothing else, is picked for the officer; anything more is theirs. */
+export function autoPickedRow(items: readonly PlannedWorkshopCandidate[]): PlannedWorkshopCandidate | null {
+  return items.length === 1 && items[0]!.pickable ? items[0]! : null;
+}
+
 export function PlannedWorkshopPicker({
   picked,
   onPick,
@@ -59,9 +64,8 @@ export function PlannedWorkshopPicker({
       const answer = await findPlannedWorkshops(clean);
       setRows(answer.items);
       setTruncated(answer.truncated);
-      const only = answer.items.filter((row) => row.pickable);
       // One pickable exact match is the ordinary case: pick it, the officer can still clear it.
-      onPick(only.length === 1 && answer.items.length === 1 ? only[0]! : null);
+      onPick(autoPickedRow(answer.items));
     } catch (error) {
       setRows(null);
       const detail = (error as { payload?: { detail?: unknown } } | null)?.payload?.detail;
