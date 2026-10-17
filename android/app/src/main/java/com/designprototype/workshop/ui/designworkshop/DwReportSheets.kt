@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +44,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
@@ -719,6 +719,73 @@ private fun DwSheetStrip(
 }
 
 // --------------------------------------------------------------------------------------
+// The zoom math, pure so that a unit test can hold it
+// --------------------------------------------------------------------------------------
+
+/** One press of Smaller or Larger. */
+internal const val DW_ZOOM_STEP = 0.15f
+
+/** The largest the paper is ever drawn: three times the file's own size. */
+internal const val DW_ZOOM_MAX = 3f
+
+/** The smallest fit, so a zero-width first measure cannot collapse the sheet to nothing. */
+internal const val DW_FIT_MIN = 0.05f
+
+/**
+ * The scale at which a page [pageWidth] wide fills [availableWidth] — both in dp — capped at 1, so the
+ * fit never ENLARGES the paper. A width that is not a real number (an unbounded measure) is drawn at
+ * actual size rather than at a scale computed from infinity.
+ */
+internal fun dwFitScale(availableWidth: Float, pageWidth: Float): Float {
+    if (!availableWidth.isFinite() || !(pageWidth > 0f)) return 1f
+    return (availableWidth / pageWidth).coerceIn(DW_FIT_MIN, 1f)
+}
+
+/** Where a zoom request lands: [chosen] (null = fit width), held between half the fit and [DW_ZOOM_MAX]. */
+internal fun dwZoomTarget(chosen: Float?, fit: Float): Float {
+    val requested = chosen?.takeIf { it.isFinite() && it > 0f } ?: fit
+    return requested.coerceIn(fit * 0.5f, DW_ZOOM_MAX)
+}
+
+/**
+ * The box a page laid out at [referencePx] occupies once drawn at [scale], held inside the
+ * [minPx]..[maxPx] the parent allows. Rounded the way `Modifier.size((ref * scale).dp)` rounds, so the
+ * sheet and its contents agree to the pixel.
+ */
+internal fun dwScaledExtent(referencePx: Int, scale: Float, minPx: Int = 0, maxPx: Int = Int.MAX_VALUE): Int =
+    (referencePx * scale).roundToInt().coerceIn(minPx, maxPx)
+
+/**
+ * Lays the page out at its REFERENCE size and draws it at [scale] from its top-left corner, while
+ * reporting only the scaled size to the sheet around it.
+ *
+ * THE DEFECT THIS REPLACES. The contents used to be `requiredSize(reference)` + `graphicsLayer(scale)`
+ * inside a sheet already sized to `reference × scale`. A child measured larger than its parent allows
+ * is CENTRED over it by Compose, so below 100% the reference page sat up and to the left of the sheet
+ * by half the difference, and the scale then shrank it towards that displaced corner: at the 44% fit of
+ * a phone the text column landed outside the clip and the sheet showed blank paper with a lone
+ * "Page 3 of 3" in the wrong place. At "Actual size" the difference is zero, which is why that zoom
+ * looked right. Measuring with the reference constraints and PLACING at the origin removes the centring
+ * entirely, whatever the zoom.
+ */
+internal fun Modifier.dwScaledPage(referenceWidth: Dp, referenceHeight: Dp, scale: Float): Modifier =
+    layout { measurable, constraints ->
+        val width = referenceWidth.roundToPx().coerceAtLeast(1)
+        val height = referenceHeight.roundToPx().coerceAtLeast(1)
+        val placeable = measurable.measure(Constraints.fixed(width, height))
+        layout(
+            dwScaledExtent(width, scale, constraints.minWidth, constraints.maxWidth),
+            dwScaledExtent(height, scale, constraints.minHeight, constraints.maxHeight),
+        ) {
+            placeable.placeWithLayer(0, 0) {
+                scaleX = scale
+                scaleY = scale
+                transformOrigin = TransformOrigin(0f, 0f)
+            }
+        }
+    }
+
+// --------------------------------------------------------------------------------------
 // The stage: the sheets, the zoom, and the one scroll that only exists when it is needed
 // --------------------------------------------------------------------------------------
 
@@ -752,10 +819,10 @@ private fun DwSheetStage(
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val available = maxWidth
-        val fit = (available / geometry.pageWidthPx.dp).coerceIn(0.05f, 1f)
         // Never scaled UP by the FIT. A designer looking at a 140%-enlarged page would be judging
         // type at a size the paper will never be printed at; enlarging is a choice the reader makes.
-        val target = (chosenScale ?: fit).coerceIn(fit * 0.5f, 3f)
+        val fit = dwFitScale(available.value, geometry.pageWidthPx)
+        val target = dwZoomTarget(chosenScale, fit)
 
         val scale by animateFloatAsState(
             targetValue = target,
@@ -779,13 +846,13 @@ private fun DwSheetStage(
                 TextButton(
                     onClick = {
                         animate = true
-                        chosenScale = (target - 0.15f).coerceAtLeast(fit * 0.5f)
+                        chosenScale = dwZoomTarget(target - DW_ZOOM_STEP, fit)
                     }
                 ) { Text("Smaller", fontSize = 12.sp) }
                 TextButton(
                     onClick = {
                         animate = true
-                        chosenScale = (target + 0.15f).coerceAtMost(3f)
+                        chosenScale = dwZoomTarget(target + DW_ZOOM_STEP, fit)
                     }
                 ) { Text("Larger", fontSize = 12.sp) }
                 TextButton(onClick = { animate = true; chosenScale = null }) {
@@ -843,8 +910,7 @@ private fun DwSheetStage(
                                     val zoomChange = event.calculateZoom()
                                     if (zoomChange > 0f && zoomChange != 1f) {
                                         animate = false
-                                        chosenScale =
-                                            ((chosenScale ?: fit) * zoomChange).coerceIn(fit * 0.5f, 3f)
+                                        chosenScale = dwZoomTarget((chosenScale ?: fit) * zoomChange, fit)
                                         event.changes.forEach { it.consume() }
                                     }
                                 }
@@ -916,16 +982,10 @@ private fun DwSheet(
     ) {
         Box(
             modifier = Modifier
-                // The page's contents, laid out at REFERENCE size and then scaled by one factor.
-                // `requiredSize` and not `size`, because the parent is the SMALLER scaled box and
-                // would otherwise squeeze the reference layout into it — at which point the phone's
-                // width would be back inside the layout and the sheet would stop being the document.
-                .requiredSize(width = geometry.pageWidthPx.dp, height = geometry.pageHeightPx.dp)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    transformOrigin = TransformOrigin(0f, 0f)
-                }
+                // The page's contents, laid out at REFERENCE size and then scaled by one factor
+                // from the sheet's top-left corner — see [dwScaledPage] for why this is not
+                // `requiredSize` + `graphicsLayer`, which left the sheet blank below 100%.
+                .dwScaledPage(geometry.pageWidthPx.dp, geometry.pageHeightPx.dp, scale)
         ) {
             Column(modifier = Modifier.fillMaxSize().padding(horizontal = marginDp)) {
                 // THE TOP MARGIN BAND. The running head is drawn INTO it and never into the text

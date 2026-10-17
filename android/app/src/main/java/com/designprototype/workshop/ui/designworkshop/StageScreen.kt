@@ -1351,20 +1351,36 @@ fun StageScreen(
         )
 
         /*
-          THE STAGE'S PAGES, LIVE. Rebuilt from the draft on disk with this screen's unsaved answers
-          laid over it, on the same debounce rhythm the web uses — see [DwStageDocumentPreview].
+          THE STAGE'S PAGES, LIVE. Rebuilt from the draft on disk — or, when this device holds no
+          draft of the workshop yet, from the server's copy — with this screen's unsaved answers laid
+          over it, on the same debounce rhythm the web uses; see [dwStagePreviewDraft].
           Closed until asked for: building the document is the right cost for a designer who wants to
           see it and the wrong one for every stage open.
         */
+        val previewServerCopy = remember(workshopId) { DwPreviewServerCopy() }
         DwStageDocumentPreview(
             workshopId = workshopId,
             stageTitle = spec.title,
             schema = previewSchema,
             revision = revision,
-            liveDraft = {
-                WorkshopDraftStore.load(appContext, workshopId)?.let { disk ->
-                    disk.copy(stages = disk.stages + (spec.key to dwLiveStageDraft(spec, state, disk.stages[spec.key])))
+            liveDraft = liveDraft@{
+                val registry = previewSchema ?: return@liveDraft null
+                val disk = WorkshopDraftStore.load(appContext, workshopId)
+                val remoteId = syncId
+                val remote = if (disk == null && remoteId != null && ConnectivityObserver.isOnline(appContext)) {
+                    previewServerCopy.get { repository.designWorkshopStages(remoteId) }
+                } else {
+                    null
                 }
+                dwStagePreviewDraft(
+                    schema = registry,
+                    workshopId = workshopId,
+                    stageKey = spec.key,
+                    local = disk,
+                    remoteId = remoteId,
+                    remote = remote,
+                    live = { existing -> dwLiveStageDraft(spec, state, existing) },
+                )
             },
         )
 
