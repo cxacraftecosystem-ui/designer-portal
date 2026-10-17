@@ -34,6 +34,21 @@ class AppSettingDto(APIModel):
     dwAiVerbDailyCap: int | None = None
 
 
+class ReportDeliverySettingsDto(APIModel):
+    """Where "Approve and hand on" e-mails the approved report (2026-10-18)."""
+
+    addresses: list[str]
+    officeName: str
+    #: The product's default office name, for the screen's placeholder.
+    defaultOfficeName: str
+    mailAvailable: bool
+
+
+class ReportDeliverySettingsUpdate(APIModel):
+    addresses: list[str] = Field(default_factory=list, max_length=50)
+    officeName: str | None = None
+
+
 class AppSettingUpdate(APIModel):
     transcriptionMode: str | None = None
     batchWindowEnabled: bool | None = None

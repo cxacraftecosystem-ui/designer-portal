@@ -37,9 +37,10 @@ way ``api/routes/review.py`` marks a reviewer's edit, with a prefix on ``notes``
 
 — and :func:`decision_history_payload` decodes the pair back into what a screen says.
 
-Nothing is e-mailed or transmitted by any of it. There is no mailer in this product; handing a
-report on RECORDS that it went, to which office, by whom and — when the authority picked one — which
-exported file, by its checksum.
+Handing a report on RECORDS that it went, to which office, by whom and — when the authority picked
+one — which exported file, by its checksum. Since 2026-10-18 each decision also e-mails the
+workshop's designers afterwards, and ``/approve-and-hand-on`` e-mails the office an expiring link to
+the file (``services/report_delivery``) — always after the transaction, never inside it.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -288,6 +289,17 @@ class DwHandOnIn(BaseModel):
 
 
 # ── THE PLANS ────────────────────────────────────────────────────────────────────────────────────
+
+
+class DwApproveAndHandOnIn(BaseModel):
+    """"Approve and hand on" (2026-10-18). ``round`` and ``readAt`` are the approval's guard and are
+    required when the report is still waiting; an already-approved report needs neither."""
+
+    note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
+    round: int | None = Field(default=None, ge=1)
+    readAt: str | None = Field(default=None, max_length=64)
+    format: Literal["PDF", "DOCX"] = "PDF"
+    templateId: str | None = Field(default=None, max_length=48)
 
 
 @dataclass(frozen=True, slots=True)

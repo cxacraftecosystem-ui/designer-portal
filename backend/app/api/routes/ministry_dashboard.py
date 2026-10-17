@@ -93,7 +93,11 @@ from app.core.deps import (
     can_see_ministry_dashboard,
     get_current_user,
 )
-from app.services import design_workshop_oversight as officers, ministry_dashboard as register
+from app.services import (
+    design_workshop_oversight as officers,
+    ministry_dashboard as register,
+    report_delivery,
+)
 from app.services.concurrency import gather_reads
 from app.services.design_workshop_inspectors import INSPECTION_ROLES
 from app.services.design_workshops import stage_writers, workshop_summary
@@ -261,7 +265,18 @@ async def _design_rows(
             logger.exception("ministry dashboard: counting artisans on %d workshop(s) failed", len(ids))
             return None
 
-    scored_map, counted_map = await gather_reads(_progress_or_none(), _beneficiaries_or_none())
+    async def _received_or_empty() -> dict[str, dict[str, Any]]:
+        # "Received" (2026-10-18): the newest e-mailed delivery of each report to the office. A
+        # failure here costs the line, never the register.
+        try:
+            return await report_delivery.received_for(ids)
+        except Exception:
+            logger.exception("ministry dashboard: reading deliveries for %d workshop(s) failed", len(ids))
+            return {}
+
+    scored_map, counted_map, received = await gather_reads(
+        _progress_or_none(), _beneficiaries_or_none(), _received_or_empty()
+    )
     progress: dict[str, dict[str, Any]] = scored_map or {}
     # ⚠ ``None`` HERE IS NOT AN EMPTY MAP, AND THE ROW BELOW SPENDS THE DIFFERENCE. A workshop with
     # nobody on its roster is an ordinary state on the day it opens and is honestly 0; a roster read
@@ -287,6 +302,7 @@ async def _design_rows(
         # None when the count could not be read at all — the client prints "not read" rather than 0.
         summary["beneficiaries"] = beneficiaries.get(workshop_id, 0) if beneficiaries is not None else None
         summary["standingGroup"] = register.group_of(summary.get("status"))
+        summary["received"] = received.get(workshop_id)
         rows.append(summary)
     return total, rows
 

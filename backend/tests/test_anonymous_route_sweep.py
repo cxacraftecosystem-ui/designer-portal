@@ -116,6 +116,10 @@ PUBLIC_ALLOWLIST: dict[tuple[str, str], str] = {
     # A plain link navigation cannot carry a bearer token, and the object it redirects to is already
     # world-readable — every phone in the field fetches it with no credentials when it self-updates.
     ("GET", "/api/app/download"): "a browser link to an object that is public anyway.",
+    # The office a report was e-mailed to has no account (2026-10-18). The expiring link's secret,
+    # carried in the body, is the credential; an unknown one is a 404 and an expired one a 410.
+    ("POST", "/api/report-deliveries/lookup"): "the office holding an e-mailed report link has no account; the link is the credential.",
+    ("POST", "/api/report-deliveries/download"): "same: it hands back a five-minute signed URL for that one file.",
     # The health family. CloudFront's origin check and the uptime monitor call these on a fixed
     # cadence with no credentials, and a 401 to either reads as an outage.
     ("GET", "/health"): "CloudFront origin check and the uptime monitor; a 401 here reads as an outage.",

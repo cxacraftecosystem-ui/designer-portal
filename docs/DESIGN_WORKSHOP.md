@@ -1086,8 +1086,10 @@ edges, each refused to a header edit and taken on its own route with a `ReviewLo
 transaction: the inspector's send-back, and the authority's approve (`PRE_SUBMISSION → APPROVED`,
 for exactly the round and the content the approver read), revise (`PRE_SUBMISSION`/`APPROVED`/
 handed-on `SUBMITTED → NEEDS_REVISION`, with a mandatory sentence filed in the designers' register)
-and hand-on (`APPROVED → SUBMITTED`, recording who, when, to which office and which exported file —
-nothing is transmitted). An approved or handed-on report is frozen to every content write; a handed-on
+and hand-on (`APPROVED → SUBMITTED`, recording who, when, to which office and which exported file).
+"Approve and hand on" (2026-10-18) does both and also e-mails the office a download link that lasts
+seven days, at the addresses an administrator sets (`backend/app/services/report_delivery.py`); with
+none set, the hand-on is recorded and the file is sent by hand. An approved or handed-on report is frozen to every content write; a handed-on
 report loses every header edge, and a `SUBMITTED` row carrying the word's pre-2026-09-13 meaning
 (`handedOnAt` null) keeps them. The approver's name and date print under the report's Certification.
 True as of «2026-10-10»; check `grep -n "DECISION_EDGES" backend/app/schemas/design_workshop_review_loop.py`.

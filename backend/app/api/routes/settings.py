@@ -6,13 +6,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.db import db
 from app.core.deps import require_admin, require_master_admin
+from app.schemas import design_workshop_approvals as approval_plans
 from app.schemas.settings import (
     AppSettingDto,
     AppSettingUpdate,
+    ReportDeliverySettingsDto,
+    ReportDeliverySettingsUpdate,
     TranscriptionProviderOrderDto,
     TranscriptionProviderOrderUpdate,
 )
-from app.services import ai, managed_secrets
+from app.services import ai, mailer, managed_secrets, report_delivery
 from app.services.app_settings import (
     DEFAULT_TIMEZONE,
     SINGLETON_ID,
@@ -35,6 +38,49 @@ from app.services.app_settings import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+
+async def _report_delivery_answer() -> dict[str, Any]:
+    office = await report_delivery.office_settings()
+    row = await db.appsetting.find_unique(where={"id": SINGLETON_ID})
+    return {
+        "addresses": office["addresses"],
+        "officeName": str(getattr(row, "dcOfficeName", None) or "") if row is not None else "",
+        "defaultOfficeName": approval_plans.DEFAULT_OFFICE,
+        "mailAvailable": mailer.mail_configured(),
+    }
+
+
+@router.get("/report-delivery", response_model=ReportDeliverySettingsDto)
+async def get_report_delivery_settings(_: Any = Depends(require_admin)) -> Any:
+    """The office addresses "Approve and hand on" e-mails approved reports to (2026-10-18)."""
+    return await _report_delivery_answer()
+
+
+@router.put("/report-delivery", response_model=ReportDeliverySettingsDto)
+async def update_report_delivery_settings(
+    payload: ReportDeliverySettingsUpdate, current_user: Any = Depends(require_admin)
+) -> Any:
+    """Replace the office addresses (empty turns e-mailed delivery off) and the office's name. 422
+    names any entry that is not an e-mail address."""
+    kept, refused = report_delivery.clean_addresses(payload.addresses)
+    if refused:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Not an e-mail address: {', '.join(refused[:5])}",
+        )
+    if len(kept) > report_delivery.MAX_OFFICE_ADDRESSES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Add at most {report_delivery.MAX_OFFICE_ADDRESSES} addresses.",
+        )
+    name = (payload.officeName or "").strip()[: approval_plans.MAX_HANDED_ON_TO_CHARS] or None
+    await get_or_create_app_settings(current_user.id)
+    await db.appsetting.update(
+        where={"id": SINGLETON_ID},
+        data={"dcOfficeEmails": {"set": kept}, "dcOfficeName": name, "updatedById": current_user.id},
+    )
+    return await _report_delivery_answer()
 
 
 @router.get("", response_model=AppSettingDto)

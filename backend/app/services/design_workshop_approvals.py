@@ -144,7 +144,7 @@ def queue_order(state: str) -> list[dict[str, str]]:
 async def awaiting_counts() -> dict[str, int]:
     """``{awaiting, toHandOn}`` — the badge's number and the second figure beside it.
 
-    THE NOTIFICATION, in this product's only shape for one: there is no mailer and no push, and
+    THE BADGE (hand-in e-mails to officials arrived 2026-10-18, ``email_outbox.notify_handed_in``), and
     ``GET /sanction-orders/awaiting-count`` set the pattern of a count a badge reads. Estate-wide on
     purpose, like the queue.
     """
