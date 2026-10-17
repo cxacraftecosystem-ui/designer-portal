@@ -105,14 +105,22 @@ async def _load(scope: dict[str, Any] | None = None) -> tuple[list[WorkshopRows]
     the price-to-cost ratios. The third query re-asks for the ids WITH `deletedAt: None`, and any row
     whose workshop does not come back is dropped — see the loop at the bottom of this function.
     """
+    # THE CALLER'S SCOPE, AND-COMPOSED (C14). ``None`` is the whole archive (an admin, a Ministry
+    # Admin); a Regional Director passes the posting clause the Ministry dashboard scopes them by.
+    # The entry read is narrowed through its workshop so a director's rows never leave the query.
+    live_where: dict[str, Any] = {"deletedAt": None}
+    entry_where: dict[str, Any] = {"deletedAt": None, "entityKey": {"in": list(ANALYSED_ENTITIES)}}
+    if scope is not None:
+        live_where = {"AND": [live_where, scope]}
+        entry_where = {**entry_where, "designWorkshop": {"is": scope}}
     archive_size, rows = await gather_reads(
-        db.designworkshop.count(where={"deletedAt": None}),
+        db.designworkshop.count(where=live_where),
         db.dwstageentry.find_many(
             # BOTH `deletedAt` COLUMNS MATTER AND THIS IS ONLY THE FIRST. This one drops rows a
             # designer removed from a collection (`save_stage_data` soft-deletes them so a phone
             # that re-syncs an old draft cannot resurrect them). The workshop's own `deletedAt` is
             # a different column on a different table, and it is handled below.
-            where={"deletedAt": None, "entityKey": {"in": list(ANALYSED_ENTITIES)}},
+            where=entry_where,
             # ROW_CAP + 1 so the cap can be DETECTED rather than inferred: exactly ROW_CAP rows is
             # ambiguous, one more is not.
             take=ROW_CAP + 1,
