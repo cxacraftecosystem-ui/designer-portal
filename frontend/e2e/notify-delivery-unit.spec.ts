@@ -70,7 +70,15 @@ test("the sanction register says whether each sign-in e-mail went, and what a re
 test("'Approve and hand on' is offered only where the server allows the decision", () => {
   const configured = { configured: true, addressCount: 1, officeName: "DC (H)", linkDays: 7, latest: null };
   expect(deliveryOffer(detail({ delivery: configured }))).toEqual({ kind: "send", label: "Approve and hand on" });
-  expect(deliveryOffer(detail({ delivery: { ...configured, configured: false } })).kind).toBe("setup");
+  const noAddresses = { ...configured, configured: false, addressCount: 0, mailAvailable: true };
+  expect(deliveryOffer(detail({ delivery: noAddresses })).kind).toBe("setup");
+  // Mail off for the whole deployment: no address prompt, whether or not addresses are set.
+  expect(deliveryOffer(detail({ delivery: { ...noAddresses, mailAvailable: false } })).kind).toBe("none");
+  expect(
+    deliveryOffer(detail({ delivery: { ...configured, configured: false, mailAvailable: false } })).kind
+  ).toBe("none");
+  // An older server that sends no mailAvailable: addresses set but not configured means mail is off.
+  expect(deliveryOffer(detail({ delivery: { ...configured, configured: false } })).kind).toBe("none");
   expect(
     deliveryOffer(detail({ status: "APPROVED", mayDecide: { handOn: true }, delivery: configured }))
   ).toEqual({ kind: "send", label: "Hand on by e-mail" });

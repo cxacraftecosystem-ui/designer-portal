@@ -303,6 +303,7 @@ function DecisionPanel({
   const [handOnNote, setHandOnNote] = useState("");
   const [pinExport, setPinExport] = useState(true);
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [deliveryFailed, setDeliveryFailed] = useState(false);
 
   function fail(err: unknown, what: string) {
     if (isUnreachable(err)) {
@@ -461,7 +462,12 @@ function DecisionPanel({
       onAnswer(answer);
       setApproveNote("");
       setOpen(null);
-      setOutcome(`Handed on and e-mailed to ${answer.delivery?.latest?.officeName ?? office}.`);
+      setDeliveryFailed(answer.deliveryFailed === true);
+      setOutcome(
+        answer.deliveryFailed
+          ? `Handed on to ${office}. The e-mail did not go — send the link.`
+          : `Handed on and e-mailed to ${answer.delivery?.latest?.officeName ?? office}.`
+      );
       void refreshAwaitingApprovalCount();
     } catch (err) {
       fail(err, "handed on");
@@ -477,7 +483,8 @@ function DecisionPanel({
     try {
       const answer = await resendReportDelivery(detail.id);
       onAnswer(answer);
-      setOutcome("A new link was e-mailed. The old one no longer works.");
+      setOutcome(deliveryFailed ? `E-mailed to ${answer.delivery?.latest?.officeName ?? "the office"}.` : "A new link was e-mailed. The old one no longer works.");
+      setDeliveryFailed(false);
     } catch (err) {
       fail(err, "sent");
     } finally {
@@ -584,7 +591,7 @@ function DecisionPanel({
 
       {offer.kind === "send" ? (
         <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
-          <ActionGroup align="start">
+          <ActionGroup>
             <button className="field-button" disabled={busy !== null} onClick={() => void deliver()} type="button">
               {busy === "deliver" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
               {offer.label}
@@ -633,7 +640,7 @@ function DecisionPanel({
             </ul>
           ) : null}
           {detail.delivery?.configured && !detail.decisionRefusal ? (
-            <ActionGroup align="start">
+            <ActionGroup>
               <button className="field-button-secondary" disabled={busy !== null} onClick={() => void resend()} type="button">
                 {busy === "resend" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
                 Send a new link
@@ -641,6 +648,14 @@ function DecisionPanel({
             </ActionGroup>
           ) : null}
         </div>
+      ) : null}
+      {deliveryFailed && !delivered.length && !detail.decisionRefusal ? (
+        <ActionGroup>
+          <button className="field-button" disabled={busy !== null} onClick={() => void resend()} type="button">
+            {busy === "resend" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
+            Send the link
+          </button>
+        </ActionGroup>
       ) : null}
 
       {open === "approve" ? (

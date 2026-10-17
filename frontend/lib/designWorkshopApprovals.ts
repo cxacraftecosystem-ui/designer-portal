@@ -104,6 +104,8 @@ export type DwApprovalDetail = DwSummary &
     alreadyApproved?: boolean;
     /** "Approve and hand on" (2026-10-18): whether the office's addresses are set, and the newest e-mail. */
     delivery?: DwReportDelivery;
+    /** On the answer to "Approve and hand on": handed on, but the office's e-mail could not be written. */
+    deliveryFailed?: boolean;
   };
 
 /** One e-mail of the report to the office, as the outbox reports it. */
@@ -118,6 +120,8 @@ export type DwReportDelivery = {
   /** True when an administrator set the office's addresses and this deployment sends e-mail. */
   configured: boolean;
   addressCount: number;
+  /** Whether this deployment sends e-mail at all. Absent from an older server: read as true. */
+  mailAvailable?: boolean;
   officeName: string;
   linkDays: number;
   latest: {
@@ -149,7 +153,12 @@ export function deliveryOffer(
   if (status === "PRE_SUBMISSION" && detail.mayDecide?.approve === true) label = "Approve and hand on";
   if (status === "APPROVED" && detail.mayDecide?.handOn === true) label = "Hand on by e-mail";
   if (!label) return { kind: "none", label: "" };
-  return { kind: detail.delivery?.configured ? "send" : "setup", label };
+  const delivery = detail.delivery;
+  if (delivery?.configured) return { kind: "send", label };
+  // The address prompt only when addresses are what is missing; with mail off, nothing to offer.
+  if (delivery?.mailAvailable === false) return { kind: "none", label: "" };
+  if (delivery && delivery.addressCount > 0) return { kind: "none", label: "" };
+  return { kind: "setup", label };
 }
 
 /** The few words for the newest delivery: when it went, how long the link lasts, whether it was opened. */
