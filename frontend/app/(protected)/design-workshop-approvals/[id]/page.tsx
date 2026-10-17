@@ -72,6 +72,7 @@ import { fetchStageRegistry, overallPercent, saveBlobToDisk, type DwRegistry, ty
 import { formatDate, formatDateTime } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canApproveDesignWorkshops } from "@/lib/permissions";
+import { plural } from "@/lib/sharingScope";
 import { reviseBody, sendBackLabel, type DwNoteDraft, type DwReviewNote } from "@/lib/reviewAids";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
@@ -152,6 +153,11 @@ function DecisionPanel({
         <>
           <span className="block">Approves round {detail.submissionRound ?? 0} as you read it.</span>
           <span className="mt-2 block">Handing it on to the office is a separate step.</span>
+          {drafts.length ? (
+            <span className="mt-2 block font-medium text-ink-900">
+              {plural(drafts.length, "drafted note")} won&apos;t be sent and will be discarded.
+            </span>
+          ) : null}
         </>
       ),
       note: "Recorded under your name. You can withdraw it later with a reason."
@@ -169,6 +175,7 @@ function DecisionPanel({
       });
       onAnswer(answer);
       setApproveNote("");
+      if (drafts.length) onSent(); // the confirm said they would be discarded
       setOpen(null);
       setOutcome(answer.alreadyApproved ? `Already approved. ${signOffLines(answer).join(" ")}` : "Approved. Ready to hand on.");
       void refreshAwaitingApprovalCount();
@@ -536,7 +543,7 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
 
   const allowed = !loading && canApproveDesignWorkshops(user);
   const media = useReaderMedia("approval", id, detail !== null);
-  const tray = useReviewTray(user?.id, id);
+  const tray = useReviewTray(user?.id, id, "approve");
 
   useEffect(() => {
     if (!allowed) return;
@@ -788,7 +795,7 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
               onClick={() => setComposing({ stageKey: active ?? "", fieldKey: null })}
             >
               <MessageSquarePlus className="h-4 w-4" aria-hidden />
-              Note
+              Draft a note
             </button>
           </ReviewDecisionBar>
         </>

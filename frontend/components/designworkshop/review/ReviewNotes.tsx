@@ -21,6 +21,7 @@ import {
   noteTarget,
   saveTray,
   type DwNoteDraft,
+  type DwTraySurface,
   type DwReviewNote
 } from "@/lib/reviewAids";
 import { plural } from "@/lib/sharingScope";
@@ -29,27 +30,27 @@ import { ReviewChip, type FlagTarget } from "./ReviewReadStage";
 
 const MAX_NOTE_CHARS = 4000;
 
-/** The drafted notes of one reader on one workshop, kept in this browser until sent. */
-export function useReviewTray(userId: string | undefined, workshopId: string) {
+/** The drafted notes of one reader on one workshop and screen, kept in this browser until sent. */
+export function useReviewTray(userId: string | undefined, workshopId: string, surface: DwTraySurface) {
   const [drafts, setDrafts] = useState<DwNoteDraft[]>([]);
   const loaded = useRef<string | null>(null);
 
   useEffect(() => {
-    const key = `${userId ?? ""}:${workshopId}`;
+    const key = `${surface}:${userId ?? ""}:${workshopId}`;
     if (loaded.current === key) return;
     loaded.current = key;
-    setDrafts(loadTray(userId, workshopId));
-  }, [userId, workshopId]);
+    setDrafts(loadTray(userId, workshopId, surface));
+  }, [userId, workshopId, surface]);
 
   const update = useCallback(
     (next: (current: DwNoteDraft[]) => DwNoteDraft[]) => {
       setDrafts((current) => {
         const value = next(current);
-        saveTray(userId, workshopId, value);
+        saveTray(userId, workshopId, surface, value);
         return value;
       });
     },
-    [userId, workshopId]
+    [userId, workshopId, surface]
   );
 
   return {

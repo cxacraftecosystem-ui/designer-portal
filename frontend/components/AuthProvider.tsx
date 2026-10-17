@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { forgetOfflinePages } from "@/components/OfflineAppShell";
 import { clearReportCache } from "@/lib/offlineReport/reportCache";
+import { clearReviewTrays } from "@/lib/reviewAids";
 
 import {
   ApiError,
@@ -254,6 +255,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // `setDraftSessionUser`.
       void clearReportCache();
       forgetOfflinePages();
+      // Review notes drafted but not sent are this account's too.
+      clearReviewTrays();
     }
   }, [adopt]);
 

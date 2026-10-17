@@ -9,6 +9,7 @@ import {
   comparableRounds,
   fileLabel,
   freshnessLabel,
+  clearReviewTrays,
   loadTray,
   MAX_TRAY_NOTES,
   noteAuthor,
@@ -20,6 +21,7 @@ import {
   roundChanges,
   sendBackLabel,
   stageDot,
+  trayKey,
   type DwReviewNote
 } from "@/lib/reviewAids";
 
@@ -178,7 +180,53 @@ test.describe("A19 / B2 / C16 — notes", () => {
   });
 
   test("the tray survives a blocked or absent storage", () => {
-    expect(loadTray("u", "w")).toEqual([]);
+    expect(loadTray("u", "w", "approve")).toEqual([]);
+    expect(() => clearReviewTrays()).not.toThrow();
+  });
+
+  test("one account keeps a separate tray per screen", () => {
+    expect(trayKey("u", "w", "inspect")).not.toBe(trayKey("u", "w", "approve"));
+    expect(trayKey("u", "w", "approve")).toBe("dw_review_tray:approve:u:w");
+    for (const page of [
+      ["frontend/app/(protected)/design-workshop-approvals/[id]/page.tsx", '"approve"'],
+      ["frontend/app/(protected)/design-workshop-inspections/[id]/page.tsx", '"inspect"'],
+      ["frontend/app/(protected)/officers/monitored/[id]/page.tsx", '"supervise"']
+    ]) {
+      expect(read(page[0])).toContain(`useReviewTray(user?.id, id, ${page[1]})`);
+    }
+  });
+
+  test("signing out forgets every drafted tray", () => {
+    const store = new Map<string, string>([
+      ["dw_review_tray:inspect:u:w", "[]"],
+      ["dw_review_tray:approve:u:x", "[]"],
+      ["field_repo_preferences", "{}"]
+    ]);
+    const fake = {
+      get length() {
+        return store.size;
+      },
+      key: (index: number) => [...store.keys()][index] ?? null,
+      removeItem: (key: string) => void store.delete(key)
+    };
+    const g = globalThis as unknown as { window?: unknown };
+    const had = "window" in g;
+    const previous = g.window;
+    g.window = { localStorage: fake };
+    try {
+      clearReviewTrays();
+    } finally {
+      if (had) g.window = previous;
+      else delete g.window;
+    }
+    expect([...store.keys()]).toEqual(["field_repo_preferences"]);
+    expect(read("frontend/components/AuthProvider.tsx")).toContain("clearReviewTrays();");
+  });
+
+  test("approving with drafted notes says they are discarded", () => {
+    const page = read("frontend/app/(protected)/design-workshop-approvals/[id]/page.tsx");
+    expect(page).toContain(`{plural(drafts.length, "drafted note")} won&apos;t be sent and will be discarded.`);
+    expect(page).toContain("Draft a note");
   });
 
   test("the tray's cap is the server's batch cap", () => {

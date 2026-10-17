@@ -107,7 +107,7 @@ export default function WorkshopUnderOversightPage({
   /* The workshop's files, asked for once the workshop itself has been read. */
   const media = useReaderMedia("oversight", id, detail !== null);
   // C16 (2026-10-17): an Assistant or Regional Director may file notes. Drafts collect in a tray.
-  const tray = useReviewTray(user?.id, id);
+  const tray = useReviewTray(user?.id, id, "supervise");
   const [composing, setComposing] = useState<FlagTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);

@@ -121,7 +121,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
 
   const allowed = !loading && canInspectDesignWorkshops(user);
   const media = useReaderMedia("inspection", id, detail !== null);
-  const tray = useReviewTray(user?.id, id);
+  const tray = useReviewTray(user?.id, id, "inspect");
 
   useEffect(() => {
     if (!allowed) return;

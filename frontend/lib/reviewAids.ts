@@ -380,13 +380,34 @@ export function comparableRounds(
 
 const TRAY_KEY = "dw_review_tray";
 
-function trayKey(userId: string | undefined, workshopId: string): string {
-  return `${TRAY_KEY}:${userId ?? "anon"}:${workshopId}`;
+/**
+ * Which screen a tray belongs to. One account can inspect a workshop AND approve it (a master
+ * admin), and a note drafted as an inspector must never leave in the approver's send-back.
+ */
+export type DwTraySurface = "inspect" | "approve" | "supervise";
+
+export function trayKey(userId: string | undefined, workshopId: string, surface: DwTraySurface): string {
+  return `${TRAY_KEY}:${surface}:${userId ?? "anon"}:${workshopId}`;
 }
 
-export function loadTray(userId: string | undefined, workshopId: string): DwNoteDraft[] {
+/** Forget every drafted tray in this browser — on sign-out, so a shared machine keeps none. */
+export function clearReviewTrays(): void {
   try {
-    const raw = window.localStorage.getItem(trayKey(userId, workshopId));
+    const storage = window.localStorage;
+    const keys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key && key.startsWith(`${TRAY_KEY}:`)) keys.push(key);
+    }
+    keys.forEach((key) => storage.removeItem(key));
+  } catch {
+    // Storage blocked: nothing was kept.
+  }
+}
+
+export function loadTray(userId: string | undefined, workshopId: string, surface: DwTraySurface): DwNoteDraft[] {
+  try {
+    const raw = window.localStorage.getItem(trayKey(userId, workshopId, surface));
     const parsed = raw ? (JSON.parse(raw) as unknown) : [];
     return Array.isArray(parsed)
       ? parsed.filter(
@@ -399,10 +420,16 @@ export function loadTray(userId: string | undefined, workshopId: string): DwNote
   }
 }
 
-export function saveTray(userId: string | undefined, workshopId: string, drafts: DwNoteDraft[]): void {
+export function saveTray(
+  userId: string | undefined,
+  workshopId: string,
+  surface: DwTraySurface,
+  drafts: DwNoteDraft[]
+): void {
+  const key = trayKey(userId, workshopId, surface);
   try {
-    if (drafts.length) window.localStorage.setItem(trayKey(userId, workshopId), JSON.stringify(drafts));
-    else window.localStorage.removeItem(trayKey(userId, workshopId));
+    if (drafts.length) window.localStorage.setItem(key, JSON.stringify(drafts));
+    else window.localStorage.removeItem(key);
   } catch {
     // Storage blocked: the tray still works for this visit.
   }
