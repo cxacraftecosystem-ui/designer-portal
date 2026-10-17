@@ -946,6 +946,35 @@ def _price_bands(values: list[float]) -> list[tuple[str, float]]:
 #: answer is a sentence rather than a second table.
 COVER_INFO_ROWS = 10
 
+#: Stage-1 cover fields that always keep a row inside :data:`COVER_INFO_ROWS` when filled
+#: (owner decision C1: the sanctioned amount prints on the cover). Declared late in stage 1, the
+#: amount otherwise fell past the cap on every workshop a plan row opened. Kept in step with
+#: ``COVER_PINNED_KEYS`` in the Android ``ReportScreen.kt``.
+COVER_PINNED_KEYS: frozenset[str] = frozenset({"sanctionAmount"})
+
+
+def cover_rows(
+    keyed: list[tuple[str, str, str]],
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Split filled ``(key, label, text)`` cover rows into what the cover prints and what it drops.
+
+    The first rows in declared order, except that a pinned row is never the one dropped: it takes
+    the place of the last unpinned row that would otherwise have fitted. Both halves keep the
+    declared order.
+    """
+    room = COVER_INFO_ROWS - sum(1 for key, _l, _t in keyed if key in COVER_PINNED_KEYS)
+    printed: list[tuple[str, str]] = []
+    overflow: list[tuple[str, str]] = []
+    for key, label, text in keyed:
+        if key in COVER_PINNED_KEYS:
+            printed.append((label, text))
+        elif room > 0:
+            printed.append((label, text))
+            room -= 1
+        else:
+            overflow.append((label, text))
+    return printed, overflow
+
 
 # --------------------------------------------------------------------------------------
 # The builder
@@ -2877,13 +2906,19 @@ class ReportBuilder:
     def _render_cover(self, section: TemplateSection) -> None:
         setup = self.data.singleton("WORKSHOP_SETUP")
         spec = self._stages.get("WORKSHOP_SETUP")
-        rows: list[tuple[str, str]] = []
+        keyed: list[tuple[str, str, str]] = []
         if spec and spec.singleton:
             for f in spec.singleton.fields:
-                if f.report_role is ReportRole.COVER_FIELD and self._visible(f):
-                    text = format_value(f, setup.get(f.key))
-                    if text:
-                        rows.append((f.label, text))
+                if f.report_role is not ReportRole.COVER_FIELD:
+                    continue
+                # A pinned row prints whatever the template's tier: the owner ruled (C1) that the
+                # sanctioned amount is on the cover, and a Basic-tier template's cover is a cover.
+                if not (self._visible(f) or (f.key in COVER_PINNED_KEYS and not f.deprecated)):
+                    continue
+                text = format_value(f, setup.get(f.key))
+                if text:
+                    keyed.append((f.key, f.label, text))
+        printed, overflow = cover_rows(keyed)
 
         settings = self.data.singleton("REPORT_GENERATION")
 
@@ -2923,7 +2958,7 @@ class ReportBuilder:
                 ),
                 logo=logo,
                 hero_image=hero,
-                info_rows=tuple(rows[:COVER_INFO_ROWS]),
+                info_rows=tuple(printed),
                 footer_lines=tuple(
                     x
                     for x in (
@@ -2966,8 +3001,8 @@ class ReportBuilder:
         # into a warning beside the download, exactly as it already does for a designer's own
         # section that the template's capture tier left out: an absent feature is obvious and a
         # silent one is a bug the designer blames themselves for.
-        if len(rows) > COVER_INFO_ROWS and self.template.section_for("WORKSHOP_SETUP") is None:
-            self.cover_fields_dropped = tuple(label for label, _v in rows[COVER_INFO_ROWS:])
+        if overflow and self.template.section_for("WORKSHOP_SETUP") is None:
+            self.cover_fields_dropped = tuple(label for label, _v in overflow)
 
     def _render_summary_metrics(self, section: TemplateSection) -> None:
         """Headline counts, derived from the records unless stage 18 states otherwise.
@@ -3464,7 +3499,7 @@ def build_report(
         where = ", ".join(f"stage {spec.number}" for spec, _count in attachments[:4])
         warnings.append(
             (
-                f"1 attached file is named in this report but the file itself is not "
+                "1 attached file is named in this report but the file itself is not "
                 if total == 1
                 else f"{total} attached files are named in this report but the files themselves are not "
             )

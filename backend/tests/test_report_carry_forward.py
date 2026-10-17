@@ -60,10 +60,12 @@ from app.services.design_workshops import (
 from app.services.report_annexures import TranscriptItem, attach_transcripts
 from app.services.report_builder import (
     COVER_INFO_ROWS,
+    COVER_PINNED_KEYS,
     ReferencedRecord,
     ReportBuilder,
     WorkshopData,
     build_report,
+    cover_rows,
     format_value,
 )
 from app.services.report_model import (
@@ -1075,6 +1077,52 @@ def test_the_cover_says_so_when_a_filled_cover_field_fits_nowhere():
     for template_id in (*FULL_TEMPLATES, "COMPACT_SUMMARY"):
         _doc, quiet = render(template_id)
         assert not [w for w in quiet if "cover field" in w], template_id
+
+
+@pytest.mark.parametrize("template_id", [t.id for t in TEMPLATES])
+def test_the_sanctioned_amount_is_on_the_rendered_cover_of_a_fully_filled_workshop(template_id):
+    """Owner decision C1: the sanctioned amount prints on the cover — on every template.
+
+    Declared twenty-first of stage 1's cover fields, the amount used to fall past the ten-row cap
+    on any workshop a plan row opened, and a Basic-tier template hid it by tier as well. It is
+    pinned now: it keeps a row inside the cap, takes the place of the last row that would have
+    fitted, and never appears in the "did not fit" warning.
+    """
+    data = _workshop_data()
+    setup = data.singletons.setdefault("WORKSHOP_SETUP", {})
+    setup.update(
+        workshopTitle="Design & Prototype Development Workshop",
+        schemeName="National Handicrafts Development Programme",
+        clusterName="Barpali", state="Odisha", district="Bargarh",
+        block="Barpali", village="Barpali", venue="Weavers' Service Centre",
+        startDate="2026-02-10", endDate="2026-02-24", durationDays=15,
+        designerName="A. Kumar", designerInstitution="NID Ahmedabad",
+        implementingAgency="Sambalpuri Bastralaya", sponsor="DC (Handicrafts)",
+        sanctionOrderNo="DCH/2026/114", sanctionOrderDate="2026-01-06",
+        sanctionAmount=450000, workshopCode="DW-2026-114",
+    )
+    document, warnings = build_report(
+        data, template_id, _resolver,
+        meta=ReportMeta(title="Sambalpuri Ikat", generated_at="2026-08-16T00:00:00Z"),
+    )
+    covers = [b for b in document.blocks if isinstance(b, CoverBlock)]
+    if not covers:
+        pytest.skip(f"{template_id} has no cover")
+    labels = [label for label, _value in covers[0].info_rows]
+    assert "Sanctioned amount" in labels, labels
+    assert len(labels) == COVER_INFO_ROWS
+    assert not [w for w in warnings if "cover field" in w and "Sanctioned amount" in w]
+
+
+def test_cover_rows_reserves_a_row_for_a_pinned_field_and_keeps_declared_order():
+    assert frozenset({"sanctionAmount"}) == COVER_PINNED_KEYS
+    keyed = [(f"k{i}", f"L{i}", "v") for i in range(12)] + [("sanctionAmount", "Amt", "1")]
+    printed, overflow = cover_rows(keyed)
+    assert [label for label, _v in printed] == [f"L{i}" for i in range(9)] + ["Amt"]
+    assert [label for label, _v in overflow] == ["L9", "L10", "L11"]
+    # Under the cap nothing moves and nothing is dropped.
+    short = [("a", "A", "1"), ("sanctionAmount", "Amt", "2"), ("b", "B", "3")]
+    assert cover_rows(short) == ([("A", "1"), ("Amt", "2"), ("B", "3")], [])
 
 
 def test_the_three_narrow_templates_drop_carried_stages_by_section_and_not_by_accident():

@@ -320,6 +320,29 @@ const FIGURES: Array<[string, string]> = [
 ];
 
 const COVER_INFO_ROWS = 10;
+
+/** `report_builder.COVER_PINNED_KEYS`: cover fields that always keep a row (owner decision C1). */
+export const COVER_PINNED_KEYS: ReadonlySet<string> = new Set(["sanctionAmount"]);
+
+/**
+ * `report_builder.cover_rows`: the first rows in declared order, except that a pinned row is never
+ * the one dropped — it takes the place of the last unpinned row that would otherwise have fitted.
+ */
+export function coverRows(
+  keyed: ReadonlyArray<[string, string, string]>
+): { printed: Array<[string, string]>; overflow: Array<[string, string]> } {
+  let room = COVER_INFO_ROWS - keyed.filter(([key]) => COVER_PINNED_KEYS.has(key)).length;
+  const printed: Array<[string, string]> = [];
+  const overflow: Array<[string, string]> = [];
+  for (const [key, label, text] of keyed) {
+    if (COVER_PINNED_KEYS.has(key)) printed.push([label, text]);
+    else if (room > 0) {
+      printed.push([label, text]);
+      room -= 1;
+    } else overflow.push([label, text]);
+  }
+  return { printed, overflow };
+}
 const REFERENCE_NAME_SOURCES: Record<string, string[]> = { Craft: ["craftName"] };
 
 const MAP_VENUE_STAGE = "WORKSHOP_SETUP";
@@ -1211,15 +1234,17 @@ export class ReportBuilder {
     const setup = singleton(this.data, "WORKSHOP_SETUP");
     const stage = this.stages.get("WORKSHOP_SETUP");
     const single = stage ? singletonOf(stage) : undefined;
-    const rows: Array<[string, string]> = [];
+    const keyed: Array<[string, string, string]> = [];
     if (single) {
       for (const f of single.fields) {
-        if (roleOf(f) === "COVER_FIELD" && this.visible(f)) {
-          const text = formatValue(this.registry, f, setup[f.key]);
-          if (text) rows.push([f.label, text]);
-        }
+        if (roleOf(f) !== "COVER_FIELD") continue;
+        // A pinned row prints whatever the template's tier — `report_builder._render_cover`.
+        if (!(this.visible(f) || (COVER_PINNED_KEYS.has(f.key) && !f.deprecated))) continue;
+        const text = formatValue(this.registry, f, setup[f.key]);
+        if (text) keyed.push([f.key, f.label, text]);
       }
     }
+    const { printed, overflow } = coverRows(keyed);
     const settings = singleton(this.data, "REPORT_GENERATION");
     let hero: ImageRef | null = null;
     if (single && section.includePhotos) {
@@ -1242,11 +1267,11 @@ export class ReportBuilder {
       org_lines: ["Government of India • Ministry of Textiles", org, ...letterhead].filter(Boolean),
       logo,
       hero_image: hero,
-      info_rows: rows.slice(0, COVER_INFO_ROWS),
+      info_rows: printed,
       footer_lines: [submissionLine(settings), generated].filter(Boolean)
     });
-    if (rows.length > COVER_INFO_ROWS && !sectionFor(this.template, "WORKSHOP_SETUP")) {
-      this.coverFieldsDropped = rows.slice(COVER_INFO_ROWS).map(([label]) => label);
+    if (overflow.length && !sectionFor(this.template, "WORKSHOP_SETUP")) {
+      this.coverFieldsDropped = overflow.map(([label]) => label);
     }
   }
 
