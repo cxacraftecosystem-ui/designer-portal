@@ -265,7 +265,6 @@ export function awaitingApprovalSentence(count: number): string {
   return count === 1 ? "1 report is waiting for approval" : `${count} reports are waiting for approval`;
 }
 
-
 /* ────────────────────────────────────────────────────────────────────────────
  * THE PHONE SUMMARY — what the desk says while it is folded below `sm`.
  *

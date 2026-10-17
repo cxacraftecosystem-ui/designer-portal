@@ -157,7 +157,7 @@ and this one asserted an absence it had never looked for.
 |---|---|---|---|---|
 | `backend/app` | 239 | 167,940 | 239 | 167,940 |
 | `frontend/app` | 108 | 58,653 | 108 | 58,653 |
-| `frontend/components` | 334 | 136,930 | 334 | 136,930 |
+| `frontend/components` | 334 | 136,933 | 334 | 136,933 |
 | `frontend/lib` | 159 | 77,092 | 159 | 77,092 |
 | `android/app/src/main/java` | 316 | 244,437 | 316 | 244,437 |
 

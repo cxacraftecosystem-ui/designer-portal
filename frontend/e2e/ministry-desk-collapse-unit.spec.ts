@@ -124,7 +124,9 @@ test("the fold is phone-only, and the control says whether the desk is open", ()
   // From sm up the fold hides nothing: no plain `sm:hidden` on the grid in either state.
   expect(card).not.toMatch(/"mt-4 grid gap-2\.5[^"]*(?<!max-)sm:hidden/);
   // The summary and the toggle are phone-only.
-  expect(card).toContain('<div className="mt-3 sm:hidden">');
+  // The summary slot holds one row's height while a count is still out, so Show all does not jump.
+  expect(card).toContain('<div className="mt-3 min-h-12 sm:hidden">');
+  expect(card).toContain('<p className="flex min-h-12 items-center gap-2 text-sm text-ink-500">');
   expect(card).toContain('<ActionGroup fill className="mt-3 sm:hidden">');
   expect(card).toContain("aria-expanded={expanded}");
   expect(card).toContain('aria-controls="ministry-desk-screens"');

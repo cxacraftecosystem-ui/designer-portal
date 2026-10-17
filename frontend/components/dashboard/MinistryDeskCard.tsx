@@ -226,9 +226,11 @@ export function MinistryDeskCard() {
         THE FOLDED SUMMARY — phones only (`sm:hidden`), and only while folded. Each count opens the
         list it counts. The number chip is the badge's amber pair, so the count reads as the same fact
         it is on the tile; it is literal and does not invert, like the badge.
+        `min-h-12` holds one row's height while a count is still out, so Show all does not jump when
+        it lands.
       */}
       {folded ? (
-        <div className="mt-3 sm:hidden">
+        <div className="mt-3 min-h-12 sm:hidden">
           {summary.kind === "waiting" ? (
             <ul className="grid gap-2">
               {summary.counts.map((item) => (
@@ -253,7 +255,7 @@ export function MinistryDeskCard() {
               ))}
             </ul>
           ) : summary.kind === "clear" ? (
-            <p className="flex items-center gap-2 text-sm text-ink-500">
+            <p className="flex min-h-12 items-center gap-2 text-sm text-ink-500">
               <Check aria-hidden className="h-4 w-4 shrink-0 text-success-600 dark:text-emerald-400" />
               Nothing waiting.
             </p>
@@ -275,81 +277,83 @@ export function MinistryDeskCard() {
       >
         {open.map((destination) => (
           <motion.div key={destination.href} variants={riseItem(reduce, 10)} className="min-w-0">
-          <Link
-            key={destination.href}
-            href={destination.href}
-            /*
-              THE HOVER BORDER IS MINISTRY AND THE FOCUS RING STAYS PURPLE, and the pair is not an
-              oversight. This tile is a <Link>, i.e. an <a>, and `globals.css` already draws every
-              focused anchor a purple `outline` at `outline-offset: 2px` that no scope re-points; an
-              orange `ring` would be drawn immediately inside that purple outline, so the tile would
-              wear two accent colours at once on one keyboard focus. Focus is also app-wide chrome
-              rather than ministry chrome — it is the same mark on every screen in the product, and
-              the whole of the ministry accent is a SURFACE accent.
-            */
-            className="flex h-full items-start gap-3 rounded-md border border-line-200 bg-card p-3.5 transition-shadow hover:border-ministry-300 hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-700"
-          >
-            {/*
-              THE `dark:` PAIR IS NOT OPTIONAL. The ministry ramp is literal and does not invert, so
-              `bg-ministry-50` is a near-white peach in BOTH themes and would paint a bright patch on
-              a dark card; `text-ministry-700` on `bg-card` in dark is 2.44:1. The dark half is the
-              `CarryContextBanner` / `SearchableSelect` pair with the hue moved — a `ministry-950/40`
-              wash with `ministry-300` ink on it, 9.87:1.
+            <Link
+              href={destination.href}
+              /*
+                THE HOVER BORDER IS MINISTRY AND THE FOCUS RING STAYS PURPLE, and the pair is not an
+                oversight. This tile is a <Link>, i.e. an <a>, and `globals.css` already draws every
+                focused anchor a purple `outline` at `outline-offset: 2px` that no scope re-points; an
+                orange `ring` would be drawn immediately inside that purple outline, so the tile would
+                wear two accent colours at once on one keyboard focus. Focus is also app-wide chrome
+                rather than ministry chrome — it is the same mark on every screen in the product, and
+                the whole of the ministry accent is a SURFACE accent.
 
-              9.87 AND NOT 10.06, WHICH IS THE RAMP'S HOUSE FIGURE MEASURED SOMEWHERE ELSE. 10.06:1
-              — quoted on the `.eyebrow` rule in `globals.css` and in `ministry-surface-unit.spec.ts`
-              — is `ministry-300` on the BARE dark card, `--card` #1a1725. This chip is not bare: the
-              40% `ministry-950` wash composites to #281616, a shade lighter than the card, and a
-              lighter ground under the same ink is a slightly smaller ratio. Nothing changes — both
-              clear AA several times over — but the figure is written as measured rather than copied
-              from the neighbouring site, because every other ratio in this feature was measured and
-              one number that does not re-derive is what stops a reader trusting the rest.
-            */}
-            <span
-              aria-hidden
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-ministry-50 text-ministry-700 dark:bg-ministry-950/40 dark:text-ministry-300"
+                The hover is for a fine pointer only: after Show all the tiles rise in under the finger
+                that pressed it, and an emulated or hybrid touch screen would leave one lit.
+              */
+              className="flex h-full items-start gap-3 rounded-md border border-line-200 bg-card p-3.5 transition-shadow pointer-fine:hover:border-ministry-300 pointer-fine:hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-700"
             >
-              <destination.icon className="h-[18px] w-[18px]" aria-hidden />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1 font-display text-sm font-bold text-ink-900">
-                {destination.label}
-                <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-ink-300" aria-hidden />
-                {/*
-                  The count rides on the row it is about, and only on that row. `ml-auto` puts it at
-                  the far edge of the label line rather than beside the arrow, so a two-digit number
-                  never pushes the arrow off the title. It draws nothing at zero and nothing while
-                  the count is unknown, so a tile with no badge means "none waiting, or not asked
-                  yet" — never "the badge failed".
-                */}
-                {destination.href === AWAITING_SANCTION_BADGE_HREF && awaitingCount > 0 ? (
-                  <span
-                    title={awaitingSanctionSentence(awaitingCount)}
-                    className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}
-                  >
-                    <span aria-hidden>{awaitingCount}</span>
-                    <span aria-hidden className="font-medium">
-                      awaiting
-                    </span>
-                    <span className="sr-only">{awaitingSanctionSentence(awaitingCount)}</span>
-                  </span>
-                ) : null}
-                {destination.href === AWAITING_APPROVAL_BADGE_HREF && awaitingApprovalCount > 0 ? (
-                  <span
-                    title={awaitingApprovalSentence(awaitingApprovalCount)}
-                    className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}
-                  >
-                    <span aria-hidden>{awaitingApprovalCount}</span>
-                    <span aria-hidden className="font-medium">
-                      waiting
-                    </span>
-                    <span className="sr-only">{awaitingApprovalSentence(awaitingApprovalCount)}</span>
-                  </span>
-                ) : null}
+              {/*
+                THE `dark:` PAIR IS NOT OPTIONAL. The ministry ramp is literal and does not invert, so
+                `bg-ministry-50` is a near-white peach in BOTH themes and would paint a bright patch on
+                a dark card; `text-ministry-700` on `bg-card` in dark is 2.44:1. The dark half is the
+                `CarryContextBanner` / `SearchableSelect` pair with the hue moved — a `ministry-950/40`
+                wash with `ministry-300` ink on it, 9.87:1.
+
+                9.87 AND NOT 10.06, WHICH IS THE RAMP'S HOUSE FIGURE MEASURED SOMEWHERE ELSE. 10.06:1
+                — quoted on the `.eyebrow` rule in `globals.css` and in `ministry-surface-unit.spec.ts`
+                — is `ministry-300` on the BARE dark card, `--card` #1a1725. This chip is not bare: the
+                40% `ministry-950` wash composites to #281616, a shade lighter than the card, and a
+                lighter ground under the same ink is a slightly smaller ratio. Nothing changes — both
+                clear AA several times over — but the figure is written as measured rather than copied
+                from the neighbouring site, because every other ratio in this feature was measured and
+                one number that does not re-derive is what stops a reader trusting the rest.
+              */}
+              <span
+                aria-hidden
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-ministry-50 text-ministry-700 dark:bg-ministry-950/40 dark:text-ministry-300"
+              >
+                <destination.icon className="h-[18px] w-[18px]" aria-hidden />
               </span>
-              <span className="mt-0.5 block text-xs leading-5 text-ink-500">{destination.note}</span>
-            </span>
-          </Link>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1 font-display text-sm font-bold text-ink-900">
+                  {destination.label}
+                  <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-ink-300" aria-hidden />
+                  {/*
+                    The count rides on the row it is about, and only on that row. `ml-auto` puts it at
+                    the far edge of the label line rather than beside the arrow, so a two-digit number
+                    never pushes the arrow off the title. It draws nothing at zero and nothing while
+                    the count is unknown, so a tile with no badge means "none waiting, or not asked
+                    yet" — never "the badge failed".
+                  */}
+                  {destination.href === AWAITING_SANCTION_BADGE_HREF && awaitingCount > 0 ? (
+                    <span
+                      title={awaitingSanctionSentence(awaitingCount)}
+                      className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}
+                    >
+                      <span aria-hidden>{awaitingCount}</span>
+                      <span aria-hidden className="font-medium">
+                        awaiting
+                      </span>
+                      <span className="sr-only">{awaitingSanctionSentence(awaitingCount)}</span>
+                    </span>
+                  ) : null}
+                  {destination.href === AWAITING_APPROVAL_BADGE_HREF && awaitingApprovalCount > 0 ? (
+                    <span
+                      title={awaitingApprovalSentence(awaitingApprovalCount)}
+                      className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}
+                    >
+                      <span aria-hidden>{awaitingApprovalCount}</span>
+                      <span aria-hidden className="font-medium">
+                        waiting
+                      </span>
+                      <span className="sr-only">{awaitingApprovalSentence(awaitingApprovalCount)}</span>
+                    </span>
+                  ) : null}
+                </span>
+                <span className="mt-0.5 block text-xs leading-5 text-ink-500">{destination.note}</span>
+              </span>
+            </Link>
           </motion.div>
         ))}
       </motion.div>
