@@ -124,6 +124,11 @@ function money(value: unknown): number | null {
  * default rounding is `halfExpand` and which groups 100000 as 1,00,000 under an Indian locale while
  * the server prints 100,000. Two spellings of one figure in one panel read as two figures.
  */
+/** Noun and verb agreed: "1 material line adds", "2 material lines add" (DA-38). The Python's `_lines`. */
+function linesAdd(count: number, noun: string): string {
+  return count === 1 ? `${count} ${noun} line adds` : `${count} ${noun} lines add`;
+}
+
 function rupees(value: number): string {
   // Python spells the three non-finite floats "inf", "-inf" and "nan"; JavaScript spells them
   // "Infinity", "-Infinity" and "NaN". A caution that overflows is a real case — see the orphan
@@ -287,7 +292,7 @@ export function checkSubtotal(
 
   if (declared === null) {
     const message =
-      `${sheetLabel}: the ${rolled.count} ${noun} line(s) add up to ${rupees(rolled.total)}; no ` +
+      `${sheetLabel}: the ${linesAdd(rolled.count, noun)} up to ${rupees(rolled.total)}; no ` +
       `${noun} cost is declared on the sheet.`;
     return { key, unit: "INR", declared: null, computed: rolled.total, difference: null, verdict: "NOT_DECLARED", message, lineCount: rolled.count };
   }
@@ -296,9 +301,9 @@ export function checkSubtotal(
   const verdict = compare(declared, rolled.total, TOLERANCE_RUPEES);
   const message =
     verdict === "AGREES"
-      ? `${sheetLabel}: the ${rolled.count} ${noun} line(s) add up to ${rupees(rolled.total)}, ` +
+      ? `${sheetLabel}: the ${linesAdd(rolled.count, noun)} up to ${rupees(rolled.total)}, ` +
         `which is what the sheet declares.`
-      : `${sheetLabel}: the ${rolled.count} ${noun} line(s) add up to ${rupees(rolled.total)}, but ` +
+      : `${sheetLabel}: the ${linesAdd(rolled.count, noun)} up to ${rupees(rolled.total)}, but ` +
         `the sheet declares ${rupees(declared)} — ${rupees(Math.abs(difference))} ` +
         `${difference < 0 ? "less" : "more"} than the lines account for.`;
   return { key, unit: "INR", declared, computed: rolled.total, difference, verdict, message, lineCount: rolled.count };

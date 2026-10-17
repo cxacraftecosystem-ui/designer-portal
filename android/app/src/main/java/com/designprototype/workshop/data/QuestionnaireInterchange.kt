@@ -244,13 +244,13 @@ const val QFORM_REUSED = "reused"
  */
 fun qFormUploadSummary(report: QFormChangeReportDto): String {
     val parts = listOfNotNull(
-        report.created.takeIf { it > 0 }?.let { "$it question(s) added" },
+        report.created.takeIf { it > 0 }?.let { "${plural(it, "question")} added" },
         report.updated.takeIf { it > 0 }?.let { "$it edited" },
         report.superseded.takeIf { it > 0 }?.let { "$it superseded" },
         report.retired.takeIf { it > 0 }?.let { "$it retired" },
         report.removed.takeIf { it > 0 }?.let { "$it removed" },
-        report.sections.takeIf { it > 0 }?.let { "$it section(s)" },
-        report.entriesCreated.takeIf { it > 0 }?.let { "$it sitting(s) recorded" },
+        report.sections.takeIf { it > 0 }?.let { plural(it, "section") },
+        report.entriesCreated.takeIf { it > 0 }?.let { "${plural(it, "sitting")} recorded" },
         report.unchanged.takeIf { it > 0 }?.let { "$it unchanged" },
     )
     return if (parts.isEmpty()) {
@@ -316,9 +316,9 @@ fun qFormProvenanceNotice(report: QFormChangeReportDto): QFormProvenanceNotice? 
         heading = if (skipped) "The answers in this file were NOT imported" else "The answers in this file were imported",
         reason = provenance.reason,
         tally = when {
-            skipped && count > 0 -> "$count answer(s) left where they already are"
-            !skipped && count > 0 && entries > 0 -> "$count answer(s) in $entries sitting(s), credited to you"
-            !skipped && count > 0 -> "$count answer(s), attributed to you"
+            skipped && count > 0 -> "${plural(count, "answer")} left where ${if (count == 1) "it already is" else "they already are"}"
+            !skipped && count > 0 && entries > 0 -> "${plural(count, "answer")} in ${plural(entries, "sitting")}, credited to you"
+            !skipped && count > 0 -> "${plural(count, "answer")}, attributed to you"
             else -> null
         },
     )

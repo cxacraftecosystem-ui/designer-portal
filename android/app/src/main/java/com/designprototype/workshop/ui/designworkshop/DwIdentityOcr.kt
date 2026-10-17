@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.AppToggle
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.ui.destructiveAction
@@ -711,7 +712,7 @@ internal fun DwIdentityCardControl(
                         onError(
                             (localRejected + result.rejectedAadhaarCount).let { rejected ->
                                 if (rejected > 0) {
-                                    "$rejected number(s) read but none valid, and there's no connection to try online. Retake in better light, or type it."
+                                    "${plural(rejected, "number")} read but none valid, and there's no connection to try online. Retake in better light, or type it."
                                 } else {
                                     "No number found, and there's no connection to try online. Fill the frame, hold flat and retry — or type it."
                                 }
@@ -1062,7 +1063,7 @@ internal fun nothingFoundOffline(
         "Pehchan needs a connection. Type it now."
     // The card WAS found and misread — better light, no glare. Distinct from "not found".
     rejected > 0 ->
-        "$rejected number(s) read but none valid, and there's no connection to try online. Retake in better light, or type it."
+        "${plural(rejected, "number")} read but none valid, and there's no connection to try online. Retake in better light, or type it."
     // Nothing found at all — fill the frame. Says the server was NOT asked, so a designer who moves
     // into signal knows there is something left to try rather than concluding the card is unreadable.
     kind == DwIdentityKind.PEHCHAN || kind == DwIdentityKind.ANY ->

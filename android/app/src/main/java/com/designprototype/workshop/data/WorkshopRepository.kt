@@ -8190,7 +8190,7 @@ class WorkshopRepository(
             // here — and re-attempting it every app run would re-POST a record that is ALREADY on the
             // server. This one really does wait for a person.
             return ReplayOutcome.Rejected(
-                "Saved, but ${refused.size} file(s) didn't upload: ${refused.distinct().joinToString(" ")} Re-attach them."
+                "Saved, but ${plural(refused.size, "file")} didn't upload: ${refused.distinct().joinToString(" ")} Re-attach them."
             )
         }
         return ReplayOutcome.Synced

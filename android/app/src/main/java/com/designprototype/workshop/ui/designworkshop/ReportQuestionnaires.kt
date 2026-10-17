@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.data.DwQuestionnaireAnswer
 import com.designprototype.workshop.data.DwQuestionnaireCache
 import com.designprototype.workshop.data.DwQuestionnaireItem
@@ -140,7 +141,7 @@ internal fun renderQuestionnaireAnnexure(
         }
         if (dropped > 0) {
             builder.para(
-                "[$dropped further sitting(s) were recorded against this questionnaire and are " +
+                "[$dropped further ${if (dropped == 1) "sitting was" else "sittings were"} recorded against this questionnaire and ${if (dropped == 1) "is" else "are"} " +
                     "not printed here. The full set is in the online workshop record.]",
                 style = ParaStyle.NOTE,
             )
@@ -171,7 +172,7 @@ private fun deviceNotes(cache: DwQuestionnaireCache): List<String> {
         val names = unread.joinToString("; ") {
             it.title.ifBlank { "questionnaire ${it.questionnaireId}" }
         }
-        notes += "${unread.size} questionnaire(s) attached to this workshop are not printed below: " +
+        notes += "${plural(unread.size, "questionnaire")} attached to this workshop ${if (unread.size == 1) "is" else "are"} not printed below: " +
             "$names. Their answers are in the online workshop record."
     }
     if (!cache.complete) {
@@ -251,7 +252,7 @@ internal fun sittingProvenance(sitting: DwQuestionnaireSitting): String {
         else -> ""
     }
     return listOf(
-        "${sitting.answeredCount} question(s) answered",
+        "${plural(sitting.answeredCount, "question")} answered",
         source,
         sitting.recordedAt.take(10),
         if (sitting.recordedBy.isNotEmpty()) "recorded by ${sitting.recordedBy}" else "",
@@ -268,8 +269,8 @@ internal fun sittingProvenance(sitting: DwQuestionnaireSitting): String {
  */
 internal fun questionnaireProvenance(item: DwQuestionnaireItem): String {
     val parts = listOf(
-        "${item.printedSittings.size} sitting(s)",
-        if (item.questionCount > 0) "${item.questionCount} question(s)" else "",
+        plural(item.printedSittings.size, "sitting"),
+        if (item.questionCount > 0) plural(item.questionCount, "question") else "",
         "version ${item.version}",
         if (item.sourceFilename.isNotEmpty()) "from ${item.sourceFilename}" else "",
         "questionnaire ${item.questionnaireId}",

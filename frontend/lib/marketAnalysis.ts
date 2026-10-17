@@ -156,6 +156,11 @@ export type MarketRow = Record<string, unknown>;
 const PY_SPACE = /\p{White_Space}/u;
 
 /** Whether Python's `str.isspace()` is true of one character. */
+/** A count and its noun, agreed: "1 price observation", "3 price observations" (DA-38). The Python's `_count`. */
+function countOf(count: number, noun: string): string {
+  return count === 1 ? `${count} ${noun}` : `${count} ${noun}s`;
+}
+
 function isPySpace(character: string): boolean {
   const code = character.charCodeAt(0);
   // 28 to 31 are U+001C to U+001F, the four `\p{White_Space}` leaves out. Written as numbers because
@@ -645,7 +650,7 @@ export function judgeBand(
     return {
       category, declaredLow, declaredHigh, evidence: dist,
       inside: 0, below: 0, above: 0, coverage: 0, verdict: "NO_EVIDENCE",
-      message: `${dist.count} price observation(s) exist for ${named}, but the band itself is incomplete.`
+      message: `${countOf(dist.count, "price observation")} ${dist.count === 1 ? "exists" : "exist"} for ${named}, but the band itself is incomplete.`
     };
   }
 
@@ -666,7 +671,7 @@ export function judgeBand(
     return {
       category, declaredLow, declaredHigh, evidence: dist, inside, below, above, coverage,
       verdict: "UNVERIFIABLE",
-      message: `Only ${dist.count} price observation(s) were recorded for ${named} — too few to ` +
+      message: `Only ${countOf(dist.count, "price observation")} ${dist.count === 1 ? "was" : "were"} recorded for ${named} — too few to ` +
         `judge the band against. ${inside} of them fall inside it.`
     };
   }
@@ -1063,7 +1068,7 @@ export function analyse({
   const cautions: string[] = [];
   if (respondentValues.length && respondentValues.length < MIN_SAMPLE_FOR_VERDICT) {
     cautions.push(
-      `Only ${respondentValues.length} respondent price expectation(s) were recorded. The figures ` +
+      `Only ${countOf(respondentValues.length, "respondent price expectation")} ${respondentValues.length === 1 ? "was" : "were"} recorded. The figures ` +
         `below describe what was collected; they are not a market estimate.`
     );
   }

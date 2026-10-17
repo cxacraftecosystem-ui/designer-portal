@@ -1311,10 +1311,13 @@ private fun FolderRow(folder: DataTreeEntryDto, onOpen: () -> Unit) {
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .openable(folder.name, MaterialTheme.shapes.medium, onOpen = onOpen)
+                .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {

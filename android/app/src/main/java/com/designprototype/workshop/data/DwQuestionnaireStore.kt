@@ -546,14 +546,14 @@ fun dwQuestionnaireWarnings(cache: DwQuestionnaireCache?): List<String> {
     if (empty.isNotEmpty()) {
         val names = empty.take(3).joinToString(", ") { it.title.ifBlank { it.questionnaireId } }
         val more = if (empty.size > 3) "…" else ""
-        said += "${empty.size} questionnaire(s) attached to this workshop have no recorded answers " +
-            "and were left out of the questionnaire annexure ($names$more)."
+        said += "${plural(empty.size, "questionnaire")} attached to this workshop ${if (empty.size == 1) "has" else "have"} no recorded answers " +
+            "and ${if (empty.size == 1) "was" else "were"} left out of the questionnaire annexure ($names$more)."
     }
     val unread = cache.unreadItems
     if (unread.isNotEmpty()) {
         val names = unread.take(3).joinToString(", ") { it.title.ifBlank { it.questionnaireId } }
         val more = if (unread.size > 3) "…" else ""
-        said += "${unread.size} questionnaire(s) attached to this workshop are named in the annexure " +
+        said += "${plural(unread.size, "questionnaire")} attached to this workshop ${if (unread.size == 1) "is" else "are"} named in the annexure " +
             "without their answers ($names$more). Open the questionnaire on this phone once while " +
             "you have a connection, then export again to include them."
     }

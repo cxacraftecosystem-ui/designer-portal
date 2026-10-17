@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.MediaActionButton
 import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.background
@@ -153,7 +154,7 @@ internal fun WorkshopSyncActions(
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         if (status.pendingMedia > 0) {
             Text(
-                "${status.pendingMedia} file(s) (${syncBytes(status.pendingMediaBytes)}) only on this phone.",
+                "${plural(status.pendingMedia, "file")} (${syncBytes(status.pendingMediaBytes)}) only on this phone.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )

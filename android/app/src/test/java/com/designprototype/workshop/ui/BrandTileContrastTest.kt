@@ -51,7 +51,7 @@ class BrandTileContrastTest {
     @Test
     fun theCardUsesTheTileInkNotTheThemeCanvas() {
         val source = File("src/main/java/com/designprototype/workshop/MainActivity.kt").readText()
-        val start = source.indexOf("file(s) attached\"")
+        val start = source.indexOf("\"file\")} attached\"")
         assertTrue("the attached-files card must exist", start >= 0)
         val card = source.substring(start - 2000, start + 6000)
         assertFalse("the card must not draw in the theme's canvas colour", card.contains("color = Canvas"))

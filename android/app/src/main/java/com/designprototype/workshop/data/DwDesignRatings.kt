@@ -692,7 +692,7 @@ fun dwLedgerEmptyNote(ledger: SubjectLedgerDto): String? {
     return when {
         ledger.summary.ratingCount == 0 -> "Nobody has rated this piece yet."
         ledger.canReadLedger -> "No ratings could be shown for this piece."
-        else -> "${ledger.summary.ratingCount} designer(s) have rated this piece. You can see the score, not who gave it."
+        else -> "${plural(ledger.summary.ratingCount, "designer")} ${if (ledger.summary.ratingCount == 1) "has" else "have"} rated this piece. You can see the score, not who gave it."
     }
 }
 

@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.AppToggle
 import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.clickable
@@ -760,8 +761,8 @@ private fun HeaderCard(
                 Text(it, color = MaterialTheme.field.body, fontSize = 12.sp)
             }
             Text(
-                "${activeQuestionCount(form)} question(s) in " +
-                    "${form.sections.count { it.isActive }} section(s) · version ${form.version}",
+                "${plural(activeQuestionCount(form), "question")} in " +
+                    "${plural(form.sections.count { it.isActive }, "section")} · version ${form.version}",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )

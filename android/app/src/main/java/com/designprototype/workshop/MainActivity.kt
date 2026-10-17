@@ -1,5 +1,6 @@
 package com.designprototype.workshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.ui.destructiveAction
 import android.Manifest
@@ -220,6 +221,7 @@ import com.designprototype.workshop.ui.PasswordRevealIcon
 import com.designprototype.workshop.ui.passwordTransformation
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.withStyle
@@ -443,6 +445,8 @@ import com.designprototype.workshop.ui.workshopCapLine
 import com.designprototype.workshop.ui.RecordCodeLookupPanel
 import com.designprototype.workshop.ui.RecordCodeSection
 import com.designprototype.workshop.ui.RecordOpen
+import com.designprototype.workshop.ui.OpenableCard
+import com.designprototype.workshop.ui.openable
 import com.designprototype.workshop.ui.RecordEditHistorySection
 // The shared prose box behind every record form: an optional on-device microphone and an optional
 // rich-text editor, both defaulting to off. See `ui/RecordProseField.kt` and `ui/RecordProseText.kt`.
@@ -3539,6 +3543,10 @@ private fun HomeScreen(
             }
         }
     }
+    /** A review-queue card's heading: the record's read-only page, only for a type that has one. */
+    val reviewOpenRecord: (recordType: String, recordId: String) -> Unit = { recordType, recordId ->
+        openSearchRecord(recordType.lowercase(), recordId)
+    }
 
     // Who may START a new entry of each kind, mirroring the backend dependency on the POST route.
     // A volunteer is deliberately allowed to answer interviews, upload media, browse, use tasks and
@@ -4778,7 +4786,8 @@ private fun HomeScreen(
                 // refuses.
                 s.section == AdminHubEntry.REVIEWS && canReview -> ReviewApprovalCard(
                     repository = repository,
-                    onError = { showError(it) }
+                    onError = { showError(it) },
+                    onOpenRecord = reviewOpenRecord
                 )
                 // The blurb names what is actually behind the toggle, and only the part EVERY admin
                 // gets. It used to promise "user management", which is not in this hub at all
@@ -5070,7 +5079,7 @@ private fun HomeScreen(
                     }
                 )
                 if (canReview) {
-                    ReviewApprovalCard(repository = repository, onError = { showError(it) })
+                    ReviewApprovalCard(repository = repository, onError = { showError(it) }, onOpenRecord = reviewOpenRecord)
                 }
             }
 
@@ -6130,43 +6139,21 @@ private fun DashboardScreen(
     /*
      * ── TWO COLUMN COUNTS, AND THE SECOND IS DERIVED FROM THE FIRST ─────────────────────────────
      *
-     * The owner's ruling: "there should be two cards in a row for a megacard only on the larger
-     * screens, and 1 card on mobile screens". Read as written, that is two numbers rather than one:
-     * how many MEGA CARDS stand side by side, and how many action cards stand side by side INSIDE
-     * one of them. The second cannot be a breakpoint on the screen, because the same 1024dp screen
-     * gives a mega card half its width when two of them share a row and all of it when one does.
+     * How many MEGA CARDS stand side by side (840dp is the breakpoint), and how many tiles stand side
+     * by side INSIDE an open one. The inner count is a fit test against the mega card's measured
+     * width, not a second breakpoint: the app's 16dp gutter, the 12dp gap and the mega card's own
+     * 14dp padding are subtracted, and two tiles are drawn whenever two [DASH_MIN_CARD_DP] tiles fit.
      *
-     * 840dp IS THE MEGA BREAKPOINT and is the number this screen already used for its widest grid,
-     * so a tablet that drew four cards across before does not suddenly draw two.
+     *   · 360dp handset  -> 1 mega card 328dp wide -> 2 tiles per row (144dp each).
+     *   · 600dp tablet   -> 1 mega card 568dp wide -> 2 tiles per row.
+     *   · 840dp+         -> 2 mega cards           -> 2 tiles per row in each.
      *
-     * THE INNER COUNT IS A FIT TEST AGAINST A MEASURED WIDTH, NOT A SECOND BREAKPOINT. It asks one
-     * question -- would two cards of the narrowest width this app already ships fit inside THIS mega
-     * card -- and the arithmetic is the real chrome, not a guess: the whole app sits inside
-     * [RepositoryApp]'s root `Box(...).padding(16.dp)`, two mega cards are separated by
-     * [DASH_GRID_GAP_DP], and a mega card spends [DASH_MEGA_PAD_DP] on each of its own edges.
-     *
-     * WHAT THAT PRODUCES, stated so the next reader does not have to run it:
-     *
-     *   · 360dp handset  -> 1 mega card 328dp wide -> 1 card per row. The owner's "1 card on mobile
-     *     screens", and the one band where this is a REDUCTION: the grid was two columns here.
-     *   · 600dp tablet   -> 1 mega card 568dp wide -> 2 cards per row. Was three; one column is the
-     *     price of the headings, and the headings are what the owner asked for.
-     *   · 840dp          -> 2 mega cards 398dp wide -> 2 cards per row, so four across, which is
-     *     exactly what the old `>= 840 -> 4` arm drew. The grouping costs this band nothing.
-     *   · 1280dp         -> 2 mega cards 618dp wide -> 2 cards per row.
-     *
-     * A THIRD INNER COLUMN IS DELIBERATELY NOT OFFERED. Three action cards inside a mega card inside
-     * a two-up row is a card about 200dp wide holding a 38dp chip, a wrapping label and two buttons,
-     * and the thing being grouped stops being legible at that point. If a wider class of device ever
-     * needs it, widen [megaColumns] first -- more mega cards side by side is the axis the owner
-     * named.
+     * TWO PER ROW ON A PHONE (owner, 2026-10-17), as documentation-portal's dashboard draws its tiles.
+     * The 2026-10 grouping had dropped phones to one tile per row; an open group of eight then ran
+     * four screens long. A third inner column is never offered: widen [megaColumns] first.
      */
-    val megaColumns = if (configuration.screenWidthDp >= 840) 2 else 1
-    val megaWidthDp =
-        (configuration.screenWidthDp - 2 * DASH_PAGE_GUTTER_DP - (megaColumns - 1) * DASH_GRID_GAP_DP) /
-            megaColumns
-    val innerColumns =
-        if (megaWidthDp - 2 * DASH_MEGA_PAD_DP >= 2 * DASH_MIN_CARD_DP + DASH_GRID_GAP_DP) 2 else 1
+    val megaColumns = dashboardMegaColumns(configuration.screenWidthDp)
+    val innerColumns = dashboardInnerColumns(configuration.screenWidthDp)
     // One list for the whole grid. The admin "Settings" card used to be emitted as its own Row below
     // the grid with `columns - 1` spacers after it, which is exactly why it never lined up with the
     // cards above: a second Row measures independently of the first. It is a tile like any other.
@@ -6594,6 +6581,8 @@ private fun EntryMode.createButtonLabel(): String = when (this) {
  * `internal` and top-level so the parity test can call it. [DashboardTile] below is file-private,
  * as is every other part of this grid, and a rule nothing can reach is a rule nothing can check.
  */
+internal fun dashboardTileClickLabel(primaryLabel: String, label: String): String = "$primaryLabel $label"
+
 internal fun dashboardPrimaryIcon(primaryLabel: String): ImageVector =
     if (primaryLabel == "Open" || primaryLabel == "Manage") Icons.AutoMirrored.Filled.ArrowForward
     else Icons.Filled.Add
@@ -6639,17 +6628,26 @@ private class DashboardTile(
  * `weight(1f)` so it — not the buttons — absorbs the slack. That is the web card's `mt-auto`: the
  * action row is pinned to the bottom edge, so it sits at one height across the whole row no matter
  * how many lines each label needs.
+ *
+ * THE WHOLE CARD IS THE PRIMARY ACTION (owner ruling, 2026-10-16), as on documentation-portal: a tap
+ * anywhere on it does what the filled button says, and only the outlined "Update" reaches the
+ * update screen. This card had no click of its own until 2026-10-17 — the earlier port added
+ * whole-card taps to the record rows but never to this tile, so a tap on its icon or label did
+ * nothing. The click sits on the content, inside the card's clip ([openable]); both buttons are
+ * children with their own pointer handling, so "Update" never also fires the card.
  */
 @Composable
 private fun DashboardActionCard(tile: DashboardTile, modifier: Modifier = Modifier) {
+    val shape = MaterialTheme.shapes.large
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = MaterialTheme.shapes.large,
+        shape = shape,
         modifier = modifier
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .openable(title = tile.label, shape = shape, clickLabel = dashboardTileClickLabel(tile.primaryLabel, tile.label)) { tile.onPrimary() }
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -6694,14 +6692,15 @@ private fun DashboardActionCard(tile: DashboardTile, modifier: Modifier = Modifi
     }
 }
 
-/** Icon + single-line label, sized to never wrap inside the narrow dashboard cards. */
+/** Icon + label for the narrow dashboard tiles; the label wraps to two lines rather than clipping. */
 @Composable
 private fun CardButtonLabel(icon: ImageVector, text: String) {
     Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
     Spacer(Modifier.width(6.dp))
-    // Ellipsis, not a silent clip: the cards are two-to-a-row on a phone and "New interview" is wider
-    // than the button at that width.
-    Text(text, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+    // TWO LINES, never an ellipsis, as documentation-portal draws it: the tiles are two to a row on a
+    // phone and "New interview" is wider than a 144dp button. The row's IntrinsicSize.Min keeps the
+    // neighbouring tile's buttons level with a wrapped one.
+    Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, textAlign = TextAlign.Center)
 }
 
 /*
@@ -6711,21 +6710,28 @@ private fun CardButtonLabel(icon: ImageVector, text: String) {
  * rather than by picking a second breakpoint, so each one has to be the real measurement it claims
  * to be. Every one is a number already on screen somewhere; none is a taste.
  */
+/** Mega cards side by side: two from 840dp, one below. */
+internal fun dashboardMegaColumns(screenWidthDp: Int): Int = if (screenWidthDp >= 840) 2 else 1
+
+/** Tiles side by side inside an open mega card. See [DashboardScreen]'s derivation. */
+internal fun dashboardInnerColumns(screenWidthDp: Int): Int {
+    val mega = dashboardMegaColumns(screenWidthDp)
+    val megaWidthDp = (screenWidthDp - 2 * DASH_PAGE_GUTTER_DP - (mega - 1) * DASH_GRID_GAP_DP) / mega
+    return if (megaWidthDp - 2 * DASH_MEGA_PAD_DP >= 2 * DASH_MIN_CARD_DP + DASH_GRID_GAP_DP) 2 else 1
+}
+
 /** [RepositoryApp]'s root `Box(...).padding(16.dp)` — the app's own gutter, one per side. */
-private const val DASH_PAGE_GUTTER_DP = 16
+internal const val DASH_PAGE_GUTTER_DP = 16
 /** `Arrangement.spacedBy(12.dp)` — the gap between two cards, and between two mega cards. */
-private const val DASH_GRID_GAP_DP = 12
+internal const val DASH_GRID_GAP_DP = 12
 /** A mega card's own padding, matching [DashboardActionCard]'s 14dp so the two edges agree. */
-private const val DASH_MEGA_PAD_DP = 14
+internal const val DASH_MEGA_PAD_DP = 14
 /**
- * The narrowest a [DashboardActionCard] may be drawn, and NOT a round number chosen for comfort: it
- * is the width one already has, today, on the 360dp handset this app is tested on, where the
- * two-column grid gives each card (360 - 2x16 gutters - 12 gap) / 2 = 158dp. A card of that width
- * carries a 38dp chip, a label that wraps to two lines and a "New" beside an "Update", because it
- * has been doing exactly that since the grid was built. Anything narrower is a claim nothing in this
- * tree supports.
+ * The narrowest a [DashboardActionCard] may be drawn: 140dp holds the 38dp chip, a label on two lines
+ * and full-width "New" / "Update" buttons whose words wrap rather than clip ([CardButtonLabel]). Two
+ * of them plus the gap fit the 300dp inside an open mega card on a 360dp handset.
  */
-private const val DASH_MIN_CARD_DP = 158
+internal const val DASH_MIN_CARD_DP = 140
 
 /**
  * ONE MEGA CARD: a colour-coded header that opens and shuts, and the cards of one [DashGroup].
@@ -6794,7 +6800,13 @@ private fun DashboardMegaCard(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onToggle)
+                    .clip(MaterialTheme.shapes.medium)
+                    .clickable(
+                        role = Role.Button,
+                        onClickLabel = if (expanded) "Hide ${group.title}" else "Show ${group.title}",
+                        onClick = onToggle
+                    )
+                    .heightIn(min = 48.dp)
             ) {
                 Box(
                     modifier = Modifier
@@ -7977,7 +7989,7 @@ private suspend fun uploadAttachments(
         }.getOrNull()
 
         val allFailed = failures.size == media.uris.size
-        val prefix = if (allFailed) "All ${failures.size} file(s) failed to upload" else "${failures.size} file(s) failed to upload"
+        val prefix = if (allFailed) "All ${plural(failures.size, "file")} failed to upload" else "${plural(failures.size, "file")} failed to upload"
         // STILL THROWN. The caller's `onFailure` is what puts this on screen and what stops the form
         // reporting a clean save, and both are still true — the record is on the server and its
         // media is not. What changed is which sentence is honest.
@@ -9774,7 +9786,7 @@ private fun AudioClipRecorder(
                 paused = phase == RecPhase.PAUSED
             )
         }
-        Text("${clips.size} clip(s)", color = Muted, fontSize = 11.sp)
+        Text(plural(clips.size, "clip"), color = Muted, fontSize = 11.sp)
     }
 }
 
@@ -9956,7 +9968,7 @@ private fun MediaCaptureSection(
                 // primary "Clear attachments" vanished into the purple in light mode (release smoke
                 // 2026-10-17, dp-final/26, 47). `BrandTileContrastTest` measures every pair.
                 val tileInk = MaterialTheme.field.onBrandTile
-                Text("${media.uris.size} file(s) attached", color = tileInk, fontWeight = FontWeight.SemiBold)
+                Text("${plural(media.uris.size, "file")} attached", color = tileInk, fontWeight = FontWeight.SemiBold)
                 // Overall upload progress across the whole batch (staged files count as 100%).
                 val overall = media.uris.map { (media.stagedProgress[it] ?: 0f).coerceIn(0f, 1f) }.average().toFloat()
                 val status = attachedUploadsStatus(
@@ -10094,7 +10106,7 @@ private fun AttachedUploadsCard(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text("${uris.size} $label(s) attached", color = tileInk, fontWeight = FontWeight.SemiBold)
+        Text("${plural(uris.size, label)} attached", color = tileInk, fontWeight = FontWeight.SemiBold)
         val overall = uris.map { (media.stagedProgress[it] ?: 0f).coerceIn(0f, 1f) }.average().toFloat()
         val status = attachedUploadsStatus(total = uris.size, done = doneCount, failed = failedCount, fraction = overall)
         if (status.showProgress) {
@@ -13645,7 +13657,7 @@ private fun ToolStagesSection(
             RecordingIndicator(getAmplitude = { runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0) })
         }
         if (stages.uris.isNotEmpty()) {
-            Text("${stages.uris.size} stage step(s) captured", color = Muted, fontSize = 12.sp)
+            Text("${plural(stages.uris.size, "stage step")} captured", color = Muted, fontSize = 12.sp)
             stages.uris.forEachIndexed { index, uri ->
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("Step ${index + 1}", color = Body, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -14233,7 +14245,7 @@ private fun ProcessForm(
             artisanId.isNotBlank() && artisanProducts.isEmpty() ->
                 Text("No products for this artisan yet. Create one first.", color = Muted, fontSize = 11.sp)
             artisanId.isNotBlank() && artisanProducts.isNotEmpty() ->
-                Text("${artisanProducts.size} product(s) for this artisan.", color = Muted, fontSize = 11.sp)
+                Text("${plural(artisanProducts.size, "product")} for this artisan.", color = Muted, fontSize = 11.sp)
         }
         if (productError != null) Text(productError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
 
@@ -14685,9 +14697,16 @@ private fun MyActivityScreen(
                         // its record code), reached from Search and from this list. The flag outlived
                         // its reason and was left asserting the opposite of the code beside it.
                         // Read-only first: the record's page, where Update leads to the form.
-                        .clickable(onClickLabel = RecordOpen.openClickLabel(item.title), role = Role.Button) { onOpen(item.mode, item.id) }
                 ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    // The click sits on the content, inside the card's clip ([openable]), so the
+                    // ripple follows the rounded corner rather than flashing a square around it.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .openable(item.title, RoundedCornerShape(14.dp)) { onOpen(item.mode, item.id) }
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
                         Text(item.title, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                         Text(
                             item.subtitle + (formatIsoDate(item.createdAt)?.let { " · $it" } ?: ""),
@@ -14797,14 +14816,14 @@ private fun ToolAssignScreen(
                 scope.launch {
                     saving = true
                     runCatching { repository.assignToolArtisans(toolId, artisanIds.toList()) }
-                        .onSuccess { result -> assigned = result; artisanIds = emptySet(); info = "Linked to ${result.size} artisan(s)." }
+                        .onSuccess { result -> assigned = result; artisanIds = emptySet(); info = "Linked to ${plural(result.size, "artisan")}." }
                         .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; onError(it.userMessage("Assignment failed")) }
                     saving = false
                 }
             },
             enabled = !saving && toolId.isNotBlank() && artisanIds.isNotEmpty(),
             modifier = Modifier.fillMaxWidth()
-        ) { Text(if (saving) "Assigning…" else "Assign tool to ${artisanIds.size} artisan(s)") }
+        ) { Text(if (saving) "Assigning…" else "Assign tool to ${plural(artisanIds.size, "artisan")}") }
 
         if (toolId.isNotBlank()) {
             HorizontalDivider()
@@ -15970,7 +15989,7 @@ private fun MasterFeedbackCard(repository: WorkshopRepository, onError: (String)
             else -> {
                 val avg = feedback.mapNotNull { it.rating }.takeIf { it.isNotEmpty() }?.average()
                 Text(
-                    "${feedback.size} user(s) gave feedback" + (avg?.let { " · average rating ${"%.1f".format(it)} / 5" } ?: ""),
+                    "${plural(feedback.size, "user")} gave feedback" + (avg?.let { " · average rating ${"%.1f".format(it)} / 5" } ?: ""),
                     color = Body,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
@@ -16093,7 +16112,7 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
             loading -> Text("Loading…", color = Muted, fontSize = 12.sp)
             orphans.isEmpty() -> Text("None — every recording is attached.", color = Muted, fontSize = 12.sp)
             else -> {
-                Text("${orphans.size} recovered file(s)", color = Body, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text(plural(orphans.size, "recovered file"), color = Body, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                 orphans.forEach { m ->
                     Column(
                         modifier = Modifier
@@ -16312,8 +16331,8 @@ private fun AdminHubScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onSectionChange(entry) }
                         .background(SurfaceCard, RoundedCornerShape(12.dp))
+                        .openable(entry.label, RoundedCornerShape(12.dp)) { onSectionChange(entry) }
                         .padding(14.dp)
                 ) {
                     Box(
@@ -16526,7 +16545,7 @@ private fun ViewDataScreen(
             loadingList -> Text("Loading ${mode.label.lowercase()}…", color = Muted)
             mode == EntryMode.QUESTIONNAIRE -> {
                 ArtisanMultiSelectField(
-                    label = "Involved artisan(s)",
+                    label = "Involved artisans",
                     artisans = artisanFilterList,
                     selectedIds = selectedArtisanIds
                 ) { id ->
@@ -16747,7 +16766,12 @@ private suspend fun loadReviewRecordValues(
  * drop off. Gated by [canReview] (any admin, or a user the master admin granted the review permission).
  */
 @Composable
-private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String) -> Unit) {
+private fun ReviewApprovalCard(
+    repository: WorkshopRepository,
+    onError: (String) -> Unit,
+    /** Opens a queued record read-only, by its wire type. Null where the host has no route. */
+    onOpenRecord: ((recordType: String, recordId: String) -> Unit)? = null
+) {
     val scope = rememberCoroutineScope()
     // THE WHOLE ENVELOPE, not just the rows. `cap`, `total` and `truncated` are how this card can
     // say the queue was cut at all — the rows the server dropped are the OLDEST, so a screen that
@@ -16829,6 +16853,7 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
                         PendingReviewRow(
                             repository = repository,
                             item = item,
+                            onOpen = onOpenRecord?.let { open -> { open(item.recordType, item.id) } },
                             onResolved = { message ->
                                 // Approve / reject / revise all move the record out of PENDING, so drop
                                 // it from the list rather than re-fetching the whole queue. Matched on
@@ -16872,6 +16897,8 @@ private fun ReviewApprovalCard(repository: WorkshopRepository, onError: (String)
 private fun PendingReviewRow(
     repository: WorkshopRepository,
     item: PendingReviewDto,
+    /** Opens the record read-only: a tap on the card's heading. Its buttons consume their own taps. */
+    onOpen: (() -> Unit)? = null,
     onResolved: (String) -> Unit,
     onInfo: (String) -> Unit,
     onError: (String) -> Unit
@@ -16920,7 +16947,16 @@ private fun PendingReviewRow(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(item.label, color = Body, fontWeight = FontWeight.SemiBold)
+            // THE HEADING OPENS THE RECORD READ-ONLY, so a reviewer can read it whole before deciding.
+            // Only the heading and not the whole card: the card also holds the inline Update and
+            // revision panels, whose fields must take their own taps.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .openable(item.label, RoundedCornerShape(8.dp), enabled = onOpen != null) { onOpen?.invoke() },
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+            Text(item.label, color = if (onOpen != null) MaterialTheme.colorScheme.primary else Body, fontWeight = FontWeight.SemiBold)
             Text(
                 listOfNotNull(
                     item.recordType.replaceFirstChar { it.uppercase() },
@@ -16931,6 +16967,7 @@ private fun PendingReviewRow(
                 color = Muted,
                 fontSize = 11.sp
             )
+            }
             if (item.needsAdminApproval) {
                 Text(
                     "Late submission — only an admin can edit or approve it.",
@@ -17070,7 +17107,7 @@ private fun PendingReviewRow(
                             enabled = !busy && changed.isNotEmpty(),
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
-                                act("Edited ${item.label} (${changed.size} field(s))", resolves = false) {
+                                act("Edited ${item.label} (${plural(changed.size, "field")})", resolves = false) {
                                     repository.editReviewedRecord(item.recordType, item.id, changed, editNote)
                                     // Re-read so the baseline matches what the server actually stored —
                                     // it title-cases names, so the box must show the normalised value.
@@ -17086,7 +17123,7 @@ private fun PendingReviewRow(
                                 when {
                                     busy -> "Saving…"
                                     changed.isEmpty() -> "No changes yet"
-                                    else -> "Save ${changed.size} change(s)"
+                                    else -> "Save ${plural(changed.size, "change")}"
                                 }
                             )
                         }
@@ -17732,8 +17769,8 @@ private fun ViewDataDetail(
                 DetailRow("Notes", rep.notes)
                 DetailRow("Status", rep.status)
                 val researchers = g.mapNotNull { it.createdBy?.name }.distinct().joinToString(", ")
-                if (researchers.isNotBlank()) DetailRow("Interviewer(s)", researchers)
-                if (g.size > 1) DetailRow("Merged from", "${g.size} interview records for these artisan(s)")
+                if (researchers.isNotBlank()) DetailRow(if (researchers.contains(", ")) "Interviewers" else "Interviewer", researchers)
+                if (g.size > 1) DetailRow("Merged from", "${g.size} interview records for these artisans")
                 // Answers aggregated across every record in the group (deduped by question + text).
                 val allResponses = g.flatMap { it.responses }
                     .filter { !it.answerText.isNullOrBlank() }
@@ -18385,7 +18422,7 @@ private fun AndroidMediaForm(
                             selectedUris = failedUris.toList()
                             uploadStatus = ActionStatus.ERROR
                             val msg = if (success == 0) {
-                                "All ${failedUris.size} file(s) failed. Check your connection and tap Upload to retry."
+                                "All ${plural(failedUris.size, "file")} failed. Check your connection and tap Upload to retry."
                             } else {
                                 "$success uploaded, ${failedUris.size} failed. Tap Upload to retry."
                             }
@@ -18548,7 +18585,7 @@ private fun MediaProcessingJobsCard(
                                     // saying otherwise has an admin press this twice and give up.
                                     "Nothing ran — jobs run off-peak or when a provider is free. They stay queued."
                                 } else {
-                                    "Ran ${run.processed} job(s): ${run.succeeded} succeeded, ${run.failed} failed."
+                                    "Ran ${plural(run.processed, "job")}: ${run.succeeded} succeeded, ${run.failed} failed."
                                 }
                                 tick += 1
                             }
@@ -19934,7 +19971,7 @@ private fun QuestionnaireForm(
                                 Text("${section.code}. ${section.title}", display = true, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp)
                                 Text(
                                     "${activeQuestions.size} questions · $answeredCount answered" +
-                                        (if (sectionSavedMedia.isNotEmpty()) " · ${sectionSavedMedia.size} saved recording(s)" else ""),
+                                        (if (sectionSavedMedia.isNotEmpty()) " · ${plural(sectionSavedMedia.size, "saved recording")}" else ""),
                                     color = Muted,
                                     fontSize = 11.sp
                                 )
@@ -20936,7 +20973,7 @@ private fun QuestionnaireBuilder(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("${section.sortOrder}. ${section.code} - ${section.title}", display = true, fontWeight = FontWeight.SemiBold)
-                            Text("${section.questions.size} question(s)", color = Muted, fontSize = 11.sp)
+                            Text(plural(section.questions.size, "question"), color = Muted, fontSize = 11.sp)
                         }
                         Text(if (expanded) "Hide ▲" else "Show ▼", color = Body, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
@@ -23226,7 +23263,7 @@ private fun DwUnfiledRecordCard(
                                 .onSuccess { answer ->
                                     if (answer.mediaKept > 0) {
                                         onError(
-                                            "${answer.noun.ifBlank { noun }} deleted. ${answer.mediaKept} file(s) kept in Miscellaneous Media."
+                                            "${answer.noun.ifBlank { noun }} deleted. ${plural(answer.mediaKept, "file")} kept in Miscellaneous Media."
                                         )
                                     }
                                 }

@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.openable
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.data.userMessage
 
@@ -1165,7 +1166,9 @@ private fun StageIndexRow(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .openable(stage.title, RoundedCornerShape(8.dp), onOpen = onOpen)
             ) {
                 Text(
                     stage.number.toString().padStart(2, '0'),

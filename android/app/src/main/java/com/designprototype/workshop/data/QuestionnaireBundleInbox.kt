@@ -256,5 +256,5 @@ fun receivedQuestionnaireStatus(row: ReceivedQuestionnaire): String = when {
     row.remoteId != null ->
         "Partly added — ${row.sectionsDone} of ${row.sectionCount} sections are on your account. Continue — do not start again, or you'll get two copies."
     else ->
-        "Not added yet. ${row.questionCount} question(s) in ${row.sectionCount} section(s)."
+        "Not added yet. ${plural(row.questionCount, "question")} in ${plural(row.sectionCount, "section")}."
 }

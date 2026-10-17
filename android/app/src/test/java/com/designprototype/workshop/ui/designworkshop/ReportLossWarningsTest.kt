@@ -257,7 +257,7 @@ class ReportLossWarningsTest {
         // header for why a paraphrase is a defect rather than a style difference.
         assertEquals(
             listOf(
-                "3 photograph(s) recorded in this workshop did not fit Compact summary's " +
+                "3 photographs recorded in this workshop did not fit Compact summary's " +
                     "photograph cap and are not in this file — stage 13. Generate the report with " +
                     "a template that prints every photograph to include them."
             ),
@@ -333,7 +333,7 @@ class ReportLossWarningsTest {
         )
 
         assertEquals(1, notes.size)
-        assertTrue(notes[0], notes[0].startsWith("2 photograph(s) recorded in this workshop"))
+        assertTrue(notes[0], notes[0].startsWith("2 photographs recorded in this workshop"))
         assertTrue(notes[0], notes[0].contains("— stage 4."))
     }
 
@@ -362,7 +362,7 @@ class ReportLossWarningsTest {
 
         assertEquals(1, notes.size)
         // 2 dropped at stage 4 and 1 at stage 13 — three in total, both stages named, ascending.
-        assertTrue(notes[0], notes[0].startsWith("3 photograph(s)"))
+        assertTrue(notes[0], notes[0].startsWith("3 photographs"))
         assertTrue(notes[0], notes[0].contains("— stage 4, stage 13."))
     }
 
@@ -431,7 +431,7 @@ class ReportLossWarningsTest {
         // appends "…" to the LIST and the following sentence's full stop lands after it, so the two
         // clients produce this exact oddity together or the port has drifted.
         assertEquals(
-            "15 photograph(s) recorded in this workshop did not fit Compact summary's photograph " +
+            "15 photographs recorded in this workshop did not fit Compact summary's photograph " +
                 "cap and are not in this file — stage 1, stage 2, stage 3, stage 4…. Generate the " +
                 "report with a template that prints every photograph to include them.",
             note,
@@ -475,7 +475,7 @@ class ReportLossWarningsTest {
 
         // Pinned against `build_report`'s f-string, character for character.
         assertEquals(
-            "4 attached file(s) are named in this report but the files themselves are not inside " +
+            "4 attached files are named in this report but the files themselves are not inside " +
                 "it — stage 1. A report file cannot carry a document, a recording or a video; send " +
                 "them alongside it.",
             dwAttachmentsNotCarriedNote(dwAttachmentsNamedButNotCarried(schema, draft, template)),
@@ -613,7 +613,7 @@ class ReportLossWarningsTest {
         val counted = listOf(1, 2, 3, 4, 5).map { singletonStage(it, "S$it", "Stage $it") to 1 }
 
         assertEquals(
-            "5 attached file(s) are named in this report but the files themselves are not inside " +
+            "5 attached files are named in this report but the files themselves are not inside " +
                 "it — stage 1, stage 2, stage 3, stage 4…. A report file cannot carry a document, " +
                 "a recording or a video; send them alongside it.",
             dwAttachmentsNotCarriedNote(counted),
@@ -649,7 +649,7 @@ class ReportLossWarningsTest {
         // Over-cap first, attachments second — `build_report`'s order. Two call sites each choosing
         // for themselves is how one workshop comes to have two differently-ordered warning lists.
         assertTrue(notes[0], notes[0].contains("photograph cap"))
-        assertTrue(notes[1], notes[1].contains("attached file(s) are named in this report"))
+        assertTrue(notes[1], notes[1].contains("1 attached file is named in this report"))
 
         val printed = printedText(document)
         // THE FILE STILL SAYS AN ATTACHMENT EXISTS — that is honest and it stays. What must not be in

@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -294,7 +295,7 @@ fun QuestionnaireAnswerScreen(
                     }
                     val saved = result.saved
                     onMessage(
-                        "Saved ${saved.created + saved.updated} answer(s)." +
+                        "Saved ${plural(saved.created + saved.updated, "answer")}." +
                             if (saved.unchanged > 0) " ${saved.unchanged} were already recorded." else ""
                     )
                     if (thenAdvance && sectionIndex < sections.lastIndex) sectionIndex++
@@ -606,7 +607,7 @@ private fun SectionNavigator(
                     SelectOption(
                         value = position.toString(),
                         label = "${position + 1}. ${section.title.ifBlank { section.code }}",
-                        hint = "${section.questions.count { it.isActive }} question(s)"
+                        hint = plural(section.questions.count { it.isActive }, "question")
                     )
                 },
                 selectedValue = index.toString(),

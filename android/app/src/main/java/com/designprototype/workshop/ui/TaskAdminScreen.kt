@@ -2,6 +2,7 @@
 
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.plural
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -194,8 +195,6 @@ private fun andList(items: List<String>): String = when (items.size) {
     1 -> items[0]
     else -> "${items.dropLast(1).joinToString(", ")} and ${items.last()}"
 }
-
-private fun plural(count: Int, one: String, many: String): String = "$count ${if (count == 1) one else many}"
 
 /**
  * The default title the server derives when the admin does not type one — ported line for line from

@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -163,7 +164,7 @@ private fun MarketFindingsCard(
 
     FindingsCard(
         title = "What the survey says",
-        subtitle = "From ${rowsFound.responses.size} survey response(s) and ${rowsFound.competitors.size} competitor product(s) in stage 8. Not saved to this stage.",
+        subtitle = "From ${plural(rowsFound.responses.size, "survey response")} and ${plural(rowsFound.competitors.size, "competitor product")} in stage 8. Not saved to this stage.",
     ) {
         // CAUTIONS BEFORE FIGURES, ALWAYS. The server orders its payload the same way for the same
         // reason: a caution that has to be scrolled to is a caution that will not be read, and
@@ -209,7 +210,7 @@ private fun MarketFindingsCard(
                     point.hasOwnEvidence ->
                         "Evidence cited on the point."
                     point.supportedBy.isNotEmpty() ->
-                        "Shares ${point.overlap} word(s) with what " +
+                        "Shares ${plural(point.overlap, "word")} with what " +
                             point.supportedBy.joinToString(", ") + " said — worth comparing."
                     else ->
                         "No survey evidence matches this point yet."
@@ -228,7 +229,7 @@ private fun MarketFindingsCard(
             SectionLabel("Products discussed together")
             findings.clusters.forEach { cluster ->
                 Advisory(
-                    cluster.members.joinToString(", ") + " — ${cluster.mentions} mention(s), " +
+                    cluster.members.joinToString(", ") + " — ${plural(cluster.mentions, "mention")}, " +
                         "${cluster.coOccurrences} in the same conversation.",
                     MaterialTheme.field.surface100, MaterialTheme.field.body,
                 )
@@ -277,7 +278,7 @@ private fun DistributionLine(label: String, dist: DwDistribution?) {
         " · too few for quartiles"
     }
     Advisory(
-        "$label: ${dist.count} observation(s), ${money(dist.minimum)}–${money(dist.maximum)}, " +
+        "$label: ${plural(dist.count, "observation")}, ${money(dist.minimum)}–${money(dist.maximum)}, " +
             "median ${money(dist.median)}$quartiles",
         MaterialTheme.field.surface100,
         MaterialTheme.field.body,
@@ -352,11 +353,11 @@ private fun CostFindingsCard(workshopId: String, rows: Map<String, List<DwDataRo
 
     FindingsCard(
         title = "Cost sheets against their own lines",
-        subtitle = "${findings.sheetCount} sheet(s), ${materialLines.size} material line(s), ${labourLines.size} labour line(s). Not saved to this stage.",
+        subtitle = "${plural(findings.sheetCount, "sheet")}, ${plural(materialLines.size, "material line")}, ${plural(labourLines.size, "labour line")}. Not saved to this stage.",
     ) {
         if (anyUnsynced) {
             Advisory(
-                "$unsyncedSheets of ${sheets.size} sheet(s) still uploading; their lines aren't totalled yet.",
+                "$unsyncedSheets of ${plural(sheets.size, "sheet")} still uploading; their lines aren't totalled yet.",
                 MaterialTheme.field.surface100, MaterialTheme.field.body,
             )
         }

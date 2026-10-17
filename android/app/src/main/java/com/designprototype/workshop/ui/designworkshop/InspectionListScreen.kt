@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.openable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -358,9 +359,16 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // The whole card opens the workshop; the click sits inside the card's clip ([openable]).
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .openable(workshop.title.ifBlank { "Untitled workshop" }, RoundedCornerShape(12.dp), onOpen = onOpen)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             Text(
                 // Never blank: an untitled row in a list of fourteen is a row nobody can identify,
                 // and on this screen there is no second way to tell two of them apart.

@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.WorkshopDraft
@@ -235,7 +236,7 @@ internal class DwFigures(
             kind = ChartKind.DONUT,
             series = tally.map { (label, count) -> label to count.toDouble() },
             title = "Prototypes by review decision",
-            caption = "${tally.values.sum()} prototype(s) reviewed.",
+            caption = "${plural(tally.values.sum(), "prototype")} reviewed.",
         )
     }
 
@@ -290,7 +291,7 @@ internal class DwFigures(
             series = bands,
             title = "Products by price band",
             unit = "products",
-            caption = "${prices.size} product(s) with a recorded price, in rupees.",
+            caption = "${plural(prices.size, "product")} with a recorded price, in rupees.",
         )
     }
 
@@ -640,7 +641,7 @@ internal fun renderMap(
     // same claim about the same rows.
     if (artisans.placed > 0) {
         sentences += "Home places of ${artisans.placed} of ${artisans.total} participating " +
-            "artisans, at ${artisans.points.size} location(s)."
+            "artisans, at ${plural(artisans.points.size, "location")}."
     }
     // WHERE THE SERVER SAYS "recorded no address that could be placed", THIS COPY HAS TO SAY MORE.
     // The office's unplaced rows are ones that stated nothing; this copy's also include every row
@@ -649,8 +650,9 @@ internal fun renderMap(
     // from the RECORD, which would be false and is exactly the kind of quiet difference between two
     // copies of one report this file exists to prevent.
     if (artisans.total > artisans.placed) {
-        sentences += "${artisans.total - artisans.placed} participant(s) have no surveyed position " +
-            "and are not shown on this map."
+        sentences += "${plural(artisans.total - artisans.placed, "participant")} " +
+            (if (artisans.total - artisans.placed == 1) "has no surveyed position and is" else "have no surveyed position and are") +
+            " not shown on this map."
     }
     if (points.isEmpty()) {
         sentences += "No address in the record could be resolved to a position; the map shows the " +

@@ -189,11 +189,11 @@ class ReportQuestionnaireAnnexureTest {
                 "T|Questionnaire,Questions,Sittings,Answers recorded|" +
                     "Barpali loom survey || 4 || 1 || 3",
                 "H2|1.1|Barpali loom survey",
-                "P|NOTE|The designer's own questionnaire, attached to this workshop · 1 sitting(s) " +
-                    "· 4 question(s) · version 3 · from barpali.xlsx · questionnaire cmq0001",
+                "P|NOTE|The designer's own questionnaire, attached to this workshop · 1 sitting " +
+                    "· 4 questions · version 3 · from barpali.xlsx · questionnaire cmq0001",
                 "P|BODY|Household level.",
                 "H3|1.1.1|Padma Meher",
-                "P|NOTE|3 question(s) answered · recorded in the app · 2026-03-04 · recorded by " +
+                "P|NOTE|3 questions answered · recorded in the app · 2026-03-04 · recorded by " +
                     "A. Mohanty",
                 "P|BODY|Recorded in the courtyard.",
                 "P|BODY|A — Household",
@@ -236,7 +236,7 @@ class ReportQuestionnaireAnnexureTest {
      * A sitting created and never filled in is not an empty heading in an appendix of evidence.
      *
      * `printed_sittings` drops it on the server and [DwQuestionnaireItem.printedSittings] drops it
-     * here, which is also why the provenance line above reads "1 sitting(s)" for an item that holds
+     * here, which is also why the provenance line above reads "1 sitting" for an item that holds
      * two.
      */
     @Test
@@ -282,7 +282,7 @@ class ReportQuestionnaireAnnexureTest {
         assertEquals(emptyList<Block>(), annexureBlocks(cacheOf(unanswered)))
         assertEquals(
             listOf(
-                "1 questionnaire(s) attached to this workshop have no recorded answers and were " +
+                "1 questionnaire attached to this workshop has no recorded answers and was " +
                     "left out of the questionnaire annexure (Dye sourcing)."
             ),
             dwQuestionnaireWarnings(cacheOf(unanswered)),
@@ -308,7 +308,7 @@ class ReportQuestionnaireAnnexureTest {
         assertTrue("the questionnaire must be named: $text", text.contains("Loom census"))
         assertTrue(
             "the file must say the answers are absent from THIS copy rather than absent: $text",
-            text.contains("are not printed below"),
+            text.contains("not printed below"),
         )
         assertTrue(
             "and must point at the record that does have them: $text",

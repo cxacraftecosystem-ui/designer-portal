@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.ui.destructiveAction
 import com.designprototype.workshop.data.userMessage
@@ -213,8 +214,8 @@ internal fun QuestionnaireHandoffCard(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        "Ready — ${file.bundle.questionCount} question(s) in " +
-                            "${file.bundle.sections.count { it.questions.isNotEmpty() }} section(s)",
+                        "Ready — ${plural(file.bundle.questionCount, "question")} in " +
+                            plural(file.bundle.sections.count { it.questions.isNotEmpty() }, "section"),
                         color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -402,7 +403,7 @@ internal fun ReceivedQuestionnairesCard(
                 .onSuccess { row ->
                     reload++
                     onMessage(
-                        "“${row.title.ifBlank { row.filename }}” received — ${row.questionCount} question(s). Not added yet."
+                        "“${row.title.ifBlank { row.filename }}” received — ${plural(row.questionCount, "question")}. Not added yet."
                     )
                 }
                 // The refusals are written to be shown: damaged, not ours, from a newer build, or
@@ -511,7 +512,7 @@ internal fun ReceivedQuestionnairesCard(
                                 context = appContext,
                                 row = row,
                                 onProgress = { done, total ->
-                                    progress = "$done of $total section(s) added."
+                                    progress = "$done of ${plural(total, "section")} added."
                                 },
                             )
                                 .onSuccess {

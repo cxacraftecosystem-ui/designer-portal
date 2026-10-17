@@ -71,7 +71,7 @@ class OfflineQueueMessageTest {
         // decide which one to take again, and "2 files failed" does not tell them which.
         assertTrue(text.contains("IMG_2201.jpg"))
         assertTrue(text.contains("clip-4.m4a"))
-        assertTrue("the count is there too, for a long list", text.contains("2 file(s)"))
+        assertTrue("the count is there too, for a long list", text.contains("2 files"))
         // THE HONEST HALF OF A WHOLE THIS APP CANNOT DELIVER. Those bytes were never obtainable; what
         // must not happen is the record being described as complete.
         assertTrue(

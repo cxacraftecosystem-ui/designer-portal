@@ -580,7 +580,7 @@ object DwSubmissionReadiness {
                     stageTitle = target.title,
                     title = "Stage ${target.number} is excluded from the report but has answers",
                     detail =
-                        "${score.requiredFilled + score.optionalFilled} field(s) filled on \"${target.title}\", but stage 20 excludes it from the report.",
+                        "${plural(score.requiredFilled + score.optionalFilled, "field")} filled on \"${target.title}\", but stage 20 excludes it from the report.",
                     // The link goes to STAGE 20, not to the excluded stage the entry names: the box
                     // that would settle this is the exclusion list, and sending a designer to the
                     // stage itself offers them nothing to change.
