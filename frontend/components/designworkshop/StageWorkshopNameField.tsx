@@ -180,7 +180,8 @@ export function StageWorkshopNameField({
   invalid?: boolean;
   disabled?: boolean;
   /**
-   * The dictation button, rendered by `FieldInput` and passed down.
+   * Wraps the dropdown in the dictation control, rendered by `FieldInput` and passed down, so the
+   * microphone sits on the trigger's line rather than under the box.
    *
    * KEPT, unlike `StageWorkshopField`'s, which is withheld on the list half. There the recogniser's
    * words would be typed OVER a title the repository chose, and a dictated near-miss is the whole
@@ -189,7 +190,7 @@ export function StageWorkshopNameField({
    * list is sitting beside them while they do it, which is what makes a near-miss visible instead of
    * permanent.
    */
-  dictation?: React.ReactNode;
+  dictation?: (control: React.ReactNode) => React.ReactNode;
 }) {
   const [list, setList] = useState<WorkshopListState<DwSummary>>({ kind: "loading" });
   /** The panel's own filter box. */
@@ -328,36 +329,37 @@ export function StageWorkshopNameField({
 
   return (
     <div className="grid gap-1">
-      <Dropdown
-        value={current}
-        onChange={onChange}
-        options={options}
-        placeholder="Type the name, or pick one already on record"
-        emptyLabel={workshopEmptyLabel(list, voice)}
-        // NEVER STOOD DOWN ON AN EMPTY OR FAILED LIST — see the header. `disabled` here is the
-        // caller's own (a locked stage, a save in flight) and nothing else.
-        disabled={disabled}
-        // `field.label`. `FieldInput`'s `unlabelled` wrapper emits a bare <span className="field-label">
-        // rather than a `Field`/`FieldBlock`, so there is no label context for `SearchableSelect` to
-        // compose a name from, and without this the trigger would announce the chosen value and never
-        // the question.
-        ariaLabel={field.label}
-        describedBy={describedBy}
-        /*
-          THE BOX IS THE SERVER'S. `truncated` is deliberately absent: `GET /design-workshops` reports
-          a real `total`, so the cut is stated once, underneath, with its number — a flag arm as well
-          would print "there are more and the server did not say how many" under a sentence that has
-          just said how many.
-        */
-        serverQuery={{ value: term, onChange: setTerm, pending }}
-        /*
-          THE HALF THE OWNER ASKED FOR AND THE HALF THE OBJECTION COULD NOT REFUSE. Whatever is in the
-          box is committable, so a workshop that exists nowhere yet is answered as fast as one with a
-          history. `onChange` is passed rather than assumed by the primitive — see `SelectCreateAction`.
-        */
-        createAction={{ label: workshopNameCreateLabel, onCreate: onChange }}
-      />
-      {dictation}
+      {(dictation ?? ((control: React.ReactNode) => control))(
+        <Dropdown
+          value={current}
+          onChange={onChange}
+          options={options}
+          placeholder="Type the name, or pick one already on record"
+          emptyLabel={workshopEmptyLabel(list, voice)}
+          // NEVER STOOD DOWN ON AN EMPTY OR FAILED LIST — see the header. `disabled` here is the
+          // caller's own (a locked stage, a save in flight) and nothing else.
+          disabled={disabled}
+          // `field.label`. `FieldInput`'s `unlabelled` wrapper emits a bare <span className="field-label">
+          // rather than a `Field`/`FieldBlock`, so there is no label context for `SearchableSelect` to
+          // compose a name from, and without this the trigger would announce the chosen value and never
+          // the question.
+          ariaLabel={field.label}
+          describedBy={describedBy}
+          /*
+            THE BOX IS THE SERVER'S. `truncated` is deliberately absent: `GET /design-workshops` reports
+            a real `total`, so the cut is stated once, underneath, with its number — a flag arm as well
+            would print "there are more and the server did not say how many" under a sentence that has
+            just said how many.
+          */
+          serverQuery={{ value: term, onChange: setTerm, pending }}
+          /*
+            THE HALF THE OWNER ASKED FOR AND THE HALF THE OBJECTION COULD NOT REFUSE. Whatever is in the
+            box is committable, so a workshop that exists nowhere yet is answered as fast as one with a
+            history. `onChange` is passed rather than assumed by the primitive — see `SelectCreateAction`.
+          */
+          createAction={{ label: workshopNameCreateLabel, onCreate: onChange }}
+        />
+      )}
       {/*
         WHAT THE LIST IS, said out loud. A designer cannot tell "the workshops I can open" from
         "every workshop there is" by looking at a dropdown, and a narrowing nobody announced is

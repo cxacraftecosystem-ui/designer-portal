@@ -49,6 +49,9 @@ export const DICTATION_LANGUAGE_BUTTON =
 export const DICTATION_FIELD_WRAPPER = "relative min-w-0";
 export const DICTATION_FIELD_PADDED = "[&_.field-input]:min-h-11 [&_.field-input]:pe-[4.75rem]";
 
+/** A dropdown with the microphone beside it: one line, the trigger taking the width. */
+export const DICTATION_BESIDE_ROW = "flex min-w-0 items-center gap-1";
+
 /** Where the adornment sits: centred on a one-line box, top-right on a textarea. */
 export function adornmentPosition(multiline: boolean): string {
   return multiline

@@ -1069,14 +1069,17 @@ export function FieldInput({
             describedBy={describedBy}
             invalid={invalid}
             disabled={disabled}
-            dictation={
+            dictation={(control) => (
               <DictationButton
                 onCommit={appendDictated}
                 disabled={disabled}
                 fieldLabel={field.label}
                 workshopId={workshopId}
-              />
-            }
+                beside
+              >
+                {control}
+              </DictationButton>
+            )}
           />
         );
       }
