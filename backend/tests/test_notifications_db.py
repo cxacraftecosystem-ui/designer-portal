@@ -96,3 +96,65 @@ def test_a_notice_written_with_mail_off_is_listed_and_marked_read(monkeypatch: p
     after = _private(read_back)
     assert all(row.readAt is not None for row in after["mine"])
     assert [row.readAt for row in after["theirs"]] == [None]
+
+
+def test_unread_only_paging_after_a_mark_keeps_the_next_older_notice() -> None:
+    """Against Postgres: "Show older" with unreadOnly, anchored on the notice just opened (now read and
+    outside the filter), starts at the very next older unread notice, and same-instant rows page by id."""
+    from datetime import UTC, datetime, timedelta
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    stamp = uuid.uuid4().hex[:8]
+    base = datetime(2026, 10, 17, 12, tzinfo=UTC)
+
+    async def seed() -> dict[str, Any]:
+        asha = await db.user.create(
+            data={
+                "email": f"notice-paging-{stamp}@example.org",
+                "name": "Asha Patel",
+                "role": "DESIGNER",
+                "passwordHash": hash_password("unused-password"),
+            }
+        )
+        rows = []
+        for n in range(5):
+            rows.append(
+                await db.notification.create(
+                    data={"userId": asha.id, "kind": "HAND_IN", "title": f"notice {n}", "createdAt": base - timedelta(minutes=n)}
+                )
+            )
+        twins = [
+            await db.notification.create(
+                data={"userId": asha.id, "kind": "HAND_IN", "title": f"twin {n}", "createdAt": base - timedelta(hours=1)}
+            )
+            for n in range(3)
+        ]
+        return {"asha": asha, "rows": rows, "twins": twins}
+
+    seeded = _private(seed)
+    headers = {"Authorization": f"Bearer {create_access_token(subject=seeded['asha'].id)}"}
+    try:
+        with TestClient(app) as client:
+            first = client.get("/api/notifications?limit=2&unreadOnly=true", headers=headers).json()
+            assert [item["title"] for item in first["items"]] == ["notice 0", "notice 1"]
+            anchor = first["items"][-1]["id"]
+            assert client.post(f"/api/notifications/{anchor}/read", headers=headers).status_code == 200
+            second = client.get(f"/api/notifications?limit=2&unreadOnly=true&before={anchor}", headers=headers).json()
+            assert [item["title"] for item in second["items"]] == ["notice 2", "notice 3"]
+            assert second["hasMore"] is True
+
+            twin_ids = sorted((row.id for row in seeded["twins"]), reverse=True)
+            page = client.get(f"/api/notifications?limit=2&before={seeded['rows'][-1].id}", headers=headers).json()
+            assert [item["id"] for item in page["items"]] == twin_ids[:2]
+            rest = client.get(f"/api/notifications?limit=2&before={twin_ids[1]}", headers=headers).json()
+            assert [item["id"] for item in rest["items"]] == twin_ids[2:] and rest["hasMore"] is False
+    finally:
+
+        async def clean() -> None:
+            await db.notification.delete_many(where={"userId": seeded["asha"].id})
+            await db.user.delete_many(where={"id": seeded["asha"].id})
+
+        _private(clean)
