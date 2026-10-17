@@ -1399,12 +1399,10 @@ export const ReportSheets = memo(function ReportSheets({
             is laid out by ReportLab in whichever face it resolved and the .docx is paginated by
             Word when the file is opened. Those disagree about where a line wraps, and a document
             that disagrees about a line can disagree about a page. Making the preview trustworthy
-            raises the cost of overclaiming rather than removing it, so the sentence gets more
-            precise rather than going away. */}
+            raises the cost of overclaiming rather than removing it, so the caveat stays — as one
+            short line, the same as Android's (release smoke 2026-10-17). */}
         <span className={compact ? "hidden" : undefined}>
-          Pages are measured in this browser, so a line that wraps differently in Word or in the
-          generated .pdf can move a break: treat the &ldquo;of {sheets.length}&rdquo; in each running foot below as a
-          close estimate of the file&rsquo;s own page count.
+          Page counts are close estimates; Word and the .pdf may break lines differently.
         </span>
         {!compact && (scale < 0.995 || scale > 1.005) ? (
           <span>

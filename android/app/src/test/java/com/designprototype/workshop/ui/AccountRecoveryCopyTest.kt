@@ -70,6 +70,7 @@ class AccountRecoveryCopyTest {
         assertEquals("Exactly this.", forgotPasswordShown("  Exactly this. "))
         assertEquals(FORGOT_PASSWORD_FALLBACK, forgotPasswordShown(""))
         assertEquals(FORGOT_PASSWORD_FALLBACK, forgotPasswordShown(null))
+        assertEquals("If that address has an account, a reset link is on its way.", FORGOT_PASSWORD_FALLBACK)
     }
 
     @Test

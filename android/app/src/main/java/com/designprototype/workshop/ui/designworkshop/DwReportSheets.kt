@@ -1,6 +1,15 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.ActionRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -632,7 +641,8 @@ private fun DwSheetStrip(
           wraps, and a document that disagrees about a line can disagree about a page.
 
           MAKING THE PREVIEW TRUSTWORTHY RAISES THE COST OF OVERCLAIMING RATHER THAN REMOVING IT, so
-          the sentence gets more precise rather than going away.
+          the caveat stays — as ONE short line (release smoke 2026-10-17, dp-final/36: four lines of
+          explanation above the zoom read as a wall).
 
           WORD FOR WORD THE WEB'S. `DwReportPaginationTest` reads both files and fails if the two
           clients start saying different things about the same number — a designer who checks the
@@ -641,9 +651,7 @@ private fun DwSheetStrip(
          */
         if (packed != null) {
             Text(
-                "Pages are measured here, with this device's own fonts, so a line that wraps differently in Word or in the " +
-                    "generated .pdf can move a break: treat the “of $total” in each running foot below as a " +
-                    "close estimate of the file's own count rather than as the file's own count.",
+                "Page counts are close estimates; Word and the .pdf may break lines differently.",
                 color = color,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
@@ -652,7 +660,7 @@ private fun DwSheetStrip(
 
         if (fontScaleOverridden) {
             Text(
-                "Shown at the document's own text size. Pinch or tap Actual size to read.",
+                "Shown at the document's own text size. Pinch or tap 100% to read.",
                 color = color,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
@@ -718,6 +726,24 @@ internal const val DW_ZOOM_STEP = 0.15f
 
 /** The largest the paper is ever drawn: three times the file's own size. */
 internal const val DW_ZOOM_MAX = 3f
+
+/**
+ * One cell of the preview's zoom toolbar: an icon over a short word, 48dp tall. [description] is the
+ * full name TalkBack reads ("Actual size" for the cell that says "100%").
+ */
+@Composable
+private fun DwZoomTool(label: String, description: String, icon: ImageVector, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
+        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = description },
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+            Text(label, fontSize = 11.sp, maxLines = 1)
+        }
+    }
+}
 
 /** The smallest fit, so a zero-width first measure cannot collapse the sheet to nothing. */
 internal const val DW_FIT_MIN = 0.05f
@@ -829,25 +855,20 @@ private fun DwSheetStage(
         val overflows = pageWidth > available
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            ActionRow {
-                TextButton(
-                    onClick = {
-                        animate = true
-                        chosenScale = dwZoomTarget(target - DW_ZOOM_STEP, fit)
-                    }
-                ) { Text("Smaller", fontSize = 12.sp) }
-                TextButton(
-                    onClick = {
-                        animate = true
-                        chosenScale = dwZoomTarget(target + DW_ZOOM_STEP, fit)
-                    }
-                ) { Text("Larger", fontSize = 12.sp) }
-                TextButton(onClick = { animate = true; chosenScale = null }) {
-                    Text("Fit width", fontSize = 12.sp)
+            // A TOOLBAR, NOT AN ACTION ROW: four controls on one thing, so one line of icon-and-word
+            // cells at every width. As an action row they stacked one per line on a phone and pushed
+            // the page a screen down (release smoke 2026-10-17, dp-final/36).
+            ActionRow(toolbar = true, spacing = 4.dp) {
+                DwZoomTool("Smaller", "Smaller", Icons.Filled.ZoomOut) {
+                    animate = true
+                    chosenScale = dwZoomTarget(target - DW_ZOOM_STEP, fit)
                 }
-                TextButton(onClick = { animate = true; chosenScale = 1f }) {
-                    Text("Actual size", fontSize = 12.sp)
+                DwZoomTool("Larger", "Larger", Icons.Filled.ZoomIn) {
+                    animate = true
+                    chosenScale = dwZoomTarget(target + DW_ZOOM_STEP, fit)
                 }
+                DwZoomTool("Fit", "Fit width", Icons.Filled.FitScreen) { animate = true; chosenScale = null }
+                DwZoomTool("100%", "Actual size", Icons.Filled.CropFree) { animate = true; chosenScale = 1f }
             }
 
             // Said only when it is true, and in the same register as the web's. At the fit there is

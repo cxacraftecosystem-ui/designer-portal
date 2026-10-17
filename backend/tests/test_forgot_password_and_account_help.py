@@ -35,11 +35,7 @@ pytestmark = [needs_db]
 PASSWORD = "forgot-password-original-1"
 
 #: The one answer, written out rather than imported so a rewording is a decision a test notices.
-ONE_ANSWER = (
-    "If that address belongs to an account that signs in with a password, a link to choose a new "
-    "password is on its way. It works once and lasts 2 hours. If nothing arrives within a few "
-    "minutes, check your spam folder, or ask an administrator to make you a link."
-)
+ONE_ANSWER = "If that address has an account, a reset link is on its way."
 
 #: slug -> (role, has a password, allow-list status or None, provider)
 ACCOUNTS: dict[str, tuple[str, bool, str | None, str]] = {

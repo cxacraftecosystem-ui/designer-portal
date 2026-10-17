@@ -21,7 +21,7 @@ const val FORGOT_PASSWORD_TWO_STEP_NOTE = "You'll still need your authenticator 
 const val FORGOT_PASSWORD_NO_EMAIL_NOTE = "No email? Ask an admin for a link."
 
 /** Shown only if a server answers 200 with no sentence of its own. The server's words win. */
-const val FORGOT_PASSWORD_FALLBACK = "If that email has a password, a reset link is on its way. Check spam, or ask an admin."
+const val FORGOT_PASSWORD_FALLBACK = "If that address has an account, a reset link is on its way."
 
 /**
  * What is wrong with the typed address before it is sent, or null. As shallow as the access screen's

@@ -26,11 +26,17 @@ import androidx.compose.ui.unit.dp
  *
  * Mark a destructive action with [Modifier.destructiveAction]: it is placed last and set apart
  * by a wider gap.
+ *
+ * [toolbar] is for a set of small controls that act on one thing (a preview's zoom), not a set of
+ * actions: every child shares ONE line in equal cells at every width and count, and never stacks.
+ * Give each child an icon and a short label (or a content description) and a 48dp height; four
+ * fit a 360dp phone. A toolbar has no destructive action.
  */
 @Composable
 fun ActionRow(
     modifier: Modifier = Modifier,
     spacing: Dp = ACTION_ROW_SPACING,
+    toolbar: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Layout(content = content, modifier = modifier.fillMaxWidth()) { measurables, constraints ->
@@ -44,6 +50,15 @@ fun ActionRow(
         val loose = Constraints(maxWidth = width)
         when {
             ordered.isEmpty() -> layout(width, 0) {}
+            toolbar -> {
+                val cell = toolbarCellWidth(width, ordered.size, gap)
+                val height = ordered.maxOf { it.minIntrinsicHeight(cell) }
+                val placeables = ordered.map { it.measure(Constraints(minWidth = cell, maxWidth = cell, minHeight = height)) }
+                val rowHeight = placeables.maxOf { it.height }
+                layout(width, rowHeight) {
+                    placeables.forEachIndexed { i, p -> p.placeRelative(i * (cell + gap), (rowHeight - p.height) / 2) }
+                }
+            }
             ordered.size == 1 -> {
                 val p = ordered[0].measure(loose)
                 layout(width, p.height) { p.placeRelative((width - p.width) / 2, 0) }
@@ -130,6 +145,10 @@ private fun Measurable.isDestructive(): Boolean = parentData === DestructiveActi
 
 private fun gapBefore(ordered: List<Measurable>, i: Int, gap: Int, apart: Int): Int =
     if (ordered[i].isDestructive() && !ordered[i - 1].isDestructive()) apart else gap
+
+/** The width of each of [count] equal cells in a toolbar [ActionRow] of [width] with [gap] between. */
+fun toolbarCellWidth(width: Int, count: Int, gap: Int): Int =
+    if (count <= 0) 0 else ((width - gap * (count - 1)) / count).coerceAtLeast(0)
 
 /** Gap between actions in a row; destructive actions sit twice this far from the rest. */
 val ACTION_ROW_SPACING: Dp = 8.dp

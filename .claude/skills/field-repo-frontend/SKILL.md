@@ -2904,3 +2904,9 @@ and `false` ignored) and lays them out:
 - Android's twin is `ActionRow` (`ui/ActionRow.kt`), with the same three rules: compact means the
   row's own width is under 600dp (measured, not the window size class); mark destructive actions
   with `Modifier.destructiveAction()`, and put only the buttons inside it — status text stays outside.
+- **Toolbar mode, Android:** `ActionRow(toolbar = true)` is for a few controls that act on ONE thing
+  (the stage preview's Smaller / Larger / Fit / 100% zoom). Every child shares one line in equal cells
+  at every width and count — it never stacks. Give each cell an icon over a short word (or an icon
+  with a content description) and `heightIn(min = 48.dp)`; four fit a 360dp phone. No destructive
+  action in a toolbar. Pinned by `ActionRowToolbarTest`. On the web a toolbar is a plain
+  `flex flex-wrap gap-2` row, never an `ActionGroup` (see the bullet above).

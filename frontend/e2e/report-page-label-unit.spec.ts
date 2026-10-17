@@ -81,10 +81,12 @@ test("the total is qualified on screen as what it now is: an estimate, not the f
   // is why this test was corrected rather than deleted: a number that now looks authoritative is
   // the one most likely to be quoted, so the sentence beside it has to be MORE precise than the
   // one it replaced, not less.
-  expect(sheet).toContain("measured in this browser");
-  expect(sheet).toContain("close estimate of the file");
-  // Named rather than merely present: the sentence has to be about the number in the foot.
-  expect(sheet).toContain("in each running foot below");
+  //
+  // One short line since the 2026-10-17 release smoke: the four-line version above the zoom read as
+  // a wall. It still names what the number is (an estimate) and why (Word and the .pdf wrap lines
+  // their own way).
+  expect(sheet).toContain("Page counts are close estimates");
+  expect(sheet).toContain("Word and the .pdf may break lines differently");
   // And the old claim must not survive beside the new one: two qualifications of one number, one
   // of them describing a mechanism the file no longer has, is worse than either alone.
   expect(sheet).not.toContain("is a floor, not the");

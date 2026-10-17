@@ -57,7 +57,7 @@ export default function ForgotPasswordPage() {
     setSent(null);
     try {
       const answer = await requestForgotPasswordLink(email);
-      setSent(answer?.message || "If that address has an account, a link is on its way.");
+      setSent(answer?.message || "If that address has an account, a reset link is on its way.");
     } catch (err) {
       if (err instanceof ApiError && serverAskedForTime(err)) {
         const wait = retryAfterWords(err.headers?.get("retry-after"));

@@ -568,14 +568,13 @@ class DwReportPaginationTest {
          * builds its copy inside JSX, so the string in that file is broken by line wraps, by
          * `&ldquo;`/`&rsquo;` entities and by a `{sheets.length}` interpolation. Asserting the whole
          * sentence would compare a rendered sentence against a source one and fail for a reason that
-         * has nothing to do with what either screen says. These three fragments carry the whole of
-         * the claim between them: WHERE the measurement happened, WHAT can move a break, and WHAT the
-         * reader should therefore treat the number as.
+         * has nothing to do with what either screen says. Since the 2026-10-17 release smoke the claim
+         * is one short line, and these two fragments carry it: WHAT the reader should treat the
+         * number as, and WHY.
          */
         val SHARED_CLAIM_FRAGMENTS = listOf(
-            "a line that wraps differently in Word or in the",
-            "can move a break",
-            "close estimate of the file",
+            "Page counts are close estimates",
+            "Word and the .pdf may break lines differently",
         )
     }
 }

@@ -138,6 +138,7 @@ import com.designprototype.workshop.ui.LocalBannerClearance
 import com.designprototype.workshop.ui.LocalIslandClearance
 import com.designprototype.workshop.ui.OfflineNotice
 import com.designprototype.workshop.ui.OutboxDeviceBannerCard
+import com.designprototype.workshop.ui.attachedUploadsStatus
 import com.designprototype.workshop.ui.onTileBorder
 import com.designprototype.workshop.ui.onTileButtonColors
 import com.designprototype.workshop.ui.bannerClearance
@@ -9953,11 +9954,21 @@ private fun MediaCaptureSection(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("${media.uris.size} file(s) attached", color = Canvas, fontWeight = FontWeight.SemiBold)
+                // THE TILE'S OWN INK for every word and control on it, in both themes: `Canvas` and
+                // `SurfaceCard` follow the theme and went dark-on-purple in dark mode, and the theme's
+                // primary "Clear attachments" vanished into the purple in light mode (release smoke
+                // 2026-10-17, dp-final/26, 47). `BrandTileContrastTest` measures every pair.
+                val tileInk = MaterialTheme.field.onBrandTile
+                Text("${media.uris.size} file(s) attached", color = tileInk, fontWeight = FontWeight.SemiBold)
                 // Overall upload progress across the whole batch (staged files count as 100%).
                 val overall = media.uris.map { (media.stagedProgress[it] ?: 0f).coerceIn(0f, 1f) }.average().toFloat()
-                val allDone = media.staged.size >= media.uris.size
-                if (!allDone) {
+                val status = attachedUploadsStatus(
+                    total = media.uris.size,
+                    done = media.uris.count { media.staged.containsKey(it) },
+                    failed = media.uris.count { it in media.stagedFailed && !media.staged.containsKey(it) },
+                    fraction = overall
+                )
+                if (status.showProgress) {
                     FieldLinearProgressIndicator(
                         progress = { overall },
                         modifier = Modifier.fillMaxWidth().height(6.dp),
@@ -9966,9 +9977,8 @@ private fun MediaCaptureSection(
                     )
                 }
                 Text(
-                    if (allDone) "All uploaded ✓ — ready to save"
-                    else "Uploading… ${(overall * 100).toInt()}% (${media.staged.size}/${media.uris.size} files done)",
-                    color = SurfaceCard,
+                    status.line,
+                    color = if (status.failed) MaterialTheme.field.errorOnBrandTile else MaterialTheme.field.onBrandTileMuted,
                     fontSize = 11.sp
                 )
                 var attachmentsExpanded by remember { mutableStateOf(false) }
@@ -9982,6 +9992,7 @@ private fun MediaCaptureSection(
                         failed = uri in media.stagedFailed,
                         onRetry = { startEagerUpload(repository, context, media, uri, scope) },
                         downloadable = true,
+                        onTile = tileInk,
                         onRemove = {
                             // Drop just this file from the batch and clean up its staged object (if any).
                             val deferred = media.stagedDeferred[uri]
@@ -9993,25 +10004,33 @@ private fun MediaCaptureSection(
                         }
                     )
                 }
-                if (media.uris.size > attachmentsCap) {
-                    ActionRow {
-                        TextButton(onClick = { attachmentsExpanded = !attachmentsExpanded }) {
+                ActionRow {
+                    if (media.uris.size > attachmentsCap) {
+                        OutlinedButton(
+                            onClick = { attachmentsExpanded = !attachmentsExpanded },
+                            colors = onTileButtonColors(tileInk),
+                            border = onTileBorder(tileInk)
+                        ) {
                             Text(if (attachmentsExpanded) "Show fewer" else "+${media.uris.size - attachmentsCap} more")
                         }
                     }
-                }
-                ActionRow {
-                    TextButton(modifier = Modifier.destructiveAction(), onClick = {
-                        val pending = media.stagedDeferred.values.toList()
-                        media.stagedDeferred.clear()
-                        media.staged = emptyMap()
-                        media.stagedProgress = emptyMap()
-                        media.stagedFailed = emptySet()
-                        media.uris = emptyList()
-                        AppScope.io.launch {
-                            pending.forEach { d -> runCatching { d.await()?.let { repository.deleteStaged(it.objectKey) } } }
+                    // The on-tile outlined variant, as on the "files ready" card.
+                    OutlinedButton(
+                        modifier = Modifier.destructiveAction(),
+                        colors = onTileButtonColors(tileInk),
+                        border = onTileBorder(tileInk),
+                        onClick = {
+                            val pending = media.stagedDeferred.values.toList()
+                            media.stagedDeferred.clear()
+                            media.staged = emptyMap()
+                            media.stagedProgress = emptyMap()
+                            media.stagedFailed = emptySet()
+                            media.uris = emptyList()
+                            AppScope.io.launch {
+                                pending.forEach { d -> runCatching { d.await()?.let { repository.deleteStaged(it.objectKey) } } }
+                            }
                         }
-                    }) { Text("Clear attachments") }
+                    ) { Text("Clear attachments") }
                 }
             }
         }
@@ -10068,7 +10087,9 @@ private fun AttachedUploadsCard(
     // Status is computed over just the passed-in subset, so a per-section card reflects only that
     // section's clips while still reading live progress/staged/failed state from the shared batch.
     val doneCount = uris.count { media.staged.containsKey(it) }
-    val allDone = doneCount >= uris.size
+    val failedCount = uris.count { it in media.stagedFailed && !media.staged.containsKey(it) }
+    // The tile's own ink in both themes — see the batch card in [MediaCaptureSection].
+    val tileInk = MaterialTheme.field.onBrandTile
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -10076,9 +10097,10 @@ private fun AttachedUploadsCard(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text("${uris.size} $label(s) attached", color = Canvas, fontWeight = FontWeight.SemiBold)
+        Text("${uris.size} $label(s) attached", color = tileInk, fontWeight = FontWeight.SemiBold)
         val overall = uris.map { (media.stagedProgress[it] ?: 0f).coerceIn(0f, 1f) }.average().toFloat()
-        if (!allDone) {
+        val status = attachedUploadsStatus(total = uris.size, done = doneCount, failed = failedCount, fraction = overall)
+        if (status.showProgress) {
             FieldLinearProgressIndicator(
                 progress = { overall },
                 modifier = Modifier.fillMaxWidth().height(6.dp),
@@ -10087,9 +10109,8 @@ private fun AttachedUploadsCard(
             )
         }
         Text(
-            if (allDone) "All uploaded ✓ — ready to save"
-            else "Uploading… ${(overall * 100).toInt()}% ($doneCount/${uris.size} files done)",
-            color = SurfaceCard,
+            status.line,
+            color = if (status.failed) MaterialTheme.field.errorOnBrandTile else MaterialTheme.field.onBrandTileMuted,
             fontSize = 11.sp
         )
         var expanded by remember { mutableStateOf(false) }
@@ -10103,12 +10124,17 @@ private fun AttachedUploadsCard(
                 failed = uri in media.stagedFailed,
                 onRetry = { startEagerUpload(repository, context, media, uri, scope) },
                 downloadable = true,
+                onTile = tileInk,
                 onRemove = { onRemove(uri) }
             )
         }
         if (uris.size > cap) {
             ActionRow {
-                TextButton(onClick = { expanded = !expanded }) {
+                OutlinedButton(
+                    onClick = { expanded = !expanded },
+                    colors = onTileButtonColors(tileInk),
+                    border = onTileBorder(tileInk)
+                ) {
                     Text(if (expanded) "Show fewer" else "+${uris.size - cap} more")
                 }
             }
@@ -18741,7 +18767,8 @@ private fun AndroidUriPreview(
     when {
         failed -> Text(
             "Upload failed — tap Retry, or Download to keep a copy.",
-            color = MaterialTheme.colorScheme.error,
+            // On the purple tile the scheme's error red is about 2:1; the tile's own error rung is AA.
+            color = if (onTile != null) MaterialTheme.field.errorOnBrandTile else MaterialTheme.colorScheme.error,
             fontSize = 11.sp
         )
         progress != null && progress < 1f -> {

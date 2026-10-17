@@ -365,3 +365,27 @@ fun onTileButtonColors(ink: Color) = ButtonDefaults.outlinedButtonColors(
 
 /** The matching outline: the ink at 70%, which keeps 3:1 against the tile in both themes. */
 fun onTileBorder(ink: Color) = BorderStroke(1.dp, ink.copy(alpha = 0.7f))
+
+/**
+ * What the purple "N file(s) attached" card says under its title, and whether it still draws a bar.
+ *
+ * Once every file that has not uploaded has FAILED, nothing is uploading any more, so "Uploading… 0%
+ * (0/1 files done)" beside "Upload failed — tap Retry…" was two contradicting lines (release smoke
+ * 2026-10-17, dp-final/26 and 47). The bar and the percentage go, and the line says how many files
+ * did not upload; each file's own row still offers Retry and Download.
+ */
+data class AttachedUploadsStatus(val line: String, val showProgress: Boolean, val failed: Boolean)
+
+fun attachedUploadsStatus(total: Int, done: Int, failed: Int, fraction: Float): AttachedUploadsStatus = when {
+    done >= total -> AttachedUploadsStatus("All uploaded ✓ — ready to save", showProgress = false, failed = false)
+    failed > 0 && done + failed >= total -> AttachedUploadsStatus(
+        if (failed == 1) "1 file didn't upload." else "$failed files didn't upload.",
+        showProgress = false,
+        failed = true,
+    )
+    else -> AttachedUploadsStatus(
+        "Uploading… ${(fraction * 100).toInt()}% ($done/$total files done)",
+        showProgress = true,
+        failed = false,
+    )
+}

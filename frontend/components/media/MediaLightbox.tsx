@@ -307,7 +307,7 @@ export function MediaPreviewTile({
           // size (`MediaActionButton`) and must never squeeze the label or overlap each other.
           <div className="grid min-w-0 gap-1.5">
             {statusLabel ? (
-              <span className={`min-w-0 truncate text-xs ${failed ? "text-error-600" : "text-ink-muted"}`}>{statusLabel}</span>
+              <span className={`min-w-0 truncate text-xs ${failed ? "font-medium text-red-800 dark:text-red-300" : "text-ink-muted"}`}>{statusLabel}</span>
             ) : null}
             <span className="flex flex-wrap items-center gap-2">
               {failed && onRetry ? <RetryMediaButton name={item.name} onRetry={onRetry} /> : null}
