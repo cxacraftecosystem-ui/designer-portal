@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.CalendarField
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1752,7 +1753,7 @@ fun DesignerProfileScreen(
                     ) {
                         form = form.copy(empanelmentNo = it)
                     }
-                    FieldDateField(
+                    CalendarField(
                         label = "Empanelment date",
                         value = form.empanelmentDate,
                         clearable = true,

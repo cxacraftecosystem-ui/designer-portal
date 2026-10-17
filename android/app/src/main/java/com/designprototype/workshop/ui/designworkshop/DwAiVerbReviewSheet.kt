@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.AppToggle
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -538,22 +539,15 @@ private fun DwVerbCueList(
         }
 
         if (cues.hasSpeakers) {
-            Row(
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Switch(checked = speakers, onCheckedChange = onSpeakers, enabled = !busy)
-                Text(
-                    "Put the speaker label in front of each line. The labels are the engine's own " +
-                        "guess — it can merge two quiet voices or split one person who moved away " +
-                        "from the microphone. A .vtt file carries that caution inside it; a .srt " +
-                        "file carries the labels alone.",
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                )
-            }
+            AppToggle(
+                label = "Put the speaker label in front of each line",
+                checked = speakers,
+                onCheckedChange = onSpeakers,
+                enabled = !busy,
+                description = "The labels are the engine's own guess — it can merge two quiet voices or " +
+                    "split one person who moved away from the microphone. A .vtt file carries that " +
+                    "caution inside it; a .srt file carries the labels alone.",
+            )
         }
 
         DwSubtitleFormat.entries.forEach { format ->

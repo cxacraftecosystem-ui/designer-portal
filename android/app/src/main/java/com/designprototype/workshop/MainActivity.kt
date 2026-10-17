@@ -8131,13 +8131,11 @@ private fun GridMeasurementSection(
 
     @Composable
     fun GridGroupRow(key: String, label: String, hint: String) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Checkbox(
-                checked = enabled.contains(key),
-                onCheckedChange = { checked -> enabled = if (checked) enabled + key else enabled - key }
-            )
-            Text(label, color = Body, fontSize = 14.sp)
-        }
+        AppToggle(
+            label = label,
+            checked = enabled.contains(key),
+            onCheckedChange = { checked -> enabled = if (checked) enabled + key else enabled - key }
+        )
         if (enabled.contains(key)) {
             Text(hint, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -11582,7 +11580,7 @@ private fun ArtisanForm(
          * box, computed by the server's own rule (`deriveAgeYears`, the port). Web parity: the
          * record page shows the same sentence under the same control.
          */
-        FieldDateField(
+        CalendarField(
             label = "Date of birth",
             value = dateOfBirth,
             onValueChange = { dateOfBirth = it },
@@ -11601,7 +11599,7 @@ private fun ArtisanForm(
                 else "Age $age. The workshop's participant table shows an age, worked out from this."
             }
         )
-        FieldDateField(
+        CalendarField(
             label = "Practising since",
             value = craftStartDate,
             onValueChange = { craftStartDate = it },
@@ -14129,10 +14127,11 @@ private fun ProcessForm(
         // and not the other is the cross-surface divergence the whole reference lane exists to end.
         TextInput("What happens in this process", notes, minLines = 3, rich = true, resetKey = editing?.id) { notes = it }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Checkbox(checked = preProcessAvailable, onCheckedChange = { preProcessAvailable = it })
-            Text("Pre-processes available", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-        }
+        AppToggle(
+            label = "Pre-processes available",
+            checked = preProcessAvailable,
+            onCheckedChange = { preProcessAvailable = it }
+        )
         if (preProcessAvailable) {
             Text("Attach the pre-process media (required).", color = Muted, fontSize = 12.sp)
             if (existingPreMedia.isNotEmpty()) {
@@ -14194,13 +14193,11 @@ private fun ProcessForm(
                         media = step.media,
                         emphasizeVideo = true,
                         beforeLocation = {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                                Checkbox(
-                                    checked = step.recordAdditional,
-                                    onCheckedChange = { step.recordAdditional = it; if (!it) step.notes = "" }
-                                )
-                                Text("Record additional information", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-                            }
+                            AppToggle(
+                                label = "Record additional information",
+                                checked = step.recordAdditional,
+                                onCheckedChange = { step.recordAdditional = it; if (!it) step.notes = "" }
+                            )
                             if (step.recordAdditional) {
                                 MultiNoteInput(label = "Additional context for this step", value = step.notes, resetKey = step.key) { step.notes = it }
                             }
@@ -15100,10 +15097,11 @@ private fun TranscriptRefineControls(
                         "Refining" + (if (mode) " and translating" else "") + " this transcript runs it through an " +
                             "AI model (gpt-4o-mini), which incurs a small extra cost each time you do it. Continue?"
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = dontRemind, onCheckedChange = { dontRemind = it })
-                        Text("Do not remind me again", fontSize = 13.sp)
-                    }
+                    AppToggle(
+                        label = "Do not remind me again",
+                        checked = dontRemind,
+                        onCheckedChange = { dontRemind = it }
+                    )
                 }
             },
             confirmButton = {
@@ -18487,9 +18485,12 @@ private fun MediaProcessingJobRow(
         }
         if (retryable) {
             if (isAdmin) {
-                OutlinedButton(onClick = onRetry, enabled = !busy) {
-                    Text(if (busy) "Re-queuing…" else "Retry", fontSize = 13.sp)
-                }
+                MediaActionButton(
+                    label = if (busy) "Re-queuing…" else "Retry",
+                    icon = Icons.Filled.Refresh,
+                    onClick = onRetry,
+                    enabled = !busy,
+                )
             } else {
                 Text("An admin can re-run this.", color = Muted, fontSize = 11.sp)
             }
@@ -21134,7 +21135,7 @@ private fun UserManagementForm(
                         DetailRow("View provenance", if (roleRank(appUser.role) >= RANK_ADMIN || appUser.canViewProvenance) "Granted" else "Not granted")
                         DetailRow("Download entire dataset", if (targetIsProfessorPlus || appUser.canDownloadDataset) "Granted" else "Not granted")
                         DetailRow("Password", if (appUser.passwordSetAt.isNullOrBlank()) "Not set" else "Set")
-                        DetailRow("Two-step verification", if (appUser.twoFactorEnabled) "On" else "Off")
+                        DetailRow("Two-step verification", if (appUser.twoFactorEnabled) "Turned on" else "Not turned on")
                         if (mayUpdateUser) {
                             OutlinedButton(
                                 onClick = { updatingUsers = updatingUsers + appUser.id },

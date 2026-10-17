@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.ui.CalendarField
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1952,7 +1953,7 @@ private fun DateField(
         if (text.isBlank()) null else runCatching { LocalDate.parse(text.take(10)) }.getOrNull()
     }
     FieldCaption(field)
-    FieldDateField(
+    CalendarField(
         label = fieldLabel(field),
         value = parsed,
         clearable = true,

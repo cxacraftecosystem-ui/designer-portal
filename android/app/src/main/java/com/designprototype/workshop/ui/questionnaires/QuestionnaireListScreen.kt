@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import com.designprototype.workshop.ui.AppToggle
 import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.semantics.Role
@@ -364,17 +365,12 @@ fun QuestionnaireListScreen(
             onError = onError,
         )
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Show deactivated", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
-                Text(
-                    "Deactivating hides a questionnaire from new interviews. Its answers are kept.",
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
-                )
-            }
-            Switch(checked = showDeactivated, onCheckedChange = { showDeactivated = it })
-        }
+        AppToggle(
+            label = "Show deactivated",
+            checked = showDeactivated,
+            onCheckedChange = { showDeactivated = it },
+            description = "Deactivating hides a questionnaire from new interviews. Its answers are kept.",
+        )
 
         when {
             loading -> Row(

@@ -105,6 +105,7 @@
  * page boundaries.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { CloudOff, Download, FileText } from "lucide-react";
@@ -1007,15 +1008,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           here is what makes this tick a confirmation rather than a preference.
         */}
         <div className="grid gap-3 md:grid-cols-[minmax(0,22rem)_1fr] md:items-start">
-          <label className="flex items-start gap-2.5 text-sm font-medium leading-6 text-ink-900">
-            <input
-              type="checkbox"
-              className="mt-1 h-4 w-4 rounded border-line-300 text-purple-700 dark:text-purple-300"
-              checked={includeAiLayers}
-              onChange={(event) => setIncludeAiLayers(event.target.checked)}
-            />
-            <span>Include machine-assisted text</span>
-          </label>
+          <Toggle label="Include machine-assisted text" checked={includeAiLayers} onChange={setIncludeAiLayers} />
           <div className="grid gap-1.5 text-sm leading-6 text-ink-muted">
             <p>
               {includeAiLayers

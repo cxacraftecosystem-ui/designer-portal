@@ -87,6 +87,7 @@
  * that table and is pinned against the Python by `frontend/e2e/ai-verbs-unit.spec.ts`.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -634,16 +635,12 @@ export function AiLayersPanel({
               {verbAllowance.aiVerbsLimit} AI runs left for {verbAllowance.aiVerbDay}
             </span>
           ) : null}
-          <label className="flex items-center gap-2 text-ink-700">
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 accent-purple-700"
-              checked={includeDeleted}
-              onChange={(event) => setIncludeDeleted(event.currentTarget.checked)}
-              data-testid="ai-layers-include-deleted"
-            />
-            Show declined layers
-          </label>
+          <Toggle
+            label="Show declined layers"
+            checked={includeDeleted}
+            onChange={setIncludeDeleted}
+            testId="ai-layers-include-deleted"
+          />
           <button type="button" className="field-button-secondary" onClick={() => setWithText((current) => !current)}>
             {withText ? "Hide the full text" : "Show the full text"}
           </button>
@@ -1491,18 +1488,12 @@ function LayerVerbs({
             changes nothing and accepts nothing.
           </p>
           {cues.hasSpeakers ? (
-            <label className="flex items-start gap-2 text-xs leading-5 text-ink-700">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-3.5 w-3.5 accent-purple-700"
-                checked={speakers}
-                onChange={(event) => setSpeakers(event.currentTarget.checked)}
-              />
-              <span>
-                Put the speaker label in front of each line. The labels are the engine&apos;s own guess — nobody told it
-                how many people were in the room.
-              </span>
-            </label>
+            <Toggle
+              label="Put the speaker label in front of each line"
+              description="The labels are the engine's own guess — nobody told it how many people were in the room."
+              checked={speakers}
+              onChange={setSpeakers}
+            />
           ) : null}
           <div className="flex flex-wrap gap-2">
             {(["srt", "vtt"] as DwSubtitleFormat[]).map((format) => (

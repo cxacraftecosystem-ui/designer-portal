@@ -1,5 +1,6 @@
 "use client";
 
+import { SearchableMultiSelect } from "@/components/ui/SearchableSelect";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -1854,18 +1855,26 @@ export default function DataBrowserPage() {
 
           <section className="panel p-4">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">Include</span>
-              {INCLUDE_OPTIONS.map((option) => (
-                <label key={option.key} className="inline-flex items-center gap-1.5 text-sm text-ink-700">
-                  <input
-                    type="checkbox"
-                    className="accent-purple-700"
-                    checked={includes[option.key]}
-                    onChange={(event) => setIncludes((prev) => ({ ...prev, [option.key]: event.target.checked }))}
-                  />
-                  {option.label}
-                </label>
-              ))}
+              <span className="text-xs font-semibold uppercase tracking-wide text-ink-500" aria-hidden>
+                Include
+              </span>
+              {/* One multi-select over the seven kinds of content, not seven loose checkboxes
+                  (owner's rule, 2026-10-17). Same state, same "pick at least one" refusal below. */}
+              <SearchableMultiSelect
+                className="min-w-0 flex-1 sm:max-w-md"
+                ariaLabel="Include in the download"
+                options={INCLUDE_OPTIONS.map((option) => ({ value: option.key, label: option.label }))}
+                values={INCLUDE_OPTIONS.filter((option) => includes[option.key]).map((option) => option.key)}
+                onChange={(keys) =>
+                  setIncludes((prev) => {
+                    const next = { ...prev };
+                    for (const option of INCLUDE_OPTIONS) next[option.key] = keys.includes(option.key);
+                    return next;
+                  })
+                }
+                placeholder="Choose what to include"
+                confirmOnSelect={false}
+              />
               <div className="ml-auto">
                 <button type="button" className="field-button" disabled={downloading} onClick={downloadFolder}>
                   <Download className="h-4 w-4" aria-hidden />

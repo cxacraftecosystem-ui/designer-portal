@@ -1,5 +1,6 @@
 "use client";
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useRef, useState } from "react";
 import { Check, X } from "lucide-react";
 
@@ -223,7 +224,7 @@ export function GridMeasurement({
     const status = grid.status[group];
     return (
       <div className="grid gap-2">
-        <label className="flex items-center gap-2 text-sm text-ink">
+        <>
           {/* `react-hooks/refs` (eslint-plugin-react-hooks 7.1.1) fails this line with "Cannot
               access refs during render". IT IS WRONG HERE, and the suppression is scoped to the
               one line rather than turned off for the project so the rule keeps working
@@ -252,9 +253,8 @@ export function GridMeasurement({
               review. Do not simply delete [abandon] from here: unchecking a group while its
               analysis is in flight is exactly the case the counter exists for. */}
           {/* eslint-disable-next-line react-hooks/refs */}
-          <input type="checkbox" checked={enabled.has(group)} onChange={(event) => toggle(group, event.target.checked)} />
-          {GRID_GROUP_LABELS[group]}
-        </label>
+          <Toggle label={GRID_GROUP_LABELS[group]} checked={enabled.has(group)} onChange={(next) => toggle(group, next)} />
+        </>
         {enabled.has(group) ? (
           <div className="grid gap-1 pl-6">
             <p className="text-xs text-ink-muted">{GRID_GROUP_HINTS[group]}</p>

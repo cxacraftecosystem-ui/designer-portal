@@ -11,10 +11,11 @@
  * the two screens cannot disagree again.
  */
 
+import { CalendarField } from "@/components/ui/CalendarField";
+import { SearchableMultiSelect } from "@/components/ui/SearchableSelect";
 import { useState, type ReactNode } from "react";
 import { SlidersHorizontal } from "lucide-react";
 
-import { DateField } from "@/components/forms/DateTimeField";
 import { Dropdown } from "@/components/ui/Dropdown";
 
 /**
@@ -440,50 +441,48 @@ export function SearchFilterBar({
             // Only reachable once "Custom range" has been chosen, so the presets — which are what
             // nearly every search actually wants — never have to walk past a calendar to be used.
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="grid gap-1">
-                <label className="field-label" htmlFor="search-range-from">
-                  From
-                </label>
-                <DateField
-                  id="search-range-from"
-                  value={value.from}
-                  max={value.to || undefined}
-                  onChange={(from) => onChange({ ...value, from })}
-                />
-              </div>
-              <div className="grid gap-1">
-                <label className="field-label" htmlFor="search-range-to">
-                  To
-                </label>
-                <DateField
-                  id="search-range-to"
-                  value={value.to}
-                  min={value.from || undefined}
-                  onChange={(to) => onChange({ ...value, to })}
-                />
-              </div>
+              <CalendarField
+                id="search-range-from"
+                label="From"
+                value={value.from}
+                max={value.to || undefined}
+                maxLabel="To"
+                onChange={(from) => onChange({ ...value, from })}
+              />
+              <CalendarField
+                id="search-range-to"
+                label="To"
+                value={value.to}
+                min={value.from || undefined}
+                minLabel="From"
+                onChange={(to) => onChange({ ...value, to })}
+              />
             </div>
           ) : null}
 
-          <fieldset className="grid gap-1.5">
-            <legend className="field-label">Record types</legend>
-            <p className="text-xs text-ink-500">
-              The same setting as the chips above. Tick any number; nothing ticked searches everything.
+          <div className="grid gap-1.5">
+            <span className="field-label" id="search-record-types-label">
+              Record types
+            </span>
+            <p className="text-xs text-ink-500" id="search-record-types-hint">
+              The same setting as the chips above. Pick any number; none picked searches everything.
             </p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-              {offeredTypes.map((type) => (
-                <label key={type} className="flex items-center gap-2 text-sm text-ink-700">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 accent-purple-700"
-                    checked={value.types.includes(type)}
-                    onChange={() => toggleType(type)}
-                  />
-                  {TYPE_LABEL[type]}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+            {/* A FILTER, so `bulk={false}`: "everything" is spelled by picking nothing, never by
+                ticking every row (SearchableMultiSelectProps.bulk). The order written back is
+                `offeredTypes`' order, exactly as `toggleType` writes it. */}
+            <SearchableMultiSelect
+              ariaLabel="Record types"
+              describedBy="search-record-types-hint"
+              options={offeredTypes.map((type) => ({ value: type, label: TYPE_LABEL[type] }))}
+              values={value.types}
+              onChange={(types) =>
+                onChange({ ...value, types: offeredTypes.filter((current) => types.includes(current)) })
+              }
+              placeholder="Every record type"
+              bulk={false}
+              confirmOnSelect={false}
+            />
+          </div>
 
           {extraFilters ? <div className="grid gap-3">{extraFilters}</div> : null}
 

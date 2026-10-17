@@ -720,11 +720,15 @@ test("the roster search boxes have a real accessible name, and so does SearchInp
 test("the date range is a real fieldset with sibling labels, never a wrapping one", () => {
   expect(BAR).toContain("<fieldset");
   expect(BAR).toContain("<legend");
-  expect(BAR).toContain('htmlFor={fromId}');
-  expect(BAR).toContain('htmlFor={toId}');
-  // A wrapping `<label>` folds every named descendant into the input's accessible name, so a
-  // `DateField` inside one announces itself as "From Open calendar" instead of "From".
-  expect(BAR).not.toMatch(/<label[^>]*>\s*\{?ROSTER_LABELS\.dateFrom[\s\S]{0,40}<DateField/);
+  // Both ends are the shared `CalendarField`, which labels its box as a SIBLING (`<label htmlFor>`)
+  // — a wrapping `<label>` folds every named descendant into the input's accessible name, so a
+  // date box inside one announces itself as "From Open calendar" instead of "From".
+  expect(BAR).toContain("id={fromId}");
+  expect(BAR).toContain("id={toId}");
+  expect(BAR).toContain("<CalendarField");
+  expect(BAR).not.toMatch(/<label[^>]*>\s*\{?ROSTER_LABELS\.dateFrom[\s\S]{0,40}<(DateField|CalendarField)/);
+  const CALENDAR = readFileSync(join(__dirname, "..", "components", "ui", "CalendarField.tsx"), "utf8");
+  expect(CALENDAR).toContain("<label htmlFor={fieldId}");
 });
 
 test("the access filter row says why it has no institution filter", () => {

@@ -28,6 +28,7 @@
  * reload — and this page offers the reload — rather than approving content nobody here looked at.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { use, useEffect, useMemo, useState } from "react";
 import { Download, Loader2, Send, Stamp, Undo2 } from "lucide-react";
 
@@ -612,19 +613,14 @@ function DecisionPanel({
           <div className="grid gap-1 text-sm leading-6 text-ink-700">
             <span className="field-label">The report file that went</span>
             {pinnable ? (
-              <label className="inline-flex items-start gap-2">
-                <input
-                  checked={pinExport}
-                  className="mt-1"
-                  onChange={(event) => setPinExport(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>
-                  {pinnable.fileName?.trim() || `The ${pinnable.format} file`}, made {formatDateTime(pinnable.generatedAt)}
-                  {pinnable.generatedByName ? ` by ${pinnable.generatedByName}` : ""} — recorded as the file the office
-                  received.
-                </span>
-              </label>
+              <Toggle
+                label={`${pinnable.fileName?.trim() || `The ${pinnable.format} file`}, made ${formatDateTime(pinnable.generatedAt)}${
+                  pinnable.generatedByName ? ` by ${pinnable.generatedByName}` : ""
+                }`}
+                description="Recorded as the file the office received."
+                checked={pinExport}
+                onChange={setPinExport}
+              />
             ) : (
               <p>
                 No report file has been made since the approval, so none can be named as the one that went. Download one

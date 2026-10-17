@@ -68,6 +68,7 @@
  * real gap and an open question for the owner rather than an oversight.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Download, FileSignature, Upload } from "lucide-react";
@@ -783,17 +784,14 @@ export default function SanctionOrdersPage() {
             ariaLabel="Search sanction orders"
           />
         </div>
-        <label className="flex items-center gap-2 text-sm text-ink-700">
-          <input
-            type="checkbox"
-            checked={mine}
-            onChange={(event) => {
-              setMine(event.currentTarget.checked);
-              setPage(1);
-            }}
-          />
-          Only orders I recorded
-        </label>
+        <Toggle
+          label="Only orders I recorded"
+          checked={mine}
+          onChange={(next) => {
+            setMine(next);
+            setPage(1);
+          }}
+        />
       </div>
 
       {items === null ? (

@@ -114,6 +114,7 @@
  * Prototypes page's UPLOAD tab, which is what it was built for.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -3468,27 +3469,20 @@ function ToggleRow({
   const value = spec.read(params);
   return (
     <div className={modified ? `${MODIFIED_RING} p-1` : "p-1"}>
-      <div className="flex items-start gap-2">
-        <input
-          id={id}
-          type="checkbox"
-          className="mt-0.5 h-4 w-4 shrink-0 accent-purple-700"
-          checked={value}
-          disabled={disabled}
-          aria-describedby={`${id}-hint`}
-          onChange={(event) => onPatch(spec.patch(event.target.checked))}
-        />
-        <div className="min-w-0">
-          <label className="text-xs font-medium text-ink-900" htmlFor={id}>
-            {spec.label}
-            {modified ? <span className="ml-1 text-purple-700 dark:text-purple-300">·</span> : null}
-          </label>
-          <p id={`${id}-hint`} className="text-xs leading-4 text-ink-500">
+      {/* `MODIFIED_RING` on the wrapper is the "changed from the preset" mark, as on every row here. */}
+      <Toggle
+        id={id}
+        label={spec.label}
+        description={
+          <>
             {spec.hint}
-          </p>
-          <InertNote reason={inactiveReason(spec.key, params)} />
-        </div>
-      </div>
+            <InertNote reason={inactiveReason(spec.key, params)} />
+          </>
+        }
+        checked={value}
+        disabled={disabled}
+        onChange={(next) => onPatch(spec.patch(next))}
+      />
     </div>
   );
 }

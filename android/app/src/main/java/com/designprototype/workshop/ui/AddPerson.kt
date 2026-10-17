@@ -146,19 +146,14 @@ fun AddPersonCard(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 modifier = Modifier.fillMaxWidth()
             )
-            Column {
-                OutlinedButton(onClick = { rolesOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text(role?.let { "Role: ${FieldPermissions.label(it)}" } ?: "Choose a role")
-                }
-                DropdownMenu(expanded = rolesOpen, onDismissRequest = { rolesOpen = false }) {
-                    roles.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(FieldPermissions.label(option)) },
-                            onClick = { role = option; rolesOpen = false }
-                        )
-                    }
-                }
-            }
+            SearchableSelectField(
+                label = "Role",
+                options = roles.map { SelectOption(it, FieldPermissions.label(it)) },
+                selectedValue = role.orEmpty(),
+                placeholder = "Choose a role",
+                includeNone = false,
+                onSelect = { picked -> role = picked.ifBlank { null } }
+            )
             Text(ADD_PERSON_SIGN_IN_QUESTION, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             listOf(
                 PasswordMode.SET to ADD_PERSON_MODE_SET,
@@ -248,13 +243,8 @@ fun AddPersonCard(
     }
 }
 
+/** A setting on the add form — the shared switch row, never a checkbox (owner's rule, 2026-10-17). */
 @Composable
 private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Checkbox, onValueChange = onChange)
-    ) {
-        Checkbox(checked = checked, onCheckedChange = null)
-        Text(label, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
-    }
+    AppToggle(label = label, checked = checked, onCheckedChange = onChange)
 }

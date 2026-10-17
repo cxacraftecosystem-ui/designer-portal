@@ -2,6 +2,7 @@ package com.designprototype.workshop.ui.designworkshop
 
 // The panel holds the three display plates as platform bitmaps, because that is what the runtime
 // hands back and what `DwSketchTracePlates` takes. Nothing here reads a pixel.
+import com.designprototype.workshop.ui.AppToggle
 import android.graphics.Bitmap
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -1417,30 +1418,17 @@ private fun DwSketchTraceOpen(
 
         /* ── Previews ───────────────────────────────────────────────────────────────────────── */
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Switch(
-                checked = autoPreview,
-                onCheckedChange = { autoPreview = it },
-                enabled = enabled,
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Re-trace a preview as I change settings", color = MaterialTheme.field.body, fontSize = 12.sp)
-                Text(
-                    if (resumed) {
-                        "A small, fast trace after each pause. Turn it off to save battery."
-                    } else {
-                        "Paused while this screen is in the background."
-                    },
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                )
-            }
-        }
+        AppToggle(
+            label = "Re-trace a preview as I change settings",
+            checked = autoPreview,
+            onCheckedChange = { autoPreview = it },
+            enabled = enabled,
+            description = if (resumed) {
+                "A small, fast trace after each pause. Turn it off to save battery."
+            } else {
+                "Paused while this screen is in the background."
+            },
+        )
         OutlinedButton(
             onClick = { startRun(DwTraceRunKind.PREVIEW, 0L) },
             enabled = enabled && running == null,
@@ -2108,16 +2096,13 @@ private fun DwTraceToggleRow(
     onPatch: (Map<String, DwTraceValue>) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Switch(checked = on, onCheckedChange = { onPatch(control.patch(it)) }, enabled = enabled)
-            Box(modifier = Modifier.weight(1f)) {
-                DwTraceRowHeading(control.label, null, changed)
-            }
-        }
+        // "Changed" stays a WORD on the label, as on every other row here (see DwTraceRowHeading).
+        AppToggle(
+            label = if (changed) "${control.label} · changed" else control.label,
+            checked = on,
+            onCheckedChange = { onPatch(control.patch(it)) },
+            enabled = enabled,
+        )
         DwTraceRowTail(control, inactive)
     }
 }

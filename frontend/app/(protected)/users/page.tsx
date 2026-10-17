@@ -1341,7 +1341,7 @@ function UsersScreen() {
               ["May download the dataset", hasRank(viewing, "PROFESSOR") || viewing.canDownloadDataset ? "Yes" : "No"],
               ["Sign-in", ACCOUNT_STATUS_LABEL[accountStatus(viewing)]],
               ["First signed in", viewing.firstLoginAt ? formatDate(viewing.firstLoginAt) : "Not yet"],
-              ["Two-step verification", viewing.twoFactorEnabled ? "On" : "Off"]
+              ["Two-step verification", viewing.twoFactorEnabled ? "Turned on" : "Not turned on"]
             ].map(([label, value]) => (
               <div key={label} className="grid gap-0.5 sm:grid-cols-[13rem_minmax(0,1fr)] sm:gap-3">
                 <dt className="font-semibold text-ink-900">{label}</dt>

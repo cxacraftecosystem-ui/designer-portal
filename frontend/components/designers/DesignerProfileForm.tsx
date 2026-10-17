@@ -62,6 +62,7 @@
  * — a second Save there POSTs a second record — which is why their wording differs.)
  */
 
+import { CalendarField } from "@/components/ui/CalendarField";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IdCard, Trash2 } from "lucide-react";
@@ -81,7 +82,6 @@ import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { RichTextField } from "@/components/richtext/RichTextField";
 import { Field, Select, TextInput } from "@/components/FormControls";
-import { DateField } from "@/components/forms/DateTimeField";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { DocumentPreview } from "@/components/media/DocumentPreview";
 import { PhoneField } from "@/components/forms/PhoneField";
@@ -957,9 +957,6 @@ export function DesignerProfileForm({
             "Empanelment date Open calendar". The same reason `FieldBlock` is used for the phone and
             state controls above. */}
         <div className="grid min-w-0 gap-1">
-          <label className="field-label" htmlFor="designer-empanelment-date">
-            {DESIGNER_PROFILE_LABELS.empanelmentDate}
-          </label>
           {/*
             `DateField` and not `<TextInput type="date">`. A native date input formats itself from the
             BROWSER's locale, not this app's, so an empanelment recorded as 02/03/2019 is February to
@@ -974,8 +971,9 @@ export function DesignerProfileForm({
             dropdown above documents. Without this, changing the empanelment date by calendar and then
             navigating away would be discarded with no unsaved-changes prompt at all.
           */}
-          <DateField
+          <CalendarField
             id="designer-empanelment-date"
+            label={DESIGNER_PROFILE_LABELS.empanelmentDate}
             name="empanelmentDate"
             defaultValue={(profile.empanelmentDate ?? "").slice(0, 10)}
             onChange={markDirty}

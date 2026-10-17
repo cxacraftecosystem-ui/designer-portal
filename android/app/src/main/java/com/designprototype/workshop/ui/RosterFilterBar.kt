@@ -375,7 +375,7 @@ fun RosterFilterSheet(
                     // for its own custom range, with the identical cross-clamping: each end bounds the
                     // other, so an inverted range — which matches nothing and reads as a broken
                     // filter — cannot be entered.
-                    FieldDateField(
+                    CalendarField(
                         label = RosterLabels.DATE_FROM,
                         value = filters.from,
                         onValueChange = { picked -> onChange(filters.copy(from = picked)) },
@@ -383,7 +383,7 @@ fun RosterFilterSheet(
                         placeholder = "Any date",
                         clearable = true
                     )
-                    FieldDateField(
+                    CalendarField(
                         label = RosterLabels.DATE_TO,
                         value = filters.to,
                         onValueChange = { picked -> onChange(filters.copy(to = picked)) },

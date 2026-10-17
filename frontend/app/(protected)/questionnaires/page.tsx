@@ -18,6 +18,7 @@
  * whole point of the feature is that they build the instrument in Excel.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -691,21 +692,17 @@ export default function QuestionnairesPage() {
         questionnaire — putting the switch inside the table would hide it exactly then.
       */}
       <div className="mb-4 flex items-start justify-between gap-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2.5">
-        <label className="flex items-start gap-2.5 text-sm leading-6 text-ink-900">
-          <input
-            type="checkbox"
-            className="mt-1.5 h-4 w-4 rounded border-line-200 text-purple-700 dark:text-purple-300"
-            checked={showDeactivated}
-            onChange={(event) => {
-              setShowDeactivated(event.target.checked);
-              // BACK TO PAGE 1. The row count changes under the pager, so page 4 of the active-only
-              // list is very often past the end of the wider one — which renders as an empty table
-              // and reads as "there are none", the failure this whole control exists to end.
-              setPage(1);
-            }}
-          />
-          <span className="font-medium">Show deactivated</span>
-        </label>
+        <Toggle
+          label="Show deactivated"
+          checked={showDeactivated}
+          onChange={(next) => {
+            setShowDeactivated(next);
+            // BACK TO PAGE 1. The row count changes under the pager, so page 4 of the active-only
+            // list is very often past the end of the wider one — which renders as an empty table
+            // and reads as "there are none", the failure this whole control exists to end.
+            setPage(1);
+          }}
+        />
         <p className="max-w-md text-right text-xs leading-5 text-ink-500">
           Deactivating keeps every answer.
         </p>

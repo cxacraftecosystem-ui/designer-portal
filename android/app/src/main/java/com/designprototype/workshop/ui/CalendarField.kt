@@ -23,12 +23,15 @@ fun CalendarField(
     maximum: LocalDate? = null,
     clearable: Boolean = true,
     supportingText: String? = null,
+    /** What the empty box says — "Any date" on a filter, "No due date" on an optional deadline. */
+    placeholder: String = FIELD_DATE_HINT,
 ) {
     FieldDateField(
         label = label,
         value = value,
         onValueChange = onValueChange,
         modifier = modifier,
+        placeholder = placeholder,
         minimum = minimum,
         maximum = maximum,
         clearable = clearable,

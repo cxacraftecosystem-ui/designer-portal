@@ -1287,10 +1287,7 @@ function SignInMethodField() {
             maxLength={MAX_PASSWORD_LENGTH}
             className="field-input"
           />
-          <label className="flex items-center gap-2 text-sm text-ink-700">
-            <input type="checkbox" checked={showPassword} onChange={(event) => setShowPassword(event.target.checked)} />
-            Show the password
-          </label>
+          <Toggle label="Show the password" checked={showPassword} onChange={setShowPassword} />
           <Toggle name="mustChangePassword" defaultChecked label="Ask them to choose a new one at first sign-in" />
           <p className="text-xs leading-5 text-ink-500">
             {passwordRuleLine("Fill in their full name too — it becomes the name on the account.")}

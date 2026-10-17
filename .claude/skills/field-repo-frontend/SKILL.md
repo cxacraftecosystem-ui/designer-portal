@@ -1471,6 +1471,45 @@ A page whose API wants UTC day bounds (e.g. `/settings/usage`) converts the stri
 4. Status line in plain words: "On since 17 Oct 2026 · 8 recovery codes left" (`twoStepSwitchView`,
    Android `TwoStepSwitch.view` — one table, two clients).
 
+#### Where they are used — the sweep of 2026-10-17, both clients
+
+Every setting, single choice, multi choice, date and six-digit code on both clients was swept onto the
+five. What that means when you add or touch a screen:
+
+- **Settings are switches.** Web: "Show the password", "Withdraw the workshops…", "Include
+  machine-assisted text", "Show deactivated", "Only orders I recorded", "Show declined layers", the
+  speaker-label options, "Read it on this computer", "Keep the photograph on this record", "Any
+  number", the find bar's "Match case" / "Whole words", "Pre-processes available", "Record additional
+  information", the grid-measurement groups, the sketch-trace on/off parameters, and the island's
+  **Admin view** (`ToggleSwitch showLabel` — it used to print "Admin view: ON"). Android: the same
+  rows plus "Do not remind me again", "Required", "Give the copy a different description", the
+  add-person / access-roster password options, the drawer's **Admin view**, and every Material
+  `Switch` that drew its own row. `Toggle` takes `testId` for a `data-testid` on the switch.
+- **Checkboxes stay only where they choose ROWS** — the review queue's selection, sharing's record
+  picker, the users/workshop assignment lists, the sanction-import rows, language packs — and for
+  **consent** (the sign-in terms, Aadhaar, usage-recording consent), which is an agreement, not a
+  setting. Radio groups of five or fewer stay radios (theme, transcription mode, sign-in method).
+- **Pick several = the multi-select.** `/data`'s "Include" kinds and the search filters' record types
+  (`bulk={false}` / `bulk = false` — a filter spells "everything" by picking nothing); Android's task
+  builder pickers now draw `SearchableMultiSelectField` and its workshop / role pickers
+  `SearchableSelectField` (workshops are records, so `searchable = true`); the role pickers on
+  add-person and the access roster are `SearchableSelectField`.
+- **Dates are `CalendarField`** everywhere except `FieldInput` (the stage form's registry wrapper
+  already draws label, hint and error around a `DateField`) and the workshop form's `DateRangeField`
+  (a range is one control with two ends, not two dates). Android: every `FieldDateField` call is now
+  `CalendarField`, which gained `placeholder`.
+- **Media buttons.** Android's media-processing Retry, the outbox's Try again, the sync card's
+  Upload / Try again now and the viewer's Download are `MediaActionButton` (tonal, icon + word, 48dp).
+- **Another person's two-step status** (the users screen on both clients) is a read-only fact and is
+  written "Turned on" / "Not turned on" — not a switch the reader cannot press, and never "On"/"Off".
+- **Held by tests.** Web `e2e/form-primitives-rule-unit.spec.ts` also refuses `? "On" : "Off"`,
+  `: ON"` / `: OFF"` and a `<DateField` outside `CalendarField`/`FieldInput`; Android
+  `FormPrimitivesRuleTest` refuses a bare `Switch(` outside `AppToggle.kt`, an "On"/"Off" or ": ON"
+  state word, and a `FieldDateField(` outside the date files.
+- **Not swept, on purpose:** action menus (Android's "Add Another Step" and the island bottom nav's
+  group menus are menus of ACTIONS, not answers), segmented `aria-pressed` mode buttons (map level,
+  zoom, compare mode — a choice between named modes, not on/off), and show-password eye buttons.
+
 **Do:** reuse these five; pass `ariaLabel` to a dropdown; keep a setting's switch pressable while a
 step is open; say the state under the switch in words. **Don't:** write `<select>`, `type="date"`, a
 single code box, `aria-pressed` for a setting, or a checkbox that changes a setting; show a switch as

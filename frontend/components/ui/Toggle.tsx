@@ -44,6 +44,8 @@ export type ToggleProps = {
   name?: string;
   id?: string;
   className?: string;
+  /** `data-testid` for the switch element itself. */
+  testId?: string;
 };
 
 export function Toggle({
@@ -58,7 +60,8 @@ export function Toggle({
   busyLabel,
   name,
   id,
-  className = ""
+  className = "",
+  testId
 }: ToggleProps) {
   const [inner, setInner] = useState(defaultChecked);
   const checked = checkedProp ?? inner;
@@ -94,9 +97,9 @@ export function Toggle({
           {label}
         </span>
         {description ? (
-          <span id={descriptionId} className="mt-0.5 block text-xs leading-5 text-ink-500">
+          <div id={descriptionId} className="mt-0.5 text-xs leading-5 text-ink-500">
             {description}
-          </span>
+          </div>
         ) : null}
         {status || (busy && busyLabel) ? (
           <span id={statusId} className="mt-1 block text-xs font-medium leading-5 text-ink-700" aria-live="polite">
@@ -108,6 +111,7 @@ export function Toggle({
         type="button"
         {...switchAria(checked, busy)}
         id={switchId}
+        data-testid={testId}
         aria-labelledby={labelId}
         aria-describedby={describedBy || undefined}
         disabled={disabled}
@@ -141,25 +145,35 @@ export function ToggleSwitch({
   checked,
   label,
   onChange,
-  disabled
+  disabled,
+  showLabel = false,
+  className = ""
 }: {
   checked: boolean;
   label: string;
   onChange: (next: boolean) => void;
   disabled?: boolean;
+  /**
+   * Draw `label` beside the track, inside the switch, for chrome too tight for a `Toggle` row — the
+   * island's "Admin view" pill. The switch is still the one control and still says on or off by its
+   * position and `aria-checked`, never by an "ON"/"OFF" word.
+   */
+  showLabel?: boolean;
+  className?: string;
 }) {
   return (
     <button
       type="button"
       {...switchAria(checked, false)}
-      aria-label={label}
+      aria-label={showLabel ? undefined : label}
       disabled={disabled}
       onClick={() => {
         const next = toggleOutcome(checked, { disabled });
         if (next !== null) onChange(next);
       }}
-      className="group inline-flex min-h-11 shrink-0 items-center px-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+      className={`group inline-flex min-h-11 shrink-0 items-center gap-2 px-0.5 disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
     >
+      {showLabel ? <span className="text-xs font-medium text-ink-700">{label}</span> : null}
       <span
         aria-hidden
         className={`relative inline-flex h-7 w-12 items-center rounded-full border transition-colors duration-200 ease-out ${

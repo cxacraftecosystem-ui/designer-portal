@@ -103,9 +103,15 @@ fun MediaViewerDialog(uri: Uri, mediaType: String, onSave: (() -> Unit)? = null,
             }
             Row(modifier = Modifier.align(Alignment.TopEnd)) {
                 if (onSave != null) {
-                    IconButton(onClick = onSave) {
-                        Icon(Icons.Filled.Download, contentDescription = "Save to device", tint = Color.White)
-                    }
+                    // A worded tonal button, not a bare white glyph on the photograph (owner, 2026-10-17:
+                    // "the buttons for retry and download on media card are not clearly visible").
+                    MediaActionButton(
+                        label = "Download",
+                        icon = Icons.Filled.Download,
+                        onClick = onSave,
+                        accessibleLabel = "Download to this device",
+                        modifier = Modifier.padding(top = 4.dp, end = 4.dp),
+                    )
                 }
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White)

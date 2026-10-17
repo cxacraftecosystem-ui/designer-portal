@@ -55,3 +55,20 @@ test("every six-digit code is entered in the six boxes", () => {
   const hits = offenders(/autoComplete="one-time-code"|autoComplete=\{index === 0 \? "one-time-code"/);
   expect(hits.every((hit) => hit.startsWith(path.join("components", "ui", "OtpCodeInput.tsx")))).toBe(true);
 });
+
+test("no setting reads as an ON/OFF word", () => {
+  // A setting says on or off by being a switch (`Toggle` / `ToggleSwitch`), never by printing the word.
+  expect(offenders(/\? "On" : "Off"|: ON"|: OFF"/)).toEqual([]);
+});
+
+test("every date box is the CalendarField", () => {
+  // `DateField` is the box `CalendarField` is built on. The one other caller is the stage form's
+  // `FieldInput`, whose registry-driven `labelled()` wrapper already draws the label, hint and error
+  // that `CalendarField` would otherwise draw a second time.
+  const allowed = [
+    path.join("components", "ui", "CalendarField.tsx"),
+    path.join("components", "forms", "DateTimeField.tsx"),
+    path.join("components", "designworkshop", "FieldInput.tsx")
+  ];
+  expect(offenders(/^\s*<DateField\b/).filter((hit) => !allowed.some((file) => hit.startsWith(file)))).toEqual([]);
+});

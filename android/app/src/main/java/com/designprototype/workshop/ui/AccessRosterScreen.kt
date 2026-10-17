@@ -1185,45 +1185,29 @@ private fun AccessEditDialog(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .toggleable(
-                                    value = mustChange,
-                                    role = Role.Checkbox,
-                                    onValueChange = { mustChange = it }
-                                )
-                        ) {
-                            Checkbox(checked = mustChange, onCheckedChange = null)
-                            Text(ACCESS_MUST_CHANGE_LABEL, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
-                        }
+                        AppToggle(
+                            label = ACCESS_MUST_CHANGE_LABEL,
+                            checked = mustChange,
+                            onCheckedChange = { mustChange = it }
+                        )
                     }
                 }
 
                 // THE TIER THEY JOIN AT. The first option is the platform's documented default — the
                 // lowest rung — because that is this platform's rule for a new joiner: everybody
                 // starts at the bottom unless somebody deliberately promotes them.
-                Column {
-                    OutlinedButton(onClick = { rolesOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text(role?.let { "Joins as ${FieldPermissions.label(it)}" } ?: "Joins at the default tier")
-                    }
-                    DropdownMenu(expanded = rolesOpen, onDismissRequest = { rolesOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Default joining tier (lowest rung)") },
-                            onClick = { role = null; rolesOpen = false }
-                        )
-                        // Offered up to the tier the server would accept from THIS admin anyway; the
-                        // server enforces the same ceiling (`assert_role`), so this is a mirror
-                        // rather than the rule.
-                        ACCESS_GRANTABLE_ROLES.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(FieldPermissions.label(option)) },
-                                onClick = { role = option; rolesOpen = false }
-                            )
-                        }
-                    }
-                }
+                // The shared single-select (owner's rule, 2026-10-17). The none-row is the default
+                // tier, so "nothing picked" still means exactly what it meant before. Offered up to the
+                // tier the server would accept from THIS admin anyway; the server enforces the same
+                // ceiling (`assert_role`), so this is a mirror rather than the rule.
+                SearchableSelectField(
+                    label = "Joins as",
+                    options = ACCESS_GRANTABLE_ROLES.map { SelectOption(it, FieldPermissions.label(it)) },
+                    selectedValue = role.orEmpty(),
+                    placeholder = "Default joining tier (lowest rung)",
+                    includeNone = true,
+                    onSelect = { picked -> role = picked.ifBlank { null } }
+                )
 
                 // `AccessRoster.notes` — an administrator's note about why this person is on the
                 // list. Dictation only: it is read in a list beside the row and nowhere else, so

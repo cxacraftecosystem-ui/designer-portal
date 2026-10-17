@@ -1035,22 +1035,17 @@ fun AppNavigationDrawerContent(
         }
         // Offered to admins only — and it can merely hide admin chrome, never unlock it.
         if (isAdmin) {
-            NavigationDrawerItem(
-                label = {
-                    Text(
-                        if (adminMode) "Admin view: ON" else "Admin view: OFF",
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                },
-                selected = adminMode,
-                icon = {
-                    Icon(
-                        if (adminMode) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                        contentDescription = null
-                    )
-                },
-                onClick = onToggleAdminView,
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+            // A real switch (owner's rule, 2026-10-17): its position and TalkBack's "On"/"Off" state
+            // say which, so the label never carries an "ON"/"OFF" word. The web's island draws the
+            // same `ToggleSwitch` labelled "Admin view".
+            AppToggle(
+                label = "Admin view",
+                checked = adminMode,
+                onCheckedChange = { onToggleAdminView() },
+                description = "Shows the admin pages and controls. Off only hides them; it never takes access away.",
+                modifier = Modifier
+                    .padding(NavigationDrawerItemDefaults.ItemPadding)
+                    .padding(horizontal = 16.dp)
             )
         }
         if (FieldPermissions.isMasterAdmin(user)) {

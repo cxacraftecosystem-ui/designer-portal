@@ -1,12 +1,12 @@
 "use client";
 
+import { CalendarField } from "@/components/ui/CalendarField";
 import { useEffect, useMemo, useState } from "react";
 import { Send, Sparkles, X } from "lucide-react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { flagCutNotice } from "@/components/data/cappedList";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
-import { DateField } from "@/components/forms/DateTimeField";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { assignmentPreview, derivedTargetFor, scopeTitle } from "@/components/tasks/scope";
@@ -479,14 +479,9 @@ export function AssignmentBuilder({
             />
           </Field>
           <div className="grid gap-3 md:grid-cols-2">
-            {/* Not <Field>, which wraps its child in a <label>: DateField contains a calendar
-                button, and a wrapping label merges its text into that button's accessible name. */}
-            <div className="grid gap-1">
-              <label className="field-label" htmlFor="task-due-date">
-                Due date
-              </label>
-              <DateField id="task-due-date" value={dueDate} onChange={setDueDate} />
-            </div>
+            {/* Not <Field>, which wraps its child in a <label>: the calendar button would fold its
+                text into the box's accessible name. CalendarField labels as a sibling. */}
+            <CalendarField id="task-due-date" label="Due date" value={dueDate} onChange={setDueDate} />
           </div>
         </div>
       </Step>

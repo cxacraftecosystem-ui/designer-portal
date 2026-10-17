@@ -35,6 +35,7 @@
  * administrators are actually meeting that 422.
  */
 
+import { Toggle } from "@/components/ui/Toggle";
 import { useRef, useState } from "react";
 import { AlertTriangle, FileSpreadsheet, Upload } from "lucide-react";
 
@@ -209,8 +210,13 @@ export function UploadPlanDialog({
         ) : null}
       </DropCard>
 
-      <label className="mt-4 flex items-start gap-3 rounded-md border border-line-200 bg-surface-50 p-3">
+      <div className="mt-4 rounded-md border border-line-200 bg-surface-50 px-3 py-1">
         {/*
+          A SWITCH, NOT A CHECKBOX (owner's rule, 2026-10-17: every on/off setting uses `Toggle`). What
+          follows is the reasoning that kept the old checkbox's fill purple, and it holds for the
+          switch's track unchanged: `Toggle` paints purple-700 and is not one of the recipe classes the
+          ministry block repaints.
+
           `accent-purple-700` STAYS PURPLE ON A MINISTRY SURFACE, AND THAT IS S1's CALL RECORDED.
 
           The 0.0.12 ministry-accent hand-off table proposed swapping this to the ministry-700 rung
@@ -227,21 +233,14 @@ export function UploadPlanDialog({
           thing. The orange on this screen is the panel rule and the header chip, both of which the
           scoped block in globals.css draws without anybody touching a component.
         */}
-        <input
-          type="checkbox"
-          className="mt-1 h-4 w-4 shrink-0 accent-purple-700"
+        <Toggle
+          label="Withdraw the workshops that are in this year's plan and not in this sheet."
+          description="Leave this off if the sheet is a partial correction. A workshop that has already been opened is never withdrawn, whatever this says."
           checked={withdrawAbsent}
           disabled={busy}
-          onChange={(event) => setWithdrawAbsent(event.currentTarget.checked)}
+          onChange={setWithdrawAbsent}
         />
-        <span className="text-sm leading-6 text-ink-700">
-          <span className="font-medium text-ink-900">
-            Withdraw the workshops that are in this year&apos;s plan and not in this sheet.
-          </span>{" "}
-          Leave this unticked if the sheet is a partial correction. A workshop that has already been
-          opened is never withdrawn, whatever this says.
-        </span>
-      </label>
+      </div>
 
       {withdrawAbsent ? (
         <p className="mt-2 flex items-start gap-2 text-sm leading-6 text-amber-800 dark:text-amber-100">
