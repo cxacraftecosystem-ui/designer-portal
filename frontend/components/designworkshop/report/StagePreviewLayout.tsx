@@ -59,25 +59,30 @@ export function PreviewDisclosureButton({
  *
  * Closed, it is exactly the closed preview — the same panel and the same button — so nothing moves
  * when the real one replaces it. Open (the script is on its way), it says the document is being
- * built, which is what the real panel says first anyway.
+ * built, which is what the real panel says first anyway. With `failure`, the script could not be
+ * fetched, and the panel says that instead — the close button still works either way.
  */
 export function StagePreviewShell({
   open,
   onOpenChange,
-  onIntent
+  onIntent,
+  failure
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   onIntent?: () => void;
+  failure?: ReactNode;
 }) {
   return (
     <section className={open ? "panel mb-5 lg:mb-0 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col" : "panel mb-5"} data-stage-preview>
       <PreviewDisclosureButton open={open} onToggle={() => onOpenChange(!open)} onIntent={onIntent} />
       {open ? (
         <div className="border-t border-line-200 p-3 sm:p-4">
-          <p role="status" aria-live="polite" className="text-sm text-ink-700">
-            Building the document…
-          </p>
+          {failure ?? (
+            <p role="status" aria-live="polite" className="text-sm text-ink-700">
+              Building the document…
+            </p>
+          )}
         </div>
       ) : null}
     </section>

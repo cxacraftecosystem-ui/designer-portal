@@ -46,14 +46,16 @@ import {
   useState,
   useSyncExternalStore
 } from "react";
-import dynamic from "next/dynamic";
+import { deferredTool, registerWarm } from "@/components/designworkshop/deferredTool";
 import type { DwFieldStamp } from "@/lib/designWorkshops";
 import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
 import { Paperclip, X } from "lucide-react";
 
 import { DictationButton } from "@/components/designworkshop/Dictation";
 import { MediaAiVerbs } from "@/components/designworkshop/MediaAiVerbs";
+import { MountWhenNear } from "@/components/designworkshop/MountWhenNear";
 import { RichTextEditor } from "@/components/designworkshop/RichTextEditor";
+import { fromStored, toPlain } from "@/lib/richText";
 import { deriveValue, isDerived } from "@/lib/derivedFields";
 import {
   addressListRole,
@@ -188,25 +190,29 @@ import type { MediaFile, MediaType } from "@/lib/types";
 function ToolLoading() {
   return <p className="min-h-10 text-xs leading-5 text-ink-500">Getting this tool ready…</p>;
 }
-const SignaturePad = dynamic(() => import("@/components/SignaturePad").then((m) => m.SignaturePad), {
-  loading: ToolLoading
+const SignaturePad = deferredTool(() => import("@/components/SignaturePad").then((m) => m.SignaturePad), {
+  placeholder: ToolLoading
 });
-const IdentityCardReader = dynamic(
+const IdentityCardReader = deferredTool(
   () => import("@/components/designworkshop/IdentityCardReader").then((m) => m.IdentityCardReader),
-  { loading: ToolLoading }
+  { placeholder: ToolLoading }
 );
-const PhotoMeasureField = dynamic(
+const PhotoMeasureField = deferredTool(
   () => import("@/components/designworkshop/PhotoMeasureField").then((m) => m.PhotoMeasureField),
-  { loading: ToolLoading }
+  { placeholder: ToolLoading }
 );
-const SketchRectifyField = dynamic(
+const SketchRectifyField = deferredTool(
   () => import("@/components/designworkshop/SketchRectifyField").then((m) => m.SketchRectifyField),
-  { loading: ToolLoading }
+  { placeholder: ToolLoading }
 );
-const SketchTraceField = dynamic(
+const SketchTraceField = deferredTool(
   () => import("@/components/sketches/upload/SketchTraceField").then((m) => m.SketchTraceField),
-  { loading: ToolLoading }
+  { placeholder: ToolLoading }
 );
+// Fetched ahead of need once the form is up, so a tool first used out of coverage is already cached.
+for (const tool of [SignaturePad, IdentityCardReader, PhotoMeasureField, SketchRectifyField, SketchTraceField]) {
+  registerWarm(tool.preload);
+}
 
 /** A `dwlocal:` reference read out of the draft store: what its tile draws, and the bytes to save. */
 type StagedTile = {
@@ -1371,7 +1377,9 @@ export function FieldInput({
        * does exactly that beside its word count, through the same `insertText` a keystroke uses.
        * Adding a second button here would give a narrative field two, one of which destroys work.
        */
+      // Built when it nears the screen — see `MountWhenNear`. Until then the field is its text.
       return unlabelled(
+        <MountWhenNear preview={toPlain(fromStored(value))} labelledBy={labelId} disabled={disabled}>
         <RichTextEditor
           value={value}
           onChange={(next) => onChange(next)}
@@ -1398,6 +1406,7 @@ export function FieldInput({
           */
           upload={richTextUpload}
         />
+        </MountWhenNear>
       );
 
     case "INT":

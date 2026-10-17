@@ -89,3 +89,46 @@ async def test_the_batched_pick_is_the_single_reads_pick(monkeypatch):
     found = await sanction_orders._stage_one_singletons(["w1", None, "w1"])
     assert found == {"w1": {"workshopTitle": "first"}}
     assert await sanction_orders._stage_one_singletons([None]) == {}
+
+
+async def test_the_officers_list_reads_stage_one_once_per_page_and_matches_the_single_read(monkeypatch):
+    """The list built each row with its own stage-1 read — the badge's N+1, one route over."""
+    entries = _Table(
+        [
+            _entry("w0", COMPLETE),
+            _entry("w1", {"workshopTitle": "Half filled", "sanctionOrderNo": "SO-1"}),
+        ]
+    )
+    monkeypatch.setattr(sanction_orders, "db", SimpleNamespace(dwstageentry=entries))
+
+    async def one_at_a_time(workshop_id):
+        found = (await sanction_orders._stage_one_singletons([workshop_id])).get(workshop_id)
+        spec = sanction_orders.stage(sanction_orders.STAGE_ONE_KEY)
+        return found, sanction_orders.stage_completeness(spec, found or {}, {})
+
+    rows = [
+        SimpleNamespace(
+            id=f"so{i}",
+            sanctionOrderNo=f"SO-{i}",
+            sanctionOrderKey=f"SO-{i}",
+            sanctionOrderDate=None,
+            sanctionAmount="1000.00",
+            designerUserId="u",
+            designerEmail="d@example.invalid",
+            accountCreated=True,
+            notes=None,
+            designWorkshopId=workshop_id,
+            createdById="o",
+            designers=[],
+        )
+        for i, workshop_id in enumerate(["w0", "w1", "w2", "w0"])
+    ]
+
+    batched = await sanction_orders.sanction_payloads(rows)
+    assert len(entries.calls) == 1, "one stage-1 read for the whole page"
+    assert entries.calls[0]["where"]["designWorkshopId"]["in"] == ["w0", "w1", "w2"]
+
+    monkeypatch.setattr(sanction_orders, "_stage_one_state", one_at_a_time)
+    single = [await sanction_orders.sanction_payload(row) for row in rows]
+    assert batched == single
+    assert [item["readyForWork"] for item in batched] == [True, False, False, True]

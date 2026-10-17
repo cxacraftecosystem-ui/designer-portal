@@ -990,10 +990,22 @@ export function isStoredRichTextEmpty(raw: unknown): boolean {
   if (known !== undefined) return known;
   const empty = isEmptyDoc(fromStored(raw));
   emptinessByDocument.set(raw, empty);
+  // The rule above is held, not hoped for: outside production the document is frozen once it is
+  // cached, so any code that edits one in place throws where it does it instead of leaving a stale
+  // answer here and a wrong completeness score on screen. `e2e/rich-text-emptiness-cache-unit.spec.ts`.
+  if (process.env.NODE_ENV !== "production") freezeDeep(raw);
   return empty;
 }
 
 const emptinessByDocument = new WeakMap<object, boolean>();
+
+function freezeDeep(value: object): void {
+  if (Object.isFrozen(value)) return;
+  Object.freeze(value);
+  for (const child of Object.values(value)) {
+    if (child && typeof child === "object") freezeDeep(child);
+  }
+}
 
 /**
  * A stable string identifying a stored value's DOCUMENT, independent of how it was spelled.

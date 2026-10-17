@@ -98,6 +98,15 @@ async function send(ids: string[], pending: Map<string, Waiter[]>) {
       await viaSingleReads(ids, pending);
       return;
     }
+    if (error instanceof ApiError && error.status !== 401 && error.status !== 403) {
+      // The batch itself failed — a 5xx, or a row the encoder choked on. Before batching, that was
+      // one photograph's failure and not the stage's, so ask for these one at a time (this batch
+      // only; the next one tries the batch again) and let each row succeed or fail on its own.
+      await viaSingleReads(ids, pending);
+      return;
+    }
+    // A dropped connection, an expired sign-in or a refusal: every single read would meet the same
+    // answer, so it is given to every waiter once rather than earned forty times over.
     for (const id of ids) settle(pending, id, (waiter) => waiter.reject(error));
     return;
   }

@@ -140,7 +140,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -2042,6 +2042,7 @@ async def sanction_payload(
     designer: Any | None = None,
     officer: Any | None = None,
     team: Sequence[Any] | None = None,
+    stage_one: Mapping[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The wire form of one sanction order. HAND-BUILT, and never ``jsonable_encoder(row)``.
 
@@ -2056,7 +2057,13 @@ async def sanction_payload(
     officer = officer or getattr(row, "createdBy", None)
 
     workshop_id = getattr(row, "designWorkshopId", None) or getattr(workshop, "id", None)
-    singleton, score = await _stage_one_state(workshop_id)
+    if stage_one is None:
+        singleton, score = await _stage_one_state(workshop_id)
+    else:
+        # Read already, for a whole page at once (``sanction_payloads``). The same pick and the
+        # same scorer, so the payload is identical to the one-order read's.
+        singleton = stage_one.get(workshop_id) if workshop_id else None
+        score = stage_completeness(stage(STAGE_ONE_KEY), singleton or {}, {})
 
     order_date = getattr(row, "sanctionOrderDate", None)
     return {
@@ -2114,6 +2121,16 @@ async def sanction_payload(
         "sourceFilename": getattr(row, "sourceFilename", None),
         "sheetRow": getattr(row, "sheetRow", None),
     }
+
+
+async def sanction_payloads(rows: Sequence[Any]) -> list[dict[str, Any]]:
+    """:func:`sanction_payload` for a page of orders, reading stage 1 ONCE for the whole page.
+
+    The officer's list used to build each row with its own stage-1 read — a query per order, the
+    same N+1 the badge had (``awaiting_count``). Same rows, same pick, same scorer.
+    """
+    stage_one = await _stage_one_singletons([getattr(row, "designWorkshopId", None) for row in rows])
+    return [await sanction_payload(row, stage_one=stage_one) for row in rows]
 
 
 def _iso(value: Any) -> str | None:

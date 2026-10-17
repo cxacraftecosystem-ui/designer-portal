@@ -2362,10 +2362,19 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
   `fieldReadsRow` (it answers true for anything it is unsure of); `e2e/stage-field-memo-unit.spec.ts`
   counts the `row` reads and fails until somebody looks. Its callbacks are stable and always call the
   newest ones — never hand a memoised field a closure and keep it.
-- **Heavy, rarely shown tools on the stage form are `next/dynamic`** — the four record forms, the
-  document preview, the code scanner, the signature pad, the card reader and the photo/sketch tools —
-  each with a placeholder that holds its height. A static import of any of them from a module the
-  stage form already loads puts it back into the script every stage waits for.
+- **Heavy, rarely shown tools on the stage form are `deferredTool`s, never bare `next/dynamic`** —
+  the four record forms, the document preview, the code scanner, the signature pad, the card reader
+  and the photo/sketch tools — each with a placeholder that holds its height
+  (`components/designworkshop/deferredTool.tsx`). A static import of any of them puts it back into
+  the script every stage waits for; a bare `next/dynamic` brings back the offline failure: a chunk
+  this browser never fetched is not in the service worker's cache, the import fails with no signal,
+  and the PAGE's error boundary replaces the whole form. `deferredTool` gives each tool its own
+  "needs a connection the first time … Try again" panel, and `registerWarm(tool.preload)` puts it in
+  the queue `warmDeferredTools` fetches once the form is up. `e2e/deferred-tools-unit.spec.ts` lists
+  every one.
+- **Off-screen rich-text narratives are drawn as text until they near the viewport**
+  (`MountWhenNear`, 1000px ahead; focus or a press builds one at once and hands it the caret). A
+  locator that reaches for the Nth `[contenteditable]` far down a stage must scroll first.
 - `Field` is a `<label>` → never wrap a dropdown or a date field in it; use `FieldBlock`.
 - `optionText()` recurses on purpose.
 - `min-w-0` is load-bearing wherever it appears.

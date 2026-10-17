@@ -418,7 +418,7 @@ async def list_sanction_orders(
             include=SANCTION_INCLUDE,
         ),
     )
-    items = [await sanction_orders.sanction_payload(row) for row in rows]
+    items = await sanction_orders.sanction_payloads(rows)
     return page_payload(items, total, clean_page, clean_size)
 
 

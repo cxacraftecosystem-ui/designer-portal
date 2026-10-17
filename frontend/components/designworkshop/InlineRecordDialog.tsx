@@ -43,7 +43,7 @@
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import dynamic from "next/dynamic";
+import { deferredTool, registerWarm } from "@/components/designworkshop/deferredTool";
 
 import { FieldDialog } from "@/components/dialogs";
 import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
@@ -63,18 +63,19 @@ import type { ProcessRecord } from "@/components/forms/ProcessForm";
 function FormLoading() {
   return <p className="min-h-40 px-1 py-6 text-sm text-ink-500">Opening the form…</p>;
 }
-const ArtisanForm = dynamic(() => import("@/components/forms/ArtisanForm").then((m) => m.ArtisanForm), {
-  loading: FormLoading
+const ArtisanForm = deferredTool(() => import("@/components/forms/ArtisanForm").then((m) => m.ArtisanForm), {
+  placeholder: FormLoading
 });
-const ProcessForm = dynamic(() => import("@/components/forms/ProcessForm").then((m) => m.ProcessForm), {
-  loading: FormLoading
+const ProcessForm = deferredTool(() => import("@/components/forms/ProcessForm").then((m) => m.ProcessForm), {
+  placeholder: FormLoading
 });
-const ProductForm = dynamic(() => import("@/components/forms/ProductForm").then((m) => m.ProductForm), {
-  loading: FormLoading
+const ProductForm = deferredTool(() => import("@/components/forms/ProductForm").then((m) => m.ProductForm), {
+  placeholder: FormLoading
 });
-const ToolForm = dynamic(() => import("@/components/forms/ToolForm").then((m) => m.ToolForm), {
-  loading: FormLoading
+const ToolForm = deferredTool(() => import("@/components/forms/ToolForm").then((m) => m.ToolForm), {
+  placeholder: FormLoading
 });
+for (const form of [ArtisanForm, ProcessForm, ProductForm, ToolForm]) registerWarm(form.preload);
 import type { InlineHostSeed, UseExistingArtisan } from "@/components/forms/inlineRecordHost";
 import type { Artisan, ArtisanIdentityMatch, ProductDocumentation, ToolDocumentation } from "@/lib/types";
 

@@ -3353,14 +3353,37 @@ export function customFieldsFor(draft: DwDraft | null | undefined, stageKey: str
   return customFieldsForStage(draft?.customDefinition ?? null, stageKey);
 }
 
-/** The same fold for one stage, for the stage page's own read. */
+/**
+ * Did a push of this stage COMPLETE after a server read of it was sent?
+ *
+ * If so, the read may describe the server as it was before that push, and folding or adopting it would
+ * lay the older copy over what was just sent: the stage then looks clean and the next save PUTs the
+ * older content back. `>=` because both stamps are this browser's clock in milliseconds and a tie is
+ * not evidence of order. A false alarm costs one more read, never data.
+ */
+export function serverReadPredatesPush(stage: Pick<DwDraftStage, "lastPushedAt"> | undefined, readSentAt: number | undefined): boolean {
+  if (readSentAt === undefined || !stage) return false;
+  return stage.lastPushedAt !== null && stage.lastPushedAt >= readSentAt;
+}
+
+/**
+ * The same fold for one stage, for the stage page's own read.
+ *
+ * `readSentAt` is when that read left. A stage pushed since then is left exactly as it is and
+ * `onStale` is called, so the caller can read again ({@link serverReadPredatesPush}).
+ */
 export async function adoptServerStage(
   workshopId: string,
   spec: DwStage,
-  incoming: DwStageData
+  incoming: DwStageData,
+  options?: { readSentAt?: number; onStale?: () => void }
 ): Promise<DwDraft | null> {
   return mutate(workshopId, (draft) => {
     const current = draft.stages[spec.key] ?? emptyStage(spec.key);
+    if (serverReadPredatesPush(draft.stages[spec.key], options?.readSentAt)) {
+      options?.onStale?.();
+      return draft;
+    }
     if (current.dirtyAt !== null) {
       /*
         FOLDED, NOT ADOPTED — AND NOT REFUSED, WHICH IS WHAT IT USED TO BE.

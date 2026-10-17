@@ -54,7 +54,7 @@
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
+import { deferredTool, registerWarm } from "@/components/designworkshop/deferredTool";
 import { Check, ChevronDown, Loader2, Pencil, Plus, ScanLine, Search, X } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -100,10 +100,11 @@ import { cachedListLine } from "@/lib/workshopOptions";
   yet as a static import it was part of every stage that has a reference picker. The placeholder
   holds the camera panel's first line so the row does not jump.
 */
-const WorkshopCodeScanner = dynamic(
+const WorkshopCodeScanner = deferredTool(
   () => import("@/components/designworkshop/WorkshopCodeScanner").then((m) => m.WorkshopCodeScanner),
-  { loading: () => <p className="min-h-10 text-xs leading-5 text-ink-500">Getting the scanner ready…</p> }
+  { placeholder: () => <p className="min-h-10 text-xs leading-5 text-ink-500">Getting the scanner ready…</p> }
 );
+registerWarm(WorkshopCodeScanner.preload);
 
 /**
  * How long after the last keystroke the search goes out.

@@ -66,12 +66,12 @@ import {
   useRef,
   useState
 } from "react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, CloudOff, Layers } from "lucide-react";
 
 import { CustomSectionsForm } from "@/components/designworkshop/CustomSections";
+import { ToolLoadFailed, deferredTool, registerWarm, warmDeferredTools } from "@/components/designworkshop/deferredTool";
 import { HeldPostNotice, useHeldPostRefusal, writesHeld } from "@/components/designworkshop/HeldPostNotice";
 import {
   CollectionTable,
@@ -198,11 +198,23 @@ const loadStageDocumentPreview = () => import("@/components/designworkshop/repor
 const preloadStageDocumentPreview = () => void loadStageDocumentPreview().catch(() => undefined);
 // Memoised as well: on the keystroke itself every prop it takes is unchanged (the form's values reach
 // it through `useDeferredValue`, a render later), so the keystroke's render skips it outright.
+//
+// While the script is on its way the placeholder is the real panel's shell with the REAL close
+// button, so a designer can always shut it; if the script cannot be fetched (no signal the first time,
+// or a tab left open across a deploy) the shell says so and offers to try again, in the panel's place.
+// The page always passes both; the fallback only satisfies the optional prop type.
+const closePreviewNoop = () => undefined;
 const StageDocumentPreview = memo(
-  dynamic(() => loadStageDocumentPreview().then((module) => module.StageDocumentPreview), {
-    loading: () => <StagePreviewShell open onOpenChange={() => undefined} />
+  deferredTool(() => loadStageDocumentPreview().then((module) => module.StageDocumentPreview), {
+    placeholder: (props) => <StagePreviewShell open={props.open ?? true} onOpenChange={props.onOpenChange ?? closePreviewNoop} />,
+    failed: (props, retry) => (
+      <StagePreviewShell open={props.open ?? true} onOpenChange={props.onOpenChange ?? closePreviewNoop} failure={<ToolLoadFailed retry={retry} />} />
+    )
   })
 );
+// Warmed last of every deferred script, and only once the designer has paused (see `warmDeferredTools`):
+// evaluating it is one long task, so it must not land on a keystroke.
+registerWarm(() => loadStageDocumentPreview().then(() => undefined, () => undefined));
 
 /**
  * How long after the last keystroke the stage is written to IndexedDB.
@@ -530,6 +542,9 @@ function DesignWorkshopStagePageBody({
    */
   const [serverId, setServerId] = useState<string | null | undefined>(() => knownServerId(id));
   const [loading, setLoading] = useState(true);
+  // Once the form is up, fetch the scripts of every tool that loads on demand, so the service worker
+  // holds them before the designer walks out of coverage. Paced by `warmDeferredTools` itself.
+  useEffect(() => (loading ? undefined : warmDeferredTools()), [loading]);
   /**
    * True while the form is being held back for the server's copy of a stage this device has never
    * read. It only changes the sentence under the spinner — but which sentence is the whole point:
@@ -783,6 +798,9 @@ function DesignWorkshopStagePageBody({
         is not on this device) is dropped with its error. `settled` holds the outcome rather than the
         promise so a failure here can never surface as an unhandled rejection.
       */
+      // When it LEFT, so the answer can be refused if this stage was pushed while it was out — see
+      // `serverReadPredatesPush`.
+      const earlySentAt = Date.now();
       const early = isLocalWorkshopId(id) ? null : settled(getDesignWorkshopStage(id, stageKey));
       try {
         const loaded = await loadRegistry();
@@ -871,8 +889,9 @@ function DesignWorkshopStagePageBody({
         // Nothing to reconcile against for a workshop the server has never seen.
         if (!canReconcile || !spec || !draft.remoteId) return;
 
-        const stageData =
-          early && draft.remoteId === id ? outcomeOf(await early) : await getDesignWorkshopStage(draft.remoteId, stageKey);
+        const useEarly = Boolean(early) && draft.remoteId === id;
+        let readSentAt = useEarly ? earlySentAt : Date.now();
+        let stageData = useEarly && early ? outcomeOf(await early) : await getDesignWorkshopStage(draft.remoteId, stageKey);
         if (cancelled) return;
         /*
           THE SERVER'S DIGEST, READ STRAIGHT OFF THE PAYLOAD AND NEVER STORED AS THOUGH IT DESCRIBED THIS
@@ -887,8 +906,25 @@ function DesignWorkshopStagePageBody({
           case where the definition endpoint alone failed and the sections on screen came off disk.
         */
         setServerCustomVersion(stageData.customSchemaVersion ?? null);
-        const merged = await adoptServerStage(draft.localId, spec, stageData);
+        /*
+          A READ THAT LEFT BEFORE A PUSH OF THIS STAGE LANDED DESCRIBES THE SERVER AS IT WAS BEFORE THAT
+          PUSH, and adopting it would put the older copy over the stage that was just sent — after which
+          the stage looks clean and the next save writes the older content back. Asking early made that
+          window longer, so the store refuses such an answer (`serverReadPredatesPush`) and the stage is
+          read again, now, which is the old serial path. Once: a second push inside the second read's
+          flight is a sync pass racing itself, and the refusal still keeps the local copy.
+        */
+        let stale = false;
+        let merged = await adoptServerStage(draft.localId, spec, stageData, { readSentAt, onStale: () => (stale = true) });
         if (cancelled) return;
+        if (stale) {
+          readSentAt = Date.now();
+          stageData = await getDesignWorkshopStage(draft.remoteId, stageKey);
+          if (cancelled) return;
+          setServerCustomVersion(stageData.customSchemaVersion ?? null);
+          merged = await adoptServerStage(draft.localId, spec, stageData, { readSentAt });
+          if (cancelled) return;
+        }
         const mergedStage = merged?.stages[stageKey];
         // Re-seed only when the fold actually took. A stage the designer has been editing keeps its
         // `dirtyAt`, and re-seeding it would throw away exactly what has not been sent yet.
