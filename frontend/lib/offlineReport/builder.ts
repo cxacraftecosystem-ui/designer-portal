@@ -99,6 +99,9 @@ const isFreeText = (f: RegistryField) => FREE_TEXT_TYPES.has(f.type);
 const fieldOf = (entity: RegistryEntity, key: string) => entity.fields.find((f) => f.key === key);
 const singletonOf = (stage: RegistryStage) => stage.entities.find((e) => e.cardinality === "SINGLETON");
 const collectionsOf = (stage: RegistryStage) => stage.entities.filter((e) => e.cardinality === "COLLECTION");
+/** The collections that can print anything — `report_builder.printable_collections`. */
+const printableCollectionsOf = (stage: RegistryStage) =>
+  collectionsOf(stage).filter((e) => e.fields.some((f) => (f.reportRole ?? "KEY_VALUE") !== "HIDDEN"));
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The data the builder reads — `report_builder.WorkshopData`
@@ -976,7 +979,7 @@ export class ReportBuilder {
     this.stageKey = stage.key;
     const singletonData = this.data.singletons[stage.key];
     const hasSingleton = Boolean(singletonData && Object.keys(singletonData).length);
-    const hasRows = collectionsOf(stage).some((e) => rowsOf(this.data, stage.key, e.key).length > 0);
+    const hasRows = printableCollectionsOf(stage).some((e) => rowsOf(this.data, stage.key, e.key).length > 0);
     if (!hasSingleton && !hasRows && section.omitIfEmpty) return;
     const numbered = this.template.numberHeadings;
     if (section.pageBreakBefore) this.doc.add({ type: "PAGEBREAK" });
@@ -1000,7 +1003,7 @@ export class ReportBuilder {
         }
       }
     }
-    const collections = collectionsOf(stage);
+    const collections = printableCollectionsOf(stage);
     for (const entity of collections) {
       if (section.entities.length && !section.entities.includes(entity.key)) continue;
       const rows = rowsOf(this.data, stage.key, entity.key);

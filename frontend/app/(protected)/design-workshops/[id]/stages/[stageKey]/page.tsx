@@ -152,7 +152,7 @@ import { registryProvenanceNotice } from "@/lib/registryProvenance";
 import { localWriteDecision, stageRefusalResult, stageRefusalWroteCount } from "@/lib/stageSaveOutcome";
 import { isUnreachable, serverAskedForTime, triageFailure } from "@/lib/offline";
 import { neverReconciled } from "@/lib/workshopOpenability";
-import { readStageFocus } from "@/lib/workshopSearch";
+import { FIELD_ANCHOR_ATTRIBUTE, readStageFocus } from "@/lib/workshopSearch";
 /*
   A CROSS-ROUTE RELATIVE IMPORT, ON PURPOSE.
 
@@ -166,6 +166,13 @@ import { readStageFocus } from "@/lib/workshopSearch";
 */
 import { reportServerId } from "../../report/reportTarget";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import {
+  SETUP_STAGE,
+  StageCaptureExtras,
+  useComputedCounts,
+  useStageAssist
+} from "@/components/designworkshop/StageCaptureExtras";
+import { applyAutoNumbers } from "@/lib/autoNumber";
 
 /**
  * A collection table that is skipped when none of its props changed — which, with the props this page
@@ -584,6 +591,11 @@ function DesignWorkshopStagePageBody({
    * — every keystroke banked into that draft — and then have the box disabled under the caret.
    */
   const postRefusal = useHeldPostRefusal(serverId);
+  /** One-tap suggestions and computed counts (2026-10-17), refetched after every save. */
+  const [assistToken, setAssistToken] = useState(0);
+  const assist = useStageAssist(serverId, stageKey, assistToken);
+  /** C12: the venue location was left empty on a stage 1 save. */
+  const [venuePrompt, setVenuePrompt] = useState(false);
   /** The notice's live region, which both Save buttons name while a refusal is shown. */
   const heldNoticeId = useId();
   /**
@@ -1271,7 +1283,13 @@ function DesignWorkshopStagePageBody({
    * Reading `collections` from the render closure and deciding before either call is both correct
    * and easier to read than making the removal test idempotent enough to survive being run twice.
    */
-  function patchCollection(entityKey: string, rows: DwRow[], removed?: DwRow) {
+  function patchCollection(entityKey: string, incoming: DwRow[], removed?: DwRow) {
+    // C6: a row just added — or one whose prototype was just chosen — takes the next number, and a
+    // schedule day its date. Blank boxes only; an existing number is never touched.
+    const numbering = stage?.entities.find((entity) => entity.key === entityKey);
+    const rows = numbering
+      ? applyAutoNumbers(numbering, collections[entityKey] ?? [], incoming, { startDate: assist?.startDate })
+      : incoming;
     /*
       A REMOVAL IS STILL DETECTED BY COUNT, BUT A REMOVAL IS NO LONGER AUTOMATICALLY A DELETION.
 
@@ -1674,6 +1692,8 @@ function DesignWorkshopStagePageBody({
         changes every time can express. It costs nothing while the panel is closed: it fetches on open.
       */
       setPreviewToken((current) => current + 1);
+      setAssistToken((current) => current + 1);
+      setVenuePrompt(stageKey === SETUP_STAGE && !singleton.venueLocation);
     } catch (err) {
       // A request that never reached a server is NOT a failed save: the stage is already on this
       // device and the sync pass will carry it. Saying "unable to save" here would be a lie that
@@ -1833,6 +1853,8 @@ function DesignWorkshopStagePageBody({
   useLayoutEffect(() => {
     patchCollectionRef.current = patchCollection;
   });
+  const patchRows = useCallback((entityKey: string, rows: DwRow[]) => patchCollectionRef.current(entityKey, rows), []);
+  useComputedCounts({ stageKey, assist, singleton, collections, patchSingleton: patchSingletonMany, patchRows });
   const rowWriters = useMemo(() => {
     const out: Record<string, (rows: DwRow[], removed?: DwRow) => void> = {};
     for (const entity of stage?.entities ?? []) {
@@ -2327,8 +2349,48 @@ function DesignWorkshopStagePageBody({
             it was typed, and the arithmetic is shown beside it.
           */}
           {stageKey === COSTING_STAGE ? (
-            <CostFindingsPanel workshopId={id} collections={collections} />
+            <CostFindingsPanel
+              workshopId={id}
+              collections={collections}
+              disabled={locked}
+              onUse={(sheetEntryId, key, value) =>
+                patchRows(
+                  "costSheet",
+                  (collections.costSheet ?? []).map((row) => (row._entryId === sheetEntryId ? { ...row, [key]: value } : row))
+                )
+              }
+            />
           ) : null}
+
+          {venuePrompt && stageKey === SETUP_STAGE && !singleton.venueLocation ? (
+            <div className="panel flex flex-col gap-2 p-4 sm:flex-row sm:items-center" role="status">
+              <p className="min-w-0 flex-1 text-sm text-ink-900">Add the venue location. The artisan list can&rsquo;t be imported without it.</p>
+              <ActionGroup inline align="end" className="max-sm:w-full">
+                <button
+                  type="button"
+                  className="field-button"
+                  onClick={() =>
+                    document
+                      .querySelector(`[${FIELD_ANCHOR_ATTRIBUTE}="workshopSetup.venueLocation"]`)
+                      ?.scrollIntoView({ behavior: "smooth", block: "center" })
+                  }
+                >
+                  Add the location
+                </button>
+              </ActionGroup>
+            </div>
+          ) : null}
+
+          <StageCaptureExtras
+            stage={stage}
+            workshopId={serverId ?? id}
+            assist={assist}
+            singleton={singleton}
+            collections={collections}
+            patchSingleton={patchSingletonMany}
+            patchRows={patchRows}
+            disabled={locked}
+          />
 
           {/*
             THE LINKED WORKSHOP, PUT WITHIN REACH OF THE REFERENCE PICKERS FIVE LEVELS DOWN.

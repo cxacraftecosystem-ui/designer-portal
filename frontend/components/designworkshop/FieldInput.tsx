@@ -175,6 +175,7 @@ import {
 import { downloadLocalMedia, downloadMediaUrl } from "@/lib/localMediaDownload";
 import { isTransient } from "@/lib/offline";
 import { loadStageReferences } from "@/lib/referenceCache";
+import { StageComputedCount } from "@/components/designworkshop/StageComputedCount";
 import type { MediaFile, MediaType } from "@/lib/types";
 
 /*
@@ -912,6 +913,9 @@ export function FieldInput({
       {dictationNotice}
     </div>
   );
+
+  // A count the stage works out from its rows replaces the typed box (owner, C7/C8, 2026-10-17).
+  if (field.computedKind) return unlabelled(<StageComputedCount field={field} value={value} labelId={labelId} />);
 
   switch (field.type) {
     case "PHONE":

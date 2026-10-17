@@ -48,6 +48,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, GripVertical, Plus, Trash2 } from "lucide-react";
 
+import { RefSuggestion } from "@/components/designworkshop/RefSuggestion";
 import { StageFieldInput, type StageCaptureContext } from "@/components/designworkshop/FieldInput";
 import {
   MirroredFieldsDisclosure,
@@ -391,6 +392,16 @@ function FieldGrid({
                   : undefined
               }
             />
+            {field.refSuggest ? (
+              <RefSuggestion
+                entity={entity}
+                field={field}
+                row={data}
+                workshopId={workshopId}
+                onPatch={onPatch}
+                disabled={disabled}
+              />
+            ) : null}
           </FieldCell>
         );
       })}

@@ -336,6 +336,18 @@ export type DwField = {
   */
   derivedKind?: "DAYS_BETWEEN" | "PRODUCT" | "SUM";
   derivedFrom?: string[];
+  /** How a NEW row numbers this field: a prefix ("S" → "S-01") or "#" for 1, 2, 3. See `lib/autoNumber`. */
+  autoNumber?: string;
+  /** Number within the rows sharing this sibling's value (iterations per prototype). */
+  autoNumberWithin?: string;
+  /** A date a new row takes from the workshop's start date and this sibling's day number. */
+  autoDateFromDay?: string;
+  /** A count the server stores on save, drawn read-only. See `lib/stageComputed`. */
+  computedKind?: "ROSTER_COUNT" | "ROSTER_WOMEN" | "ATTENDANCE_DAYS" | "ROSTER_COMPLETED" | "SURVEY_RESPONSES";
+  /** Drawn by a dedicated control, never as a box. `ATTENDANCE`: stage 3's daily tick-list. */
+  widget?: string;
+  /** One-tap carries from the chosen in-workshop record: `fill` copies into blanks, `hint` is shown only. */
+  refSuggest?: { fill: Record<string, string>; hint: Record<string, string> };
   columnWidthPct?: number;
   /**
    * This field is the caption of that media field. It must be rendered directly underneath its
@@ -3573,8 +3585,13 @@ export function isFilled(value: DwValue | undefined): boolean {
 }
 
 /** The registry fields a form actually renders: deprecated ones are dead inputs, captions belong to their media field. */
+/** Widgets this client draws itself; a field declaring one is left out of the generic grid. */
+export const DW_KNOWN_WIDGETS: ReadonlySet<string> = new Set(["ATTENDANCE"]);
+
 export function formFields(entity: DwEntity): DwField[] {
-  return entity.fields.filter((field) => !field.deprecated && !field.captionFor);
+  return entity.fields.filter(
+    (field) => !field.deprecated && !field.captionFor && !(field.widget && DW_KNOWN_WIDGETS.has(field.widget))
+  );
 }
 
 /** The caption field declared for `mediaKey`, if the entity has one. */
