@@ -87,6 +87,54 @@ export const SEARCH_THRESHOLD = 8;
 export const RENDER_CAP = 80;
 
 /**
+ * Past this many rows a FLAT list is virtualised: every row stays reachable by scrolling and by the
+ * keyboard, but only the rows in view (plus `OVERSCAN` either side) are in the DOM. At or below it
+ * every row is drawn. (Owner, 2026-10-17: "works for long lists". The earlier answer was an 80-row
+ * cap with a "keep typing" footer, which left rows 81+ reachable only by typing.) The same number as
+ * documentation-portal's `SearchableSelect`, so the shared primitive behaves the same in both apps.
+ *
+ * A GROUPED list is never virtualised: its headings break the one-row-height arithmetic, and the
+ * grouped lists in this app are short. It draws every row instead.
+ */
+export const VIRTUALIZE_AT = 200;
+
+/** Rows drawn beyond each edge of the visible window, so a fast flick does not show a gap. */
+export const OVERSCAN = 8;
+
+export type VirtualSlice = { virtual: boolean; start: number; end: number; padTop: number; padBottom: number };
+
+/**
+ * Which rows of a `count`-row list to draw, given the list's scroll position, its visible height and
+ * one row's height. Not virtual (every row, no padding) at or below `VIRTUALIZE_AT` or when grouped.
+ * The padding above and below keeps the scrollbar the true length of the whole list.
+ */
+export function virtualSlice(
+  count: number,
+  scrollTop: number,
+  viewport: number,
+  rowHeight: number,
+  flat = true
+): VirtualSlice {
+  if (!flat || count <= VIRTUALIZE_AT || rowHeight <= 0) {
+    return { virtual: false, start: 0, end: count, padTop: 0, padBottom: 0 };
+  }
+  const start = Math.max(0, Math.min(count, Math.floor(scrollTop / rowHeight) - OVERSCAN));
+  const end = Math.min(count, Math.ceil((scrollTop + viewport) / rowHeight) + OVERSCAN);
+  return { virtual: true, start, end, padTop: start * rowHeight, padBottom: (count - end) * rowHeight };
+}
+
+/**
+ * The scrollTop that brings row `index` into view with `nearest` semantics: unchanged when the row is
+ * already fully visible, otherwise scrolled by the least amount — never re-centred.
+ */
+export function scrollTopToShow(index: number, rowHeight: number, scrollTop: number, viewport: number): number {
+  const top = index * rowHeight;
+  if (top < scrollTop) return top;
+  if (top + rowHeight > scrollTop + viewport) return top + rowHeight - viewport;
+  return scrollTop;
+}
+
+/**
  * Diacritics folded so "Jodhpur" is reachable by typing "jodhpur" and "Ahmedābād" by "ahmedabad".
  *
  * RUNS OF WHITESPACE COLLAPSE TOO, on both sides of the comparison, and that half was a real miss.

@@ -4,7 +4,13 @@ import path from "node:path";
 import { expect, test } from "@playwright/test";
 
 import type { TwoFactorStatus } from "@/lib/twoFactor";
-import { formatOnSince, leavingSetupDiscards, recoveryCodesLeft, twoStepSwitchView } from "@/lib/twoStepSwitch";
+import {
+  SETUP_AWAY_LIMIT_MS,
+  formatOnSince,
+  leavingSetupDiscards,
+  recoveryCodesLeft,
+  twoStepSwitchView
+} from "@/lib/twoStepSwitch";
 
 /**
  * THE TWO-STEP VERIFICATION SWITCH TELLS THE TRUTH (owner's report, 2026-10-17): it was switched on in
@@ -60,19 +66,27 @@ test("the counts and the date read as words", () => {
   expect(formatOnSince("not a date")).toBeNull();
 });
 
-test("leaving setup discards it — but not hiding the tab, which is how a phone reaches the authenticator", () => {
+test("leaving setup discards it — a short hide (a look at the authenticator) does not, a long absence does", () => {
   expect(leavingSetupDiscards("cancel")).toBe(true);
   expect(leavingSetupDiscards("switch-off")).toBe(true);
   expect(leavingSetupDiscards("unmount")).toBe(true);
   expect(leavingSetupDiscards("pagehide")).toBe(true);
+  // A short look at the authenticator app keeps the key; a long absence drops it.
   expect(leavingSetupDiscards("hidden")).toBe(false);
+  expect(leavingSetupDiscards("hidden", 60_000)).toBe(false);
+  expect(leavingSetupDiscards("hidden", SETUP_AWAY_LIMIT_MS)).toBe(false);
+  expect(leavingSetupDiscards("hidden", SETUP_AWAY_LIMIT_MS + 1)).toBe(true);
 });
 
-test("the card cancels on pagehide and unmount, and its switch is the server's enabled", () => {
+test("the card cancels on pagehide, unmount and a long absence, and its switch is the server's enabled", () => {
   const card = readFileSync(path.resolve(__dirname, "../components/settings/TwoStepVerificationCard.tsx"), "utf8");
   expect(card).toContain('window.addEventListener("pagehide", onPageHide)');
   expect(card).toContain("cancelTwoFactorSetup({ keepalive: true })");
-  expect(card).not.toContain('addEventListener("visibilitychange"');
+  // Hidden for longer than the limit is a leave; a shorter hide is a trip to the authenticator app.
+  expect(card).toContain('document.addEventListener("visibilitychange", onVisibility)');
+  expect(card).toContain('leavingSetupDiscards("hidden", away)');
+  // A pending setup with none on this screen is cancelled on load, so a returning client reads Off.
+  expect(card).toContain("if (!answer.enabled && answer.pending && !settingUp.current) {");
   expect(card).toContain("<Toggle");
   expect(card).toContain("<OtpCodeInput");
   const client = readFileSync(path.resolve(__dirname, "../lib/twoFactor.ts"), "utf8");

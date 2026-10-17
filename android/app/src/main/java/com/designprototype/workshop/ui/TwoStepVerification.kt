@@ -389,14 +389,21 @@ object TwoStepSwitch {
             .joinToString(" · ")
 
     /**
-     * Leaving setup DISCARDS the unconfirmed key: Cancel, switching it back off, Back, or leaving the
-     * screen. NOT the app going to the background — the person is very likely in their authenticator
-     * app reading the code. When they come back, the status is re-read; a setup the server has since
-     * expired (15 minutes) drops back to Off.
+     * Away this long in the background, a setup is abandoned rather than paused for a look at the
+     * authenticator app. The web's `SETUP_AWAY_LIMIT_MS` (lib/twoStepSwitch.ts) is the same number.
+     */
+    const val AWAY_LIMIT_MILLIS: Long = 5L * 60L * 1000L
+
+    /**
+     * Leaving setup DISCARDS the unconfirmed key: Cancel, switching it back off, Back, leaving the
+     * screen, and coming back after more than [AWAY_LIMIT_MILLIS] in the background. A SHORT trip to
+     * the background does not — the person is very likely in their authenticator app reading the code.
+     * The server's 15-minute limit covers the case where they never come back at all.
      */
     enum class Leave { CANCEL, SWITCH_OFF, SCREEN_CLOSED, BACKGROUNDED }
 
-    fun leavingDiscards(leave: Leave): Boolean = leave != Leave.BACKGROUNDED
+    fun leavingDiscards(leave: Leave, awayMillis: Long = 0L): Boolean =
+        if (leave == Leave.BACKGROUNDED) awayMillis > AWAY_LIMIT_MILLIS else true
 
     /** Back from the background in setup, the server no longer holds the key: setup is over. */
     fun setupExpired(phase: Phase, status: TwoFactorStatusDto?): Boolean =
@@ -461,7 +468,16 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
     val inSetup by rememberUpdatedState(step is TwoStepStep.Setup)
 
     suspend fun load() {
-        runCatching { repository.twoFactorStatus() }
+        runCatching {
+            var answer = repository.twoFactorStatus()
+            // A setup left over from an earlier visit and never finished: it is Off, and with no setup
+            // on THIS screen nobody can finish it, so forget the key now rather than keep it.
+            if (!answer.enabled && answer.pending && !inSetup) {
+                runCatching { repository.cancelTwoFactorSetup() }
+                answer = answer.copy(pending = false)
+            }
+            answer
+        }
             .onSuccess { status = it; loadError = null }
             .onFailure { loadError = it.apiErrorMessage("Two-step verification could not be loaded.") }
     }
@@ -475,11 +491,28 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
         error = null
     }
 
-    // Back from the background (very likely from the authenticator app): re-read the status. A setup
-    // the server has expired meanwhile is over — the switch drops to Off and says so.
+    // Back from the background: away longer than AWAY_LIMIT_MILLIS, the setup is abandoned and its key
+    // discarded. A shorter trip (very likely to the authenticator app) keeps it; the status is re-read,
+    // and a setup the server has expired meanwhile is over too — the switch drops to Off and says so.
     val lifecycleOwner = context as? androidx.lifecycle.LifecycleOwner
     DisposableEffect(lifecycleOwner) {
+        var stoppedAt: Long? = null
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                stoppedAt = android.os.SystemClock.elapsedRealtime()
+            }
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
+                val away = stoppedAt?.let { android.os.SystemClock.elapsedRealtime() - it } ?: 0L
+                stoppedAt = null
+                if (inSetup && TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.BACKGROUNDED, away)) {
+                    go(TwoStepStep.Idle)
+                    notice = "Setup was stopped because you were away. Two-step verification is still off. Switch it on to get a new code to scan."
+                    scope.launch {
+                        runCatching { repository.cancelTwoFactorSetup() }
+                        load()
+                    }
+                }
+            }
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 scope.launch {
                     load()

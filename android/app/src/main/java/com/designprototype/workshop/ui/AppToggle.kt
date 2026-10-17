@@ -89,9 +89,16 @@ fun AppToggle(
             checked = checked,
             onCheckedChange = null,
             enabled = enabled,
+            // Off is an ink-500 edge and knob on the surface-200 track: the theme's outline is line-200,
+            // about 1.2:1 on the card, which left an Off switch barely visible (WCAG 1.4.11 asks 3:1).
+            // On is the theme's primary/onPrimary — purple-700/white in light, purple-400/950 in dark.
             colors = SwitchDefaults.colors(
                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                uncheckedTrackColor = MaterialTheme.field.surface200,
+                uncheckedThumbColor = MaterialTheme.field.muted,
+                uncheckedBorderColor = MaterialTheme.field.muted,
             )
         )
     }

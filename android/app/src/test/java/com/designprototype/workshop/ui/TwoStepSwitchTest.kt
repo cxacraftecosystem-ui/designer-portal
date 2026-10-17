@@ -64,7 +64,12 @@ class TwoStepSwitchTest {
         assertTrue(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.CANCEL))
         assertTrue(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.SWITCH_OFF))
         assertTrue(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.SCREEN_CLOSED))
+        // A short trip to the authenticator app keeps the key; a long absence drops it — the web's rule.
         assertFalse(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.BACKGROUNDED))
+        assertFalse(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.BACKGROUNDED, 60_000L))
+        assertFalse(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.BACKGROUNDED, TwoStepSwitch.AWAY_LIMIT_MILLIS))
+        assertTrue(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.BACKGROUNDED, TwoStepSwitch.AWAY_LIMIT_MILLIS + 1))
+        assertEquals(5L * 60L * 1000L, TwoStepSwitch.AWAY_LIMIT_MILLIS)
     }
 
     @Test

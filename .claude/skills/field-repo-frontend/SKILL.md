@@ -1372,7 +1372,10 @@ subtlety below is a bug already paid for once.
 
 Owner's ruling, 2026-10-17, and it is not a style preference: **every surface of both apps** uses
 these five and nothing else for these five jobs. The documentation portal mirrors the components
-under the same names and APIs; keep this section identical in both repos' copies of this skill.
+under the same names and APIs. **The shared core below (between the `shared:form-primitives`
+markers) is byte-identical in both repos' copies of this skill** — change it in both, then run
+`node scripts/check-skill-shared-block.mjs` (it diffs the two blocks when the sibling checkout is
+present). The repo-specific notes after it (file paths, the sweep list) are this repo's own.
 
 | Job | Web (`components/ui/`) | Android (`ui/`) | Never |
 |---|---|---|---|
@@ -1381,6 +1384,64 @@ under the same names and APIs; keep this section identical in both repos' copies
 | Pick several | `SearchableMultiSelect` (chips on by default) | `SearchableMultiSelectField` | a wall of checkboxes |
 | A date | `CalendarField` (`CalendarField.tsx`, over `DateField`) | `CalendarField` (`CalendarField.kt`, over `FieldDateField`) | `<input type="date">` |
 | A six-digit code | `OtpCodeInput` (`OtpCodeInput.tsx` + pure `otpCode.ts`) | `OtpCodeField` (`OtpCodeField.kt`, pure `OtpCode`) | one text box for the code |
+
+<!-- shared:form-primitives:start — this block is byte-identical in designer-portal and documentation-portal; edit both, then run `node scripts/check-skill-shared-block.mjs` -->
+#### The shared core — same numbers and rules in both apps
+
+The rule in one line: **no plain `<select>`, no checkbox standing in for a setting, no native date
+input, and no single-box code input — on any surface of either app, web or Android.**
+
+| Job | Web | Android | Never |
+|---|---|---|---|
+| An on/off setting | `Toggle` | `AppToggle` | "On"/"Off" words beside a button; a checkbox |
+| Pick one | `SearchableSelect` | `SearchableSelectField` | a plain `<select>` |
+| Pick several | `SearchableMultiSelect` | `SearchableMultiSelectField` | a wall of checkboxes |
+| A date | `CalendarField` | `CalendarField` | `<input type="date">`; the platform `DatePickerDialog` |
+| A 6-digit code | `OtpCodeInput` | `OtpCodeField` | one text box for the code |
+
+1. **Toggle.** A real switch: web `<button role="switch" aria-checked>` in a full-width row (label +
+   optional description, the whole row is the target, ≥44px on a phone, Space/Enter from the native
+   button, the global focus outline); Android one `toggleable(role = Role.Switch)` row, ≥48dp, the M3
+   `Switch` as decoration. `busy` refuses presses and keeps `checked` true to the server. Contrast:
+   Off = an ink-500 edge and ink-500 knob on the surface-200 track; On = purple-700 with a white knob
+   (dark: purple-400 with a purple-950 knob). Every state-carrying part is 3:1 or better on the card.
+2. **SearchableSelect / SearchableMultiSelect.** Type-to-filter (a box at 8+ options), ARIA
+   combobox/listbox keyboard pattern, empty state, `disabled`. **Past 200 rows a flat list is
+   virtualised** (`VIRTUALIZE_AT = 200`, fixed measured row height, `aria-setsize`/`aria-posinset`,
+   the highlight kept in view by the least scroll) — a local list is never cut. The single select
+   takes `clearable` (a separate Clear (x) button beside the trigger, never inside it, 44px on a
+   phone). The multi select draws removable chips (44px hit area on a phone) and "Select all" acts on
+   the FILTERED rows.
+3. **CalendarField.** A field that opens a calendar; typed entry still works; `min`/`max`; Clear.
+   The value is a LOCAL `yyyy-mm-dd` (the `parseDateInput` rule) — never `new Date("yyyy-mm-dd")`,
+   never `toISOString().slice(0, 10)`.
+4. **OtpCodeInput / OtpCodeField.** EXACTLY six boxes, ASCII digits only (anything else refused).
+   Web `inputMode="numeric"`, `pattern="[0-9]*"`, `autoComplete="one-time-code"`; Android
+   `KeyboardType.NumberPassword`. A pasted six-digit code fills every box; typing advances; Backspace
+   steps back; `onComplete` fires when the sixth digit lands. Error: every box red, one shake (360ms,
+   none under either reduced-motion switch). Each box is "Digit n of 6". Typeface **Plus Jakarta
+   Sans**, tabular figures, large. A recovery code is a SEPARATE text field behind a "Use a recovery
+   code instead" switch. Used on EVERY six-digit code surface: two-step setup, the sign-in challenge,
+   turning it off, new recovery codes, the first-password two-step step, admin flows, and the Aadhaar
+   OTP (designer, behind its flag).
+5. **The two-step verification switch.** One `Toggle` labelled "Two-step verification" with the state
+   in plain words under it ("On since 17 Oct 2026 · 8 recovery codes left").
+   - Off → switch on → setup (QR, key, six boxes). It reads "Setting up…", NOT On, until the server
+     has verified a code (`/enable`).
+   - Leaving setup unverified DISCARDS it (`POST /api/auth/two-factor/setup/cancel`, idempotent, never
+     touches an enabled secret): Cancel, switching back off, Back, navigating away, reload or closed
+     tab, and **coming back after more than 5 minutes hidden or backgrounded** (web
+     `visibilitychange`, Android `ON_STOP`/`ON_START`). A shorter trip — to the authenticator app on
+     the same phone — keeps the key.
+   - `GET` status reports `pending`; a client that finds a pending setup with none on its screen
+     cancels it and shows Off. The server ignores and clears a pending secret older than 15 minutes.
+   - Sign-in asks for a code ONLY when two-step is enabled; a pending secret changes nothing.
+   - On → switch off → a current code (six boxes) or a recovery code, then off.
+6. **Media card actions (Retry, Download).** A real button with an icon AND a word, from the purple
+   ramp: a pale ground (purple-50; dark purple-950), a purple edge at 3:1 or better against the card
+   and surface-50, deep-purple ink at 4.5:1 or better, ≥48dp / 44px on touch, in one action row that
+   never overlaps another control, the same on every card, tile, upload row and outbox row.
+<!-- shared:form-primitives:end -->
 
 **`e2e/form-primitives-rule-unit.spec.ts` fails the build** on a line that starts with `<select`, a
 native date input, or `autoComplete="one-time-code"` anywhere but `OtpCodeInput`. A checkbox used as a
@@ -1413,10 +1474,14 @@ chooses ROWS (select these three records); a switch changes a SETTING.**
 
 §11.5 is the whole contract. What 2026-10-17 added: the multi-select draws each selection as a **chip
 with a remove button** under the trigger (`chips`, default true, `CHIP_LIMIT` 12 then "and N more"; a
-disabled option's chip has no remove). Pass `chips={false}` only where the screen already lists the
-selection beside the control. Long lists stay on `RENDER_CAP` + the filter box + the cap sentence (they
-are not virtualised: the cap already bounds the DOM at 80 rows, and every highlight/pin invariant in
-§11.5 is written against `rendered`). Name a trigger with `ariaLabel` — a `<label htmlFor>` cannot.
+disabled option's chip has no remove; the remove button is 28px to look at and 44px to hit on a
+phone). Pass `chips={false}` only where the screen already lists the selection beside the control.
+**Long lists are virtualised past 200 rows** (`VIRTUALIZE_AT` and the pure `virtualSlice` /
+`scrollTopToShow` in `selectFilter.ts`, pinned by `e2e/select-virtual-unit.spec.ts`): a LOCAL list is
+never cut at `RENDER_CAP` any more — only a `serverQuery` answer is held to it, as its page size. A
+grouped list is drawn whole (headings break the fixed-row arithmetic). The single select takes
+`clearable` (+ `clearLabel`) for a separate Clear (x) button beside the trigger. Name a trigger with
+`ariaLabel` — a `<label htmlFor>` cannot.
 
 #### `CalendarField`
 
@@ -1462,10 +1527,13 @@ A page whose API wants UTC day bounds (e.g. `/settings/usage`) converts the stri
 1. Off → switch on → setup opens (QR, key, six boxes). The switch is **not on**: its status line reads
    "Setting up…". It reads On only after the SERVER accepted a code (`/enable`).
 2. Leaving setup unconfirmed **discards** it: Cancel, switching back off, navigating away / unmount,
-   reload or closed tab (`pagehide`, `keepalive`) call `POST /auth/two-factor/setup/cancel`. **Hiding
-   the tab or backgrounding the app does not** — that is how a phone reaches the authenticator app.
-   The server ignores and clears a pending key older than 15 minutes, `GET` reports `pending`, and a
-   returning client shows Off with "start again" — **never On, never a request for a code nobody saved**.
+   reload or closed tab (`pagehide`, `keepalive`) call `POST /auth/two-factor/setup/cancel`, and so
+   does **coming back after more than 5 minutes hidden or backgrounded** (`SETUP_AWAY_LIMIT_MS` +
+   `leavingSetupDiscards("hidden", away)` on `visibilitychange` on the web; `AWAY_LIMIT_MILLIS` +
+   `leavingDiscards(BACKGROUNDED, away)` on `ON_STOP`/`ON_START` on Android). A SHORTER trip keeps the
+   key — that is how a phone reaches the authenticator app. The server ignores and clears a pending key
+   older than 15 minutes, `GET` reports `pending`, and a client that finds a pending setup with none on
+   its own screen cancels it and shows Off — **never On, never a request for a code nobody saved**.
    Sign-in asks for a code only when `twoFactorEnabled` is true.
 3. On → switch off → a current code (six boxes) or a recovery code, then off.
 4. Status line in plain words: "On since 17 Oct 2026 · 8 recovery codes left" (`twoStepSwitchView`,
@@ -1499,7 +1567,11 @@ five. What that means when you add or touch a screen:
   (a range is one control with two ends, not two dates). Android: every `FieldDateField` call is now
   `CalendarField`, which gained `placeholder`.
 - **Media buttons.** Android's media-processing Retry, the outbox's Try again, the sync card's
-  Upload / Try again now and the viewer's Download are `MediaActionButton` (tonal, icon + word, 48dp).
+  Upload / Try again now and the viewer's Download are `MediaActionButton` (icon + word, 48dp). Its
+  colours are its OWN (`MediaActionColors`: purple-50 ground, purple-600 edge, purple-800 ink; dark
+  purple-950 / purple-500 / purple-200), never the theme's `secondaryContainer` — this app maps that
+  slot to surface-100, about 1.05:1 on the card, which is how the first pass still looked like bold
+  text. `MediaActionColorsTest` measures every pair; the web `MEDIA_ACTION_CLASS` is the same pair.
 - **Another person's two-step status** (the users screen on both clients) is a read-only fact and is
   written "Turned on" / "Not turned on" — not a switch the reader cannot press, and never "On"/"Off".
 - **Held by tests.** Web `e2e/form-primitives-rule-unit.spec.ts` also refuses `? "On" : "Off"`,

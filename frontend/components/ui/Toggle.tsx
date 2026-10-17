@@ -29,6 +29,23 @@ import { useId, useState } from "react";
 
 import { switchAria, toggleOutcome } from "@/components/ui/toggleKeys";
 
+/**
+ * THE TRACK AND THUMB COLOURS, measured (WCAG 1.4.11 asks 3:1 for the parts that say the state):
+ *
+ * - Off: an ink-500 edge on a surface-200 track — 6.3:1 against the card in light, 6.4:1 in dark —
+ *   with an ink-500 thumb (5.1:1 on the track). The old line-200 edge and white thumb were 1.2:1 on
+ *   a white card, so an Off switch was barely there at all.
+ * - On: purple-700 with a white thumb in light (7.6:1 on the card). In dark purple-700 is 2.3:1 on
+ *   the card, so the track moves up the ramp to purple-400 (7.2:1) with a purple-950 thumb (6.7:1) —
+ *   the same pair Android's dark scheme uses for `primary` / `onPrimary`.
+ *
+ * Exported so `toggle-semantics-unit.spec.ts` measures the very classes drawn here.
+ */
+export const SWITCH_TRACK_ON = "border-purple-700 bg-purple-700 dark:border-purple-400 dark:bg-purple-400";
+export const SWITCH_TRACK_OFF = "border-ink-500 bg-field-200";
+export const SWITCH_THUMB_ON = "bg-white dark:bg-purple-950";
+export const SWITCH_THUMB_OFF = "bg-ink-500";
+
 export type ToggleProps = {
   checked?: boolean;
   defaultChecked?: boolean;
@@ -120,13 +137,13 @@ export function Toggle({
           flip();
         }}
         className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors duration-200 ease-out disabled:cursor-not-allowed disabled:opacity-60 ${
-          checked ? "border-purple-700 bg-purple-700" : "border-line-200 bg-field-200"
+          checked ? SWITCH_TRACK_ON : SWITCH_TRACK_OFF
         } ${busy ? "opacity-70" : ""}`}
       >
         <span
           aria-hidden
-          className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ease-out ${
-            checked ? "translate-x-[22px]" : "translate-x-[3px]"
+          className={`inline-block h-5 w-5 rounded-full shadow-sm transition-transform duration-200 ease-out ${
+            checked ? `translate-x-[22px] ${SWITCH_THUMB_ON}` : `translate-x-[3px] ${SWITCH_THUMB_OFF}`
           }`}
         />
       </button>
@@ -177,12 +194,12 @@ export function ToggleSwitch({
       <span
         aria-hidden
         className={`relative inline-flex h-7 w-12 items-center rounded-full border transition-colors duration-200 ease-out ${
-          checked ? "border-purple-700 bg-purple-700" : "border-line-200 bg-field-200"
+          checked ? SWITCH_TRACK_ON : SWITCH_TRACK_OFF
         }`}
       >
         <span
-          className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ease-out ${
-            checked ? "translate-x-[22px]" : "translate-x-[3px]"
+          className={`inline-block h-5 w-5 rounded-full shadow-sm transition-transform duration-200 ease-out ${
+            checked ? `translate-x-[22px] ${SWITCH_THUMB_ON}` : `translate-x-[3px] ${SWITCH_THUMB_OFF}`
           }`}
         />
       </span>

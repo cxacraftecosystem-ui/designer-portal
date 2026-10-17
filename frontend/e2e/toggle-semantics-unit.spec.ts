@@ -48,3 +48,48 @@ test("FormData sees exactly what a checkbox sent: 'on' while on, nothing while o
   const toggle = source("components/ui/Toggle.tsx");
   expect(toggle).toContain('{name && checked ? <input type="hidden" name={name} value="on" /> : null}');
 });
+
+/*
+ * WCAG 1.4.11: the parts of a switch that say its state need 3:1 against what is around them. The
+ * hexes are globals.css's tokens (light :root, dark [data-theme="dark"]); the classes are the ones
+ * Toggle.tsx exports and draws, so a colour change that fails the bar fails here.
+ */
+const TOKENS = {
+  light: { card: "#ffffff", "ink-500": "#615d7a", "field-200": "#e9e6f5", "purple-700": "#762cb1", white: "#ffffff" },
+  dark: { card: "#1a1725", "ink-500": "#9e98b2", "field-200": "#2e2840", "purple-400": "#c090f5", "purple-950": "#2f0d4b" }
+} as const;
+
+function luminance(hex: string): number {
+  const channels = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255);
+  const [r, g, b] = channels.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+test("an Off switch and an On switch both stand out from the card at 3:1, in light and dark", () => {
+  const drawn = source("components/ui/Toggle.tsx");
+  expect(drawn).toContain('export const SWITCH_TRACK_OFF = "border-ink-500 bg-field-200";');
+  expect(drawn).toContain('export const SWITCH_THUMB_OFF = "bg-ink-500";');
+  expect(drawn).toContain(
+    'export const SWITCH_TRACK_ON = "border-purple-700 bg-purple-700 dark:border-purple-400 dark:bg-purple-400";'
+  );
+  expect(drawn).toContain('export const SWITCH_THUMB_ON = "bg-white dark:bg-purple-950";');
+
+  for (const mode of ["light", "dark"] as const) {
+    const t = TOKENS[mode];
+    expect(contrast(t["ink-500"], t.card), `${mode} Off edge vs card`).toBeGreaterThanOrEqual(3);
+    expect(contrast(t["ink-500"], t["field-200"]), `${mode} Off thumb vs track`).toBeGreaterThanOrEqual(3);
+  }
+  expect(contrast(TOKENS.light["purple-700"], TOKENS.light.card), "light On track vs card").toBeGreaterThanOrEqual(3);
+  expect(contrast(TOKENS.light.white, TOKENS.light["purple-700"]), "light On thumb vs track").toBeGreaterThanOrEqual(3);
+  expect(contrast(TOKENS.dark["purple-400"], TOKENS.dark.card), "dark On track vs card").toBeGreaterThanOrEqual(3);
+  expect(contrast(TOKENS.dark["purple-950"], TOKENS.dark["purple-400"]), "dark On thumb vs track").toBeGreaterThanOrEqual(3);
+
+  // Both switches draw from the constants, and the 1.2:1 Off look is gone.
+  const toggle = source("components/ui/Toggle.tsx");
+  expect(toggle.match(/checked \? SWITCH_TRACK_ON : SWITCH_TRACK_OFF/g)?.length, "Toggle and ToggleSwitch").toBe(2);
+  expect(toggle).not.toContain('"border-line-200 bg-field-200"');
+});

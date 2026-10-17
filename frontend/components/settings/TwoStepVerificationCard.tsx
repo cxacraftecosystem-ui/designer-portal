@@ -9,11 +9,13 @@
  *   Off → switch on  → setup opens (QR, key, six boxes). The switch is NOT on: it reads "Setting up…".
  *                      Only when the server accepts a code (`/enable`) does it read On; then the ten
  *                      recovery codes are shown, once.
- *   Leaving setup    → Cancel, switching it back off, navigating away, reloading or closing the tab
- *                      DISCARDS the unconfirmed key (`POST /auth/two-factor/setup/cancel`). Hiding the
- *                      tab does not: on a phone the person goes to their authenticator app mid-setup
+ *   Leaving setup    → Cancel, switching it back off, navigating away, reloading or closing the tab,
+ *                      and coming back to a tab hidden for more than five minutes DISCARD the
+ *                      unconfirmed key (`POST /auth/two-factor/setup/cancel`). A short hide does not:
+ *                      on a phone the person goes to their authenticator app mid-setup
  *                      (`leavingSetupDiscards`). A setup the server still holds from an earlier visit
- *                      reads Off with "start again" — never On, never a request for a code nobody saved.
+ *                      is cleared on load and reads Off — never On, never a request for a code nobody
+ *                      saved.
  *   On  → switch off → a current code (six boxes) or a recovery code, then it is off.
  *
  * The status line under the switch is plain words: "On since 17 Oct 2026 · 8 recovery codes left"
@@ -43,7 +45,7 @@ import {
   type TwoFactorSetup,
   type TwoFactorStatus
 } from "@/lib/twoFactor";
-import { twoStepSwitchView, type TwoStepPhase } from "@/lib/twoStepSwitch";
+import { leavingSetupDiscards, twoStepSwitchView, type TwoStepPhase } from "@/lib/twoStepSwitch";
 
 /** Which part of the conversation is on screen. */
 type Step =
@@ -76,7 +78,14 @@ export function TwoStepVerificationCard() {
 
   const load = useCallback(async () => {
     try {
-      setStatus(await fetchTwoFactorStatus());
+      let answer = await fetchTwoFactorStatus();
+      // A setup left over from an earlier visit (or another tab) and never finished: it is Off, and
+      // with no setup on THIS screen nobody can finish it, so forget the key now rather than keep it.
+      if (!answer.enabled && answer.pending && !settingUp.current) {
+        await cancelTwoFactorSetup().catch(() => undefined);
+        answer = { ...answer, pending: false };
+      }
+      setStatus(answer);
       setLoadError(null);
     } catch (err) {
       setLoadError(messageOf(err, "Two-step verification could not be loaded."));
@@ -92,18 +101,41 @@ export function TwoStepVerificationCard() {
   }, [step]);
 
   // LEAVING SETUP DISCARDS IT: a reload or a closed tab (`pagehide`, sent with keepalive so it outlives
-  // the page) and a navigation inside the app (this component unmounting). Not `visibilitychange` —
-  // see `leavingSetupDiscards`.
+  // the page), a navigation inside the app (this component unmounting), and coming back to a tab that
+  // was hidden for longer than SETUP_AWAY_LIMIT_MS. A shorter hide is a trip to the authenticator app
+  // and keeps the key — see `leavingSetupDiscards`.
   useEffect(() => {
+    let hiddenAt: number | null = null;
     function onPageHide() {
       if (settingUp.current) void cancelTwoFactorSetup({ keepalive: true }).catch(() => undefined);
     }
+    function onVisibility() {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      const away = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+      hiddenAt = null;
+      if (settingUp.current && leavingSetupDiscards("hidden", away)) {
+        settingUp.current = false;
+        setStep({ kind: "idle" });
+        setCode("");
+        setCodeKind("totp");
+        setError(null);
+        setNotice("Setup was stopped because you were away. Two-step verification is still off. Switch it on to get a new code to scan.");
+        void cancelTwoFactorSetup()
+          .catch(() => undefined)
+          .then(() => load());
+      }
+    }
     window.addEventListener("pagehide", onPageHide);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onVisibility);
       if (settingUp.current) void cancelTwoFactorSetup({ keepalive: true }).catch(() => undefined);
     };
-  }, []);
+  }, [load]);
 
   if (!user) return null;
 

@@ -10,6 +10,7 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +31,7 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -182,9 +185,14 @@ private class PendingSave {
  *
  * WHY (owner, 2026-10-17: "the buttons for retry and download on media card are not clearly visible").
  * They were 12sp TextButtons with 2dp of vertical padding: a purple word on a white card, easy to miss
- * and well under a thumb's 48dp. Now each is a [FilledTonalButton] — the theme's secondaryContainer
- * ground with its onSecondaryContainer ink, a pair Material 3 derives to meet AA contrast in BOTH the
- * light and the dark scheme — carrying the icon AND the word, at least 48dp tall.
+ * and well under a thumb's 48dp. Now each is a [FilledTonalButton] with its OWN pale-purple ground, a
+ * 1dp purple edge and deep-purple ink ([MediaActionColors]), carrying the icon AND the word, at least
+ * 48dp tall — the same look as the web twin (purple-50 ground, purple border, purple-800 ink).
+ *
+ * It does NOT use the theme's secondaryContainer: this app maps that slot to surface-100, which is
+ * about 1.05:1 against the white card in light and 1.13:1 against the dark card, so the button's
+ * ground and edge vanished and it read as bold text. [MediaActionColorsTest] pins the edge at 3:1 or
+ * better against the card and surface-50, and the ink at 4.5:1 or better on the ground, in both themes.
  */
 @Composable
 fun MediaActionButton(
@@ -196,14 +204,18 @@ fun MediaActionButton(
     /** The full name for TalkBack — "Download interview-3.m4a". */
     accessibleLabel: String? = null,
 ) {
+    val colors = MediaActionColors.forTheme(MaterialTheme.field.isDark)
     FilledTonalButton(
         onClick = onClick,
         enabled = enabled,
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
         colors = ButtonDefaults.filledTonalButtonColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            containerColor = colors.ground,
+            contentColor = colors.ink,
+            disabledContainerColor = colors.disabledGround,
+            disabledContentColor = colors.disabledInk,
         ),
+        border = BorderStroke(1.dp, if (enabled) colors.edge else colors.disabledEdge),
         modifier = modifier
             .heightIn(min = 48.dp)
             .semantics { accessibleLabel?.let { contentDescription = it } },
@@ -211,6 +223,46 @@ fun MediaActionButton(
         Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(6.dp))
         Text(label, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+    }
+}
+
+/**
+ * The media action button's colours, from the purple ramp, per theme. Plain values (no Compose
+ * lookup) so a JVM unit test can measure every pair.
+ *
+ * Light: purple-50 ground, purple-600 edge (5.2:1 on the white card, 4.9:1 on surface-50),
+ * purple-800 ink (9.4:1 on the ground). Dark: purple-950 ground, purple-500 edge (5.0:1 on the
+ * dark card, 4.7:1 on surface-50), purple-200 ink (12:1 on the ground). Disabled keeps a visible
+ * edge (line-200 is too faint to say "a button is here") but drops the ink to the placeholder rung.
+ */
+@Immutable
+data class MediaActionColors(
+    val ground: Color,
+    val edge: Color,
+    val ink: Color,
+    val disabledGround: Color,
+    val disabledEdge: Color,
+    val disabledInk: Color,
+) {
+    companion object {
+        val Light = MediaActionColors(
+            ground = FieldPalette.Purple50,
+            edge = FieldPalette.Purple600,
+            ink = FieldPalette.Purple800,
+            disabledGround = FieldPalette.Surface100Light,
+            disabledEdge = FieldPalette.Ink300Light,
+            disabledInk = FieldPalette.Ink500Light,
+        )
+        val Dark = MediaActionColors(
+            ground = FieldPalette.Purple950,
+            edge = FieldPalette.Purple500,
+            ink = FieldPalette.Purple200,
+            disabledGround = FieldPalette.Surface100Dark,
+            disabledEdge = FieldPalette.Ink300Dark,
+            disabledInk = FieldPalette.Ink500Dark,
+        )
+
+        fun forTheme(isDark: Boolean): MediaActionColors = if (isDark) Dark else Light
     }
 }
 

@@ -63,13 +63,21 @@ function onLine(status: TwoFactorStatus | null): string {
   return [since ? `On since ${since}` : "On", recoveryCodesLeft(status.recovery_codes_remaining)].join(" · ");
 }
 
+/** Hidden this long, a setup is abandoned rather than paused for a look at the authenticator app. */
+export const SETUP_AWAY_LIMIT_MS = 5 * 60 * 1000;
+
 /**
  * Leaving setup without a confirmed code DISCARDS it (`POST /auth/two-factor/setup/cancel`): Cancel,
- * switching it back off, navigating away, closing or reloading the tab. NOT the tab being hidden: on a
- * phone the person leaves for their authenticator app in the middle of setup, and cancelling then would
- * throw away the key they are about to read a code from. The server's 15-minute limit covers the case
- * where they never come back.
+ * switching it back off, navigating away, closing or reloading the tab, and coming back to a tab that
+ * was hidden for longer than `SETUP_AWAY_LIMIT_MS`. A SHORT hide does not: on a phone the person leaves
+ * for their authenticator app in the middle of setup, and cancelling then would throw away the key they
+ * are about to read a code from. Android's `TwoStepSwitch.leavingDiscards` is the same rule, and the
+ * server's 15-minute limit covers the case where they never come back at all.
  */
-export function leavingSetupDiscards(event: "cancel" | "switch-off" | "unmount" | "pagehide" | "hidden"): boolean {
-  return event !== "hidden";
+export function leavingSetupDiscards(
+  event: "cancel" | "switch-off" | "unmount" | "pagehide" | "hidden",
+  awayMs = 0
+): boolean {
+  if (event === "hidden") return awayMs > SETUP_AWAY_LIMIT_MS;
+  return true;
 }

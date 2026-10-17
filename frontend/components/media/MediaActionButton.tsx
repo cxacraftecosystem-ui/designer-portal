@@ -9,12 +9,16 @@ import { Download, RefreshCw } from "lucide-react";
  * WHY THIS EXISTS (owner, 2026-10-17: "the buttons for retry and download on media card are not
  * clearly visible"). Both used to be 2px-tall text-xs chips — a bordered word on a white tile, easy
  * to miss and hard to hit with a thumb. Now each is a real TONAL button: icon AND the word, a purple-50
- * ground with purple-800 ink (8.9:1) and a purple-300 border, flipping to purple-950/40 with
- * purple-100 ink in the dark theme (well over AA); 44px tall on a phone, 36px from `sm` up. They wrap
- * onto their own line rather than squeezing a status label, so they never overlap another control.
+ * ground with purple-800 ink (9.4:1) inside a purple-600 edge (5.2:1 on the card), flipping to a
+ * purple-950 ground with purple-200 ink and a purple-500 edge in the dark theme; 44px tall on a phone
+ * (any coarse pointer), 36px from `sm` up with a mouse. They wrap onto their own line rather than
+ * squeezing a status label, so they never overlap another control.
  *
  * A click never reaches the tile under it — tiles open a preview on click.
  */
+export const MEDIA_ACTION_CLASS =
+  "inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-md border border-purple-600 bg-purple-50 px-3 text-sm font-semibold text-purple-800 transition enabled:hover:border-purple-700 enabled:hover:bg-purple-100 disabled:cursor-not-allowed disabled:border-ink-300 disabled:bg-surface-50 disabled:text-ink-500 sm:min-h-9 pointer-coarse:min-h-11 dark:border-purple-500 dark:bg-purple-950 dark:text-purple-200 dark:enabled:hover:border-purple-400 dark:enabled:hover:bg-purple-900";
+
 export function MediaActionButton({
   label,
   icon,
@@ -41,7 +45,11 @@ export function MediaActionButton({
       }}
       aria-label={accessibleLabel}
       title={title}
-      className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-md border border-purple-300 bg-purple-50 px-3 text-sm font-semibold text-purple-800 transition enabled:hover:border-purple-400 enabled:hover:bg-purple-100 disabled:cursor-not-allowed disabled:border-line-200 disabled:bg-surface-50 disabled:text-ink-500 sm:min-h-9 dark:border-purple-700 dark:bg-purple-950/40 dark:text-purple-100 dark:enabled:hover:bg-purple-900/60"
+      // The EDGE is what makes it a button on a white or surface-50 card: purple-600 is 5.2:1 / 4.9:1
+      // there (purple-300 was 1.6:1, and the purple-50 ground alone is about 1.05:1). Dark: purple-500,
+      // 5.0:1 on the dark card, around a solid purple-950 ground with purple-200 ink (12:1). Android's
+      // `MediaActionColors` is the same pair, measured by `MediaActionColorsTest`.
+      className={MEDIA_ACTION_CLASS}
     >
       {icon}
       {label}
