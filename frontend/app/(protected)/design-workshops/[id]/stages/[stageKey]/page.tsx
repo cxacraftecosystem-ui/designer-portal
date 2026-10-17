@@ -111,7 +111,9 @@ import {
   dwFrozenReason,
   getDesignWorkshopStage,
   saveDesignWorkshopStage,
-  unconfirmedCopies,
+  countedSingleton,
+  pendingCopyKeys,
+  splitKeptCopies,
   type DwEntity,
   type DwEntryData,
   type DwRegistry,
@@ -734,12 +736,8 @@ function DesignWorkshopStagePageBody({
     // C9: copied text not yet edited or kept is not counted — the server's rule, shown here too.
     () => {
       if (!stage) return null;
-      const hidden = new Set(Object.keys(copiedFrom));
-      for (const key of unconfirmedCopies(provenance?.singleton)) if (!editedKeys.has(key)) hidden.add(key);
-      const counted = hidden.size
-        ? Object.fromEntries(Object.entries(singleton).filter(([key]) => !hidden.has(key)))
-        : singleton;
-      return scoreStageData(stage, counted, collections, customFields, custom);
+      const hidden = pendingCopyKeys(copiedFrom, provenance?.singleton, editedKeys);
+      return scoreStageData(stage, countedSingleton(singleton, hidden), collections, customFields, custom);
     },
     [stage, singleton, collections, customFields, custom, copiedFrom, provenance, editedKeys]
   );
@@ -1288,15 +1286,14 @@ function DesignWorkshopStagePageBody({
       if (entity.cardinality !== "SINGLETON") continue;
       for (const field of entity.fields) labels.set(field.key, field.label);
     }
-    const keys = new Set<string>(Object.keys(copiedFrom));
-    for (const key of unconfirmedCopies(provenance?.singleton)) if (!editedKeys.has(key)) keys.add(key);
+    const keys = pendingCopyKeys(copiedFrom, provenance?.singleton, editedKeys);
     return [...keys].filter((key) => labels.has(key)).map((key) => ({ key, label: labels.get(key)! }));
   }, [stage, copiedFrom, provenance, editedKeys]);
 
   /** C9 "Keep as is": an unsent copy simply loses its mark; a sent one is confirmed on the server. */
   const keepCopies = useCallback(
     async (keys: string[]) => {
-      const local = keys.filter((key) => key in copiedFrom);
+      const { local, remote } = splitKeptCopies(keys, copiedFrom);
       if (local.length) {
         setCopiedFrom((current) => {
           const next = { ...current };
@@ -1304,7 +1301,6 @@ function DesignWorkshopStagePageBody({
           return next;
         });
       }
-      const remote = keys.filter((key) => !(key in copiedFrom));
       if (!remote.length || !serverId) return;
       setConfirmingCopies(true);
       try {
@@ -1732,10 +1728,17 @@ function DesignWorkshopStagePageBody({
           // leaves the server holding the union of its row and this browser's bucket, so this browser
           // still has not read the server's copy and must go on merging until it does. See
           // `markStagePushed`'s `mergedEntries`.
-          mergedEntries: merged
+          mergedEntries: merged,
+          sentCopiedFrom: copyMarksBody(draftStage).copiedFrom
         });
         const next = updated?.stages[stageKey];
         if (next) setStageSync({ dirtyAt: next.dirtyAt, lastPushedAt: next.lastPushedAt, failure: next.failure });
+        // C9: the server now carries the copy marks this push sent; the page follows the draft so
+        // "Keep as is" confirms them on the server at the first press.
+        if (next) {
+          setCopiedFrom(next.copiedFrom ?? {});
+          if (next.provenance) setProvenance(next.provenance);
+        }
         // The push settled `removedFrom` in the store, so the banked baseline has to lose it too or
         // the very next render is "different from what is banked" and re-marks a stage that has
         // just landed as unsent. Left stale, the amber "Saved on this device only" chip came back
@@ -2435,8 +2438,8 @@ function DesignWorkshopStagePageBody({
             <CostFindingsPanel workshopId={id} collections={collections} />
           ) : null}
 
-          {/* Stage 3: the designer's own artisan-list import (C11). Needs the server's copy of the
-              workshop — a workshop only this device holds has nowhere to import into yet. */}
+          {/* C9: start this stage from the designer's own earlier workshop. Needs the server's copy
+              of the workshop — the sources are read from it. */}
           {DW_COPYABLE_STAGES.includes(stageKey) && serverId ? (
             <CopyFromEarlierPanel
               workshopId={serverId}
@@ -2449,6 +2452,8 @@ function DesignWorkshopStagePageBody({
             />
           ) : null}
 
+          {/* Stage 3: the designer's own artisan-list import (C11). Needs the server's copy of the
+              workshop — a workshop only this device holds has nowhere to import into yet. */}
           {stageKey === PARTICIPANTS_STAGE && serverId ? (
             <RosterImportPanel workshopId={serverId} disabled={locked} />
           ) : null}

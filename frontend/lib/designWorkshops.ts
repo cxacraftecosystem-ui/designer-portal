@@ -3736,3 +3736,37 @@ export function unconfirmedCopies(provenance: Record<string, DwFieldStamp> | nul
     .filter(([, stamp]) => stamp?.source === DW_COPIED_SOURCE)
     .map(([key]) => key);
 }
+
+/**
+ * C9: the boxes holding copied text that does not count yet — marked on this device and not yet
+ * sent, or stamped `copied` by the server and not edited since the stage opened.
+ */
+export function pendingCopyKeys(
+  copiedFrom: Record<string, string>,
+  stamps: Record<string, DwFieldStamp> | null | undefined,
+  editedKeys: ReadonlySet<string>
+): Set<string> {
+  const keys = new Set(Object.keys(copiedFrom));
+  for (const key of unconfirmedCopies(stamps)) if (!editedKeys.has(key)) keys.add(key);
+  return keys;
+}
+
+/** C9: the singleton as the completeness bar should score it — pending copies left out. */
+export function countedSingleton<T>(singleton: Record<string, T>, hidden: ReadonlySet<string>): Record<string, T> {
+  if (!hidden.size) return singleton;
+  return Object.fromEntries(Object.entries(singleton).filter(([key]) => !hidden.has(key)));
+}
+
+/**
+ * C9 "Keep as is": a copy still marked only on this device just loses its mark; every other key is
+ * confirmed on the server (where, once a push carrying it was accepted, its stamp now lives).
+ */
+export function splitKeptCopies(
+  keys: readonly string[],
+  copiedFrom: Record<string, string>
+): { local: string[]; remote: string[] } {
+  return {
+    local: keys.filter((key) => key in copiedFrom),
+    remote: keys.filter((key) => !(key in copiedFrom))
+  };
+}

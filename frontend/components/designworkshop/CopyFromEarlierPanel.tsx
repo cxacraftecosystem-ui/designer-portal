@@ -8,7 +8,7 @@
  * - **Your earlier workshops** — the designer's own text, copied into EMPTY boxes only and marked
  *   "Copied". Copied text does not count toward completeness until the designer edits it or presses
  *   "Keep as is".
- * - **Other designers in this cluster** — read only. Their text is shown to read, never put in a box:
+ * - **Other designers, same cluster or craft** — read only. Their text is shown to read, never put in a box:
  *   the registry's rule is one author per box.
  *
  * The page owns the boxes; this panel only hands it values (`onCopy`) and asks the server to keep a
@@ -208,7 +208,7 @@ export function CopyFromEarlierPanel({
               {sources.reference.length ? (
                 <div>
                   <h3 className="font-display text-sm font-bold tracking-tight text-ink-900">
-                    Other designers in this cluster
+                    Other designers, same cluster or craft
                   </h3>
                   <p className="mt-1 text-xs text-ink-500">Read only. Write your own in the boxes below.</p>
                   <ul className="mt-2 grid gap-2">

@@ -270,6 +270,14 @@ def mark_provenance(
     at = (now or datetime.now(UTC)).isoformat()
     out = dict(provenance)
     for key, source in copied.items():
+        # ALREADY KEPT FROM THIS SOURCE, so not re-marked. A second device (or an older client)
+        # re-sending the mark for text the designer already confirmed elsewhere must not turn their
+        # answer back into an unchecked copy: the text still equals the source, so verification
+        # alone cannot tell the two apart.
+        held = out.get(key)
+        kept_from = held.get("confirmedCopyOf") if isinstance(held, dict) else None
+        if isinstance(kept_from, dict) and kept_from.get("workshopId") == source.get("workshopId"):
+            continue
         out[key] = {
             "by": getattr(user, "id", None),
             "byName": getattr(user, "name", None),

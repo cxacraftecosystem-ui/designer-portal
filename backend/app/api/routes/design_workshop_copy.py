@@ -11,6 +11,7 @@ offered text to put in it. Its own module so the busy ``design_workshops`` route
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,6 +20,7 @@ from pydantic import Field
 from app.api.routes.design_workshops import _require_designer
 from app.core.db import db
 from app.core.deps import get_current_user
+from app.schemas import design_workshop_approvals
 from app.schemas.common import APIModel
 from app.services import workshop_copy
 from app.services.design_workshops import load_workshop_or_404
@@ -79,5 +81,32 @@ async def confirm_copied_fields(
     if not wanted:
         return {"provenance": before, "confirmed": []}
     after = workshop_copy.mark_provenance(before, {}, wanted, current_user)
-    await db.dwstageentry.update(where={"id": row.id}, data={"fieldProvenance": Json(after)})
+    # THE SAME IN-FLIGHT GUARD AS ``save_stage``: confirming moves completeness, so it must not land
+    # on a report an approval froze between the read above and this write. The header write carries
+    # ``NOT FROZEN_WHERE`` and moves ``updatedAt`` (the approval's own compare-and-set), and the
+    # entry write is predicated on the version read, so a save that raced in is not overwritten.
+    async with db.tx() as tx:
+        open_header = await tx.designworkshop.update_many(
+            where={"id": workshop_id, "NOT": design_workshop_approvals.FROZEN_WHERE},
+            data={"updatedAt": datetime.now(UTC)},
+        )
+        if open_header != 1:
+            frozen = await tx.designworkshop.find_unique(where={"id": workshop_id})
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=design_workshop_approvals.frozen_refusal(
+                    getattr(frozen, "status", None), getattr(frozen, "handedOnAt", None)
+                )
+                or design_workshop_approvals.FROZEN_APPROVED,
+            )
+        moved = await tx.dwstageentry.update_many(
+            where={"id": row.id, "version": row.version, "deletedAt": None},
+            data={"fieldProvenance": Json(after)},
+        )
+        if moved != 1:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CONFIRM_RACED)
     return {"provenance": after, "confirmed": wanted}
+
+
+#: 409 when the stage was saved between this request's read and its write.
+CONFIRM_RACED = "This stage changed while the copied text was being kept. Reload it and try again."

@@ -66,6 +66,31 @@ def test_marking_and_confirming_a_copy() -> None:
     assert workshop_copy.unconfirmed_copies(kept) == set()
 
 
+def test_a_kept_copy_is_not_re_marked_by_a_repeated_claim() -> None:
+    """A second device (or an older client) re-sending the mark must not undo "Keep as is"."""
+    user = SimpleNamespace(id="u1", name="Asha")
+    source = {"workshopId": "w0", "title": "Earlier"}
+    marked = workshop_copy.mark_provenance({}, {"history": source}, [], user)
+    kept = workshop_copy.mark_provenance(marked, {}, ["history"], user)
+    again = workshop_copy.mark_provenance(kept, {"history": source}, [], user)
+    assert again["history"]["source"] == "designer"
+    # A copy from a DIFFERENT earlier workshop is a new copy, and is marked.
+    other = workshop_copy.mark_provenance(kept, {"history": {"workshopId": "w9", "title": "X"}}, [], user)
+    assert other["history"]["source"] == workshop_copy.SOURCE_COPIED
+
+
+def test_confirm_copied_carries_the_in_flight_frozen_guard() -> None:
+    from pathlib import Path
+
+    route = (
+        Path(workshop_copy.__file__).resolve().parents[1] / "api" / "routes" / "design_workshop_copy.py"
+    ).read_text(encoding="utf-8")
+    body = route[route.index("async def confirm_copied_fields(") :]
+    assert '"NOT": design_workshop_approvals.FROZEN_WHERE' in body
+    assert "db.tx()" in body
+    assert '"version": row.version' in body
+
+
 def test_unconfirmed_copied_text_does_not_count_toward_completeness() -> None:
     data = {
         "clusterIntroduction": "A long history",
@@ -131,6 +156,7 @@ def world() -> Any:
                 ("earlier", "author", "IN_PROGRESS"),
                 ("current", "author", "DRAFT"),
                 ("theirs", "other", "COMPLETE"),
+                ("approved", "author", "APPROVED"),
             ):
                 facts[name] = await db.designworkshop.create(
                     data={
@@ -139,6 +165,7 @@ def world() -> Any:
                         "createdById": facts[owner].id,
                         "clusterName": cluster,
                         "status": status,
+                        **({"approvedAt": datetime.now(UTC)} if status == "APPROVED" else {}),
                     }
                 )
             await db.dwstageentry.create(
@@ -147,6 +174,18 @@ def world() -> Any:
                     "stageKey": STAGE,
                     "entityKey": ENTITY,
                     "data": Json({"history": f"Their history {stamp}"}),
+                }
+            )
+            # A frozen report still holding an unchecked copy: keeping it would move completeness.
+            await db.dwstageentry.create(
+                data={
+                    "designWorkshopId": facts["approved"].id,
+                    "stageKey": STAGE,
+                    "entityKey": ENTITY,
+                    "data": Json({"history": f"Our history {stamp}"}),
+                    "fieldProvenance": Json(
+                        {"history": {"source": workshop_copy.SOURCE_COPIED, "by": facts["author"].id}}
+                    ),
                 }
             )
         finally:
@@ -194,6 +233,18 @@ def world() -> Any:
             headers=headers("author"),
         )
         facts["after_confirm"] = read("current")
+        # The same copy mark arriving again from a second device after "Keep as is".
+        facts["resent"] = put(
+            "current",
+            {"history": copied_value, "craftIntroduction": f"Typed by hand {stamp}"},
+            copiedFrom={"history": facts["earlier"].id},
+        )
+        facts["after_resend"] = read("current")
+        facts["confirm_frozen"] = client.post(
+            f"/api/design-workshops/{facts['approved'].id}/stages/{STAGE}/confirm-copied",
+            json={"fields": ["history"]},
+            headers=headers("author"),
+        )
         facts["other_sources"] = client.get(
             f"/api/design-workshops/{facts['current'].id}/stages/{STAGE}/copy-sources",
             headers=headers("outsider"),
@@ -231,6 +282,19 @@ def test_keep_as_is_makes_the_copy_count(world: Any) -> None:
     stage_read = world["after_confirm"].json()
     assert stage_read["provenance"]["singleton"]["history"]["source"] == "designer"
     assert "History of the craft" not in stage_read["completeness"]["missing"]
+
+
+@needs_db
+def test_a_resent_mark_does_not_undo_keep_as_is(world: Any) -> None:
+    assert world["resent"].status_code == 200, world["resent"].text
+    stage_read = world["after_resend"].json()
+    assert stage_read["provenance"]["singleton"]["history"]["source"] == "designer"
+    assert "History of the craft" not in stage_read["completeness"]["missing"]
+
+
+@needs_db
+def test_keep_as_is_is_refused_on_a_frozen_report(world: Any) -> None:
+    assert world["confirm_frozen"].status_code == 403, world["confirm_frozen"].text
 
 
 @needs_db
