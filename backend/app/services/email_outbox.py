@@ -767,7 +767,10 @@ async def notify_record_comment(
 
 async def hand_in_audience(workshop_id: str) -> list[tuple[Any, bool]]:
     """``[(account, is_approver)]``: the workshop's assigned inspectors, then the approving authority
-    (every Ministry Admin and master admin). An account in both is listed once, as an inspector."""
+    (every Ministry Admin and master admin whom rule 7 does not bar from deciding THIS workshop).
+    An account in both is listed once, as an inspector."""
+    from app.services import design_workshop_posts as posts
+    from app.services.concurrency import gather_reads
     from app.services.design_workshop_inspectors import inspector_accounts
 
     inspectors = await inspector_accounts(workshop_id)
@@ -777,8 +780,20 @@ async def hand_in_audience(workshop_id: str) -> list[tuple[Any, bool]]:
     people: dict[str, tuple[Any, bool]] = {}
     for person in inspectors:
         people.setdefault(person.id, (person, False))
-    for person in approvers:
-        people.setdefault(person.id, (person, True))
+    candidates = [person for person in approvers if person.id not in people]
+    if candidates:
+        # Rule 7, batched: the same predicate as ``posts.decision_refusal``, two reads for everyone.
+        ids = [person.id for person in candidates]
+        held, authored = await gather_reads(
+            posts.supervisory_posts_among(workshop_id, ids),
+            posts.authorship_among(workshop_id, ids),
+        )
+        for person in candidates:
+            if posts.approval_refusals(
+                posts=held.get(person.id, frozenset()), authored=authored.get(person.id, frozenset())
+            ):
+                continue
+            people.setdefault(person.id, (person, True))
     return list(people.values())
 
 
@@ -867,10 +882,21 @@ async def flush_digests(
         if created is not None and created >= cutoff:
             continue
         due.setdefault(str(row.toAddress), []).append(row)
+    # A person who switched to OFF since a row was held is not sent it: the row is set aside
+    # (DIGESTED) with no digest. One read for every recipient's current choice.
+    recipient_ids = {str(row.recipientId) for rows in due.values() for row in rows if row.recipientId}
+    modes: dict[str, str] = {}
+    if recipient_ids:
+        preferences = await db.userpreference.find_many(where={"userId": {"in": list(recipient_ids)}})
+        modes = {str(pref.userId): hand_in_mode(pref) for pref in preferences}
     queued = 0
     for address, rows in due.items():
+        silenced = [row for row in rows if row.recipientId and modes.get(str(row.recipientId)) == HAND_IN_OFF]
+        for row in silenced:
+            await db.emailmessage.update_many(where={"id": row.id, "status": HELD}, data={"status": DIGESTED})
+        silenced_ids = {row.id for row in silenced}
         claimed = []
-        for row in rows:
+        for row in (row for row in rows if row.id not in silenced_ids):
             if await db.emailmessage.update_many(
                 where={"id": row.id, "status": HELD}, data={"status": DIGESTED}
             ):

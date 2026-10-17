@@ -260,10 +260,13 @@ async def request_access(
         requested_by=uid,
         decided_by=None,
     )
-    # The owner hears of the request (2026-10-18). Never raises; a no-op when mail is off.
-    await email_outbox.notify_data_access_requested(
-        payload.ownerId, current_user, tier=payload.tier, note=request_note
-    )
+    # The owner hears of a NEW or reopened request (2026-10-18), never of a repeat while one is
+    # already pending — so re-posting cannot flood the owner's inbox. Never raises; a no-op when
+    # mail is off.
+    if existing is None or _status_str(existing.status) != "PENDING":
+        await email_outbox.notify_data_access_requested(
+            payload.ownerId, current_user, tier=payload.tier, note=request_note
+        )
     return public_encode(grant)
 
 
