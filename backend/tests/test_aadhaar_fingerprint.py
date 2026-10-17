@@ -108,6 +108,35 @@ def test_no_key_means_nothing_is_stored_or_matched() -> None:
             fp.seal({"aadhaarNumber": _fresh_aadhaar()}, _settings(key))
 
 
+def test_the_spreadsheet_import_refuses_the_file_without_the_key(monkeypatch) -> None:
+    """No key: the import answers the same 503 and sentence as create, edit and lookup, before it
+    writes anything (not even its ledger row), instead of failing half-way with an unhandled error."""
+    from fastapi import HTTPException
+
+    from app.core import config, db as db_module
+    from app.services import artisan_import
+
+    writes: list[str] = []
+
+    class _NoWrites:
+        def __getattr__(self, name: str) -> Any:
+            writes.append(name)
+            raise AssertionError(f"the import touched db.{name} with no key configured")
+
+    monkeypatch.setattr(config, "get_settings", lambda: _settings(None))
+    monkeypatch.setattr(db_module, "db", _NoWrites())
+    parsed = SimpleNamespace(artisans=[], problems=[], sheet="Artisans")
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(
+            artisan_import.import_artisans(
+                parsed, workshop=SimpleNamespace(id="w1"), actor=SimpleNamespace(id="u1"), venue_fix={}
+            )
+        )
+    assert refused.value.status_code == 503
+    assert refused.value.detail == "Aadhaar numbers can't be saved right now. Try again shortly."
+    assert writes == []
+
+
 # ── seal: the write side ────────────────────────────────────────────────────────────────────────
 
 

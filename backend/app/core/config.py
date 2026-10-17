@@ -658,7 +658,7 @@ class Settings(BaseSettings):
     # /iit/shared/aadhaar-fingerprint-key. Unset: any write or lookup carrying an Aadhaar is refused.
     aadhaar_fingerprint_key: str | None = Field(default=None, alias="AADHAAR_FINGERPRINT_KEY")
     # Regulation 18(3) (services/aadhaar/log_retention.py): Aadhaar log entries older than two years
-    # are archived to the encrypted backup bucket by the queue worker, once a day, and deleted
+    # are archived to AADHAAR_LOG_ARCHIVE_BUCKET by the queue worker, once a day, and deleted
     # AADHAAR_LOG_ARCHIVE_YEARS (at least 5) later, unless the record is under a legal hold.
     aadhaar_log_retention_enabled: bool = Field(default=True, alias="AADHAAR_LOG_RETENTION_ENABLED")
     # Default: the media bucket (AWS_S3_BUCKET). The prefix must not be one the bucket serves publicly.

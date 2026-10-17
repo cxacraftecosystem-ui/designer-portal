@@ -934,5 +934,7 @@ backfilled, and is dropped by the deferred migration — run order in `backend/D
 
 **`AadhaarLogArchive`** is the ledger of Aadhaar log archives (Regulation 18(3)): entries older than
 two years leave `RecordRevision` only in the transaction that writes one of these rows, after the
-object has read back from the encrypted backup bucket; `deleteAfter` is when the object is removed.
+object has read back from the archive bucket (`AADHAAR_LOG_ARCHIVE_BUCKET`, the media bucket by
+default); `deleteAfter` is when the current object is removed (its versions follow about 90 days
+later, [AADHAAR.md](AADHAAR.md) §3).
 **`AadhaarLegalHold`** suspends both for one record. [AADHAAR.md](AADHAAR.md) §3.

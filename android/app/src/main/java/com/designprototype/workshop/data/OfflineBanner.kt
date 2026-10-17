@@ -324,6 +324,14 @@ data class OutboxFailureRow(
      */
     val stale: Boolean = false,
     /**
+     * Held by this phone, not refused by the server: the Aadhaar number typed into this record could
+     * not be kept (the Keystore could not seal it, or can no longer open the seal), so nothing was
+     * sent. The tray offers "Type it again" (2026-10-18). See `AadhaarAtRest.numberWithheld`.
+     */
+    val needsAadhaar: Boolean = false,
+    /** The withheld number's last four digits when they were kept, for the retype prompt. */
+    val aadhaarLast4: String? = null,
+    /**
      * The files queued with this entry, as this phone holds them, so the tray can offer Download on
      * each before anything is sent. Paths and names only — never the record body, for the reason
      * the rest of this projection gives.
@@ -530,6 +538,9 @@ fun outboxFailureRows(
                 // flag was added to end. See [OutboxFailureRow.otherAccount]. (2026-09-03)
                 otherAccount = dwDraftIsForAnotherAccount(entry.ownerUserId, signedInUserId),
                 stale = entry.staleCorrection,
+                // The same test the drain holds the entry on, so the tray and the pass agree.
+                needsAadhaar = entry.createdId == null && AadhaarAtRest.numberWithheld(entry.payloadJson),
+                aadhaarLast4 = AadhaarAtRest.withheldLast4(entry.payloadJson),
             )
         }
 
