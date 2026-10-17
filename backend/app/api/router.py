@@ -29,6 +29,7 @@ from app.api.routes import (
     map_points,
     media,
     ministry_dashboard,
+    notifications,
     preferences,
     processes,
     products,
@@ -232,6 +233,7 @@ api_router.include_router(asr_models.router)
 api_router.include_router(feedback.router)
 # The caller's own stored create answers, for an outbox replay that lost its record id.
 api_router.include_router(idempotency_keys.router)
+api_router.include_router(notifications.router)
 api_router.include_router(preferences.router)
 api_router.include_router(settings.router)
 api_router.include_router(ai_keys.router)
