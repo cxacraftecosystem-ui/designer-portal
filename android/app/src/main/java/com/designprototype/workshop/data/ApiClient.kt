@@ -239,6 +239,8 @@ object ApiClient {
                     attempt++
                     try {
                         val response = chain.proceed(original)
+                        // Any status means the server answered (data/ServerReachability.kt).
+                        ServerReachability.recordAnswer()
                         if (retriable && response.code in RETRIABLE_GATEWAY_CODES && attempt < maxAttempts) {
                             response.close()
                             runCatching { Thread.sleep(backoffMillis(attempt)) }
@@ -247,6 +249,7 @@ object ApiClient {
                         return@addInterceptor response
                     } catch (e: IOException) {
                         lastError = e
+                        ServerReachability.recordFailure(e)
                         if (!retriable || attempt >= maxAttempts) throw e
                         runCatching { Thread.sleep(backoffMillis(attempt)) }
                     }

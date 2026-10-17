@@ -70,7 +70,8 @@ class OutboxBannerTest {
     fun `waiting entries say which situation the phone is actually in`() {
         val offline = outboxDeviceBanner(OutboxCounts(waiting = 3, refused = 0), online = false)!!
         assertTrue(offline.showCloudOff)
-        assertFalse("nothing here needs a person", offline.actionable)
+        // Tappable since 2026-10-17: the tray lists waiting entries too, with Download and Send now.
+        assertTrue("a waiting entry has a tray row behind it", offline.actionable)
         assertEquals(
             "3 entries saved on this device — will be sent when you have a signal.",
             offline.lines.single().text,
@@ -149,7 +150,7 @@ class OutboxBannerTest {
         assertTrue(line.text, line.text.contains("Sign in as them"))
         // The standing promise of this queue on every path where something is not going.
         assertTrue(line.text, line.text.contains("nothing has been deleted"))
-        // NOT TAPPABLE. The tray lists refusals (`outboxFailureRows` filters on `failure`), so a tap
+        // NOT TAPPABLE. The tray lists this account's waiting entries and refusals only, so a tap
         // would open a screen with nothing on it — a dead end wearing the costume of a remedy, which
         // is the phrase this queue already uses about the two buttons it had to stop offering.
         assertFalse("there is no tray row behind this line", banner.actionable)

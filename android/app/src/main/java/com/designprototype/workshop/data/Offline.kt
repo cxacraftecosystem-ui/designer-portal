@@ -16,6 +16,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import retrofit2.HttpException
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -649,8 +650,21 @@ data class OfflineQueueResult(
  * surface competes with those three for the two seconds it is read in, which is the standing rule
  * for both clients: one line, state the fact, name the act, and put the argument up here.
  */
-fun offlineSavedMessage(result: OfflineQueueResult, isCorrection: Boolean): String {
-    val head = if (isCorrection) {
+fun offlineSavedMessage(
+    result: OfflineQueueResult,
+    isCorrection: Boolean,
+    serverDown: Boolean = false,
+    signInNeeded: Boolean = false,
+): String {
+    val head = if (signInNeeded && !isCorrection) {
+        // THE SERVER ANSWERED, WITH A 401: the session expired. Waiting for a server that is already
+        // answering would never send it; signing in again does.
+        "Saved on this phone; it will upload once you sign in again."
+    } else if (serverDown && !isCorrection) {
+        // ONLINE, BUT THE SERVER OR UPLOAD STORAGE DID NOT ANSWER — "when you have a signal" would
+        // send a designer with four bars looking for a fifth.
+        "Saved on this phone; it will upload when the server is reachable."
+    } else if (isCorrection) {
         "Correction saved on this device. It will be sent when you have a signal; until then " +
             "the office still sees the earlier version."
     } else {
@@ -670,6 +684,20 @@ fun offlineSavedMessage(result: OfflineQueueResult, isCorrection: Boolean): Stri
  * captures that FAILED and the next act is to go and retake a particular one, whereas these are
  * intact and the only question is how much is riding on the entry.
  */
+/**
+ * Whether a failed request means the server (or upload storage) did not answer: no answer at all,
+ * a 5xx, a 408 or a 429. Decides the "when the server is reachable" sentence, and only that — a 401
+ * or a 409 still in progress are worth queueing (`isTransient`) but the server DID answer them.
+ */
+fun serverDidNotAnswer(error: Throwable): Boolean = when (error) {
+    is HttpException -> error.code().let { it == 408 || it == 429 || it >= 500 }
+    is IOException -> true
+    else -> false
+}
+
+/** The request was refused because the session expired: the fix is signing in again. */
+fun sessionExpired(error: Throwable): Boolean = error is HttpException && error.code() == 401
+
 private fun stagedFiles(n: Int): String = if (n == 1) "1 file" else "$n files"
 
 /** The server-written half of a refusal, made to end in a full stop so two sentences do not run on. */

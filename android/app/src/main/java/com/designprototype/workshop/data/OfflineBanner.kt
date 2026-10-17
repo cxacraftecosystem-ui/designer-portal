@@ -140,8 +140,8 @@ data class OutboxBannerLine(val text: String, val warn: Boolean)
  * @property showCloudOff gate for the cloud-off icon. FALSE when nothing outstanding is waiting on
  *   the network — a refusal drawn under a cloud icon tells the designer to go and find a signal,
  *   which is the one thing that will not help.
- * @property actionable there is something a PERSON can do, so the banner is worth being tappable.
- *   Driven by [OutboxCounts.refused] alone: an entry that is merely waiting needs nobody.
+ * @property actionable there is something a PERSON can see or do in the tray: a refusal to answer,
+ *   or a waiting entry whose files can be downloaded or sent now.
  */
 data class OutboxBanner(
     val showCloudOff: Boolean,
@@ -165,14 +165,19 @@ internal fun outboxEntryCount(n: Int): String = if (n == 1) "1 entry" else "$n e
  * not arriving walks to the top of the hill to find a signal, and does it again the next day.
  * Telling them the walk is pointless is the only useful sentence available.
  */
-fun outboxDeviceBanner(counts: OutboxCounts, online: Boolean): OutboxBanner? {
+fun outboxDeviceBanner(counts: OutboxCounts, online: Boolean, serverReachable: Boolean = true): OutboxBanner? {
     if (counts.isEmpty) return null
     val lines = mutableListOf<OutboxBannerLine>()
     if (counts.waiting > 0) {
         lines.add(
             OutboxBannerLine(
-                text = if (online) {
+                text = if (online && serverReachable) {
                     "${outboxEntryCount(counts.waiting)} saved on this device — sending now."
+                } else if (online) {
+                    // ONLINE, BUT THE SERVER IS NOT ANSWERING (data/ServerReachability.kt). "When you
+                    // have a signal" would send a designer with four bars looking for a fifth.
+                    "${outboxEntryCount(counts.waiting)} saved on this device — will be sent when " +
+                        "the server is reachable."
                 } else {
                     "${outboxEntryCount(counts.waiting)} saved on this device — will be sent when " +
                         "you have a signal."
@@ -210,12 +215,13 @@ fun outboxDeviceBanner(counts: OutboxCounts, online: Boolean): OutboxBanner? {
         // The icon follows the WAITING half only. This is the gate `dwDeviceSyncBanner` computes for
         // the same reason, and getting it wrong in the other direction is what shipped here.
         showCloudOff = counts.waiting > 0,
-        // REFUSALS ALONE, and another account's entries deliberately do NOT make this true. Tapping
-        // opens the tray, and the tray lists refusals (`outboxFailureRows` filters on `failure`); a
-        // banner that invited a tap and then showed an empty screen would be one more dead end
-        // wearing the costume of a remedy, which is the phrase this queue already uses about the two
-        // buttons it had to stop offering.
-        actionable = counts.refused > 0,
+        // WAITING OR REFUSED, and another account's entries alone deliberately do NOT make this
+        // true. Tapping opens the tray, which lists this account's waiting entries (status, Download,
+        // Send now — `outboxWaitingRows`) and its refusals (`outboxFailureRows`); a banner that
+        // invited a tap and then showed an empty screen would be one more dead end wearing the
+        // costume of a remedy. Waiting entries joined on 2026-10-17: the release smoke test found a
+        // queued upload with no way to see it or download its file before it went (dp/61).
+        actionable = counts.waiting > 0 || counts.refused > 0,
         lines = lines,
     )
 }
@@ -535,3 +541,77 @@ fun outboxFailureRows(
                 stale = entry.staleCorrection,
             )
         }
+
+/**
+ * The connection line above the outbox banner, or null when the phone is online and the server is
+ * answering. Offline wins: with no network the server's silence says nothing new.
+ */
+fun connectionNotice(online: Boolean, serverUnreachable: Boolean): String? = when {
+    !online -> OFFLINE_SENTENCE
+    serverUnreachable -> ServerReachability.SERVER_UNREACHABLE_SENTENCE
+    else -> null
+}
+
+/**
+ * Whether the network coming back should ask the server once. A failed request while offline marks
+ * the server unreachable, and nothing clears that until a request gets an answer — an empty outbox
+ * sends nothing, and the sync loop may be most of a 45-second wait away — so a healthy server read
+ * "Can't reach the server" for up to that long after reconnecting. Only on the way back online, not
+ * on every capability change, so a server that really is down is not asked on each signal flicker.
+ */
+fun shouldReprobeServer(wasOnline: Boolean, nowOnline: Boolean, serverUnreachable: Boolean): Boolean =
+    nowOnline && !wasOnline && serverUnreachable
+
+/** The line the app shows while the phone has no network. */
+const val OFFLINE_SENTENCE = "You're offline — showing what was last loaded. New work stays on this phone."
+
+/**
+ * One entry this account has queued and nothing has refused, as the tray lists it: what it is,
+ * where it stands, and its files, so each can be downloaded before it is sent.
+ *
+ * A PURE PROJECTION of [PendingEntry], for [OutboxFailureRow]'s reason: the tray never holds the
+ * record body.
+ */
+data class OutboxWaitingRow(
+    val entryId: String,
+    val label: String,
+    val kind: String,
+    val status: String,
+    val files: List<OutboxQueuedFile>,
+)
+
+/** Where a waiting entry stands, in the words the banner uses for the same state. */
+fun outboxWaitingStatus(online: Boolean, serverReachable: Boolean): String = when {
+    !online -> "Waiting for a signal"
+    !serverReachable -> "Waiting for the server"
+    else -> "Sending now"
+}
+
+/**
+ * The tray's "waiting" rows, oldest first — the order the drain sends them in. Refusals are
+ * [outboxFailureRows]'s; entries another account captured are not listed here, because nothing this
+ * session does can send them (the banner names them on their own line).
+ */
+fun outboxWaitingRows(
+    entries: List<PendingEntry>,
+    signedInUserId: String?,
+    online: Boolean,
+    serverReachable: Boolean = true,
+): List<OutboxWaitingRow> {
+    val status = outboxWaitingStatus(online, serverReachable)
+    return entries
+        .filter { it.failure == null && !dwDraftIsForAnotherAccount(it.ownerUserId, signedInUserId) }
+        .sortedBy { it.createdAt }
+        .map { entry ->
+            OutboxWaitingRow(
+                entryId = entry.id,
+                label = entry.label.ifBlank { "(untitled)" },
+                kind = outboxKindLabel(
+                    entry.type,
+                    isUpdate = entry.targetId != null && entry.type != OFFLINE_MEDIA_ONLY,
+                ),
+                status = status,
+                files = entry.media.map { OutboxQueuedFile(it.localPath, it.originalFilename, it.mimeType) },
+            )
+        }
+}

@@ -37,6 +37,8 @@ import com.designprototype.workshop.data.DW_DRAFT_OTHER_ACCOUNT_ROW
 import com.designprototype.workshop.data.REFERENCE_FIELD_NOUNS
 import com.designprototype.workshop.data.OutboxFailureRow
 import com.designprototype.workshop.data.OutboxQueuedFile
+import com.designprototype.workshop.data.OutboxWaitingRow
+import com.designprototype.workshop.data.outboxWaitingRows
 import com.designprototype.workshop.data.RepickChoices
 import com.designprototype.workshop.data.StaleCorrectionReview
 import com.designprototype.workshop.data.WorkshopRepository
@@ -107,11 +109,17 @@ fun OfflineOutboxTray(
     onClose: () -> Unit,
     /** Called after anything changed, so the banner behind the dialog re-reads its counts. */
     onChanged: () -> Unit,
+    /** The root's connection state, for each waiting entry's status line. */
+    online: Boolean = true,
+    serverReachable: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
 
     var rows by remember { mutableStateOf<List<OutboxFailureRow>>(emptyList()) }
+    // THE ENTRIES THAT ARE ONLY WAITING (2026-10-17). The tray used to list refusals alone, so a
+    // queued upload could be neither seen nor downloaded before it went (release smoke test, dp/61).
+    var waiting by remember { mutableStateOf<List<OutboxWaitingRow>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
@@ -143,6 +151,12 @@ fun OfflineOutboxTray(
         rows = outboxFailureRows(
             runCatching { repository.outboxFailures(appContext) }.getOrDefault(emptyList()),
             repository.cachedUser()?.id,
+        )
+        waiting = outboxWaitingRows(
+            runCatching { repository.outboxEntries(appContext) }.getOrDefault(emptyList()),
+            repository.cachedUser()?.id,
+            online = online,
+            serverReachable = serverReachable,
         )
         loading = false
     }
@@ -274,7 +288,7 @@ fun OfflineOutboxTray(
         onDismissRequest = onClose,
         title = {
             Text(
-                "Records this device could not send",
+                if (waiting.isEmpty() && rows.isNotEmpty()) "Records this device could not send" else "Saved on this phone",
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -284,13 +298,15 @@ fun OfflineOutboxTray(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(
-                    "These could not be saved, so waiting for a signal will not send them. Nothing " +
-                        "has been deleted — the record and its photographs are still on this phone.",
-                    color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                )
+                if (rows.isNotEmpty()) {
+                    Text(
+                        "These could not be saved, so waiting for a signal will not send them. Nothing " +
+                            "has been deleted — the record and its photographs are still on this phone.",
+                        color = MaterialTheme.field.muted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                    )
+                }
                 when {
                     loading -> Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -300,7 +316,7 @@ fun OfflineOutboxTray(
                         Text("Reading the queue…", color = MaterialTheme.field.muted, fontSize = 12.sp)
                     }
 
-                    rows.isEmpty() -> Text(
+                    rows.isEmpty() && waiting.isEmpty() -> Text(
                         "Nothing is waiting on you any more.",
                         color = MaterialTheme.field.muted,
                         fontSize = 13.sp,
@@ -326,6 +342,29 @@ fun OfflineOutboxTray(
                             },
                             onDiscard = { confirmDiscard = row },
                             onReview = { reviewing = row },
+                        )
+                    }
+                }
+                if (!loading && waiting.isNotEmpty()) {
+                    if (rows.isNotEmpty()) HorizontalDivider(color = MaterialTheme.field.hairline)
+                    Text(
+                        "Waiting to send",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    waiting.forEach { row ->
+                        OutboxWaitingCard(
+                            row = row,
+                            busy = busy,
+                            onSendNow = {
+                                act {
+                                    outboxRetryMessage(
+                                        label = row.label,
+                                        result = repository.retryOutboxEntry(appContext, row.entryId),
+                                    )
+                                }
+                            },
                         )
                     }
                 }
@@ -751,5 +790,40 @@ private fun OutboxQueuedFiles(files: List<OutboxQueuedFile>) {
             }
         }
         MediaDownloadNotice(downloader)
+    }
+}
+
+/**
+ * One entry that is only waiting: what it is, where it stands, its files with Download on each,
+ * and Send now — the same per-entry retry a refusal gets, which for a waiting entry simply sends it
+ * ahead of the next automatic pass.
+ */
+@Composable
+private fun OutboxWaitingCard(row: OutboxWaitingRow, busy: Boolean, onSendNow: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(row.label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            listOfNotNull(
+                row.kind,
+                row.status,
+                when (row.files.size) {
+                    0 -> null
+                    1 -> "1 file"
+                    else -> "${row.files.size} files"
+                },
+            ).joinToString(" · "),
+            color = MaterialTheme.field.muted,
+            fontSize = 11.sp,
+        )
+        if (row.files.isNotEmpty()) OutboxQueuedFiles(row.files)
+        OutlinedButton(onClick = onSendNow, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text("Send now", fontSize = 12.sp)
+        }
     }
 }
