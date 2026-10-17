@@ -220,7 +220,9 @@ async def list_reports_to_approve(
     else:
         total, rows = await gather_reads(
             db.designworkshop.count(where=where),
-            db.designworkshop.find_many(where=where, skip=skip, take=clean_size, order=dated or order),
+            db.designworkshop.find_many(
+                where=where, skip=skip, take=clean_size, order=dated or order
+            ),
         )
         readiness = await review_aids.readiness_for(rows)
     names = await approvals.names_for(rows)
@@ -281,7 +283,9 @@ async def generate_report_for_approval(
     # built from the same fingerprint in the last fortnight is read back and answered with
     # `x-report-reused-from`. `fresh` rebuilds regardless. No new ledger row is written for a reuse.
     options = payload.model_dump(exclude={"record", "fresh"})
-    fingerprint = await review_aids.report_fingerprint(record, fmt=fmt, options=options)
+    fingerprint = await review_aids.report_fingerprint(
+        record, fmt=fmt, options=options, viewer=current_user
+    )
     if payload.record and not payload.fresh:
         reused = await _stored_report(workshop_id, fingerprint)
         if reused is not None:
@@ -334,6 +338,9 @@ async def _store_report(workshop_id: str, export_id: str, fmt: str, blob: bytes)
         await db.dwreportexport.update(where={"id": export_id}, data={"storageKey": key})
     except Exception:  # the download itself has succeeded
         logger.warning("could not store report %s for reuse", export_id, exc_info=True)
+        return
+    # One stored file per workshop and format: the older ones can never be served again.
+    await review_aids.drop_superseded_reports(workshop_id, fmt, export_id)
 
 
 async def _stored_report(workshop_id: str, fingerprint: str) -> Response | None:
@@ -356,7 +363,9 @@ async def _stored_report(workshop_id: str, fingerprint: str) -> Response | None:
         "x-report-export-id": prior.id,
         "x-report-reused-from": prior.generatedAt.isoformat() if prior.generatedAt else "",
     }
-    return Response(content=blob, media_type=_MIME.get(prior.format, _MIME["DOCX"]), headers=headers)
+    return Response(
+        content=blob, media_type=_MIME.get(prior.format, _MIME["DOCX"]), headers=headers
+    )
 
 
 # --------------------------------------------------------------------------------------

@@ -84,7 +84,7 @@ class DwInspectionFeedbackIn(BaseModel):
     """
 
     note: str = Field(min_length=1, max_length=MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS)
-    stageKey: str | None = Field(default=None, max_length=64)
+    stageKey: str | None = Field(default=None, max_length=120)
     fieldKey: str | None = Field(default=None, max_length=120)
     recordedAt: str | None = Field(default=None, max_length=40)
 
@@ -109,7 +109,7 @@ class DwNoteItem(BaseModel):
     """One note in a batch: the sentence, and the stage and field it is about (both optional)."""
 
     note: str = Field(min_length=1, max_length=MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS)
-    stageKey: str | None = Field(default=None, max_length=64)
+    stageKey: str | None = Field(default=None, max_length=120)
     fieldKey: str | None = Field(default=None, max_length=120)
 
 

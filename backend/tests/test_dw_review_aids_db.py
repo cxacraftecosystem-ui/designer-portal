@@ -20,6 +20,7 @@ import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
 from app.services.stage_schema import stages
+from prisma import Json
 
 _URL = os.environ.get("DATABASE_URL", "")
 _LOCAL = any(host in _URL for host in ("localhost", "127.0.0.1"))
@@ -52,6 +53,9 @@ WORKSHOPS = {
     "hand_in": "IN_PROGRESS",
     "report": "PRE_SUBMISSION",
     "groups_waiting": "NEEDS_REVISION",
+    "resubmit": "NEEDS_REVISION",
+    "race": "PRE_SUBMISSION",
+    "refs": "PRE_SUBMISSION",
 }
 
 
@@ -142,7 +146,9 @@ async def _read_back(workshop_id: str) -> dict[str, Any]:
                 where={"recordType": "DESIGN_WORKSHOP", "recordId": workshop_id}
             ),
             "exports": await db.dwreportexport.find_many(where={"designWorkshopId": workshop_id}),
-            "snapshots": await db.dwroundsnapshot.find_many(where={"designWorkshopId": workshop_id}),
+            "snapshots": await db.dwroundsnapshot.find_many(
+                where={"designWorkshopId": workshop_id}
+            ),
         }
     finally:
         await db.disconnect()
@@ -361,6 +367,25 @@ def test_a_director_without_the_post_or_on_a_closed_report_is_refused(world):
 # --------------------------------------------------------------------------------------
 
 
+def test_a_stage_save_that_resubmits_keeps_a_copy_of_the_round(world):
+    wid = _wid(world, "resubmit")
+    saved = world["client"].put(
+        f"/api/design-workshops/{wid}/stages/WORKSHOP_SETUP",
+        json={"entries": [{"entityKey": "workshopSetup", "data": {"venue": "Barpali hall"}}]},
+        headers=_as(world, "designer"),
+    )
+    assert saved.status_code == 200, saved.text
+    read = world["client"].get(
+        f"/api/design-workshop-approvals/{wid}", headers=_as(world, "ministry")
+    )
+    assert read.json()["status"] == "PRE_SUBMISSION"
+    assert [s["round"] for s in read.json()["roundSnapshots"]] == [2]
+    copy = world["client"].get(
+        f"/api/design-workshop-approvals/{wid}/rounds/2", headers=_as(world, "ministry")
+    )
+    assert copy.status_code == 200 and copy.json()["round"] == 2
+
+
 def test_handing_in_keeps_a_copy_of_the_round(world):
     wid = _wid(world, "hand_in")
     handed = world["client"].patch(
@@ -457,6 +482,7 @@ def test_an_unchanged_report_is_served_from_the_stored_file(world, monkeypatch):
 
     stored: dict[str, bytes] = {}
     builds: list[int] = []
+    deleted: list[str] = []
 
     async def fake_inputs(*_args, **_kwargs):
         return object(), object(), [], "DCH_STANDARD"
@@ -467,8 +493,11 @@ def test_an_unchanged_report_is_served_from_the_stored_file(world, monkeypatch):
 
     monkeypatch.setattr(route, "_report_inputs", fake_inputs)
     monkeypatch.setattr(route, "render_report", fake_render)
-    monkeypatch.setattr(s3, "put_object_bytes", lambda key, data, mime: stored.__setitem__(key, data))
+    monkeypatch.setattr(
+        s3, "put_object_bytes", lambda key, data, mime: stored.__setitem__(key, data)
+    )
     monkeypatch.setattr(s3, "get_object_bytes", lambda key, max_bytes=None: stored[key])
+    monkeypatch.setattr(s3, "delete_object", deleted.append)
 
     url = f"/api/design-workshop-approvals/{_wid(world, 'report')}/report"
     first = world["client"].post(
@@ -484,14 +513,19 @@ def test_an_unchanged_report_is_served_from_the_stored_file(world, monkeypatch):
     assert second.headers["x-report-export-id"] == first.headers["x-report-export-id"]
     assert second.content == b"%PDF-fake"
     fresh = world["client"].post(
-        url, json={"formats": ["PDF"], "record": True, "fresh": True}, headers=_as(world, "ministry")
+        url,
+        json={"formats": ["PDF"], "record": True, "fresh": True},
+        headers=_as(world, "ministry"),
     )
     assert "x-report-reused-from" not in fresh.headers
     assert len(builds) == 2
+    # The rebuild replaced the first PDF: only the newest stored file per format is kept.
+    assert deleted == [f"reports/{_wid(world, 'report')}/{first.headers['x-report-export-id']}.pdf"]
     other_format = world["client"].post(
         url, json={"formats": ["DOCX"], "record": True}, headers=_as(world, "ministry")
     )
     assert "x-report-reused-from" not in other_format.headers
+    assert len(deleted) == 1  # another format is not a newer build of the PDF
 
 
 def test_the_rows_behind_the_answers(world):
@@ -503,11 +537,199 @@ def test_the_rows_behind_the_answers(world):
     exports = asyncio.run(_read_back(_wid(world, "report")))["exports"]
     assert len(exports) == 3
     assert all(row.inputFingerprint for row in exports)
-    assert sum(1 for row in exports if row.storageKey) == 3
+    assert sum(1 for row in exports if row.storageKey) == 2
     snapshots = asyncio.run(_read_back(_wid(world, "hand_in")))["snapshots"]
     assert [row.round for row in snapshots] == [1]
 
 
 class _Closed:
-    def __exit__(self, *_args: Any) -> None:
+    def __exit__(self, *_args: object) -> None:
         return None
+
+
+# --------------------------------------------------------------------------------------
+# Service-level checks. They run after the client has closed (conftest's rule), each on its own
+# connection.
+# --------------------------------------------------------------------------------------
+
+
+def _with_db(work):
+    async def run():
+        await db.connect()
+        try:
+            return await work()
+        finally:
+            await db.disconnect()
+
+    return asyncio.run(run())
+
+
+def test_the_snapshot_purge_reaches_past_any_batch_of_deleted_workshops(world):
+    """More than 500 workshops deleted over a year ago: every one's copies go in one pass."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.services import design_workshop_review_aids as aids
+
+    owner = world["people"]["designer"].id
+    long_ago = datetime.now(UTC) - timedelta(days=400)
+    recently = datetime.now(UTC) - timedelta(days=30)
+    tag = uuid.uuid4().hex[:8]
+
+    async def work():
+        old_ids = [f"purge{tag}{n:04d}" for n in range(520)]
+        await db.designworkshop.create_many(
+            data=[
+                {"id": wid, "title": f"Gone {wid}", "createdById": owner, "deletedAt": long_ago}
+                for wid in old_ids
+            ]
+        )
+        kept = await db.designworkshop.create(
+            data={"title": f"Recent {tag}", "createdById": owner, "deletedAt": recently}
+        )
+        await db.dwroundsnapshot.create_many(
+            data=[
+                {"designWorkshopId": wid, "round": 1, "stages": Json({})}
+                for wid in [*old_ids, kept.id]
+            ]
+        )
+        await aids.purge_expired_snapshots(force=True)
+        left_old = await db.dwroundsnapshot.count(where={"designWorkshopId": {"in": old_ids}})
+        left_recent = await db.dwroundsnapshot.count(where={"designWorkshopId": kept.id})
+        return left_old, left_recent
+
+    assert _with_db(work) == (0, 1)
+
+
+def test_stored_reports_are_purged_when_stale_or_their_workshop_is_gone(world, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from app.services import design_workshop_review_aids as aids, s3
+
+    deleted: list[str] = []
+    monkeypatch.setattr(s3, "delete_object", deleted.append)
+    owner = world["people"]["designer"].id
+    tag = uuid.uuid4().hex[:8]
+
+    async def work():
+        live = await db.designworkshop.create(data={"title": f"Live {tag}", "createdById": owner})
+        gone = await db.designworkshop.create(
+            data={"title": f"Gone {tag}", "createdById": owner, "deletedAt": datetime.now(UTC)}
+        )
+        base = {"format": "PDF", "templateId": "DCH_STANDARD", "fileName": "r.pdf"}
+        rows = {
+            "fresh": await db.dwreportexport.create(
+                data={**base, "designWorkshopId": live.id, "storageKey": f"k/{tag}/fresh"}
+            ),
+            "stale": await db.dwreportexport.create(
+                data={
+                    **base,
+                    "designWorkshopId": live.id,
+                    "storageKey": f"k/{tag}/stale",
+                    "generatedAt": datetime.now(UTC) - timedelta(days=20),
+                }
+            ),
+            "orphan": await db.dwreportexport.create(
+                data={**base, "designWorkshopId": gone.id, "storageKey": f"k/{tag}/orphan"}
+            ),
+        }
+        await aids.purge_stored_reports()
+        return {
+            name: (await db.dwreportexport.find_unique(where={"id": row.id})).storageKey
+            for name, row in rows.items()
+        }
+
+    keys = _with_db(work)
+    assert keys == {"fresh": f"k/{tag}/fresh", "stale": None, "orphan": None}
+    assert f"k/{tag}/stale" in deleted and f"k/{tag}/orphan" in deleted
+    assert f"k/{tag}/fresh" not in deleted
+
+
+def test_a_note_filed_mid_clearance_wins(world, monkeypatch):
+    """The note lands between clear_round's count and its insert: the verdict must not stand."""
+    from fastapi import HTTPException
+
+    from app.services import design_workshop_review_aids as aids
+
+    wid = _wid(world, "race")
+    inspector = world["people"]["inspector"]
+
+    async def work():
+        record = await db.designworkshop.find_unique(where={"id": wid})
+        actions = type(db.dwinspectionfeedback)  # slotted: patch the class, not the instance
+        real_count = actions.count
+        calls = {"n": 0}
+
+        async def count(self, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:  # the first count runs before the other request's note commits
+                await db.dwinspectionfeedback.create(
+                    data={
+                        "designWorkshopId": wid,
+                        "round": record.submissionRound,
+                        "actorId": inspector.id,
+                        "note": "Filed meanwhile.",
+                    }
+                )
+                return 0
+            return await real_count(self, **kwargs)
+
+        monkeypatch.setattr(actions, "count", count)
+        try:
+            await aids.clear_round(record, inspector)
+        except HTTPException as refused:
+            status_code = refused.status_code
+        else:
+            status_code = 200
+        monkeypatch.undo()
+        left = await db.dwinspectionclearance.count(
+            where={"designWorkshopId": wid, "inspectorId": inspector.id}
+        )
+        return status_code, left
+
+    assert _with_db(work) == (422, 0)
+
+
+def _artisan_ref_slot() -> tuple[str, str, str]:
+    for spec in stages():
+        for entity in spec.entities:
+            for field in entity.fields:
+                if getattr(field, "ref_model", None) == "Artisan":
+                    return spec.key, entity.key, field.key
+    raise AssertionError("no stage field refers to an artisan")
+
+
+def test_the_report_fingerprint_follows_the_viewer_and_the_records_it_cites(world):
+    from app.services import design_workshop_review_aids as aids
+
+    wid = _wid(world, "refs")
+    people = world["people"]
+    stage_key, entity_key, field_key = _artisan_ref_slot()
+
+    async def work():
+        artisan = await db.artisan.create(
+            data={"name": "Sita Devi", "place": "Barpali", "createdById": people["designer"].id}
+        )
+        await db.dwstageentry.create(
+            data={
+                "designWorkshopId": wid,
+                "stageKey": stage_key,
+                "entityKey": entity_key,
+                "data": Json({field_key: artisan.id}),
+            }
+        )
+        record = await db.designworkshop.find_unique(where={"id": wid})
+
+        async def digest(viewer):
+            return await aids.report_fingerprint(record, fmt="PDF", options={}, viewer=viewer)
+
+        as_ministry = await digest(people["ministry"])
+        as_admin = await digest(people["admin"])
+        as_designer = await digest(people["designer"])
+        await db.artisan.update(where={"id": artisan.id}, data={"name": "Sita Devi Meher"})
+        renamed = await digest(people["ministry"])
+        return as_ministry, as_admin, as_designer, renamed
+
+    as_ministry, as_admin, as_designer, renamed = _with_db(work)
+    assert as_ministry == as_admin  # both unrestricted: one file serves both
+    assert as_designer != as_ministry  # a restricted reader's report is their own
+    assert renamed != as_ministry  # a renamed artisan is not served stale
