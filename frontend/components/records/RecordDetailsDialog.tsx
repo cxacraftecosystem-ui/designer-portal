@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** One label and its value, read-only. A row whose value is null is left out rather than printed blank. */
 export type RecordDetail = readonly [label: string, value: ReactNode | null];
@@ -41,7 +42,7 @@ export function RecordDetailsDialog({
       title={title}
       description={description}
       footer={
-        <div className="flex flex-wrap justify-end gap-2">
+        <ActionGroup align="end">
           <button type="button" className="field-button-secondary" onClick={onClose}>
             Close
           </button>
@@ -50,7 +51,7 @@ export function RecordDetailsDialog({
               Update
             </button>
           ) : null}
-        </div>
+        </ActionGroup>
       }
     >
       <dl className="mt-4 grid gap-2 text-sm">

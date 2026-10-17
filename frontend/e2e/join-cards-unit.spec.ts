@@ -71,7 +71,7 @@ test.describe("decoding a join card", () => {
       "newer format"
     );
     expect((decodeJoinCard("DPW2:J:DWLOCAL-3F2504E04F8911D39A0C0305.9TQ4V0KZ7BXMHR3NDPJ2WY:XXXX") as { message: string }).message).toContain(
-      "had not been shared yet"
+      "before the workshop synced"
     );
     expect((decodeJoinCard(CARD.slice(0, -1) + "G") as { message: string }).message).toContain("does not check out");
   });
@@ -88,8 +88,8 @@ test.describe("reading the server's answers", () => {
 
   test("the server's sentence is shown as given, and a missing one falls back per outcome", () => {
     expect(joinOutcomeSentence({ outcome: "PROVISIONAL", detail: "The server's own words." })).toBe("The server's own words.");
-    expect(joinOutcomeSentence({ outcome: "PROVISIONAL" })).toContain("You are not on the workshop yet");
-    expect(joinOutcomeSentence({ outcome: "FULL" })).toContain("You are on this workshop");
+    expect(joinOutcomeSentence({ outcome: "PROVISIONAL" })).toContain("Waiting for an admin to confirm you");
+    expect(joinOutcomeSentence({ outcome: "FULL" })).toContain("You're on this workshop");
   });
 
   test("a refusal keeps its sentence; a dead network says nothing was spent", () => {
@@ -99,7 +99,7 @@ test.describe("reading the server's answers", () => {
       kind: "offline",
       message: JOIN_CARD_REDEEM_OFFLINE_MESSAGE
     });
-    expect(JOIN_CARD_REDEEM_OFFLINE_MESSAGE).toContain("has not been spent");
+    expect(JOIN_CARD_REDEEM_OFFLINE_MESSAGE).toContain("the card wasn't used");
     expect(joinCardFailure(new ApiError(500, "boom", { detail: "boom" })).message).toContain("Try again in a moment");
   });
 });
@@ -125,7 +125,7 @@ test.describe("a card's state, in the handset's order", () => {
       /^Cancelled\./
     );
     expect(joinCardState({ ...base, usesConsumed: 1, expiresAt: "2026-08-01T00:00:00Z" }, NOW)).toMatch(/^Used up\./);
-    expect(joinCardState({ ...base, expiresAt: "2026-08-01T00:00:00Z" }, NOW)).toMatch(/^Out of date\./);
+    expect(joinCardState({ ...base, expiresAt: "2026-08-01T00:00:00Z" }, NOW)).toMatch(/^Expired\./);
     expect(joinCardState(base, NOW)).toBe("Still good for 1 more person. Printed by Asha.");
     expect(joinCardState({ ...base, maxUses: 5, usesConsumed: 2 }, NOW)).toContain("3 more people");
     expect(joinCardState({ ...base, maxUses: null }, NOW)).toContain("any number of people");

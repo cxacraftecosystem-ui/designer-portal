@@ -216,6 +216,7 @@ import {
   CHOOSER_REFUSED_FALLBACK,
   CHOOSER_REFUSED_TITLE
 } from "./chooserSentences";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * How many workshops the chooser asks for.
@@ -599,7 +600,7 @@ function ChooseWorkshopThenSketches() {
   const header = (
     <PageHeader
       title="Sketches and Prototypes"
-      description="Pick one of your design workshops and work on its pieces — add drawings, photographs and 3D models on the Upload tab, rate and rank them on the Review tab."
+      description="Upload, rate and rank a workshop's pieces."
       icon={<PencilRuler className="h-5 w-5" aria-hidden />}
     />
   );
@@ -622,22 +623,20 @@ function ChooseWorkshopThenSketches() {
               heading list with no top level. Not copied for the sake of symmetry. */}
           <h2 className="font-display text-xl font-bold tracking-tight text-ink-900">Designer access required</h2>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Sketches and prototypes are a designer&apos;s work in progress, added to a workshop and ranked by other
-            designers. This page is open to designers, Assistant Directors, Regional Directors, Ministry Admins, admins
-            and the master admin.
+            For designers, ministry officers and admins.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>. An admin can
             raise your access.
           </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <ActionGroup className="mt-7">
             <Link href="/dashboard" className="field-button">
               Back to dashboard
             </Link>
             <Link href="/guide" className="field-button-secondary">
               Open the walkthrough
             </Link>
-          </div>
+          </ActionGroup>
         </section>
       </div>
     );
@@ -771,9 +770,7 @@ function ChooseWorkshopThenSketches() {
           />
         </div>
         <p id="sketches-workshop-why" className="max-w-3xl text-sm leading-6 text-ink-muted">
-          Every design workshop you can open — the ones you were given access to, and every one on the platform if you
-          are an admin. The same screen is also inside each workshop, under Sketches &amp; prototypes on its own page,
-          if you would rather start from there.
+          Workshops you can open.
         </p>
         {workshops === null ? (
           // "Still asking", said out loud and in words. Never the empty state — a designer told they
@@ -814,8 +811,7 @@ function ChooseWorkshopThenSketches() {
         // No selection, and this is a sentence rather than a spinner: nothing is loading, the page is
         // waiting for a person. The same shape `/design-review` uses for the same state.
         <p className="panel px-4 py-6 text-center text-sm text-ink-muted">
-          Nothing is open yet. Choose one of your design workshops above to add its sketches and prototypes, or to rate
-          and rank the ones that are already there.
+          Choose a workshop above.
         </p>
       ) : verdict === "unknown" ? (
         <p className="panel px-4 py-6 text-center text-sm text-ink-muted" aria-live="polite">
@@ -844,9 +840,8 @@ function ChooseWorkshopThenSketches() {
           <h2 className="text-base font-medium text-ink">That workshop couldn&apos;t be checked</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
             {uncheckableNote
-              ? `It isn't in the chooser above, and checking it didn't work: ${uncheckableNote}`
-              : "It isn't in the chooser above, and checking it needs a connection."}{" "}
-            This doesn&apos;t mean you can&apos;t open it. Try again, or choose one of the workshops above.
+              ? `Couldn't check this workshop: ${uncheckableNote}`
+              : "Checking this workshop needs a connection."}
           </p>
           <button type="button" className="field-button-secondary mt-4" onClick={retry}>
             Try again
@@ -870,8 +865,7 @@ function ChooseWorkshopThenSketches() {
         <section className="panel px-4 py-6" aria-live="polite">
           <h2 className="text-base font-medium text-ink">You can&apos;t open that workshop</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
-            The link may be old, the id may be mistyped, the workshop may have been deleted, or you may not have been
-            given access to it. Choose one of your own workshops above.
+            Check the link, or choose a workshop above.
           </p>
           <Link href="/design-workshops" className="field-button-secondary mt-4 inline-flex">
             Open the workshops list

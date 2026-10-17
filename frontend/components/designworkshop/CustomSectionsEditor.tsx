@@ -107,6 +107,7 @@ import {
   type DwTier
 } from "@/lib/designWorkshops";
 import { isLocalWorkshopId, loadDraft } from "@/lib/designWorkshopStore";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const TIERS: DwTier[] = ["BASIC", "STANDARD", "ADVANCED"];
 
@@ -672,7 +673,7 @@ export function CustomSectionsEditor({
       isAnswered(section, field.key)
         ? {
             title: "Retire this question?",
-            body: `"${field.label || field.key}" stops being asked. It has answers recorded against it, so it cannot be deleted — those answers stay in the record, print in the report under this wording, and stop counting towards the stage's completeness.`,
+            body: `"${field.label || field.key}" stops being asked. Its answers are kept and still print.`,
             confirmLabel: "Retire question",
             tone: "warning"
           }
@@ -704,7 +705,7 @@ export function CustomSectionsEditor({
       touched
         ? {
             title: "Retire this section?",
-            body: `"${section.title || section.key}" stops being asked. Answers have been recorded against it, so neither it nor its questions can be deleted — everything already recorded stays readable and prints in the report under the wording it was asked as.`,
+            body: `"${section.title || section.key}" stops being asked. Its answers are kept and still print.`,
             confirmLabel: "Retire section",
             tone: "warning"
           }
@@ -755,9 +756,9 @@ export function CustomSectionsEditor({
       const parts = [
         result.created ? `${result.created} question${result.created === 1 ? "" : "s"} added` : "",
         result.superseded
-          ? `${result.superseded} kept under ${result.superseded === 1 ? "its" : "their"} old wording and re-asked under the new one`
+          ? `${result.superseded} reworded`
           : "",
-        result.retired ? `${result.retired} retired, with the answers already given kept` : "",
+        result.retired ? `${result.retired} retired` : "",
         result.removed ? `${result.removed} removed` : ""
       ].filter(Boolean);
       setNotice(parts.length ? `Saved — ${parts.join("; ")}.` : "Saved. Nothing in the definition changed.");
@@ -787,8 +788,7 @@ export function CustomSectionsEditor({
         <div className="flex items-start gap-2 rounded-md bg-amber-100 p-3 text-amber-800">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <p className="text-xs leading-5">
-            This workshop is only on this device so far. Its own questions can be added once it has uploaded, which
-            happens automatically when you are online. Everything captured here is safe.
+            Questions can be added once this workshop uploads.
           </p>
         </div>
       </section>
@@ -945,11 +945,11 @@ export function CustomSectionsEditor({
                         promise contradicted by the very next dialog.
                       */
                       sectionHolds
-                      ? "Its questions on screen are unanswered, but a question no longer asked holds an answer — so this section is kept, not deleted, and its keys cannot be re-used."
-                      : "No answers recorded yet, so everything here is still freely editable."}
+                      ? "A retired question has answers, so this section can't be deleted."
+                      : "No answers yet — fully editable."}
                 </p>
               </div>
-              <div className="flex flex-wrap justify-end gap-2">
+              <ActionGroup align="end">
                 {/*
                   THE GRIP ANSWERS THE KEYBOARD TOO, even though the two arrows beside it already do.
                   It is the affordance that LOOKS like reordering, so a reader who finds it must not
@@ -995,7 +995,7 @@ export function CustomSectionsEditor({
                 </button>
                 <button
                   type="button"
-                  className={rowAction("danger")}
+                  data-danger className={rowAction("danger")}
                   onClick={() => void removeSection(sectionIndex)}
                   disabled={frozen}
                 >
@@ -1015,7 +1015,7 @@ export function CustomSectionsEditor({
                     "Delete"
                   )}
                 </button>
-              </div>
+              </ActionGroup>
             </header>
 
             <div className="grid gap-3 md:grid-cols-2">
@@ -1055,8 +1055,8 @@ export function CustomSectionsEditor({
                 />
                 <p className="text-xs leading-5 text-ink-500">
                   {sectionHolds
-                    ? "Fixed: answers have been recorded here. To ask these questions at another stage, retire this section and add a new one there — everything already recorded stays readable."
-                    : "The stage where these questions are asked and count towards completeness, even if the section prints at the back of the report."}
+                    ? "Fixed — this section has answers."
+                    : "Where these questions are asked."}
                 </p>
               </div>
               <label className="grid min-w-0 gap-1 md:col-span-2">
@@ -1096,11 +1096,7 @@ export function CustomSectionsEditor({
                       // amber-100 / amber-800 are the palette's tinted-card pair; amber-50 and amber-200
                       // are stock Tailwind and do not pair with them.
                       <p className="mb-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-                        This question already has answers, and you have changed its wording. Saving will keep
-                        the original question and its answers as they are — under “{cost.was}” — and add your
-                        new wording as a separate question with no answers yet. Nothing is overwritten, and
-                        both print in the report. Everything else about it (help text, unit, whether it is
-                        required, its position) can be changed freely.
+                        This question has answers. Saving keeps “{cost.was}” and its answers, and adds your wording as a new question.
                       </p>
                     ) : null}
 
@@ -1136,8 +1132,8 @@ export function CustomSectionsEditor({
                         />
                         <span className="text-xs leading-5 text-ink-500">
                           {locked
-                            ? "Fixed once saved, because every answer is filed under it."
-                            : "Lower-case letter first, then letters and digits. It is never shown to anybody, and it cannot be changed after the first save."}
+                            ? "Fixed once saved."
+                            : "Lower-case letter, then letters and digits. Fixed once saved."}
                         </span>
                       </label>
 
@@ -1209,8 +1205,7 @@ export function CustomSectionsEditor({
                           onChange={(event) => patchField(sectionIndex, fieldIndex, { unit: event.target.value })}
                         />
                         <span className="text-xs leading-5 text-ink-500">
-                          Printed under the box as “Measured in …”, so the answer is recorded in one unit
-                          rather than three.
+                          Shown as “Measured in …”.
                         </span>
                       </label>
 
@@ -1249,8 +1244,7 @@ export function CustomSectionsEditor({
                             }
                           />
                           <span className="text-xs leading-5 text-ink-500">
-                            One option per line. Write <code>COTTON | Cotton (unbleached)</code> to save one
-                            code and print another; a line without a printed form prints the code itself.
+                            One per line. <code>CODE | Printed label</code> is optional.
                           </span>
                         </label>
                       ) : null}
@@ -1309,7 +1303,7 @@ export function CustomSectionsEditor({
                         </button>
                         <span className="text-xs text-ink-500">
                           {field.required
-                            ? "Required, so it is Basic and it blocks submitting this stage until it is answered."
+                            ? "Required."
                             : answeredField
                               ? /*
                                   "…everything else can still change" WAS A SENTENCE THIS SCREEN COULD
@@ -1327,11 +1321,11 @@ export function CustomSectionsEditor({
                                   flag — the one of the five with a control right beside this sentence —
                                   for a word the rule does not use.
                                 */
-                                "Answered — its wording is fixed from here. Its help, whether it is required, its unit, its bounds and its position can all still change freely. Changing the kind of answer is the one thing that strands the answer already recorded."
+                                "Answered — wording is fixed. Changing the answer type strands existing answers."
                               : "Optional."}
                         </span>
                       </div>
-                      <div className="flex flex-wrap justify-end gap-2">
+                      <ActionGroup align="end">
                         {/* Same contract as the section grip above: an accelerator over the arrows,
                             never a replacement for them, and it answers the arrow keys itself. */}
                         <button
@@ -1372,7 +1366,7 @@ export function CustomSectionsEditor({
                         </button>
                         <button
                           type="button"
-                          className={rowAction("danger")}
+                          data-danger className={rowAction("danger")}
                           onClick={() => void removeField(sectionIndex, fieldIndex)}
                           disabled={frozen}
                         >
@@ -1388,7 +1382,7 @@ export function CustomSectionsEditor({
                             </>
                           )}
                         </button>
-                      </div>
+                      </ActionGroup>
                     </div>
                   </li>
                 );
@@ -1408,10 +1402,7 @@ export function CustomSectionsEditor({
               <div className="rounded-md border border-dashed border-line-200 bg-surface-50 p-3">
                 <h3 className="text-sm font-medium text-ink-900">No longer asked</h3>
                 <p className="mt-1 text-xs leading-5 text-ink-500">
-                  {retiredHere.length === 1 ? "This question is" : "These questions are"} not asked any more. What was
-                  already recorded against {retiredHere.length === 1 ? "it" : "them"} is kept, prints in the report
-                  under the wording it was asked as, and counts towards nothing. The keys cannot be used again by a
-                  new question.
+                  No longer asked. Answers are kept and still print.
                 </p>
                 <ul className="mt-2 grid gap-1">
                   {retiredHere.map((field) => (
@@ -1443,8 +1434,7 @@ export function CustomSectionsEditor({
                 // Every cap says so on screen. A control that silently stops working is indistinguishable
                 // from one that is broken.
                 <p className="mt-2 text-xs leading-5 text-ink-500">
-                  This section holds the maximum of {MAX_CUSTOM_FIELDS_PER_SECTION} questions. Split it into
-                  two sections to ask more.
+                  Maximum {MAX_CUSTOM_FIELDS_PER_SECTION} questions per section.
                 </p>
               ) : null}
             </div>
@@ -1470,13 +1460,7 @@ export function CustomSectionsEditor({
         <section className="panel grid gap-2 p-4">
           <h2 className="font-display text-lg font-bold text-ink-900">No longer asked</h2>
           <p className="text-xs leading-5 text-ink-500">
-            {retiredSections.length === 1 ? "This section is" : "These sections are"} not asked any more, because
-            answers had already been recorded against{" "}
-            {retiredSections.length === 1 ? "it" : "them"} when {retiredSections.length === 1 ? "it" : "they"} were
-            removed. Everything recorded stays readable, prints in the report under the wording it was asked as,
-            and counts towards nothing. Saving this screen does not change{" "}
-            {retiredSections.length === 1 ? "it" : "them"}. To ask any of these questions again, add a new section
-            with new keys — the old keys belong to the answers already given.
+            No longer asked. Answers are kept and still print.
           </p>
           <ul className="grid gap-2">
             {retiredSections.map((section) => (
@@ -1516,8 +1500,7 @@ export function CustomSectionsEditor({
         </button>
         {sections.length >= MAX_CUSTOM_SECTIONS ? (
           <p className="mt-2 text-xs leading-5 text-ink-500">
-            A workshop may carry {MAX_CUSTOM_SECTIONS} custom sections. Merge two of them, or move the
-            questions that belong to another stage into a section on that stage.
+            Maximum {MAX_CUSTOM_SECTIONS} custom sections.
           </p>
         ) : null}
       </div>
@@ -1529,8 +1512,8 @@ export function CustomSectionsEditor({
             <div className="min-w-0">
               <p className="text-sm font-medium">
                 {problems.length === 1
-                  ? "One thing has to change before this can be saved"
-                  : `${problems.length} things have to change before this can be saved`}
+                  ? "Fix one thing to save"
+                  : `Fix ${problems.length} things to save`}
               </p>
               {/* EVERY refusal at once and not the first, because a designer fixing a form one round
                   trip at a time gives up on the third — which is the argument the server's own 422 makes
@@ -1555,14 +1538,12 @@ export function CustomSectionsEditor({
               {diff.created ? <li>add {diff.created} question{diff.created === 1 ? "" : "s"};</li> : null}
               {diff.superseded.map((entry) => (
                 <li key={`${entry.was}→${entry.now}`}>
-                  keep “{entry.was}” and the answers given under it exactly as they are, and ask “{entry.now}”
-                  as a new question beside it;
+                  keep “{entry.was}” and add “{entry.now}” as a new question;
                 </li>
               ))}
               {diff.retiredFields.length ? (
                 <li>
-                  stop asking {diff.retiredFields.map((label) => `“${label}”`).join(", ")} — the answers already
-                  recorded stay readable and print in the report;
+                  stop asking {diff.retiredFields.map((label) => `“${label}”`).join(", ")} (answers kept);
                 </li>
               ) : null}
               {diff.deletedFields.length ? (
@@ -1606,8 +1587,8 @@ export function CustomSectionsEditor({
             <div className="min-w-0 text-xs leading-5">
               <p className="font-medium">
                 {diff.retypedFields.length === 1
-                  ? "One answered question is changing the kind of answer it takes"
-                  : `${diff.retypedFields.length} answered questions are changing the kind of answer they take`}
+                  ? "One answered question changes its answer type"
+                  : `${diff.retypedFields.length} answered questions change their answer type`}
               </p>
               <ul className="mt-1 grid gap-1">
                 {diff.retypedFields.map((entry) => (
@@ -1624,11 +1605,7 @@ export function CustomSectionsEditor({
                   true is narrower and worse: the refusal comes back on EVERY save, naming a value they did
                   not type on that visit, and the stage cannot be submitted until it is retyped. */}
               <p className="mt-1">
-                The answers already recorded stay exactly as they were given, in the old form. Every later save
-                of that stage will flag each such answer by name, and the stage can&apos;t be submitted until
-                somebody retypes it in the new form. If the answers already given are still right as they stand,
-                leave the kind of answer alone; if the question really has changed, reword it as well, and it
-                becomes a new question with the old one kept beside it.
+                Existing answers will be flagged until retyped. To keep them, reword the question instead.
               </p>
             </div>
           </div>
@@ -1639,15 +1616,12 @@ export function CustomSectionsEditor({
           // pressed and with the way round it. A 409 arriving after a save is a designer discovering a rule
           // by breaking it.
           <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-            {diff.movedSections.map((title) => `“${title}”`).join(", ")} cannot be moved to another stage,
-            because answers have already been recorded against{" "}
-            {diff.movedSections.length === 1 ? "it" : "them"}. Put the stage back, or retire the section here and add a new one on the other stage —
-            the answers already given stay readable either way.
+            {diff.movedSections.map((title) => `“${title}”`).join(", ")} has answers and can&apos;t move stage. Retire it and add a new section there.
           </p>
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
+          <ActionGroup className="max-sm:w-full"><button
             type="button"
             className="field-button"
             // `dirty` AND NOT `nothingToDo` — see the note on `dirty`. The diff describes what a save
@@ -1672,7 +1646,7 @@ export function CustomSectionsEditor({
             }}
           >
             Discard changes
-          </button>
+          </button></ActionGroup>
           {!dirty ? <span className="text-xs text-ink-500">Nothing has changed yet.</span> : null}
         </div>
       </section>

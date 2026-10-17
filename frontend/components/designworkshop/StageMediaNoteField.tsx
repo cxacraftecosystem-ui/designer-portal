@@ -426,8 +426,8 @@ export function StageMediaNoteField({
       <div className="grid gap-1">
         {noteBox}
         <p className="text-xs text-ink-500">
-          This sentence fills itself in from the {role.subject} record and counts the files attached to it. Choose{" "}
-          <span className="font-medium">{role.refField.label}</span> on this row and those files can be listed here.
+          Fills in from the {role.subject} record. Choose{" "}
+          <span className="font-medium">{role.refField.label}</span> to list its files.
         </p>
       </div>
     );
@@ -446,8 +446,8 @@ export function StageMediaNoteField({
           this listing does.
         */}
         <p className="text-xs text-ink-500">
-          The files attached to the {role.subject} record could not be listed, so this is a plain box. The sentence still
-          fills itself in from the record when this stage is saved; reload the page to try the list again.
+          The {role.subject} record&apos;s files could not be listed, so this is a plain box. It still fills in on save —
+          reload to retry.
         </p>
       </div>
     );
@@ -481,7 +481,7 @@ export function StageMediaNoteField({
   const disagrees = Boolean(recordCount && claim && claim !== recordCount);
   const gridSentence =
     gridFrames > 0
-      ? `${gridFrames} measurement-grid frame${gridFrames === 1 ? " is" : "s are"} attached and not counted — a photograph of ruled paper is not footage of the subject.`
+      ? `${gridFrames} grid frame${gridFrames === 1 ? "" : "s"} not counted.`
       : "";
 
   return (
@@ -523,8 +523,7 @@ export function StageMediaNoteField({
           {picked.length ? (
             <>
               <p className="text-xs text-ink-500">
-                {picked.length} of the {countable.length} attached file{countable.length === 1 ? "" : "s"} named. The
-                record&apos;s own count is kept as the first sentence — narrowing never makes it smaller.{" "}
+                {picked.length} of {countable.length} named.{" "}
                 <button
                   type="button"
                   className="font-medium text-purple-700 dark:text-purple-300 underline underline-offset-2"
@@ -543,16 +542,12 @@ export function StageMediaNoteField({
                 record" used to be. It is the right behaviour and it is invisible until it happens.
               */}
               <p className="text-xs text-ink-500">
-                This is your own answer now rather than the record&apos;s: the line under this box will name you
-                instead of the {role.subject} record. Clear the box entirely to go back — it is filled in from the
-                record again on the next save.
+                Your own text now. Clear the box to refill it from the record.
               </p>
             </>
           ) : (
             <p className="text-xs text-ink-500">
-              The box counts everything attached to the {role.subject} record, which is what the report prints. Ticking
-              files adds a second sentence naming the ones a reader should ask for first; the count itself is never
-              changed.
+              Tick files to name the key ones.
             </p>
           )}
 
@@ -577,16 +572,13 @@ export function StageMediaNoteField({
               deliberately does not invert: "this is wrong" must read identically in both themes.
             */
             <p className="text-xs font-medium leading-5 text-error-600">
-              Naming those {picked.length} files would make the sentence {refusedOverrun} character
-              {refusedOverrun === 1 ? "" : "s"} longer than the {field.maxLength} characters this field allows, so nothing was
-              written and the box is unchanged. Name fewer files, or shorten the sentence in the box by hand first.
+              Too long by {refusedOverrun} character{refusedOverrun === 1 ? "" : "s"}. Name fewer files.
             </p>
           ) : null}
         </div>
       ) : countable.length === 1 ? (
         <p className="text-xs text-ink-500">
-          One file is attached to the {role.subject} record and the sentence already names it, so there is nothing to
-          narrow. {gridSentence}
+          One file, already named. {gridSentence}
         </p>
       ) : (
         /*
@@ -598,10 +590,10 @@ export function StageMediaNoteField({
           deleted parent leaves behind (`media.py` SET NULLs the FK and leaves the tag).
         */
         <p className="text-xs text-ink-500">
-          No files are listed against the {role.subject} record{gridFrames > 0 ? ", other than grid frames" : ""}, so
-          there is nothing to point at. {gridSentence}
+          No files are listed against the {role.subject} record{gridFrames > 0 ? ", other than grid frames" : ""}.{" "}
+          {gridSentence}
           {claim
-            ? " The sentence in the box was written when this stage was last saved — either the record has lost files since, or some of the ones it counted are not shown in this list. It is left exactly as it is."
+            ? " Box text is from the last save — files may have been removed or aren't listed here."
             : ""}
         </p>
       )}
@@ -615,8 +607,7 @@ export function StageMediaNoteField({
           the SERVER's, taken over every row, and is the one number here that is complete.
         */
         <p className="text-xs text-ink-500">
-          Only the {rows.length} most recent of {total} attached files are listed here. The count already in the box
-          covers all {total}.
+          Showing the latest {rows.length} of {total}.
         </p>
       ) : null}
 
@@ -659,8 +650,7 @@ export function StageMediaNoteField({
           sentence would do.
         */
         <p className="text-xs text-ink-500">
-          The sentence in the box already names particular files, so ticking here replaces that part of it rather than
-          adding to it.
+          Ticking replaces the files already named.
         </p>
       ) : null}
     </div>

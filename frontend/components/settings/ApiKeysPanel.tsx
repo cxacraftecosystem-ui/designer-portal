@@ -9,6 +9,7 @@ import { PasswordRevealButton } from "@/components/ui/PasswordReveal";
 import { useToast } from "@/components/ui/Toast";
 import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The managed provider keys (`/api/secrets`, master admin only).
@@ -304,6 +305,7 @@ export function ApiKeysPanel() {
                       </td>
 
                       <td className="px-4 py-3">
+                        {/* Icon controls beside the value (reveal, copy) — a cell toolbar, not an action row. */}
                         <div className="flex items-start gap-2">
                           {plaintext ? (
                             <code className="max-w-[18rem] break-all rounded-md bg-surface-50 px-2 py-1 font-mono text-xs text-ink-900">
@@ -415,7 +417,7 @@ export function ApiKeysPanel() {
                               this button for. */}
                           {hasStoredOverride(secret) ? (
                             <button
-                              className={rowAction("danger")}
+                              data-danger className={rowAction("danger")}
                               onClick={() => {
                                 setEditing(null);
                                 setConfirmingClear(secret.key);
@@ -471,7 +473,7 @@ export function ApiKeysPanel() {
                             <p className="mt-2 text-[0.6875rem] leading-4 text-ink-500">
                               Saving replaces the value for everyone, immediately.
                             </p>
-                            <div className="mt-2 flex justify-end gap-2">
+                            <ActionGroup align="end" className="mt-2">
                               <button
                                 className={rowAction("neutral")}
                                 onClick={() => {
@@ -492,7 +494,7 @@ export function ApiKeysPanel() {
                                 <Check className="h-3.5 w-3.5" aria-hidden />
                                 {rowBusy === "save" ? "Saving…" : "Save key"}
                               </button>
-                            </div>
+                            </ActionGroup>
                           </div>
                         ) : null}
 
@@ -504,12 +506,12 @@ export function ApiKeysPanel() {
                                 ? "This saved key cannot be read, so nothing is using it. Clearing it only removes it and the warning beside it."
                                 : "The saved key is removed and the default value applies again. If there is no default value, the features that need this key stop working."}
                             </p>
-                            <div className="mt-2 flex justify-end gap-2">
+                            <ActionGroup align="end" className="mt-2">
                               <button className={rowAction("neutral")} onClick={() => setConfirmingClear(null)} type="button">
                                 Keep it
                               </button>
                               <button
-                                className={rowAction("danger")}
+                                data-danger className={rowAction("danger")}
                                 disabled={rowBusy === "clear"}
                                 onClick={() => clearOverride(secret)}
                                 type="button"
@@ -517,7 +519,7 @@ export function ApiKeysPanel() {
                                 <Trash2 className="h-3.5 w-3.5" aria-hidden />
                                 {rowBusy === "clear" ? "Clearing…" : "Clear override"}
                               </button>
-                            </div>
+                            </ActionGroup>
                           </div>
                         ) : null}
                       </td>

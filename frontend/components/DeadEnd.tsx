@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { useAuth } from "@/components/AuthProvider";
 import { DynamicIslandNav } from "@/components/DynamicIslandNav";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { roleLabel } from "@/lib/permissions";
 
@@ -213,7 +214,7 @@ export function DeadEndWayBack({
           )}
         </p>
       ) : null}
-      <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+      <ActionGroup className="mt-7">
         {children}
         {loading ? null : user ? (
           <>
@@ -237,7 +238,7 @@ export function DeadEndWayBack({
             </Link>
           </>
         )}
-      </div>
+      </ActionGroup>
       {loading ? <p className="mt-3 text-xs text-ink-500">Checking your session…</p> : null}
     </>
   );

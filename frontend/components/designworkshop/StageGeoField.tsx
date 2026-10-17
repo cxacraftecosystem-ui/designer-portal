@@ -37,6 +37,7 @@ import { LocateFixed, MapPinned } from "lucide-react";
 
 import { MapPointPicker, mapPickerAvailable } from "@/components/forms/MapPointPicker";
 import { resolvePoint, type PointAddress } from "@/components/forms/LocationFields";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 import { geoValue, readNumber, type DwGeoValue, type DwValue } from "@/lib/designWorkshops";
 
 /** Shorter than the location card's own hunt: somebody is standing there with a finger on a button. */
@@ -118,7 +119,7 @@ export function StageGeoField({
     // The same bounds the server's `coerce_value` enforces. Checking here means a transposed pair is
     // refused at the keyboard rather than at Save, forty fields later.
     if (latNumber < -90 || latNumber > 90 || lonNumber < -180 || lonNumber > 180) {
-      setProblem("A latitude runs from -90 to 90 and a longitude from -180 to 180.");
+      setProblem("Latitude is -90 to 90; longitude -180 to 180.");
       return;
     }
     setProblem(null);
@@ -131,7 +132,7 @@ export function StageGeoField({
 
   function useDeviceFix() {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setProblem("This browser cannot report a location. Type the coordinates in, or point at the place on the map.");
+      setProblem("No location from this browser. Type coordinates or use the map.");
       return;
     }
     setBusy(true);
@@ -151,10 +152,10 @@ export function StageGeoField({
         // location on, or go outside. "Location failed" tells a designer none of the three.
         setProblem(
           failure.code === failure.PERMISSION_DENIED
-            ? "Location permission was refused for this site. Allow it in the address-bar permissions, or point at the place on the map."
+            ? "Location blocked. Allow it for this site, or use the map."
             : failure.code === failure.POSITION_UNAVAILABLE
-              ? "The device has no location to give — check that location services are switched on."
-              : "The device could not get a fix in time. Try again outdoors, or point at the place on the map."
+              ? "No location — turn on location services."
+              : "No fix in time. Try outdoors, or use the map."
         );
       },
       { enableHighAccuracy: true, timeout: FIX_TIMEOUT_MS, maximumAge: 0 }
@@ -197,7 +198,9 @@ export function StageGeoField({
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      {/* The two real buttons go through the shared row rule; the text links and the accuracy note
+          sit on their own line under them, so they never count as buttons in the row. */}
+      <ActionGroup align="start">
         <button type="button" className="field-button-secondary" disabled={disabled || busy} onClick={useDeviceFix}>
           <LocateFixed className="h-4 w-4" aria-hidden />
           {busy ? "Getting a fix…" : "Use current GPS"}
@@ -217,7 +220,9 @@ export function StageGeoField({
             {mapOpen ? "Hide the map" : "Pick on map"}
           </button>
         ) : null}
+      </ActionGroup>
 
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 empty:hidden">
         {recordingPlace ? (
           <button
             type="button"
@@ -259,7 +264,7 @@ export function StageGeoField({
           lat={stored?.lat ?? null}
           lon={stored?.lon ?? null}
           onPick={pick}
-          onFailure={() => setProblem("The map could not be loaded. You can still type the coordinates in, or use the GPS.")}
+          onFailure={() => setProblem("Map didn't load. Type coordinates or use GPS.")}
           ariaLabel="Click the map to place this location"
         />
       ) : null}
@@ -272,10 +277,10 @@ export function StageGeoField({
           {placeLooking
             ? "Checking where this point is…"
             : place && (place.state || place.district)
-              ? `This point is in ${[place.district, place.state].filter(Boolean).join(", ")}${
+              ? `In ${[place.district, place.state].filter(Boolean).join(", ")}${
                   place.pincode ? ` (${place.pincode})` : ""
-                }. Nothing here is saved — it is a check that the coordinates are where you meant.`
-              : "The address lists do not recognise anywhere at these coordinates. Check the latitude and longitude are not the wrong way round."}
+                }.`
+              : "No known place here. Are latitude and longitude swapped?"}
         </p>
       ) : null}
 

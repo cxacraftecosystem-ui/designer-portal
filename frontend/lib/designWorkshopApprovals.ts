@@ -182,17 +182,17 @@ export const APPROVAL_QUEUE_TABS: ReadonlyArray<{
   {
     value: "awaiting",
     label: "Waiting for approval",
-    empty: "No report is waiting for approval. A report arrives here when its designers hand it in."
+    empty: "Nothing waiting for approval."
   },
   {
     value: "approved",
     label: "Approved, not yet handed on",
-    empty: "No approved report is waiting to be handed on to the office."
+    empty: "Nothing waiting to hand on."
   },
   {
     value: "handedOn",
     label: "Handed on",
-    empty: "No report has been handed on to the office yet."
+    empty: "Nothing handed on yet."
   },
   {
     value: "returned",
@@ -231,25 +231,25 @@ export const REVISE_COPY: Record<
     button: "Send back without approving",
     title: "Send this report back without approving it?",
     confirm: "Send it back",
-    body: "The report goes back to its designers as Needs revision, with your sentence as the correction to make. It comes back here when they hand it in again.",
-    placeholder: "Say what needs correcting. The designers read this as written.",
-    done: "Sent back. The report is with its designers for corrections, and your sentence is on the record."
+    body: "It goes back to its designers as Needs revision.",
+    placeholder: "What needs correcting",
+    done: "Sent back."
   },
   WITHDRAW: {
     button: "Withdraw the approval",
     title: "Withdraw the approval of this report?",
     confirm: "Withdraw the approval",
-    body: "The report is no longer approved. It goes back to its designers as Needs revision, with your reason as the correction to make, and it has to be approved again before it can be handed on.",
-    placeholder: "Say why the approval is withdrawn and what needs correcting. The designers read this as written.",
-    done: "Approval withdrawn. The report is with its designers for corrections, and your reason is on the record."
+    body: "It goes back to its designers as Needs revision and must be approved again.",
+    placeholder: "Why, and what needs correcting",
+    done: "Approval withdrawn."
   },
   RETURN_FROM_OFFICE: {
     button: "Return it from the office",
     title: "Return this report from the office?",
     confirm: "Return it",
-    body: "The report was handed on to the office. Returning it takes the approval back as well: it goes to its designers as Needs revision, with your reason as the correction to make, and has to be approved and handed on again. The hand-on stays on the record.",
-    placeholder: "Say why it is returned and what needs correcting. The designers read this as written.",
-    done: "Returned. The report is with its designers for corrections, and the approval and the hand-on before it stay on the record."
+    body: "This also withdraws the approval. It goes back to its designers as Needs revision.",
+    placeholder: "Why, and what needs correcting",
+    done: "Returned."
   }
 };
 
@@ -275,7 +275,7 @@ export type DwApprovalAction = {
 
 /** When the server sent no sentence for a refused decision — said rather than left as a dead button. */
 export const NO_DECISION_REASON =
-  "The repository did not say whether you may take this decision on this report, so it is not offered. Reload the page to ask again.";
+  "Couldn't check your permission. Reload the page.";
 
 /**
  * THE BUTTONS A REPORT OFFERS, IN ORDER, AND FOR EACH WHETHER IT MAY BE PRESSED AND WHY NOT.
@@ -318,17 +318,17 @@ export function noDecisionSentence(detail: DwApprovalDetail | null | undefined):
   const status = String(detail.status ?? "").toUpperCase();
   switch (status) {
     case "NEEDS_REVISION":
-      return "This report is with its designers for corrections. It comes back here when they hand it in again.";
+      return "With its designers for corrections.";
     case "SUBMITTED":
-      return "This report was handed in before reports were approved on this platform, so there is no approval to give, withdraw or hand on.";
+      return "Handed in before reports were approved here — nothing to decide.";
     case "ARCHIVED":
-      return "This report is archived. It comes back here if its designers hand it in again.";
+      return "Archived.";
     case "DRAFT":
     case "IN_PROGRESS":
     case "COMPLETE":
-      return "This report has not been handed in, so there is nothing to decide yet. It arrives here when its designers hand it in.";
+      return "Not handed in yet.";
     default:
-      return "This version of the app does not recognise this report's status, so it offers no decision. Reload the page; if it persists, this browser needs a newer build.";
+      return "Unknown status. Reload to update the app.";
   }
 }
 

@@ -97,12 +97,12 @@ export function decideIdentityPhotograph(
  */
 export function retentionOutcomeSentence(result: DwPhotoRetentionResult): string {
   if (result.deleted) {
-    return "That photograph has been deleted — the file and the record of it are both gone. The number you confirmed is unaffected.";
+    return "Photo deleted — the file and the record of it are both gone. The number you confirmed is unaffected.";
   }
   const who = result.retention?.decidedByName?.trim();
   return who
-    ? `That photograph is kept on this record, in ${who}'s name. It is a photograph of an identity document, so it is stored unmasked and anyone who can open this record can see it.`
-    : "That photograph is kept on this record. It is a photograph of an identity document, so it is stored unmasked and anyone who can open this record can see it.";
+    ? `Photo kept on this record, in ${who}'s name. It's unmasked — anyone who can open this record can see it.`
+    : "Photo kept on this record. It's unmasked — anyone who can open this record can see it.";
 }
 
 /**
@@ -113,4 +113,4 @@ export function retentionOutcomeSentence(result: DwPhotoRetentionResult): string
  * screen is where the cost of not deciding is paid, and it is the only place it is visible.
  */
 export const DW_PHOTO_UNDECIDED =
-  "This photograph was uploaded to the record when you attached it, so it is stored right now. Choose what happens to it: an identity card is stored unmasked, unlike the number itself, which is masked everywhere it is shown.";
+  "This photo is saved unmasked. Keep it or delete it — the number stays masked either way.";

@@ -58,7 +58,7 @@ export function UnsavedChangesDialog({
           >
             Keep editing
           </button>
-          <button type="button" className="field-danger" disabled={saving} onClick={onDiscard}>
+          <button type="button" data-danger className="field-danger" disabled={saving} onClick={onDiscard}>
             Discard
           </button>
           <button type="button" className="field-button" disabled={saving} onClick={onSave}>

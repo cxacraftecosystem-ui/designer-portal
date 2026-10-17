@@ -164,6 +164,7 @@ import { isUnreachable } from "@/lib/offline";
 // and what they cost when they are skipped, are written out in that module. Shared with the history
 // view beside this one, which had the first defect in exactly the same shape.
 import { reportServerId, reportTemplateId } from "./reportTarget";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * What this file asks for on top of the saved settings, for ONE download.
@@ -815,7 +816,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   /** Write the file on this device, from the draft and the sources it holds. */
   async function writeHere(format: "DOCX" | "PDF") {
     const draft = await loadDraft(id);
-    if (!draft) throw new Error("This workshop is not saved on this device, so its report cannot be built here.");
+    if (!draft) throw new Error("This workshop isn't on this device.");
     const registry = (await loadRegistry()).registry as unknown as Registry;
     const sources = draft.remoteId ? ((await getSources(draft.remoteId, userId))?.sources ?? null) : null;
     const file = await generateOfflineFile(
@@ -871,7 +872,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         // that never completed, which is the offline case — and the file is then written here.
         if (err instanceof ApiError) {
           setError(
-            `The ${format} could not be generated: ${err.message} The workshop itself is safe — nothing you have entered was affected.`
+            `Couldn't generate the ${format}: ${err.message} Your workshop is unaffected.`
           );
           return;
         }
@@ -879,8 +880,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
       }
     } catch (err) {
       setError(
-        `The ${format} could not be written: ${err instanceof Error ? err.message : "something went wrong"} ` +
-          "The workshop itself is safe — nothing you have entered was affected."
+        `Couldn't write the ${format}: ${err instanceof Error ? err.message : "something went wrong"} ` +
+          "Your workshop is unaffected."
       );
     } finally {
       setDownloading(null);
@@ -966,7 +967,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           </FieldBlock>
           <p className="text-sm leading-6 text-ink-muted">
             {templates.find((template) => template.id === templateId)?.description ??
-              "Choosing a template changes the sections, their order and the page size — the workshop data is unchanged."}
+              "Sets the sections, order and page size."}
           </p>
         </div>
 
@@ -989,11 +990,11 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <p className="text-sm leading-6 text-ink-muted">
             {transcriptOverride === ""
               ? wantsTranscripts(settings)
-                ? "Stage 20 asks for the transcript annexure, so this file will carry it. The preview below includes it."
-                : "Stage 20 leaves the transcripts out. Overriding here changes this one file and not the saved setting."
+                ? "Included, as set in stage 20."
+                : "Left out, as set in stage 20."
               : transcriptOverride === "YES"
-                ? "This file only. The preview below is built from the saved setting, so the annexure may not appear in it."
-                : "This file only. The saved setting is untouched and the next report will follow it again."}
+                ? "This file only. The preview may not show it."
+                : "This file only."}
           </p>
         </div>
 
@@ -1013,8 +1014,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <div className="grid gap-1.5 text-sm leading-6 text-ink-muted">
             <p>
               {includeAiLayers
-                ? "This file will carry an annexure of the transcripts, summaries and readings a person has accepted, each named as machine-assisted and each printed with the model that produced it and the person who accepted it. Nothing unaccepted is printed."
-                : "Off. Transcripts, summaries and readings produced automatically are left out of this file entirely. Accept them on the workshop's AI layers screen first; what is accepted there is what this can print."}
+                ? "Adds accepted AI text, labelled with its model and who accepted it."
+                : "Off. AI text is left out."}
             </p>
             {/*
               WHAT THE TICK WILL ACTUALLY DO, said before the sixty pages rather than after them.
@@ -1028,11 +1029,11 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               <p aria-live="polite" className="font-medium text-ink-700">
                 {acceptedLayersUnknown ? (
                   <>
-                    The number of accepted items couldn&rsquo;t be loaded just now. The report will still carry whatever is accepted — open{" "}
+                    Couldn&rsquo;t count accepted items. Check{" "}
                     <Link href={`/design-workshops/${id}/ai-layers`} className="underline">
                       AI layers
-                    </Link>{" "}
-                    to check.
+                    </Link>
+                    .
                   </>
                 ) : acceptedLayerCount === null ? (
                   "Counting what has been accepted…"
@@ -1045,8 +1046,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                   // how a designer concludes the tick did nothing at all, which is the failure this
                   // whole count exists to prevent. The count is already on screen and is the answer.
                   <>
-                    Nothing has been accepted, so this file will carry no annexure — ticking the box changes nothing
-                    until something is. Accept what belongs in it on{" "}
+                    Nothing accepted yet. Accept items on{" "}
                     <Link href={`/design-workshops/${id}/ai-layers`} className="underline">
                       AI layers
                     </Link>
@@ -1058,7 +1058,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                     <Link href={`/design-workshops/${id}/ai-layers`} className="underline">
                       Read them first
                     </Link>{" "}
-                    if you have not — the preview below does not show this annexure.
+                    — the preview doesn&rsquo;t show them.
                   </>
                 )}
               </p>
@@ -1121,21 +1121,19 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               const heldReason = heldPostReason(postRefusal);
               if (heldReason) {
                 setError(
-                  `${heldReason} The colour is still applied to any file you download from this page right now.`
+                  `${heldReason} The colour still applies to downloads from this page.`
                 );
                 return;
               }
               if (!online) {
                 setError(
-                  "You're offline, so this colour can't be saved to the workshop. It is still applied to any " +
-                    "file you download from this page right now."
+                  "Offline — colour not saved. It still applies to downloads from this page."
                 );
                 return;
               }
               if (stage20Pending) {
                 setError(
-                  "Stage 20 has changes on this device that haven't uploaded yet, and they would undo this colour, so " +
-                    "it hasn't been saved. Let them upload first, then set the colour."
+                  "Stage 20 has unsent changes. Let them upload, then set the colour."
                 );
                 return;
               }
@@ -1201,25 +1199,22 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             </p>
             <p className="mt-1 leading-6">
               {localOnly
-                ? "It was started without a connection and uploads by itself the next time there is one. "
+                ? "It uploads when you're online. "
                 : ""}
-              The preview below and the .docx and .pdf are built on this device from everything saved on it, including
-              changes that have not uploaded yet. Photographs taken on this device, and any opened here before, are
-              included; anything the file leaves out is listed beside the download.
+              The preview and files are built from what&rsquo;s on this device.
             </p>
           </div>
         ) : null}
 
         {unsentStages && !builtHere ? (
           <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-            {unsentStages} stage{unsentStages === 1 ? " is" : "s are"} saved on this device and{" "}
-            {unsentStages === 1 ? "has" : "have"} not uploaded yet. The preview and the files below are built from the
-            uploaded copy, so {unsentStages === 1 ? "that stage's" : "those stages'"} latest changes are not in them until
-            the upload finishes.
+            {unsentStages} stage{unsentStages === 1 ? " is" : "s are"} not uploaded yet, so {unsentStages === 1 ? "its" : "their"} latest
+            changes aren&rsquo;t in the report.
           </div>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="grid gap-2">
+          <ActionGroup>
           <button
             type="button"
             className="field-button"
@@ -1243,8 +1238,9 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <button type="button" className="field-button-secondary" onClick={() => window.print()}>
             Print these pages
           </button>
+          </ActionGroup>
           {preview ? (
-            <span className="text-xs text-ink-500">
+            <span className="text-center text-xs text-ink-500">
               {preview.meta.templateName} · {pageSize} · {preview.blocks.length} blocks
               {previewAccent ? ` · ${previewAccent.toUpperCase()}` : ""}
             </span>
@@ -1266,7 +1262,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                   quietly stops is indistinguishable from a list that ended. A file written on this
                   device hands over its whole list, so the note is not shown for one. */}
               {fileBuiltHere ? null : (
-                <p className="mt-1 text-xs">Long lists are shortened here — the preview warnings below are the complete set.</p>
+                <p className="mt-1 text-xs">Shortened — see the full list below.</p>
               )}
             </div>
           ) : (
@@ -1321,7 +1317,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <div>
             <p className="text-sm font-medium text-ink-900">
               {incomplete.length} stage{incomplete.length === 1 ? "" : "s"} still {incomplete.length === 1 ? "has" : "have"}{" "}
-              unfilled required fields. The report will generate without them, and the sections they feed will be thin.
+              empty required fields.
             </p>
             <ul className="mt-2 grid gap-1">
               {incomplete.map(({ stage, score }) => (
@@ -1344,7 +1340,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             </ul>
           </div>
         ) : (
-          <p className="text-sm text-ink-700">Every required field in all 22 stages is filled in.</p>
+          <p className="text-sm text-ink-700">All required fields are filled in.</p>
         )}
 
         {/*
@@ -1374,9 +1370,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             Open a stage to correct something the preview shows
           </summary>
           <p className="mt-2 text-xs leading-5 text-ink-500">
-            The pages below print each stage&rsquo;s own saved answers, not the artisan or product records they were
-            copied from — so a value that is filled in but wrong is corrected on its stage, and a report already
-            handed over is never changed by editing an artisan or a product afterwards.
+            The report prints each stage&rsquo;s saved answers, not the artisan or product records they were copied
+            from — so correct a wrong value on its stage.
           </p>
           <ul className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
             {(registry?.stages ?? []).map((stage) => (
@@ -1411,8 +1406,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         // so `_runs_for` cannot carry CODE into the .docx or the .pdf — the words survive, the face
         // does not. Drawing it without saying so would be the preview lying about the file.
         <section className="mb-5 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-          {codeSpans} passage{codeSpans === 1 ? " is" : "s are"} marked as code below. In the .docx and the .pdf the words
-          appear as ordinary text.
+          {codeSpans} passage{codeSpans === 1 ? " is" : "s are"} marked as code — printed as plain text.
         </section>
       ) : null}
 
@@ -1439,8 +1433,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           ) : previewFailed ? (
             <div className="grid justify-items-start gap-2">
               <p className="text-sm text-ink-700">
-                The preview couldn&rsquo;t be built. The message at the top of this page says why; nothing you have
-                captured is affected.
+                Couldn&rsquo;t build the preview.
               </p>
               <button type="button" className="field-button-secondary" onClick={retryPreview}>
                 Try again

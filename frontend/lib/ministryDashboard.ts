@@ -66,12 +66,12 @@ export const REGISTER_KINDS: ReadonlyArray<{
     // ampersand and lower-case p included. A fourth spelling invented on a new screen is a name
     // nobody's grep finds and nobody's colleague recognises; `ministryDesk.ts` carries that rule.
     label: "Design & prototype workshops",
-    note: "The 22-stage records designers fill in. Progress is how far through those stages each one is."
+    note: "Progress through the 22 stages."
   },
   {
     value: "other",
     label: "Other workshops",
-    note: "Recorded field visits. These carry no stages, so they have a review status rather than progress."
+    note: "Field visits, by review status."
   }
 ];
 
@@ -307,19 +307,19 @@ export const PEOPLE_KINDS: ReadonlyArray<{
   {
     id: "designers",
     title: "Designers",
-    note: "Who is running design & prototype workshops, how many, and how far along each one is.",
+    note: "Who runs workshops, and how far along.",
     countLabel: "designer"
   },
   {
     id: "officers",
     title: "Assistant & Regional Directors",
-    note: "The directorate's postings — who oversees which workshops, and in what capacity.",
+    note: "Who oversees which workshops.",
     countLabel: "officer"
   },
   {
     id: "inspectors",
     title: "Inspectors",
-    note: "Who inspects, how much correction they filed, and how often a workshop went back.",
+    note: "Inspections, corrections and send-backs.",
     countLabel: "inspector"
   }
 ];
@@ -448,7 +448,7 @@ export function personProgressSentence(person: RegisterPerson): string {
     case "noWorkshops":
       return "No workshops in this scope";
     case "capped":
-      return "Not scored — too many workshops on this page to score at once";
+      return "Not scored — too many on this page";
     case "unreadable":
       return "Not scored — progress couldn't be loaded";
     default:
@@ -522,10 +522,10 @@ export function downloadBeneficiaries() {
 export function progressSentence(progress: RegisterProgress | null | undefined): string {
   if (!progress) return "Progress isn't available for this workshop.";
   if (progress.unscoredReason === "capped") {
-    return "Not scored on this page — there are too many workshops here to score at once. Narrow the list or go to another page to score this one.";
+    return "Not scored on this page — narrow the list to score it.";
   }
   if (progress.percent === null || progress.stagesComplete === null) {
-    return "Progress couldn't be loaded for this workshop, so it hasn't been scored.";
+    return "Progress couldn't be loaded, so it hasn't been scored.";
   }
   const outstanding = (progress.requiredTotal ?? 0) - (progress.requiredFilled ?? 0);
   const stages = `${progress.stagesComplete} of ${progress.stagesTotal} stages complete`;
@@ -591,6 +591,6 @@ function humaniseStanding(status: string): string {
 export function unclassifiedSentence(count: number): string | null {
   if (count <= 0) return null;
   return count === 1
-    ? "1 workshop has a status that isn't in any group, so it counts only in the total. It is still listed under “Everything”."
-    : `${count} workshops have a status that isn't in any group, so they count only in the total. They are still listed under “Everything”.`;
+    ? "1 workshop has an ungrouped status — see “Everything”."
+    : `${count} workshops have ungrouped statuses — see “Everything”.`;
 }

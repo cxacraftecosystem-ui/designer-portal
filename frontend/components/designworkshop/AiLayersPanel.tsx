@@ -159,6 +159,7 @@ import {
   type DwAiPayloadView
 } from "@/lib/aiLayers";
 import { listDesignWorkshopTranscripts, type DwTranscriptItem, type DwTranscriptList } from "@/lib/designWorkshops";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * Each layer's whole decision history, keyed by layer, once it has been read.
@@ -277,8 +278,7 @@ export function AiLayersPanel({
             // The disjunction, unresolved on purpose, exactly as the app's 404 page leaves it. A GET
             // that 404s here is either a server older than these routes or a workshop this account
             // cannot open, and naming only the first would assert that the workshop exists.
-            "This workshop's AI layers couldn't be loaded. They may not be available right now, or you may not " +
-              "have access to this workshop."
+            "Couldn't load the AI layers."
           )
         );
       } finally {
@@ -394,7 +394,7 @@ export function AiLayersPanel({
         }
         setDecisions((current) => ({ ...current, [layer.id]: answer.decisions }));
       } catch (err) {
-        setError(aiLayerProblem(err, "That layer could not be read. Press Reload and try again."));
+        setError(aiLayerProblem(err, "Couldn't read that layer. Reload and try again."));
       } finally {
         setReadingId(null);
       }
@@ -407,7 +407,7 @@ export function AiLayersPanel({
     try {
       setHistory(await listDesignWorkshopAiLayerDecisions(workshopId));
     } catch (err) {
-      setError(aiLayerProblem(err, "The decision history could not be read. Try again."));
+      setError(aiLayerProblem(err, "Couldn't load the history. Try again."));
     } finally {
       setHistoryLoading(false);
     }
@@ -469,11 +469,10 @@ export function AiLayersPanel({
       cancelLabel: "Not yet",
       body: (
         <>
-          Accepting records <strong>you</strong>, by name and at this moment, as the person who read this text and stands
-          behind it. Only accepted layers can be printed in a report, marked as AI-produced — so these words can reach a
-          document handed to a ministry officer with your name attached to them.{" "}
+          Your name is recorded as the person who read and stands behind this text. Accepted layers can be printed in a
+          report, marked as AI-produced.{" "}
           {provenance.unrecorded
-            ? "No provider or model was recorded for this text, so a later error can't be traced back to its source."
+            ? "No provider or model was recorded."
             : `It was produced by ${provenance.provider}, model ${provenance.model}, ${tierLabel(layer.tier).toLowerCase()}.`}
         </>
       ),
@@ -481,9 +480,8 @@ export function AiLayersPanel({
         <>
           {readable
             ? null
-            : "The full text is not on screen. Press “Read this layer” on its row and read it before you accept — an acceptance says you did. "}
-          Once you accept it, nobody else can. You can withdraw your acceptance later and the withdrawal is recorded too,
-          but a report generated in the meantime will still say you accepted it.
+            : "Read the full text first — press “Read this layer” on its row. "}
+          You can withdraw later; reports already made will still show your acceptance.
         </>
       )
     });
@@ -494,7 +492,7 @@ export function AiLayersPanel({
     setNotice(null);
     try {
       await acceptDesignWorkshopAiLayer(workshopId, layer.id);
-      setNotice(`Accepted. The ${layerKindNoun(layer.kind)} now carries your name and the moment you accepted it.`);
+      setNotice(`Accepted under your name.`);
       await refresh();
       await afterDecision(layer);
     } catch (err) {
@@ -512,8 +510,7 @@ export function AiLayersPanel({
       await unacceptDesignWorkshopAiLayer(workshopId, layer.id, note);
       setWithdrawing(null);
       setNotice(
-        "Your acceptance has been withdrawn and your reason saved. The layer itself is unchanged and can be accepted again. " +
-          "Reports already generated still name it as accepted."
+        "Acceptance withdrawn. Reports already made still show it as accepted."
       );
       await refresh();
       await afterDecision(layer);
@@ -531,14 +528,12 @@ export function AiLayersPanel({
       confirmLabel: "Decline it",
       body: (
         <>
-          It won&apos;t be offered again and can&apos;t be printed. It is kept, not erased, as the record that a person
-          said no.
+          It won&apos;t be printed. It is kept as a record that it was declined.
         </>
       ),
       note: (
         <>
-          The recording it was made from is not changed, and neither is the layer above it. Anything produced from this
-          layer has to be declined first.
+          The source is not changed.
         </>
       )
     });
@@ -549,7 +544,7 @@ export function AiLayersPanel({
     setNotice(null);
     try {
       await deleteDesignWorkshopAiLayer(workshopId, layer.id);
-      setNotice("Declined. It is kept as the record that a person said no. Register the material again if it is still wanted.");
+      setNotice("Declined.");
       await refresh();
       if (historyOpen) await loadHistory();
     } catch (err) {
@@ -575,13 +570,12 @@ export function AiLayersPanel({
       const result = await registerDesignWorkshopAiLayer(workshopId, { sourceMediaId: item.mediaId });
       setNotice(
         result.total > 1
-          ? `Registered as ${result.total} layers: the original transcript, and the rewritten version made from it. ` +
-              "Neither is printed until somebody accepts it."
-          : "Registered as one layer. It isn't printed until somebody accepts it."
+          ? `Registered as ${result.total} layers. Accept them to print.`
+          : "Registered. Accept it to print."
       );
       await refresh();
     } catch (err) {
-      setError(aiLayerProblem(err, "That recording could not be registered as a layer."));
+      setError(aiLayerProblem(err, "Couldn't register that recording."));
     } finally {
       setRegistering(null);
     }
@@ -600,13 +594,10 @@ export function AiLayersPanel({
           <div className="min-w-0">
             <h2 className="font-display text-base font-bold text-ink-900">What a model produced, and who accepted it</h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              Every entry here is text an AI model produced from this workshop&apos;s own material — it never edits that
-              material. Each one says where the model ran, which model it was and what it was made from, so a later error
-              can be traced back. <strong>Nothing is printed until a person accepts it</strong>, and an acceptance records
-              who and when.
+              AI-made text from this workshop&apos;s material. <strong>Nothing is printed until a person accepts it.</strong>
             </p>
             <p className="mt-2 text-sm leading-6 text-ink-muted">
-              These layers are annexure material and suggestions. They never fill in a stage field.
+              They never fill in a stage field.
             </p>
           </div>
         </div>
@@ -641,19 +632,18 @@ export function AiLayersPanel({
             onChange={setIncludeDeleted}
             testId="ai-layers-include-deleted"
           />
-          <button type="button" className="field-button-secondary" onClick={() => setWithText((current) => !current)}>
+          <ActionGroup className="max-sm:w-full"><button type="button" className="field-button-secondary" onClick={() => setWithText((current) => !current)}>
             {withText ? "Hide the full text" : "Show the full text"}
           </button>
           <button type="button" className="field-button-secondary" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden />
             {loading ? "Reading…" : "Reload"}
-          </button>
+          </button></ActionGroup>
         </div>
 
         {!withText ? (
           <p className="text-xs leading-5 text-ink-500">
-            “Show the full text” brings the text of every layer at once. To read just one, press “Read this layer” on
-            its row.
+            Or press “Read this layer” on one row.
           </p>
         ) : null}
 
@@ -687,7 +677,7 @@ export function AiLayersPanel({
               </ul>
             ) : (
               <p className="text-xs leading-5 text-ink-500">
-                Nobody has accepted, withdrawn or declined a layer of this workshop.
+                No decisions yet.
               </p>
             )
           ) : null}
@@ -725,10 +715,7 @@ export function AiLayersPanel({
         <p className="flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           <Info className="mt-1 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
           <span>
-            Accepting is what makes a layer printable. A report asked to include machine-assisted text carries every
-            layer accepted here, names each one as machine-assisted, and prints it with the model that produced it and
-            the person who accepted it. Treat an acceptance as a signature on text that is ready to go into a document,
-            not as a note kept for later.
+            Accepting signs off the text for print. Reports label it as AI-assisted, with the model and your name.
           </span>
         </p>
 
@@ -776,8 +763,8 @@ export function AiLayersPanel({
           <h3 className="font-display text-sm font-bold text-ink-900">Nothing has been registered yet</h3>
           <p className="text-sm leading-6 text-ink-muted">
             {includeDeleted
-              ? "No model output has been recorded against this workshop, declined or otherwise."
-              : "No model output has been recorded against this workshop. If something was registered and then declined, tick “Show declined layers” — a declined layer is kept as the record that a person said no."}
+              ? "No AI layers yet."
+              : "No AI layers yet. Tick “Show declined layers” to see declined ones."}
           </p>
         </div>
       ) : null}
@@ -795,10 +782,10 @@ export function AiLayersPanel({
                 {recording
                   ? `${recording.stageTitle} · ${recording.fieldLabel} · ${recording.durationText}`
                   : transcriptsFailed
-                    ? "The recordings couldn't be loaded, so this one can't be named here. The layers below are unaffected."
+                    ? "Couldn't load the recording's name."
                     : // A photograph's OCR chain roots on an IMAGE, which the transcripts endpoint does
                       // not list at all — so "not in that list" is an ordinary answer, not a fault.
-                      "Not in this workshop's transcripts — it may be a photograph, or a recording you don't have access to."}
+                      "A photograph, or a recording you can't access."}
                 {" · "}
                 <span className="font-mono">{group.mediaId}</span>
               </p>
@@ -806,7 +793,7 @@ export function AiLayersPanel({
                 {layersHere} layer{layersHere === 1 ? "" : "s"} stand
                 {layersHere === 1 ? "s" : ""} on it
                 {group.roots.length > 1
-                  ? ` in ${group.roots.length} separate chains — more than one model read the same material, and the tiers below say which is which.`
+                  ? ` in ${group.roots.length} chains.`
                   : "."}
               </p>
             </div>
@@ -853,8 +840,7 @@ export function AiLayersPanel({
               workshop
             </h3>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              These were made from a passage a designer sent — a note being written, or a selection from a stage field —
-              rather than from a recording. The original words are kept with each layer.
+              Made from text a designer sent, not a recording. The original words are kept.
             </p>
           </div>
           <ul className="grid gap-3">
@@ -902,16 +888,16 @@ export function AiLayersPanel({
               <li key={entry.node.layer.id} className="grid gap-2">
                 <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
                   {entry.reason === "NO_SOURCE"
-                    ? "This layer doesn't record what it was made from, so it can't be printed until it is repaired. Ask an administrator to check it."
+                    ? "Source missing — it can't be printed. Ask an admin to check it."
                     : entry.reason === "SOURCE_NOT_LISTED"
-                      ? "The layer this was made from is not in this list. Tick “Show declined layers” above — it may have been declined."
+                      ? "Its source isn't listed — it may have been declined. Tick “Show declined layers”."
                       : entry.reason === "UNKNOWN_SOURCE"
                         ? // NOT A FAULT IN THE ROW, unlike the other three, and it must not be worded
                           // as one: this build simply does not know the kind of thing the server says
                           // this layer was made from. The honest answer is to say so and to name the
                           // remedy, which is an update to this app rather than a repair to the data.
-                          "What this layer was made from can't be shown here. Its details below are complete; only its place in the chain can't be drawn. Reload the page to update the app."
-                        : "This layer's chain leads back to itself, so the recording it was made from can't be found. It can't be printed until it is repaired."}
+                          "Its source can't be shown. Reload to update the app."
+                        : "Source can't be found — it can't be printed."}
                 </p>
                 <ul className="grid gap-3">
                   <LayerRow
@@ -943,8 +929,7 @@ export function AiLayersPanel({
         <div className="panel grid gap-2 p-4">
           <h3 className="font-display text-sm font-bold text-ink-900">What the tiers on this screen mean</h3>
           <p className="text-sm leading-6 text-ink-muted">
-            Not a ranking, in either direction. Only the handset works with no signal, and only the cloud carries the craft
-            vocabulary that stops <em>dabu</em> being written as <em>double</em>.
+            The phone works offline; the cloud knows craft words like <em>dabu</em>.
           </p>
           <ul className="grid gap-2">
             {tiersPresent.map((tier) => (
@@ -1098,7 +1083,7 @@ function LayerRow({
               {parentKind
                 ? `Produced from the ${layerKindNoun(parentKind)} above it.`
                 : "Produced from the recording or photograph itself."}
-              {note ? ` ${note}` : " Reload the page to update the app and see what this layer holds."}
+              {note ? ` ${note}` : " Reload to update the app."}
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -1158,7 +1143,7 @@ function LayerRow({
 
         {provenance.unrecorded ? (
           <p className="text-xs leading-5 text-ink-500">
-            No provider or model was recorded for this layer, so a later error can&apos;t be traced back through it.
+            No provider or model was recorded.
           </p>
         ) : null}
 
@@ -1183,8 +1168,7 @@ function LayerRow({
           <p className="flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-2 py-1.5 text-xs leading-5 text-ink-700">
             <EyeOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-500" aria-hidden />
             <span>
-              You don&apos;t have access to the recording this layer was made from, so its text is hidden. The details above
-              are shown in full.
+              Text hidden — you can&apos;t access the source recording.
             </span>
           </p>
         ) : typeof text === "string" && text.trim() ? (
@@ -1196,7 +1180,7 @@ function LayerRow({
         ) : layer.preview ? (
           <p className="line-clamp-2 text-xs leading-5 text-ink-500">{layer.preview}</p>
         ) : layer.textChars === 0 ? (
-          <p className="text-xs leading-5 text-ink-500">This layer has no text; its content is shown below.</p>
+          <p className="text-xs leading-5 text-ink-500">No text; content below.</p>
         ) : null}
 
         {!layer.textWithheld && layer.textChars ? (
@@ -1248,8 +1232,7 @@ function LayerRow({
 
         {declined ? (
           <p className="text-xs leading-5 text-ink-500">
-            A declined layer can&apos;t be accepted or declined again. Register the material again if it is still wanted;
-            this entry stays as the record that somebody said no.
+            Declined. Register the material again if you still want it.
           </p>
         ) : withdrawing === layer.id ? (
           <WithdrawForm busy={busy} onCancel={() => onWithdrawOpen(null)} onSubmit={(text) => onWithdraw(layer, text)} />
@@ -1259,7 +1242,7 @@ function LayerRow({
                 layers stand on has neither act available, and an empty flex row with a gap is a
                 stray space between two sentences. */}
             {(layer.accepted || !layer.textWithheld) || !liveChildren.length ? (
-            <div className="flex flex-wrap items-center gap-2">
+            <ActionGroup>
               {layer.accepted ? (
                 // WITHDRAW, NEVER A SECOND ACCEPT. The server refuses a second acceptance because it
                 // would overwrite the first acceptor's name, so offering the button would offer a
@@ -1296,7 +1279,7 @@ function LayerRow({
                   {busy ? "Declining…" : "Decline it"}
                 </button>
               )}
-            </div>
+            </ActionGroup>
             ) : null}
 
             {/* NEITHER OF THE TWO SENTENCES BELOW IS A DISABLED BUTTON WITH A TOOLTIP. Each replaces
@@ -1312,8 +1295,7 @@ function LayerRow({
               // ("press Show the full text and read it before you accept") can never be followed for
               // one of these: `includeText` does not lift the withholding, and the route says so.
               <p className="text-xs leading-5 text-ink-500">
-                You can&apos;t accept this layer because you don&apos;t have access to the recording it was made from. Ask
-                whoever uploaded the recording for access, or ask them to accept it.
+                You can&apos;t access the source recording. Ask its uploader for access.
               </p>
             ) : null}
 
@@ -1324,11 +1306,11 @@ function LayerRow({
               // is predictable from what is already on the page — with one exception, which the last
               // sentence names: somebody else may have declined them since this list was read.
               <p className="text-xs leading-5 text-ink-500">
-                To decline this layer, first decline{" "}
+                First decline{" "}
                 {liveChildren.length === 1
-                  ? `the ${layerKindNoun(liveChildren[0].layer.kind)} below, which was made from it`
-                  : `the ${liveChildren.length} layers below, which were made from it`}
-                . If somebody has already done so, press Reload above.
+                  ? `the ${layerKindNoun(liveChildren[0].layer.kind)} below`
+                  : `the ${liveChildren.length} layers below`}
+                .
               </p>
             ) : null}
           </div>
@@ -1489,8 +1471,7 @@ function LayerVerbs({
           </p>
           {cues.hasSpeakers ? (
             <Toggle
-              label="Put the speaker label in front of each line"
-              description="The labels are the engine's own guess — nobody told it how many people were in the room."
+              label="Label speakers on each line (a best guess)"
               checked={speakers}
               onChange={setSpeakers}
             />
@@ -1516,8 +1497,7 @@ function LayerVerbs({
         layer.textWithheld ? (
           // A GUARANTEED 403, so the reason stands where the buttons would have been.
           <p className="text-xs leading-5 text-ink-500">
-            You can&apos;t proofread or translate this layer because you don&apos;t have access to the recording it was made
-            from. Ask whoever uploaded the recording for access.
+            You can&apos;t access the source recording. Ask its uploader for access.
           </p>
         ) : blocked !== null ? (
           /*
@@ -1537,7 +1517,7 @@ function LayerVerbs({
           <p className="text-xs leading-5 text-ink-500">{blocked}</p>
         ) : (
           <>
-            <div className="flex flex-wrap gap-2">
+            <ActionGroup>
               {canProofread ? (
                 <button
                   type="button"
@@ -1562,7 +1542,7 @@ function LayerVerbs({
                   Translate this
                 </button>
               ) : null}
-            </div>
+            </ActionGroup>
             {target !== null ? (
               <div className="grid gap-1.5">
                 <label className="field-label" htmlFor={`ai-translate-${layer.id}`}>
@@ -1582,13 +1562,12 @@ function LayerVerbs({
                   onChange={(event) => setTarget(event.target.value)}
                 />
                 <p className="text-xs leading-5 text-ink-500">
-                  The translation is added beside this layer and never replaces it, so the artisan&apos;s own words are
-                  kept.
+                  Added beside the original, never replacing it.
                 </p>
                 {target.trim() && translationTargetRefusal(target) ? (
                   <p className="text-xs leading-5 text-error-600">{translationTargetRefusal(target)}</p>
                 ) : null}
-                <div className="flex flex-wrap gap-2">
+                <ActionGroup>
                   <button
                     type="button"
                     className="field-button"
@@ -1606,7 +1585,7 @@ function LayerVerbs({
                   >
                     Cancel
                   </button>
-                </div>
+                </ActionGroup>
               </div>
             ) : null}
           </>
@@ -1646,8 +1625,7 @@ function WithdrawForm({
   return (
     <div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2">
       <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
-        Withdrawing doesn&apos;t delete the layer or change reports already generated. Say why, if there is a reason worth
-        keeping.
+        Reports already made are not changed. Reason (optional):
       </p>
       <label className="grid gap-1 text-xs font-medium text-amber-800 dark:text-amber-100">
         Why (optional)
@@ -1657,11 +1635,11 @@ function WithdrawForm({
           maxLength={MAX_AI_LAYER_NOTE_CHARS}
           disabled={busy}
           onChange={(event) => setNote(event.currentTarget.value)}
-          placeholder="The model invented a village name that is not in the recording."
+          placeholder="e.g. invented a village name"
           data-testid="ai-layer-withdraw-note"
         />
       </label>
-      <div className="flex flex-wrap items-center gap-2">
+      <ActionGroup>
         <button type="button" className="field-button" disabled={busy} onClick={() => onSubmit(note)}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Undo2 className="h-4 w-4" aria-hidden />}
           {/* Worded as well as spun — reduced motion freezes the spinner. */}
@@ -1675,7 +1653,7 @@ function WithdrawForm({
         >
           Keep it accepted
         </button>
-      </div>
+      </ActionGroup>
     </div>
   );
 }
@@ -1716,7 +1694,7 @@ function PayloadView({ view }: { view: NonNullable<DwAiPayloadView> }) {
       {/* Every truncation says so. A payload that quietly stopped would be read as the whole answer. */}
       {view.truncated ? (
         <p className="mt-1 text-xs leading-5 text-ink-500">
-          Showing the first part only. The rest is saved but not shown here.
+          Showing the start only.
         </p>
       ) : null}
     </div>
@@ -1761,8 +1739,7 @@ function RegisterPanel({
       <div className="panel grid gap-2 p-4">
         <h3 className="font-display text-sm font-bold text-ink-900">The recordings couldn&apos;t be loaded</h3>
         <p className="text-sm leading-6 text-ink-muted">
-          Nothing can be registered until they load. The layers above are unaffected. Open the report screen&apos;s
-          transcript annexure to see the state of each recording.
+          Reload to try again.
         </p>
       </div>
     );
@@ -1774,9 +1751,7 @@ function RegisterPanel({
       <div>
         <h3 className="font-display text-sm font-bold text-ink-900">Recordings with no layer yet</h3>
         <p className="mt-1 text-sm leading-6 text-ink-muted">
-          Registering adds a recording&apos;s existing transcript here as a layer, with its details. It runs no AI,
-          produces no new text and uses up no AI runs — the words are already saved. It usually adds two layers: the
-          original transcript and the rewritten version made from it.
+          Adds a recording&apos;s existing transcript as a layer. Runs no AI.
         </p>
         <p className="mt-2 text-sm leading-6 text-ink-muted">
           The provider and the model will show as <strong>not recorded</strong> for these transcripts.
@@ -1785,7 +1760,7 @@ function RegisterPanel({
 
       {!layersKnown ? (
         <p className="text-sm leading-6 text-ink-700">
-          Loading this workshop&apos;s existing layers… Recordings you can register will appear here once they have loaded.
+          Loading…
         </p>
       ) : items.length ? (
         <ul className="grid gap-2">
@@ -1836,7 +1811,7 @@ function RegisterPanel({
         </ul>
       ) : (
         <p className="text-sm leading-6 text-ink-700">
-          Every recording this workshop holds is already registered as a layer, or the workshop has no recordings.
+          Nothing to register.
         </p>
       )}
     </div>

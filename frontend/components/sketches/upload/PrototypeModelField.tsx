@@ -138,6 +138,7 @@ import { DropCard } from "./DropCard";
 
 // TYPE-ONLY, so the panel that composes this one can own the contract without a runtime cycle.
 import type { AttachAnswer } from "@/components/sketches/upload/UploadTabPanel";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The model formats worth naming, and the one that travels best.
@@ -149,14 +150,14 @@ import type { AttachAnswer } from "@/components/sketches/upload/UploadTabPanel";
  * discovering it a month later.
  */
 const MODEL_FORMATS = [
-  { ext: "glb", label: "GLB", note: "One self-contained file — mesh, materials and textures together. The best choice for this field." },
-  { ext: "gltf", label: "glTF", note: "Usually a mesh plus separate texture files. Attach the .glb version where you have one." },
-  { ext: "stl", label: "STL", note: "Geometry only, no colour. What most 3D printers expect." },
-  { ext: "obj", label: "OBJ", note: "Geometry plus a separate .mtl and textures, which this single field cannot hold together." },
-  { ext: "ply", label: "PLY", note: "Common output of a photogrammetry or scanning app." },
-  { ext: "3mf", label: "3MF", note: "A printing format that does carry colour and materials in one file." },
-  { ext: "fbx", label: "FBX", note: "Common from animation tools; large, and not every CAD package reads it." },
-  { ext: "usdz", label: "USDZ", note: "What an iPhone's own scanner produces." }
+  { ext: "glb", label: "GLB", note: "One file with materials and textures. Best choice." },
+  { ext: "gltf", label: "glTF", note: "Textures are separate files. Prefer .glb." },
+  { ext: "stl", label: "STL", note: "Geometry only. For 3D printers." },
+  { ext: "obj", label: "OBJ", note: "Materials are separate files. Prefer .glb." },
+  { ext: "ply", label: "PLY", note: "From scanning apps." },
+  { ext: "3mf", label: "3MF", note: "Printing, with colour." },
+  { ext: "fbx", label: "FBX", note: "From animation tools. Large." },
+  { ext: "usdz", label: "USDZ", note: "From iPhone scans." }
 ] as const;
 
 const MODEL_ACCEPT = MODEL_FORMATS.map((f) => `.${f.ext}`).join(",");
@@ -263,16 +264,14 @@ export function PrototypeModelField({
     const notes: string[] = [];
     if (!known) {
       notes.push(
-        `“.${extension}” is not one of the model formats this field expects. It will still be stored and can ` +
-          "still be downloaded, but the next designer may not have anything that opens it."
+        `“.${extension}” isn't a usual model format. It's stored, but others may not be able to open it.`
       );
     } else if (known.ext === "obj" || known.ext === "gltf") {
       notes.push(`${known.label}: ${known.note}`);
     }
     if (file.size > LARGE_MODEL_BYTES) {
       notes.push(
-        `This file is ${formatBytes(file.size)}. It will upload in parts and will resume if the connection ` +
-          "drops, but on a shared hotspot that is a long transfer — worth starting somewhere with signal."
+        `${formatBytes(file.size)} — a long upload. Start where the signal is good.`
       );
     }
     setWarning(notes.length > 0 ? notes.join(" ") : null);
@@ -333,9 +332,7 @@ export function PrototypeModelField({
     const rejected = files.filter((file) => !file.type.startsWith("image/"));
     if (frames.length === 0) {
       setTurntableProblem(
-        `“${turntableLabel}” holds photographs, and nothing chosen here is one. A video of the piece turning ` +
-          "cannot go in it — the report places image fields as pictures and would have nothing to draw for a film. " +
-          "Take the frames as still photographs, or attach the video to “Process video” on the prototype's stage."
+        `“${turntableLabel}” takes photos only. Attach videos to “Process video” on the stage.`
       );
       return;
     }
@@ -409,7 +406,7 @@ export function PrototypeModelField({
           <Camera className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
           <div className="min-w-0 flex-1">
             <h4 className="text-sm font-medium text-ink-900">
-              “{turntableLabel}” is the 3D view a reviewer will actually see
+              “{turntableLabel}” is what reviewers see
             </h4>
             {/*
               THE DESCRIPTION LINE IS THE REPORT FACT, and it sits in the header rather than in the
@@ -423,9 +420,7 @@ export function PrototypeModelField({
               edit; moving the paragraph, which is what happened, is not one.
             */}
             <p className="mt-0.5 text-xs leading-5 text-ink-500">
-              The report shows image fields as pictures and lists a 3D model as “1 3D model attached”. You can
-              turn the model on its stage here and in the phone app, but on the printed page a turn of
-              photographs is how this prototype appears.
+              The printed report shows these photos; 3D models are only listed.
             </p>
           </div>
         </div>
@@ -433,9 +428,8 @@ export function PrototypeModelField({
         <div className="border-t border-line-200 p-3">
           {/* The capture advice — `DW_TURNTABLE_CAPTURE_ADVICE` on the handset, verbatim, same rule. */}
           <p className="text-xs leading-5 text-ink-500">
-            Stand the piece still and move around it, one photograph every 30° for {TURNTABLE_MINIMUM} frames, or
-            every 15° for {TURNTABLE_COMFORTABLE} — enough that a reviewer can read the form rather than guess it.
-            Keep the light and the background the same for all of them.
+            Walk around the piece: one photo every 30° ({TURNTABLE_MINIMUM} frames) or 15° ({TURNTABLE_COMFORTABLE}).
+            Keep light and background the same.
           </p>
           {turntableCount !== undefined ? (
             <p
@@ -507,7 +501,7 @@ export function PrototypeModelField({
                 label={`Add photographs to “${turntableLabel}”`}
                 buttonLabel="Choose the whole turn"
                 accept="image/*"
-                acceptSentence="Photographs, chosen or dropped together. They are added to this prototype in the order they arrive, kept on this device straight away, and uploaded with everything else."
+                acceptSentence="Photos, added in order."
                 multiple
                 disabled={disabled}
                 onFiles={(files) => chooseFrames(files)}
@@ -515,8 +509,7 @@ export function PrototypeModelField({
             </div>
           ) : (
             <p className="mt-3 text-xs leading-5 text-ink-500">
-              Frames are added to “{turntableLabel}” on the prototype&apos;s own stage form — this panel
-              cannot take them.
+              Add frames on the prototype&apos;s stage.
             </p>
           )}
           {/*
@@ -581,9 +574,7 @@ export function PrototypeModelField({
           <div className="min-w-0 flex-1">
             <h4 className="text-sm font-medium text-ink-900">“{modelLabel}”</h4>
             <p className="mt-0.5 text-xs leading-5 text-ink-500">
-              Worth attaching even though the report only lists it: it is the form another designer can measure,
-              re-scale, section or send to a printer. They download it and open it in their own software, so the
-              format matters.
+              Listed in the report; others can download it to measure or print.
             </p>
           </div>
         </div>
@@ -610,7 +601,7 @@ export function PrototypeModelField({
             label="Model file"
             buttonLabel="Choose a model file"
             accept={MODEL_ACCEPT}
-            acceptSentence={`${MODEL_FORMATS.map((format) => format.label).join(", ")} — or any other file, which is stored and downloadable but may not open for the next designer. GLB travels best; the list below says why.`}
+            acceptSentence={`${MODEL_FORMATS.map((format) => format.label).join(", ")}. GLB is best.`}
             disabled={disabled}
             onFiles={(files) => {
               const file = files[0];
@@ -676,7 +667,7 @@ export function PrototypeModelField({
                   <span>{warning}</span>
                 </p>
               ) : null}
-              <div className="mt-2 flex flex-wrap gap-2">
+              <ActionGroup className="mt-2">
                 <button type="button" className="field-button" onClick={attach} disabled={disabled}>
                   Add to “{modelLabel}”
                 </button>
@@ -708,7 +699,7 @@ export function PrototypeModelField({
                 >
                   Put this file away
                 </button>
-              </div>
+              </ActionGroup>
             </div>
           ) : null}
 

@@ -178,8 +178,8 @@ export function ReviewCard({
     } catch (error) {
       setLedgerProblem(
         isUnreachable(error)
-          ? "Couldn't connect, so the review history couldn't be loaded. Check your connection and try again."
-          : refusalText(error, "This review history couldn't be loaded.")
+          ? "No connection. Try again."
+          : refusalText(error, "Couldn't load the review history.")
       );
     } finally {
       setLedgerLoading(false);
@@ -197,7 +197,7 @@ export function ReviewCard({
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (score === null) {
-      setProblem("Choose a score from 1 to 5 — the ranking is computed from it.");
+      setProblem("Choose a score from 1 to 5.");
       return;
     }
     setSaving(true);
@@ -284,8 +284,8 @@ export function ReviewCard({
           nothing was stored and that the text is still on screen, which is what a designer acts on.
         */
         isUnreachable(error)
-          ? "This rating wasn't sent and couldn't be saved on this device — usually because the browser is in private mode or the disk is full. What you wrote is still in the boxes."
-          : refusalText(error, "This rating couldn't be saved.")
+          ? "Couldn't send or save. Leave private mode or free some space."
+          : refusalText(error, "Couldn't save the rating.")
       );
     } finally {
       savingRef.current = false;
@@ -410,7 +410,7 @@ export function ReviewCard({
             value={suggestion}
             maxLength={4000}
             onChange={(event) => setSuggestion(event.target.value)}
-            placeholder="A suggestion or recommendation the maker can act on."
+            placeholder="A suggestion for the maker"
           />
         </label>
 
@@ -433,9 +433,7 @@ export function ReviewCard({
           finished document looking for their own paragraph.
         */}
         <p className="text-xs leading-5 text-ink-500">
-          Scores, assessments and suggestions stay in this workshop&apos;s review history — they are shown here and used in
-          the ranking, and the printed report does not include them. The report takes the order the pieces end up in,
-          and who settled it. Anything that must appear in the report belongs on the piece&apos;s own stage form.
+          Reviews aren&apos;t printed; the report uses only the final order.
         </p>
 
         {problem ? (
@@ -511,7 +509,7 @@ function Ledger({ ledger }: { ledger: SubjectLedger }) {
           ? "Nobody has rated this piece yet."
           : ledger.canReadLedger
             ? "No ratings were found for this round."
-            : `${ledger.summary.ratingCount} designer(s) have rated this piece. Their names aren't shown to you.`}
+            : `${ledger.summary.ratingCount} rating(s), anonymous.`}
       </p>
     );
   }

@@ -583,7 +583,7 @@ function MediaPageBody() {
         setError(
           `${failed.length} of ${selectedFiles.length} file(s) failed to upload: ${failed.map((item) => item.name).join(", ")}. ` +
             reason +
-            "The rest were saved — remove the ones that uploaded, then upload the others again."
+            "The rest were saved. Remove those, then upload the others again."
         );
         return;
       }
@@ -617,8 +617,8 @@ function MediaPageBody() {
         "Remove this media file?",
         // Android's "Permanently delete recording?" says the same thing: the file leaves storage, so
         // there is nothing left to re-link afterwards.
-        "This permanently deletes the file. It cannot be undone, and the file can no longer be attached to a record.",
-        "Any transcript generated from it is deleted with it."
+        "The file and its transcript are deleted.",
+        "This can't be undone."
       ),
       confirmLabel: "Remove file"
     });
@@ -732,7 +732,7 @@ function MediaPageBody() {
       ) : null}
       {adminMode ? (
         <button
-          className={rowAction("danger")}
+          data-danger className={rowAction("danger")}
           onClick={() => remove(item)}
           disabled={writesHeld(hold)}
           aria-describedby={typeof hold === "string" ? heldNoticeId : undefined}
@@ -754,7 +754,7 @@ function MediaPageBody() {
     <>
       <PageHeader
         title="Miscellaneous Media"
-        description="Upload media — images, videos, audio and files. Audio is transcribed after it uploads."
+        description="Images, video, audio and files. Audio is transcribed."
         icon={<Images className="h-5 w-5" aria-hidden />}
       />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
@@ -823,7 +823,7 @@ function MediaPageBody() {
                       // how a timeout came to tell somebody a workshop they had just been added to
                       // did not exist — and a file uploaded attached to nothing has to be repaired
                       // through the relink route afterwards.
-                      "This list could not be loaded — nothing you have chosen is lost"
+                      "Couldn't load this list"
                     : entryOptions.length === 0
                       ? "No entries for this type"
                       : entryCut

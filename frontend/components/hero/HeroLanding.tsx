@@ -96,13 +96,13 @@ const RECORD_TYPES = [
     icon: Package,
     title: "Product",
     copy:
-      "What is made: materials, pricing, imagery — and length, breadth and height read off a photograph taken against a measuring grid."
+      "Materials, pricing, imagery and dimensions measured from photos."
   },
   { icon: GitBranch, title: "Process", copy: "How it is made, step by ordered step, with media per step." },
   {
     icon: Wrench,
     title: "Tool",
-    copy: "The toolkit, which artisans use each tool, and its dimensions measured the same way."
+    copy: "The toolkit, who uses each tool, and its dimensions."
   },
   // "The standard form" and "reuse" are the app's own words, not descriptions of them:
   // `questionnaires/[id]/page.tsx:597` toggles between "Publish as the standard form" and "Withdraw
@@ -113,7 +113,7 @@ const RECORD_TYPES = [
     icon: ClipboardList,
     title: "Questionnaire",
     copy:
-      "Structured interviews, recorded and auto-transcribed — on the repository's standard form or one a designer wrote and can reuse at the next workshop."
+      "Structured interviews, recorded and transcribed."
   },
   { icon: Images, title: "Miscellaneous Media", copy: "Audio, video and photographs that belong to no one record." },
   { icon: UsersRound, title: "Workshop", copy: "Field expeditions: assignments, date windows, approvals." }
@@ -849,11 +849,8 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
                 {...heroEntrance(reduce, 0.55, 0.6, { y: 20 })}
                 className="mt-6 max-w-xl text-lg leading-relaxed text-white/75"
               >
-                A field documentation repository for artisan crafts, and the design &amp; prototype
-                workshop that runs on top of it. Record artisans, products, processes and tools, run
-                structured interviews that transcribe themselves — then take a designer through{" "}
-                {STAGE_COUNT_WORD_LOWER} stages in a cluster and hand over the report at the end of
-                it. Captured offline, in the field, where the craft actually happens.
+                Document artisan crafts in the field, then run a {STAGE_COUNT_WORD_LOWER}-stage design &amp; prototype
+                workshop and hand over the report. Works offline.
               </motion.p>
 
               <div className="mt-9 flex flex-wrap items-center gap-4">
@@ -970,10 +967,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
                   ))}
                 </ul>
                 <p className="mt-4 text-xs leading-relaxed text-white/50">
-                  The anatomy of a finished transcript — the wording is illustrative, not an
-                  interview from the repository. The spoken language is detected rather than assumed:
-                  these recordings code-switch between Hindi and English, and some are in Marwari or
-                  Garhwali.
+                  Illustrative wording. The spoken language is detected automatically.
                 </p>
               </motion.div>
             </div>
@@ -1000,9 +994,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
           Eight record types, linked to each other from the moment they are captured.
         </h2>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-ink-500">
-          An artisan carries into their products; a product carries into the process that makes it
-          and the tools it takes; every interview, photograph and recording lands attached to the
-          artisan, the craft and the workshop it came from. Nothing arrives as a loose file.
+          Every interview, photo and recording is attached to its artisan, craft and workshop.
         </p>
         {/*
           WHAT CHANGED UNDER THIS SECTION, AND WHY IT IS A SECOND PARAGRAPH RATHER THAN A CLAUSE.
@@ -1054,10 +1046,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
           the API does not have, and would read to an admin as a promise their records are fenced.
         */}
         <p className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
-          Six of the eight — artisans, products, processes, tools, media and questionnaires — can
-          also be filed under a design &amp; prototype workshop. The form starts on the workshop you
-          were most recently given access to, so a fortnight of records lands in the right place
-          without choosing it each time. You can pick any other workshop you are on, or none.
+          Records can be filed under a design &amp; prototype workshop — the form starts on your latest one.
         </p>
         <div className="mt-12 grid grid-cols-2 gap-4 md:grid-cols-4">
           {RECORD_TYPES.map((record) => (
@@ -1156,9 +1145,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
             account. Sending somebody to a sign-in screen without telling them makes the refusal
             there read as a fault in the app. */}
         <p className="relative mx-auto mt-3 max-w-xl text-white/75">
-          Sign in with your researcher account, or with Google. Access is by invitation: an
-          administrator approves your address first, and signing in from an address that isn&rsquo;t
-          on the list sends them a request for approval.
+          By invitation. Signing in from a new address sends an approval request.
         </p>
         <div className="relative mt-8 flex flex-wrap items-center justify-center gap-4">
           <Link

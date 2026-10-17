@@ -34,6 +34,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * WHO INSPECTS ONE DESIGN & PROTOTYPE WORKSHOP — the ASSIGNER's half of the fifth scope.
@@ -372,7 +373,7 @@ export function DesignWorkshopInspectorsPanel({
             }
             setEligible([]);
             setLoadError(
-              describeFailure(err, "Unable to load the accounts that may be assigned an inspection", readerMayAssign)
+              describeFailure(err, "Couldn't load accounts", readerMayAssign)
             );
           });
       },
@@ -605,9 +606,9 @@ export function DesignWorkshopInspectorsPanel({
   const announcement = !workshopId
     ? ""
     : dirty
-      ? `${selected.length} inspector${selected.length === 1 ? "" : "s"} selected, not yet saved. ${added.length} to add, ${removed.length} to remove.`
+      ? `${selected.length} selected — unsaved (+${added.length}, −${removed.length}).`
       : selected.length === 0
-        ? "This workshop is not under inspection. Nothing unsaved."
+        ? "No inspectors."
         : `${selected.length} inspector${selected.length === 1 ? "" : "s"} assigned to this workshop. Nothing unsaved.`;
 
   async function save() {
@@ -635,8 +636,8 @@ export function DesignWorkshopInspectorsPanel({
           ? `${held.length} inspector${held.length === 1 ? "" : "s"} assigned to this workshop`
           : "This workshop is not under inspection",
         description: held.length
-          ? "They can read every stage of it and change nothing."
-          : "Nobody is assigned to inspect it. The designers who run it are unaffected.",
+          ? "Read-only access."
+          : "No inspectors.",
         tone: "success"
       });
       onSaved?.();
@@ -656,16 +657,13 @@ export function DesignWorkshopInspectorsPanel({
         <div>
           <h2 className="font-display font-bold text-ink-900">Inspection of a design workshop</h2>
           <p className="text-xs leading-5 text-ink-500">
-            Who may read one design &amp; prototype workshop in order to inspect and review it.
+            Who inspects a workshop.
           </p>
         </div>
       </div>
 
       <p className="mt-3 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-        Inspection is read-only: whoever is assigned here can open every stage of this workshop but
-        change nothing — an admin appointed to inspect it cannot edit it while they hold the post. A
-        Ministry Admin, an admin or the master admin decides who inspects what, and cannot appoint
-        themselves. The designers who run a workshop cannot be its inspector.
+        Inspectors can read every stage but change nothing.
       </p>
 
       {featureMissing ? (
@@ -751,8 +749,8 @@ export function DesignWorkshopInspectorsPanel({
             // pick one from a control that is not there is the trap this panel's header is about.
             <p className="mt-4 text-sm text-ink-500">
               {ownsThePicker
-                ? "Pick a design workshop to see who is inspecting it."
-                : "Choose a workshop above to see who is inspecting it."}
+                ? "Pick a workshop."
+                : "Choose a workshop above."}
             </p>
           ) : inspectors === null ? (
             <p className="mt-4 text-sm text-ink-500">Loading…</p>
@@ -763,17 +761,14 @@ export function DesignWorkshopInspectorsPanel({
                   label="Inspectors assigned to this workshop"
                   hint={
                     <p className="text-xs leading-5 text-ink-500">
-                      Inspector / Reviewer, Ministry Admin, admin and master admin accounts are offered — never your
-                      own — if they can still sign in. Somebody who worked on this workshop, or who is its Assistant
-                      Director or Regional Director, cannot be assigned; you are told why when you save. Unticking
-                      somebody ends their inspection when you save. At most {MAX_DESIGN_WORKSHOP_INSPECTORS} accounts.
+                      Up to {MAX_DESIGN_WORKSHOP_INSPECTORS}. Its designers and directors can&rsquo;t inspect it.
                     </p>
                   }
                 >
                   <div className="grid gap-2">
                     <SearchInput
                       onChange={(next) => setSearch(next.slice(0, ELIGIBLE_INSPECTOR_SEARCH_MAX))}
-                      placeholder="Search accounts that may inspect, by name or email"
+                      placeholder="Search by name or email"
                       value={search}
                     />
                     {/* At most ONE line here, ever: what the search is doing, or the single sentence
@@ -787,7 +782,7 @@ export function DesignWorkshopInspectorsPanel({
                       ariaLabel="Inspectors assigned to this workshop"
                       // Pointed at each notice only while it is on screen: `aria-describedby` naming
                       // an id that is not in the document is worse than naming nothing.
-                      capHint="Use the search box above to find the rest."
+                      capHint="Search above to find the rest."
                       confirmLabel="Done"
                       describedBy={
                         [searchNotice ? searchNoticeId : null, readerInspects ? selfNoteId : null]
@@ -821,9 +816,7 @@ export function DesignWorkshopInspectorsPanel({
                   call, so letting it go out would cost a round trip to say what is already known. */}
               {overCap ? (
                 <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
-                  {selected.length} accounts are selected and a workshop may have at most{" "}
-                  {MAX_DESIGN_WORKSHOP_INSPECTORS}. Untick {selected.length - MAX_DESIGN_WORKSHOP_INSPECTORS} of them to
-                  save.
+                  Maximum {MAX_DESIGN_WORKSHOP_INSPECTORS}. Untick {selected.length - MAX_DESIGN_WORKSHOP_INSPECTORS} to save.
                 </p>
               ) : null}
 
@@ -832,7 +825,7 @@ export function DesignWorkshopInspectorsPanel({
               <div className="mt-3">
                 {inspectors.length === 0 ? (
                   <p className="text-sm text-ink-500">
-                    This workshop is not under inspection. Nobody has been assigned to review it.
+                    No inspectors yet.
                   </p>
                 ) : (
                   <ul className="grid gap-1.5">
@@ -869,7 +862,7 @@ export function DesignWorkshopInspectorsPanel({
               ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button className="field-button" disabled={!dirty || saving || overCap} onClick={save} type="button">
+                <ActionGroup className="max-sm:w-full"><button className="field-button" disabled={!dirty || saving || overCap} onClick={save} type="button">
                   <Save className="h-4 w-4" aria-hidden />
                   {saving ? "Saving…" : "Save who inspects this"}
                 </button>
@@ -886,7 +879,7 @@ export function DesignWorkshopInspectorsPanel({
                     Discard changes
                   </button>
                 ) : null}
-                {/* Colour never carries the meaning on its own — the word "unsaved" does. */}
+                {/* Colour never carries the meaning on its own — the word "unsaved" does. */}</ActionGroup>
                 {dirty ? (
                   <span className="text-xs text-amber-800 dark:text-amber-100">
                     {added.length + removed.length} unsaved change{added.length + removed.length === 1 ? "" : "s"}

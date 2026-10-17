@@ -46,6 +46,7 @@ import {
   type TwoFactorStatus
 } from "@/lib/twoFactor";
 import { leavingSetupDiscards, twoStepSwitchView, type TwoStepPhase } from "@/lib/twoStepSwitch";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** Which part of the conversation is on screen. */
 type Step =
@@ -364,14 +365,14 @@ export function TwoStepVerificationCard() {
             errorKey={errorKey}
             disabled={busy}
           />
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="submit" className="field-button" disabled={busy || !isCompleteCode(code)}>
               {busy ? "Checking…" : "Turn on"}
             </button>
             <button type="button" className="field-button-secondary" disabled={busy} onClick={() => void leaveSetup()}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </form>
       ) : null}
 
@@ -389,7 +390,7 @@ export function TwoStepVerificationCard() {
               <li key={recovery}>{recovery}</li>
             ))}
           </ul>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button
               type="button"
               className="field-button-secondary"
@@ -412,7 +413,7 @@ export function TwoStepVerificationCard() {
             >
               I&rsquo;ve saved them
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
 
@@ -454,7 +455,7 @@ export function TwoStepVerificationCard() {
               autoFocus
             />
           )}
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button
               type="submit"
               className={step.kind === "disable" ? "field-danger rounded-md px-4 py-2 text-sm font-medium" : "field-button"}
@@ -465,7 +466,7 @@ export function TwoStepVerificationCard() {
             <button type="button" className="field-button-secondary" disabled={busy} onClick={() => go({ kind: "idle" })}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </form>
       ) : null}
     </section>

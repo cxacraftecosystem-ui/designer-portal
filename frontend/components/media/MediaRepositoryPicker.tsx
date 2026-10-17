@@ -90,6 +90,7 @@ import { SearchInput } from "@/components/SearchInput";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { listResource } from "@/lib/api";
 import type { MediaFile, MediaType } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 type ListState = {
   rows: MediaFile[];
@@ -324,7 +325,7 @@ export function MediaRepositoryPicker({
                 // second, louder button that does nothing.
                 confirmOnSelect={false}
               />
-              <div className="flex flex-wrap items-center gap-2">
+              <ActionGroup>
                 <button
                   type="button"
                   className="field-button"
@@ -346,7 +347,7 @@ export function MediaRepositoryPicker({
                     Clear the selection
                   </button>
                 ) : null}
-              </div>
+              </ActionGroup>
             </>
           ) : (
             <Dropdown

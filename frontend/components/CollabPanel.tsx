@@ -156,9 +156,8 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
               (cleared)". Saying "original values are the first before" without that exception told
               an admin the left-hand column was the old number when it never is for those fields. */}
           <p className="text-xs text-ink-muted">
-            Original values are the first &quot;before&quot; of each field — except identity and contact fields
-            (Aadhaar, Pehchan card, phone, email, address), where only the fact that they changed is recorded, never
-            the value. Visible to the owner and admins.
+            Identity and contact fields (Aadhaar, Pehchan card, phone, email, address) record only that they
+            changed, never the value. Visible to the owner and admins.
           </p>
           <ul className="mt-2 grid gap-2">
             {revisions.length === 0 ? <li className="text-sm text-ink-muted">No edits recorded.</li> : null}

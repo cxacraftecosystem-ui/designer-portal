@@ -209,10 +209,11 @@ test("an unanswered cascade names the box to answer first, and never blames the 
 test("an empty repository says what has to exist first, and names the field that cannot be answered", () => {
   const line = notice({ payload: answer({ scopedToWorkshop: false }) });
   expect(line).toContain("Target product categories");
-  expect(line).toContain("Create the record first, then link it here");
-  // And it does not offer a create this control does not have — see the four things
-  // `ReferenceMultiSelect` deliberately does not do, in its own header.
-  expect(line).toContain("it does not create them");
+  expect(line).toContain("then link it here");
+  // And it says creating happens elsewhere, rather than offering a create this control does not
+  // have — see the four things `ReferenceMultiSelect` deliberately does not do, in its own header.
+  expect(line).toContain("Create the record elsewhere first");
+  expect(line).not.toContain("Create one here");
 });
 
 test("the linked-workshop sentence is the server's own, said once and never doubled", () => {
@@ -220,7 +221,7 @@ test("the linked-workshop sentence is the server's own, said once and never doub
   // `scopeNoticeLines` owns this sentence; the arm imports it rather than writing a second copy.
   expect(line).toContain("linked workshop yet");
   // Two explanations of one empty list would be the form arguing with itself.
-  expect(line).not.toContain("Create the record first, then link it here");
+  expect(line).not.toContain("then link it here");
 });
 
 test("a typed term replaces the scope's empty-list claim instead of stacking on it", () => {
@@ -231,15 +232,14 @@ test("a typed term replaces the scope's empty-list claim instead of stacking on 
   expect(line).toContain("kamla");
   // But the narrowing still has to be said, or "Nothing matches" reads as "this person has no
   // record" about somebody documented one workshop away.
-  expect(line).toContain("only shows records documented under this design workshop");
-  expect(line).toContain("This list only shows records");
+  expect(line).toContain("in this design workshop's linked workshop");
 });
 
 test("an unlinked workshop keeps its widened-net sentence even under a search", () => {
   // That line is about how wide the net IS, which a query does not make false — unlike the one the
   // test above replaces. Both halves of one judgement, an assertion each.
   const line = notice({ payload: answer({ scopedToWorkshop: false }), query: "kamla" });
-  expect(line).toContain("not linked to a workshop record");
+  expect(line).toContain("Not linked to a workshop yet");
   expect(line).toContain("Nothing matches");
 });
 
@@ -251,7 +251,7 @@ test("a search still in flight says so rather than reporting no match", () => {
 
 test("a truncated answer keeps the server's own truncation sentence", () => {
   const line = notice({ payload: answer({ truncated: true, options: [option("a1", "Kamla Devi")] }) });
-  expect(line).toContain("Only the first 50 matches are listed");
+  expect(line).toContain("First 50 matches");
 });
 
 test("a whole, ordinary list says nothing at all", () => {
@@ -383,7 +383,7 @@ test("the record arm turns the picker's own filter off and says where the rest a
   // control deliberately does not have.
   expect(arm).toContain("searchable={false}");
   expect(arm).toContain("capHint={");
-  expect(arm).toContain("Use the search box above to find the rest");
+  expect(arm).toContain("Search above to find the rest");
 });
 
 test("the search box is the server's, and it sits above the picker", () => {

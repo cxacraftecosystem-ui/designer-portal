@@ -57,10 +57,8 @@ export function ArtefactNotice({ className }: { className?: string }) {
         <div className="min-w-0">
           <h2 className="font-display text-lg font-bold text-ink-900">Two downloads, and they are not the same file</h2>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-muted">
-            The <span className="font-medium text-ink-900">question set</span> carries your questions and no answers —
-            that is the one to send to another designer. The <span className="font-medium text-ink-900">full .xlsx</span>{" "}
-            carries every sitting recorded against the questionnaire: every respondent&rsquo;s name, every note and every
-            answer. That one is yours.
+            Share the <span className="font-medium text-ink-900">question set</span> (no answers). Keep the{" "}
+            <span className="font-medium text-ink-900">full .xlsx</span> (all answers) to yourself.
           </p>
         </div>
         <button
@@ -95,12 +93,10 @@ function ArtefactDetail() {
             Question set — safe to send
           </h3>
           <p className="text-sm leading-6 text-ink-700">
-            The questions, the sections, their order, their help text and their required flags.
+            Questions and sections only.
           </p>
           <p className="text-sm leading-6 text-ink-700">
-            <span className="font-semibold text-ink-900">It contains no answers</span>, no respondents&rsquo; names and no
-            recorded sittings. Any designer may download it, and whoever you send it to uploads it and gets their own
-            empty questionnaire with your questions in it.
+            <span className="font-semibold text-ink-900">No answers or names.</span> Safe to share.
           </p>
         </article>
 
@@ -110,12 +106,10 @@ function ArtefactDetail() {
             Full .xlsx — your fieldwork
           </h3>
           <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
-            The same questions <span className="font-semibold">plus every sitting</span>: each respondent&rsquo;s name,
-            the notes taken during the interview and every answer given.
+            Questions <span className="font-semibold">plus every answer and name</span>.
           </p>
           <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
-            It is the file the app matches your edits against, so it is the one to re-upload after editing in Excel — and
-            it is not one to pass on. Only you, a designer working on its design workshop, and an admin can take it.
+            Re-upload this one after editing. Don&rsquo;t share it.
           </p>
         </article>
       </div>
@@ -123,24 +117,20 @@ function ArtefactDetail() {
       <div className="grid gap-2 rounded-md border border-line-200 p-3">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-ink-900">
           <Upload className="h-4 w-4 shrink-0 text-field-600 dark:text-purple-300" aria-hidden />
-          What happens to answers that are already in a file you upload
+          Answers in an uploaded file
         </h3>
         <ul className="grid gap-1.5 text-sm leading-6 text-ink-700">
           <li className="flex items-start gap-2">
             <FileSpreadsheet className="mt-1 h-3.5 w-3.5 shrink-0 text-ink-500" aria-hidden />
             <span>
-              <span className="font-medium text-ink-900">A pro-forma you filled in yourself</span> — answers you typed
-              from your own paper interviews are imported as sittings and recorded under your name, with a note on each
-              one saying it arrived on a spreadsheet.
+              <span className="font-medium text-ink-900">Your pro-forma</span> — answers are imported under your name.
             </span>
           </li>
           <li className="flex items-start gap-2">
             <FileSpreadsheet className="mt-1 h-3.5 w-3.5 shrink-0 text-ink-500" aria-hidden />
             <span>
-              <span className="font-medium text-ink-900">A workbook that came out of the app</span> — its questions are
-              imported and its answers are <span className="font-semibold">not</span>. Those answers are already recorded
-              here, under the names of the people who recorded them; copying them into a second questionnaire would
-              duplicate somebody&rsquo;s fieldwork and put your name on it. The report after the upload says so plainly.
+              <span className="font-medium text-ink-900">A downloaded workbook</span> — questions only; answers are
+              <span className="font-semibold"> not</span> imported.
             </span>
           </li>
         </ul>

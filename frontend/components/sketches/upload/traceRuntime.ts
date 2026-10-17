@@ -289,8 +289,7 @@ export async function loadImageEditor(): Promise<ImageEditRuntime> {
       // from it IS "this device cannot crop or sharpen". `isUnavailable` is for the errors that come
       // back from an edit, where "the frame was refused" and "the tool is gone" are different things.
       throw new Error(
-        "The cropping and sharpening tools could not be loaded on this device. The photograph and " +
-          "the trace are unaffected — the trace's own “Sharpen amount” control still works.",
+        "Crop and sharpen tools didn't load. “Sharpen amount” still works.",
         { cause: error }
       );
     }

@@ -62,6 +62,7 @@ import type {
   ToolDocumentation,
   Workshop
 } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 // ---------------------------------------------------------------------------
 // Local types for the /data browsing endpoints
@@ -382,7 +383,7 @@ function DataTablesPanel({
       setActiveSheet(0);
       setFilter("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load the data tables for this folder");
+      setError(err instanceof Error ? err.message : "Couldn't load this folder");
     } finally {
       setLoading(false);
     }
@@ -455,7 +456,7 @@ function DataTablesPanel({
 
   return (
     <section className="panel overflow-hidden">
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+      <ActionGroup className="px-4 py-3">
         <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={toggle} aria-expanded={open}>
           <motion.span animate={{ rotate: open ? 90 : 0 }} transition={{ duration: 0.15 }} className="grid place-items-center">
             <ChevronRight className="h-4 w-4 text-ink-500" aria-hidden />
@@ -468,7 +469,7 @@ function DataTablesPanel({
           <FileSpreadsheet className="h-4 w-4" aria-hidden />
           {downloading ? "Preparing report…" : "Download report (.xlsx)"}
         </button>
-      </div>
+      </ActionGroup>
       {/* SAID WHERE IT APPLIES — beside the button, not in a help page. This reader can see the
           design-workshop tabs below and the workbook they download will not carry them, so the
           sentence has to be where the decision to click is made. The FILE says it too — the server
@@ -578,7 +579,7 @@ function DataTablesPanel({
                       {sheet.truncated ? (
                         <p className="mx-4 mb-3 rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-800">
                           {sheet.truncatedNote ??
-                            "This list is too long to show in full. Open a narrower folder to see the rest."}
+                            "Too long to show in full. Open a narrower folder."}
                         </p>
                       ) : null}
 
@@ -1023,7 +1024,7 @@ function BrowseByTypePanel() {
       // A capped export that presents itself as complete is the worst outcome here — the researcher
       // archives it and never learns what is missing — so the server's flag is surfaced verbatim.
       const capNote = manifest.truncated
-        ? " This export was too large to include everything, so it is not the complete data set. Narrow it down, or ask an admin for a full extract."
+        ? " Incomplete — too large. Narrow it, or ask an admin for a full extract."
         : "";
       // WHAT THIS ARCHIVE IS NOT, said once, to the readers for whom the absence is a question — and
       // as of 2026-08-31 that is a much smaller group, because `GET /export/dataset` now builds the
@@ -1041,8 +1042,8 @@ function BrowseByTypePanel() {
       const dwNote = !designWorkshopsVisible
         ? ""
         : canExportDesignWorkshopData(user)
-          ? " Design workshop stages are in it, under Design workshops."
-          : " Design workshop stages are not in it — open the By design workshop folder below.";
+          ? " Includes design workshop stages."
+          : " Design workshop stages are in the By design workshop folder.";
       setDatasetNote(
         (failed.length
           ? `Archive saved — ${manifest.files.length - failed.length} of ${manifest.files.length} files (${failed.length} failed, listed in _failed-downloads.txt).`
@@ -1650,7 +1651,7 @@ export default function DataBrowserPage() {
       .map((option) => option.key)
       .join(",");
     if (!include) {
-      setError("Pick at least one content type to include in the download.");
+      setError("Pick at least one content type.");
       return;
     }
     setDownloading(true);
@@ -1685,7 +1686,7 @@ export default function DataBrowserPage() {
               // Conversion failed (odd codec, oversized, ffmpeg missing) — keep the original.
               const original = await fetch(file.url);
               if (!original.ok) {
-                throw new Error("Neither the converted audio nor the original file could be downloaded.");
+                throw new Error("Couldn't download the audio.");
               }
               zip.file(file.originalPath ?? file.path, await original.blob());
             } else {
@@ -1726,7 +1727,7 @@ export default function DataBrowserPage() {
       URL.revokeObjectURL(url);
       setFailures(failed);
       const truncatedNote = manifest.truncated
-        ? " This folder holds more files than one archive can include, so some are missing. Download narrower subfolders for a complete set."
+        ? " Some files are missing — download smaller folders for the rest."
         : "";
       setDownloadNote(
         (failed.length
@@ -1753,7 +1754,7 @@ export default function DataBrowserPage() {
   const header = (
     <PageHeader
       title="Data Browser"
-      description="Browse the records folder by folder, preview media and transcripts, and download any folder as a zip, choosing which kinds of content to include."
+      description="Browse records and download folders."
       icon={<Database className="h-5 w-5" aria-hidden />}
     />
   );
@@ -1777,8 +1778,7 @@ export default function DataBrowserPage() {
           </div>
           <h2 className="font-display text-base font-semibold text-ink-900">Dataset access is restricted</h2>
           <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-ink-500">
-            Browsing and downloading the dataset is available to professors and above, or to accounts that have been granted the
-            dataset-download permission. Ask an admin to grant you access if you need it for your research.
+            Needs Professor access or dataset access. Ask an admin.
           </p>
         </section>
       </>
@@ -1939,7 +1939,7 @@ export default function DataBrowserPage() {
 
             {currentTree?.truncated ? (
               <div className="border-b border-amber-500/30 bg-amber-100 px-4 py-2 text-xs text-amber-800">
-                This folder holds more than can be listed here. Open its subfolders to see everything in it.
+                Too many to list. Open a subfolder.
               </div>
             ) : null}
 
@@ -2003,7 +2003,7 @@ export default function DataBrowserPage() {
                               </div>
                               <div className="text-xs text-ink-500">{meta}</div>
                             </div>
-                            {file.content != null ? (
+                            <ActionGroup className="max-sm:w-full">{file.content != null ? (
                               <button
                                 type="button"
                                 className="text-sm font-semibold text-purple-700 dark:text-purple-300 hover:underline"
@@ -2020,7 +2020,7 @@ export default function DataBrowserPage() {
                               >
                                 {transcriptOpen ? "Hide transcript" : "View transcript"}
                               </button>
-                            ) : null}
+                            ) : null}</ActionGroup>
                             {file.mediaType === "IMAGE" && file.url ? (
                               <a href={file.url} target="_blank" rel="noreferrer" className="shrink-0">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}

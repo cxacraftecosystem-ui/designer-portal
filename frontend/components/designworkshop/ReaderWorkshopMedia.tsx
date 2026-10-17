@@ -64,8 +64,8 @@ export function useReaderMedia(surface: ReaderSurface, workshopId: string, enabl
         setState("failed");
         setFailure(
           isUnreachable(err)
-            ? "The files could not be loaded — check the connection and try again. The stages below are unaffected."
-            : "The files could not be loaded. Try again; the stages below are unaffected."
+            ? "No connection — files didn't load."
+            : "Couldn't load the files. Try again."
         );
       });
     return () => {
@@ -102,7 +102,7 @@ export function ReaderMediaTile({ file }: { file: ReaderMediaFile }) {
       <div className="flex items-center gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
         <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
         <span>
-          {name} is recorded here but cannot be opened right now. Try Refresh files.
+          Can&rsquo;t open {name}. Try Refresh files.
         </span>
       </div>
     );
@@ -163,7 +163,7 @@ export function ReaderMediaValue({ value }: { value: DwValue | undefined }) {
   if (state === "failed") {
     return (
       <span className="text-sm text-ink-500">
-        {total} file{total === 1 ? "" : "s"} recorded here. They could not be loaded — see Files above.
+        {total} file{total === 1 ? "" : "s"} — couldn&rsquo;t load.
       </span>
     );
   }
@@ -211,8 +211,7 @@ export function ReaderFilesPanel({
         </button>
       </div>
       <p className="text-xs leading-5 text-ink-500">
-        The photographs, recordings and attachments filed with this workshop, to look at and listen to. Nothing here
-        can be changed, and the links stop working a few minutes after the page loads — Refresh files renews them.
+        Read-only. Links expire after a few minutes — use Refresh files.
       </p>
       {state === "loading" ? <p className="text-sm text-ink-700">Loading the files…</p> : null}
       {state === "failed" ? <p className="text-sm text-red-700 dark:text-red-400">{failure}</p> : null}
@@ -276,8 +275,7 @@ export function ReaderCustomAnswers({
       ))}
       {unmatched ? (
         <p className="text-xs leading-5 text-ink-500">
-          {unmatched} more answer{unmatched === 1 ? " was" : "s were"} given to a question this workshop has since
-          removed.
+          {unmatched} more answer{unmatched === 1 ? "" : "s"} to removed questions.
         </p>
       ) : null}
     </div>

@@ -121,11 +121,11 @@ test("the cap sentence says what the cap now falls on first", () => {
   */
   const lines = scopeNoticeLines(SKETCH_REF, payload({ truncated: true }));
   expect(lines).toContain(
-    "Only the first 50 matches are listed, tentative ones first — type more of the name to narrow them."
+    "First 50 matches, tentative first. Type more to narrow."
   );
   // And the box it points at is real: this picker's search is the server's, over every row, not a
   // filter over the page (§11.5). The clause naming it survives on both branches.
-  expect(lines.some((line) => line.includes("type more of the name to narrow them"))).toBe(true);
+  expect(lines.some((line) => line.includes("Type more to narrow"))).toBe(true);
 });
 
 test("an unordered truncated list keeps exactly the sentence it always had", () => {
@@ -133,7 +133,7 @@ test("an unordered truncated list keeps exactly the sentence it always had", () 
     SKETCH_REF,
     payload({ truncated: true, tentativeFirst: false, tentativeLabel: "", options: [option("a")] })
   );
-  expect(lines).toEqual(["Only the first 50 matches are listed — type more of the name to narrow them."]);
+  expect(lines).toEqual(["First 50 matches. Type more to narrow."]);
 });
 
 test("the two sentences are ordered why-then-how-short, and both are said", () => {
@@ -142,7 +142,7 @@ test("the two sentences are ordered why-then-how-short, and both are said", () =
   const lines = scopeNoticeLines(SKETCH_REF, payload({ truncated: true }));
   expect(lines).toHaveLength(2);
   expect(lines[0]).toContain("rows come first");
-  expect(lines[1]).toContain("Only the first 50 matches");
+  expect(lines[1]).toContain("First 50 matches");
 });
 
 test("the picker draws the chip from the payload and never from a hardcoded word", () => {

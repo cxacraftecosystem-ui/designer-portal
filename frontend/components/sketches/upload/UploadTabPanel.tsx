@@ -272,7 +272,8 @@ export function UploadTabPanel({
     <div className="grid gap-4">
       {/* Two sections rather than one long column, because a designer arrives holding either a sheet
           of paper or an object, never both, and the half they did not come for is noise. Real buttons
-          with `aria-pressed`, so the choice is reachable by keyboard and announced. */}
+          with `aria-pressed`, so the choice is reachable by keyboard and announced. A segmented
+          toggle, not an action row, so it is deliberately not an ActionGroup. */}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -315,8 +316,8 @@ export function UploadTabPanel({
           */}
           <p className="mt-1 max-w-prose text-sm leading-6 text-ink-500">
             {photoOwnedAbove
-              ? "Photograph the sheet once. Both panels below work from that one photograph — the tracing panel turns it into clean line art on this device, which a phone photograph on a courtyard table usually needs, and the measuring panel takes a dimension off it. Nothing is filed until a button in one of them is pressed, and the photograph itself is never altered."
-              : "The panel below is where a sketch is attached, in both forms. Choose the photograph of the sheet and it can be filed exactly as it is — “Attach the photograph only” does nothing else. If the drawing is hard to read in it, the same panel traces clean line art from it on this device and files that alongside. The photograph is never altered and never replaced."}
+              ? "One photo of the sheet, used to trace line art and to measure. Nothing is filed until you choose."
+              : "Attach the photo as it is, or trace clean line art from it too."}
           </p>
           {/*
             WHERE THE DRAWING LANDS, ON ITS OWN LINE, because it is the one fact in the paragraph
@@ -406,9 +407,7 @@ export function UploadTabPanel({
         <div className="panel p-4">
           <h3 className="font-display text-base font-semibold text-ink-900">Prototypes</h3>
           <p className="mt-1 max-w-prose text-sm leading-6 text-ink-500">
-            A prototype reaches a reviewer two ways. Photographs of it turning appear in the report as
-            pictures; a 3D model file is listed there as an attached file. Both are worth attaching — the panel
-            below says which does what.
+            Turntable photos appear in the report; 3D models are listed.
           </p>
           {/*
             ── WHAT THIS HALF TAKES THAT THE OTHER ONE DOES NOT, SAID AT THE TOP ──────────────────
@@ -427,9 +426,7 @@ export function UploadTabPanel({
             reading, which is the same defect as printing a cap nobody looked up.
           */}
           <p className="mt-1 max-w-prose text-sm leading-6 text-ink-500">
-            Photographs go to “{turntableLabel}”, a whole turn at a time — the same kind of file the Sketches
-            section takes. “{modelLabel}” is the one box on this tab that takes something else entirely: a 3D
-            model, in the formats the card below names, and never a photograph.
+            Photos go to “{turntableLabel}”; 3D files go to “{modelLabel}”.
           </p>
           {/*
             ── NO SHARED PICKER ON THIS HALF, AND THAT IS AN ANSWER RATHER THAN AN OMISSION ───────

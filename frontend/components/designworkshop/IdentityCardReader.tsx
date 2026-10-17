@@ -80,6 +80,7 @@ import {
   type DwPhotoRetention
 } from "@/lib/identityPhotoRetention";
 import type { MediaFile } from "@/lib/types";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 type Candidate = {
   number: string;
@@ -240,8 +241,8 @@ export function IdentityCardReader({
             // designer who reads "could not be deleted" and nothing else has no way to know whether
             // to try again or whether it half-worked; the server refuses the whole request rather
             // than half-deleting, so this can say so.
-            `That decision could not be recorded, so the photograph is exactly as it was — still stored on this record. ${error.message}`
-          : "That decision could not be recorded, so the photograph is exactly as it was — still stored on this record. Try again."
+            `Couldn't record that — the photo is still stored. ${error.message}`
+          : "Couldn't record that — the photo is still stored. Try again."
       );
     } finally {
       setDeciding(null);
@@ -278,7 +279,7 @@ export function IdentityCardReader({
         // rule this app does not require for anything else — so the honest answer is to say what to
         // do rather than to fail in a way that looks like the reader being broken.
         setProblem(
-          "This photograph was attached in an earlier session, so its file is no longer in this tab. Re-attach it to read the number from it, or type the number in."
+          "Re-attach the photo to read it, or type the number."
         );
         return;
       }
@@ -289,8 +290,8 @@ export function IdentityCardReader({
             outcome.reason === "undecodable"
               ? // Not "the card could not be read". The commonest cause is an iPhone HEIC, and
                 // sending somebody back to re-photograph a card that was fine is the worse answer.
-                "This browser could not open that picture. Photographs from an iPhone are often HEIC, which most browsers cannot read — re-save it as JPEG or PNG, or type the number in."
-              : "This computer could not read that photograph. Type the number in instead."
+                "Can't open that picture (HEIC?). Save it as JPEG or PNG, or type the number."
+              : "Couldn't read that photo. Type the number instead."
           );
           return;
         }
@@ -301,12 +302,12 @@ export function IdentityCardReader({
         if (!first) {
           setProblem(
             found.rejectedCount > 0
-              ? `${found.rejectedCount} number(s) were read off that card and every one failed its checksum, so at least one digit was wrong in each. Take another photograph in better light with no glare across the digits, or type the number in.`
+              ? "The number read failed its check. Retake in better light, or type it."
               : // Naming the second route matters here and not on the artisan form: this reader
                 // still holds the file, so unticking and pressing again costs nothing.
                 offered === true
-                ? "No Aadhaar number could be read on this computer. Untick “Read it on this computer” and press again to have the photograph read online, which reads a worn card better and can also read a Pehchan card — or type the number in."
-                : "No Aadhaar number could be read on this computer. Take another photograph with the whole card in frame and no glare across the digits, or type the number in."
+                ? "No number found. Untick “Read it on this computer” to read online, or type it."
+                : "No number found. Retake with the whole card in frame, or type it."
           );
           return;
         }
@@ -336,8 +337,8 @@ export function IdentityCardReader({
           rejected > 0
             ? // The COUNT, never the values — a rejected candidate is still somebody's misread
               // identity number. It also names a different next action from "nothing was found".
-              `${rejected} number(s) were read off that card and every one failed its checksum, so at least one digit was wrong in each. Take another photograph in better light with no glare across the digits, or type the number in.`
-            : "No number could be read from that photograph. Take another with the whole card in frame and no glare across the digits, or type the number in."
+              "The number read failed its check. Retake in better light, or type it."
+            : "No number found. Retake with the whole card in frame, or type it."
         );
         return;
       }
@@ -370,10 +371,7 @@ export function IdentityCardReader({
         <span className="text-sm font-medium text-ink-900">Read the number from this card</span>
       </div>
       <p className="text-xs leading-5 text-ink-500">
-        The number is read from the photograph and shown here for you to check against the card. Nothing is written into{" "}
-        {targetLabel} until you confirm it — a single wrong digit in an identity number does not clash with anybody, so it
-        creates a duplicate artisan that nothing downstream can detect. The photographs listed above were uploaded to
-        this record when you attached them; after a read you are asked whether to keep or delete the one you read.
+        Check the number against the card. Nothing is written into {targetLabel} until you confirm.
       </p>
 
       {/*
@@ -383,8 +381,8 @@ export function IdentityCardReader({
       */}
       {browserReads === true && offered === true ? (
         <Toggle
-          label="Read it on this computer"
-          description="The photograph is not sent anywhere, and this works with no connection. Switched off, the photograph is read online, which reads a worn or angled card better and is the only way to read a Pehchan card."
+          label="Read on this computer"
+          description="Offline, photo not sent. Switch off to read online — better for worn cards and Pehchan."
           checked={readHere}
           disabled={disabled || reading}
           onChange={setReadHere}
@@ -396,8 +394,7 @@ export function IdentityCardReader({
         <p className="flex items-start gap-2 text-xs leading-5 text-ink-500">
           <MonitorCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>
-            Read on this computer. The photograph is not sent anywhere, and this works with no connection — but only an
-            Aadhaar number can be read this way.
+            Read on this computer (offline, photo not sent). Aadhaar only.
           </span>
         </p>
       ) : null}
@@ -438,14 +435,13 @@ export function IdentityCardReader({
             {/* WHERE it was read, stated rather than remembered — and the local route has no
                 confidence to print, so without this line it would be the one with LESS said about
                 it. "The photograph was not sent anywhere" is the part worth saying. */}
-            {candidate.local ? " · read on this computer; the photograph was not sent anywhere" : ""}.
+            {candidate.local ? " · read on this computer" : ""}.
           </p>
 
           <p className="flex items-start gap-2 rounded-md border border-amber-500 bg-amber-100 px-2 py-1.5 text-xs leading-5 text-amber-800">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>
-              Read it off the card itself, not off this screen. A misread digit produces a number that belongs to nobody,
-              so nothing downstream can ever detect it.
+              Check it against the card, not this screen.
             </span>
           </p>
 
@@ -455,7 +451,7 @@ export function IdentityCardReader({
             </p>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-2">
+          <ActionGroup>
             <button
               type="button"
               className="field-button"
@@ -476,7 +472,7 @@ export function IdentityCardReader({
               <X className="h-3 w-3" aria-hidden />
               Discard this reading
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
 
@@ -513,7 +509,7 @@ export function IdentityCardReader({
                 What happens to “{entry.name}”? {DW_PHOTO_UNDECIDED}
               </span>
             </p>
-            <div className="flex flex-wrap items-center gap-2">
+            <ActionGroup>
               {/*
                 THE SAFE ANSWER IS THE PRIMARY BUTTON, and it is first in the DOM so it is also first
                 for a keyboard and for a screen reader. Nothing here is preselected and nothing
@@ -553,13 +549,12 @@ export function IdentityCardReader({
                 )}
                 Keep it on this record
               </button>
-            </div>
+            </ActionGroup>
             <p className="text-xs leading-5 text-amber-800 dark:text-amber-100">
               {/* Both consequences, stated before the press rather than reported after it.
                   "Deleted" is said in full because this app soft-deletes almost everything and a
                   designer has every reason to assume this is another of those. */}
-              Deleting removes the file and the record of it — it cannot be undone, and the number you
-              confirm is unaffected. Keeping it records that you chose to, with your name and the time.
+              Deleting can&apos;t be undone. The number is unaffected.
             </p>
           </div>
         );

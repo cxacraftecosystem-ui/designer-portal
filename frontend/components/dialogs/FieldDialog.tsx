@@ -48,6 +48,7 @@ import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 import { ministrySurface } from "@/lib/permissions";
 import { lockPageScroll, unlockPageScroll } from "@/lib/scrollLock";
 import { cn } from "@/lib/utils";
@@ -456,7 +457,7 @@ export function FieldDialog({
                 </button>
               ) : null}
             </div>
-            {footer ? <div className="mt-5 flex flex-wrap justify-end gap-2">{footer}</div> : null}
+            {footer ? <ActionGroup align="end" className="mt-5">{footer}</ActionGroup> : null}
           </motion.div>
         </motion.div>
       ) : null}

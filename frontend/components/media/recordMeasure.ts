@@ -214,7 +214,7 @@ export function proposalFor(value: number, uncertainty: number, from: LengthUnit
   if (rounded <= 0) {
     return {
       ok: false,
-      reason: `That measures about ${converted.toPrecision(2)} ${to}, which rounds to zero in a box that stores ${COLUMN_DECIMALS} decimal places. A stored 0 would read as “measured, and it is nothing”, so nothing is proposed.`
+      reason: `About ${converted.toPrecision(2)} ${to}, which rounds to zero at ${COLUMN_DECIMALS} decimal places, so nothing is proposed.`
     };
   }
 

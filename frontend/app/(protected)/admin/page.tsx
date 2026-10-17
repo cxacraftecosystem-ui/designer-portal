@@ -122,7 +122,7 @@ export default function AdminHubPage() {
   const header = (
     <PageHeader
       title="Settings"
-      description="The admin hub — reviews, recovered recordings, feedback, assignments, and user management in one place."
+      description="Admin tools."
       icon={<SlidersHorizontal className="h-5 w-5" aria-hidden />}
     />
   );
@@ -146,7 +146,7 @@ export default function AdminHubPage() {
           </div>
           <h2 className="font-display text-base font-semibold text-ink-900">Admin access required</h2>
           <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-ink-500">
-            The settings hub is available to admins and the master admin only.
+            Admins only.
           </p>
         </section>
       </>
@@ -162,7 +162,7 @@ export default function AdminHubPage() {
     },
     {
       label: "Recovered recordings",
-      description: "Media whose parent record was deleted — relink it below.",
+      description: "Media from deleted records.",
       href: "#recovered-recordings",
       icon: AudioLines
     },
@@ -171,7 +171,7 @@ export default function AdminHubPage() {
       // an admin can restore a deleted workshop; until the list route grew `deletedOnly` nothing on
       // any surface would name one, so the promise pointed at a screen that did not exist.
       label: "Deleted workshops",
-      description: "Design workshops in the trash — restore one below.",
+      description: "Restore deleted workshops.",
       href: "#deleted-workshops",
       // NOT Trash2, which is the bin every delete control in this app wears, the danger-tone confirm
       // dialog included: the tile leads to the screen that UNDOES a deletion, and a bin on it reads
@@ -188,13 +188,13 @@ export default function AdminHubPage() {
       // feedback users sent" and delivering the half of it they still cannot see (the satisfaction
       // ratings remain master-admin, deliberately; see routes/feedback.py).
       label: "User feedback",
-      description: "Grievances, suggestions, recommendations and bug reports — read them, and answer them.",
+      description: "Read and answer feedback.",
       href: "/feedback",
       icon: MessageSquare
     },
     {
       label: "Assign tools to artisans",
-      description: "Link documented tools to the artisans who use them.",
+      description: "Link tools to artisans.",
       href: "/tools?assign=1",
       icon: Wrench
     },
@@ -204,13 +204,13 @@ export default function AdminHubPage() {
       // its access levels — is done properly on /workshop-access/manage, the tile below. Two doors
       // onto one job, one of which was a signpost rather than a page, is worse than one door.
       label: "Task assignment",
-      description: "Hand documentation work to the people below you, then hold it to account.",
+      description: "Assign and track documentation work.",
       href: "/settings/tasks",
       icon: ClipboardList
     },
     {
       label: "Workshop access",
-      description: "The request queue across every workshop, plus each roster and its access levels.",
+      description: "Requests, rosters and access levels.",
       // Straight to the console: this hub is admin-only, so the fork at /workshop-access would ask
       // an admin a question it already knows the answer to.
       href: "/workshop-access/manage",
@@ -222,7 +222,7 @@ export default function AdminHubPage() {
       // follow-up is still thin it mostly reports what it cannot yet say — and a tile that
       // promised "adoption rates" would send an admin looking for a figure the page withholds
       // on purpose.
-      description: "Adoption, survival, cost-to-price and recurring opportunities, compared across every workshop.",
+      description: "Compare outcomes across workshops.",
       href: "/admin/analytics",
       icon: ChartNoAxesCombined
     },
@@ -239,7 +239,7 @@ export default function AdminHubPage() {
       // The pending count rides on the tile because this is the surface an admin opens anyway;
       // see `usePendingAccessCount` for why there is no timer behind it.
       description:
-        "The addresses allowed to sign in, and the people waiting to be approved. Approve, refuse, suspend and restore — nothing is ever deleted.",
+        "Who may sign in, and who is waiting.",
       href: "/admin/access",
       // NOT ShieldCheck — "Workshop access" above already wears it, and two shields on one grid of
       // twelve tiles is how an admin ends up on the wrong screen twice before reading the labels.
@@ -262,7 +262,7 @@ export default function AdminHubPage() {
       // only because their server gates are different predicates that could drift from it.
       label: "Types of workshop",
       description:
-        "The “Type of workshop” dropdown on every record form, and which kind of workshop each type lists.",
+        "The “Type of workshop” options.",
       href: "/admin/workshop-types",
       icon: Tags,
       visible: isAdmin(user)
@@ -272,7 +272,7 @@ export default function AdminHubPage() {
       // Says what the roster IS rather than what the screen does, because the thing admins get
       // wrong about it is thinking it is a view of the Designer role. It is not: the role says what
       // somebody may do, the roster says whether the institution still recognises them at all.
-      description: "Who may sign in as a designer. Empanel by email, suspend and restore — nothing is ever deleted.",
+      description: "Empanel, suspend and restore designers.",
       href: "/admin/designers",
       icon: BadgeCheck,
       visible: canManageDesignerRoster(user)
@@ -283,7 +283,7 @@ export default function AdminHubPage() {
       // gets wrong about it is reading it as a list of workshops. It is a list of INTENTIONS: two
       // hundred to three hundred rows a year, none of which is a workshop until somebody opens it.
       description:
-        "The ministry's directory of the workshops planned for the year — number, date, state, district and venue. Upload the sheet, correct it by uploading it again, and open a workshop from a row when it is time.",
+        "This year's planned workshops. Upload the sheet; open workshops from it.",
       href: "/annual-plan",
       // NOT ClipboardList ("Craft" above wears it) and not FileSpreadsheet — the icon-collision
       // note on "Who may sign in" records what two identical icons on one grid of twelve cost.
@@ -299,7 +299,7 @@ export default function AdminHubPage() {
       label: "API keys",
       // Admin-visible because the transcription provider ranking lives behind this tile; the key
       // list itself is still master-admin-only once the page opens.
-      description: "Rank the transcription providers, and rotate or test the keys they run on.",
+      description: "Rank transcription providers and manage keys.",
       href: "/settings/api-keys",
       icon: KeyRound,
       visible: isAdmin(user)
@@ -315,7 +315,7 @@ export default function AdminHubPage() {
       // same reason. `isAdmin` mirrors `require_usage_reader` (Admin and above) the same way the
       // other gated tiles on this hub mirror their own routes' server-side checks.
       label: "Usage",
-      description: "Which screens are reached, how often, how fast, and how often broken — aggregated across every account.",
+      description: "Screen usage, speed and errors.",
       href: "/settings/usage",
       icon: Activity,
       visible: isAdmin(user)
@@ -374,8 +374,7 @@ export default function AdminHubPage() {
         <div className="border-b border-line-200 px-4 py-3">
           <h2 className="font-display font-bold text-ink-900">Recovered recordings</h2>
           <p className="text-sm text-ink-500">
-            Media still linked to a deleted record. The files are safe — relink them to a live record from the Media
-            page.
+            Relink these from the Media page.
           </p>
           <HeldPostNotice
             refusal={mediaListNotice(visibleOrphans.map((item) => heldFor(mediaWorkshopIds(item))), "relinked")}

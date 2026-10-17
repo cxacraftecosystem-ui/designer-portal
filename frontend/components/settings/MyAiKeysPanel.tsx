@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { FieldLabelProvider } from "@/components/ui/fieldLabel";
 import { PasswordRevealButton } from "@/components/ui/PasswordReveal";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * **A designer's OWN provider keys.** One card, one row per provider, and an accordion per provider
@@ -371,7 +372,7 @@ function ProviderRow({
       ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
+        <ActionGroup className="max-sm:w-full"><button
           type="button"
           disabled={busy !== null || (!key.trim() && model === state.model)}
           onClick={() =>
@@ -420,7 +421,7 @@ function ProviderRow({
           >
             <Trash2 className="h-4 w-4" aria-hidden /> Remove
           </button>
-        ) : null}
+        ) : null}</ActionGroup>
         {message ? <span className="text-xs text-ink-500">{message}</span> : null}
       </div>
 
@@ -477,14 +478,11 @@ export function MyAiKeysPanel() {
           go hunting for and not find is the same lie as printing it on a model's row, told earlier
           and to somebody who has not yet decided whether to hand over a credential. */}
       <p className="mt-1.5 text-sm leading-6 text-ink-500">
-        Bring your own key and the AI work you ask for — proofreading, expanding, translating,
-        transcribing and photo descriptions — runs on your account with your provider, at your
-        choice of model, and is billed to you. Leave this empty and everything works as it does now,
-        using the portal&apos;s own key.
+        Optional. With your own key, the AI work you ask for runs and bills on your account.
+        Leave empty to use the portal&apos;s key.
       </p>
       <p className="mt-1.5 text-xs leading-5 text-ink-500">
-        Your key is stored encrypted, is used only for work you personally ask for, and is never
-        shown to anyone — including administrators. Background jobs are never billed to you.
+        Stored encrypted and never shown to anyone, including admins. Background jobs never use it.
       </p>
       <ul className="mt-4 space-y-3">
         {catalogue.providers.map((provider) => {

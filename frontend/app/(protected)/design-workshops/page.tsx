@@ -176,6 +176,7 @@ import {
 // picker: two screens explaining the same empty list in two ways is how a reader learns that
 // neither explanation is worth reading.
 import { LINKED_WORKSHOP_KIND_GAP } from "@/components/designworkshop/linkedWorkshopPicker";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The eight statuses `DesignWorkshopStatus` declares, plus the reserved empty option.
@@ -250,12 +251,12 @@ const OVERSIGHT_DOORS: readonly { href: string; label: string; note: string }[] 
   {
     href: "/officers/monitored",
     label: "Workshops I monitor",
-    note: "the workshops you were named on as Assistant Director or Regional Director"
+    note: "where you are Assistant or Regional Director"
   },
   {
     href: "/officers",
     label: "Workshop oversight",
-    note: "where a workshop's designer and its two supervising officers are named"
+    note: "name designers and supervising officers"
   }
 ];
 
@@ -1090,7 +1091,7 @@ function DesignWorkshopsPageBody() {
     const ok = await confirm(
       deleteConfirm(
         "Delete this design workshop?",
-        `"${workshop.title}" is removed from the list, along with every stage recorded against it.`,
+        `"${workshop.title}" and all its stages leave the list.`,
         // Stated because it is TRUE and because it is unlike everything else in this app: nothing
         // else here has a soft delete, so a reader who has met the artisan and product dialogs will
         // assume this one is permanent and will hesitate over something an admin can undo.
@@ -1099,7 +1100,7 @@ function DesignWorkshopsPageBody() {
         // restore it" was true of the API and unreachable in the product — nothing listed deleted
         // workshops, so the only admin who could act on this sentence was one who had written the id
         // down first. A promise a reader cannot follow is worse than no promise.
-        "Nothing is erased — an admin can restore it from Settings → Deleted workshops."
+        "An admin can restore it from Settings → Deleted workshops."
       )
     );
     if (!ok) return;
@@ -1372,7 +1373,7 @@ function DesignWorkshopsPageBody() {
           control additionally respects admin view so an admin browsing as an
           ordinary user is not offered it. */}
       {allowDelete && adminMode ? (
-        <button type="button" className={rowAction("danger")} onClick={() => remove(workshop)}>
+        <button type="button" data-danger className={rowAction("danger")} onClick={() => remove(workshop)}>
           Delete
         </button>
       ) : null}
@@ -1383,7 +1384,7 @@ function DesignWorkshopsPageBody() {
     <>
       <PageHeader
         title="Design workshops"
-        description="The 22-stage design and prototype workshop record: setup and participants, cluster background, market survey, sketches, prototypes, costing, outcomes and the generated report."
+        description="Your design and prototype workshops."
         icon={<DraftingCompass className="h-5 w-5" aria-hidden />}
         actions={
           // Gated to NOTHING rather than to a disabled button: an ungated "New …" invites an
@@ -1433,7 +1434,7 @@ function DesignWorkshopsPageBody() {
           <div className="flex items-start gap-3">
             <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             <div className="grow">
-              <p className="font-medium">Starting a new design workshop is an admin’s job</p>
+              <p className="font-medium">An admin starts new workshops</p>
               <p className="mt-1 leading-6">{DESIGN_WORKSHOP_CREATE_REFUSAL}</p>
               {/*
                 THE LAST CLAUSE OF THAT REFUSAL IS NOW A CONTROL RATHER THAN A CLAIM.
@@ -1470,10 +1471,7 @@ function DesignWorkshopsPageBody() {
         // Says what is on screen and what is not. A list that silently shows only the local subset
         // is indistinguishable from a repository with three workshops in it.
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          You&rsquo;re offline, so this shows only the design workshops started on this device and the ones with changes
-          waiting to upload. Other workshops — including ones you have opened here before — aren&rsquo;t listed and
-          can&rsquo;t be searched. What&rsquo;s here can be edited as usual, and the full list comes back once you&rsquo;re
-          online.
+          Offline — showing only workshops on this device. The full list returns when you reconnect.
         </div>
       ) : null}
 
@@ -1538,9 +1536,9 @@ function DesignWorkshopsPageBody() {
           className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800"
         >
           {unlinkedCount === 1
-            ? "One workshop here was started on this device and is not linked to a workshop yet. "
-            : `${unlinkedCount} workshops here were started on this device and are not linked to a workshop yet. `}
-          {DW_LOCAL_DRAFT_LINK_PROMPT} Use “Move into a workshop” on the row.
+            ? "One draft on this device isn't linked to a workshop. "
+            : `${unlinkedCount} drafts on this device aren't linked to a workshop. `}
+          Use “Move into a workshop” on the row.
         </div>
       ) : null}
 
@@ -1552,8 +1550,7 @@ function DesignWorkshopsPageBody() {
           <div>
             <h2 className="font-display text-lg font-bold text-ink-900">Start a design workshop</h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              Only the title is needed to begin. Everything else here is also asked in stage 1 and will be filled in from
-              there — this is the shortcut for what is already known in the room.
+              Only the title is required.
             </p>
           </div>
           {/*
@@ -1602,8 +1599,7 @@ function DesignWorkshopsPageBody() {
             */}
             {sourceList.kind === "ok" && sourceList.rows.length > 0 ? (
               <p className="text-xs leading-5 text-ink-500">
-                Only workshops filed as a Design &amp; Prototype Development Workshop, and only ones you have access to,
-                appear here.
+                Design &amp; Prototype workshops you can access.
               </p>
             ) : sourceNotice ? (
               <p className="text-xs leading-5 text-ink-500">{sourceNotice}</p>
@@ -1640,7 +1636,7 @@ function DesignWorkshopsPageBody() {
                   setTitle(next);
                 }}
                 options={titleOptions}
-                placeholder="Type the name, or pick one already on record"
+                placeholder="Type or pick a name"
                 ariaLabel="Workshop title"
                 // THE BOX IS THE SERVER'S — see the state's note. `truncated` is deliberately absent:
                 // a cut list here costs nothing, because whatever is typed is committable.
@@ -1816,7 +1812,7 @@ function DesignWorkshopsPageBody() {
           <Field label="Notes">
             <TextArea name="notes" />
           </Field>
-          <div className="flex gap-2">
+          <ActionGroup>
             <button className="field-button" disabled={creating}>
               {creating ? "Creating…" : "Create design workshop"}
             </button>
@@ -1827,7 +1823,7 @@ function DesignWorkshopsPageBody() {
             >
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </form>
       ) : null}
 
@@ -1917,8 +1913,7 @@ function DesignWorkshopsPageBody() {
             <span>
               <span className="font-display text-lg font-bold text-ink-900">Designers on a workshop</span>
               <span className="mt-1 block text-sm leading-6 text-ink-muted">
-                Add designers to a design &amp; prototype workshop so they can open it and fill in its stages. A designer
-                who isn&rsquo;t on this list can&rsquo;t open the workshop.
+                Choose who can open and fill in a workshop.
               </span>
             </span>
             <span aria-hidden className="shrink-0 text-sm text-ink-500">
@@ -2005,7 +2000,7 @@ function DesignWorkshopsPageBody() {
               title="No design workshops found"
               body={
                 allowCreate
-                  ? "Start one with the button above. A workshop can be created with nothing but a title and filled in over the following weeks."
+                  ? "Start one with the button above."
                   : emptyScopeDoors.length
                     ? // A DIRECTORATE READER, AND THE SENTENCE WRITTEN FOR A DESIGNER IS WRONG FOR
                       // THEM. "Ask an admin to name you as one of its designers" is the right next
@@ -2023,13 +2018,13 @@ function DesignWorkshopsPageBody() {
                       // Every clause below is a fact about what the SCOPE can ever contain, so it
                       // survives any filter being set, which is what lets the panel under it stand
                       // unconditionally too.
-                      "This list shows the workshops you opened and the ones you were named on as a designer. Workshops you supervise are listed on a separate screen, not here."
+                      "Workshops you supervise are on a separate screen."
                     : allowWork
                       ? // An empty list is the worst moment to be vague at a designer: there is nothing
                         // on screen to explain itself, so this is the whole answer — why there is no
                         // "New workshop" button, who to ask, and what happens once they have asked.
-                        "Design workshops you have access to will appear here. Starting a new one is done by an admin or the master admin — ask them to create it for your cluster and name you as one of its designers, and it will show up here ready for all 22 stages."
-                      : "Design workshops you have access to will appear here."
+                        "Ask an admin to create one and add you as a designer."
+                      : "Workshops shared with you appear here."
               }
             />
             {/*
@@ -2052,8 +2047,7 @@ function DesignWorkshopsPageBody() {
               <div className="mt-4 rounded-md border border-line-200 bg-surface-50 p-4">
                 <h3 className="text-sm font-medium text-ink-900">Where your workshops are</h3>
                 <p className="mt-1 text-sm leading-6 text-ink-700">
-                  This list shows what you opened yourself and what you were named on as a designer. Workshops you
-                  supervise are here:
+                  Workshops you supervise:
                 </p>
                 <ul className="mt-3 grid gap-2">
                   {emptyScopeDoors.map((door) => (

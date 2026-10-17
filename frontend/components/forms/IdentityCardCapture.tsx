@@ -105,6 +105,7 @@ import {
 import { browserCanReadCards, readCardTextInBrowser } from "@/lib/identityCardLocal";
 import { identityCandidatesFromText } from "@/lib/identityCardText";
 import { canRunDesignWorkshops } from "@/lib/permissions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** "123456789012" -> "1234 5678 9012", the grouping the card prints and a person proofreads by. */
 function display(choice: DwIdentityChoice): string {
@@ -265,17 +266,17 @@ export function IdentityCardCapture({
       // The COUNT, never the values — a rejected reading is still somebody's misread identity
       // number — and it names a different next action from "nothing was found at all".
       setProblem(
-        `${rejected} number(s) were read off that card and every one failed its checksum, so at least one digit was wrong in each. Take another photograph in better light with no glare across the digits, or type the number in.`
+        "The number read failed its check. Retake in better light, or type it."
       );
       return;
     }
     setProblem(
-      `No ${kind === "AADHAAR" ? "Aadhaar" : "Pehchan"} number could be read from that photograph. Fill the frame with the card, hold it flat and try again — or type the number in.` +
+      `No ${kind === "AADHAAR" ? "Aadhaar" : "Pehchan"} number found. Fill the frame with the card, or type it.` +
         // Naming the other reader only when there IS one, and only when it is the one not just
         // tried. The photograph is gone by now (see `read`), so this is an instruction to take
         // another one — which is what "try again" already meant, with one box to untick first.
         (locally && offered === true
-          ? " Reading it online handles a worn or angled card better: untick “Read it on this computer” and photograph it again."
+          ? " Or untick “Read it on this computer” to read online."
           : "")
     );
   }
@@ -299,7 +300,7 @@ export function IdentityCardCapture({
     if (willKeep && onKeepPhotograph) {
       try {
         await onKeepPhotograph(file);
-        setKept("That photograph has been kept on the record, as you asked.");
+        setKept("Photo kept on the record.");
       } catch (error) {
         // NOT FATAL TO THE READ. The card is still in the artisan's hand and the number is still
         // worth having; failing the whole thing here would cost a re-photograph to fix a storage
@@ -307,8 +308,8 @@ export function IdentityCardCapture({
         // silence this control exists to end.
         setKept(
           error instanceof Error
-            ? `That photograph could not be kept: ${error.message} The number can still be read below.`
-            : "That photograph could not be kept. The number can still be read below."
+            ? `Couldn't keep the photo: ${error.message}`
+            : "Couldn't keep the photo."
         );
       }
     }
@@ -320,8 +321,8 @@ export function IdentityCardCapture({
             outcome.reason === "undecodable"
               ? // Not "the card could not be read". The commonest cause is an iPhone HEIC, and
                 // sending somebody back to re-photograph a card that was fine is the worse answer.
-                "This browser could not open that picture. Photographs from an iPhone are often HEIC, which most browsers cannot read — re-save it as JPEG or PNG, or type the number in."
-              : "This computer could not read that photograph. Type the number in instead."
+                "Can't open that picture (HEIC?). Save it as JPEG or PNG, or type the number."
+              : "Couldn't read that photo. Type the number instead."
           );
           return;
         }
@@ -347,16 +348,16 @@ export function IdentityCardCapture({
       // `photographWasNotStored` is false for a deployment too old to have the field, and a promise
       // about regulated data must not be made out of a missing key.
       if (!willKeep && photographWasNotStored(result)) {
-        setKept("Nothing was kept: the photograph was read and discarded.");
+        setKept("Photo read and discarded.");
       }
       offer(identityChoices(result, kind, aadhaarProblem), false, result.rejectedAadhaarCount ?? 0);
     } catch (error) {
       setProblem(
         typeof navigator !== "undefined" && !navigator.onLine
-          ? "The connection dropped before the card could be read. Nothing was sent and nothing was kept. Type the number in, or try again where there is signal."
+          ? "Connection lost — nothing was sent or kept. Type the number, or try again."
           : error instanceof Error
-            ? `That card could not be read: ${error.message}`
-            : "That card could not be read. Type the number in instead."
+            ? `Couldn't read the card: ${error.message}`
+            : "Couldn't read the card. Type the number instead."
       );
     } finally {
       setReading(false);
@@ -369,7 +370,7 @@ export function IdentityCardCapture({
     // capability withheld for no reason — which is the whole of what reading here buys.
     if (!useLocal && typeof navigator !== "undefined" && !navigator.onLine) {
       setProblem(
-        "Reading a card needs a connection. Type the number in now; if you photograph the card, you can check what you typed against it when you are back online."
+        "Reading a card needs a connection. Type the number for now."
       );
       return;
     }
@@ -380,8 +381,7 @@ export function IdentityCardCapture({
   return (
     <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
       <p className="text-xs leading-5 text-ink-500">
-        Photograph the card, or choose a photograph of it, and the number is read off it. You check it against the card
-        and confirm before anything is written into {targetLabel}.{" "}
+        Photograph the card to read the number. Confirm it before it goes into {targetLabel}.{" "}
         {/*
           WHAT HAPPENS TO THE PICTURE, SAID EVERY TIME AND IN THE PRESENT TENSE. The number itself is
           masked everywhere this repository shows it; a photograph of the card is that same number in
@@ -390,10 +390,10 @@ export function IdentityCardCapture({
           happen — a researcher never has to work out which branch they are in.
         */}
         {willKeep
-          ? "You have asked for the photograph to be kept on this record. It is a photograph of an identity document, so it is stored unmasked."
+          ? "The photo will be kept on this record, unmasked."
           : useLocal
-            ? "The photograph is read on this computer and is not sent anywhere or stored."
-            : "The photograph is not stored anywhere."}
+            ? "Read on this computer; the photo isn't sent or stored."
+            : "The photo isn't stored."}
       </p>
 
       {/*
@@ -409,8 +409,8 @@ export function IdentityCardCapture({
       */}
       {canKeep ? (
         <Toggle
-          label="Keep the photograph on this record"
-          description="Left off, the card is read and the picture is not stored anywhere — which is what happens if you do not decide."
+          label="Keep the photo on this record"
+          description="Off by default."
           checked={keepPhotograph}
           disabled={disabled || reading}
           onChange={setKeepPhotograph}
@@ -418,7 +418,7 @@ export function IdentityCardCapture({
         />
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
+      <ActionGroup>
         <button type="button" className="field-button-secondary" disabled={disabled || reading} onClick={() => open(cameraRef)}>
           {reading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Camera className="h-4 w-4" aria-hidden />}
           Photograph the card
@@ -427,7 +427,7 @@ export function IdentityCardCapture({
           <ImageIcon className="h-4 w-4" aria-hidden />
           Choose a photo
         </button>
-      </div>
+      </ActionGroup>
 
       {/*
         THE CHOICE IS SHOWN ONLY WHERE THERE IS ONE. A checkbox with one reachable state is a
@@ -437,8 +437,8 @@ export function IdentityCardCapture({
       */}
       {localUsable && offered === true ? (
         <Toggle
-          label="Read it on this computer"
-          description="The photograph is not sent anywhere, and this works with no connection. Switched off, the photograph is read online, which handles a worn or angled card better."
+          label="Read on this computer"
+          description="Offline, photo not sent. Switch off to read online — better for worn cards."
           checked={readHere}
           disabled={disabled || reading}
           onChange={setReadHere}
@@ -449,7 +449,7 @@ export function IdentityCardCapture({
       {localUsable && offered !== true ? (
         <p className="flex items-start gap-2 text-xs leading-5 text-ink-500">
           <MonitorCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span>Read on this computer. The photograph is not sent anywhere, and this works with no connection.</span>
+          <span>Read on this computer (offline, photo not sent).</span>
         </p>
       ) : null}
 
@@ -489,8 +489,7 @@ export function IdentityCardCapture({
           <p className="flex items-start gap-2 rounded-md border border-amber-500 bg-amber-100 px-2 py-1.5 text-xs leading-5 text-amber-800">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>
-              Check it against the card itself, not this screen. A single wrong digit creates a second record for the
-              same artisan.
+              Check it against the card. One wrong digit creates a duplicate artisan.
             </span>
           </p>
           {currentValue ? (
@@ -524,7 +523,7 @@ export function IdentityCardCapture({
                       returns no confidence at all, so without this line the local route would be
                       the one with LESS said about it — and "the photograph never left this
                       computer" is the thing most worth saying. */}
-                  {readLocally ? " · read on this computer; the photograph was not sent anywhere" : ""}
+                  {readLocally ? " · read on this computer" : ""}
                 </p>
               </div>
             ))}

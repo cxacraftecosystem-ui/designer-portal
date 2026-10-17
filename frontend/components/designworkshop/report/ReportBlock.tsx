@@ -403,7 +403,7 @@ function ReportImage({
       {url === null ? (
         <span className="rp-photo-missing">
           <ImageOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          This photograph can&rsquo;t be shown here — it will still be included in the generated file if it can be read.
+          Can&rsquo;t show this photo here; it&rsquo;s still in the file.
         </span>
       ) : url && !measuring ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -669,7 +669,7 @@ function ReportMapFigure({ block, modeKey }: { block: DwMapBlock; modeKey?: stri
           <img src={raster} alt={block.title || "Map of the workshop's places"} className="rp-figure-img" />
         ) : (
           <p className="rp-figure-absent">
-            The map is drawn into the picture when the file is generated. The places it will pin are listed below.
+            The map is drawn in the file. Places:
           </p>
         )
       ) : (
@@ -1038,7 +1038,7 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
               precisely the part of a document a reader trusts without checking. So the preview
               says what it is instead of pretending. */}
           <p className="rp-toc-note">
-            Built with real page numbers when the file is generated, to depth {block.depth}.
+            Page numbers are added in the file (depth {block.depth}).
           </p>
         </section>
       );

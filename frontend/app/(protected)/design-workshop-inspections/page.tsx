@@ -83,6 +83,7 @@ import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
 import type { AddressReference, PageResult } from "@/lib/types";
 import { CalendarField } from "@/components/ui/CalendarField";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 20;
 
@@ -103,7 +104,7 @@ const SEARCH_DEBOUNCE_MS = 300;
  */
 function describeFailure(error: unknown): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "Couldn't connect, so this list couldn't be loaded. Check your connection and try again.";
+    return "No connection. Try again.";
   }
   if (error.status === 403) {
     return error.message;
@@ -236,21 +237,19 @@ export default function DesignWorkshopInspectionsPage() {
             Inspector / Reviewer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Workshops to inspect lists the design &amp; prototype workshops you have been appointed to inspect. It
-            is open to Inspector / Reviewers, Ministry Admins, Admins and the Master Admin. Designers open their
-            workshops from Design workshops; inspectors are appointed on Workshop oversight.
+            For appointed inspectors.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
           </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <ActionGroup className="mt-7">
             <Link href="/dashboard" className="field-button">
               Back to dashboard
             </Link>
             <Link href="/guide" className="field-button-secondary">
               Open the walkthrough
             </Link>
-          </div>
+          </ActionGroup>
         </section>
       </div>
     );
@@ -262,7 +261,7 @@ export default function DesignWorkshopInspectionsPage() {
     <div>
       <PageHeader
         title="Workshops to inspect"
-        description="The design & prototype workshops you have been appointed to inspect. You can read every stage of one and change none of it."
+        description="Workshops you inspect. Read-only."
         icon={<FileSearch className="h-5 w-5" aria-hidden />}
       />
 

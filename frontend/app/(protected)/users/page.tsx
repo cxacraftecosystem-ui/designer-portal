@@ -68,7 +68,6 @@ import {
   newAccountBody,
   passwordFrom,
   passwordHasEdgeSpace,
-  provisionerTierPhrase,
   rowOffers,
   type AccountStatusKind,
   type CreateFormPrefill
@@ -81,6 +80,7 @@ import {
   RequirePasswordChangeDialog,
   TemporaryPasswordDialog
 } from "./AccountDialogs";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 function GrantCell({
   included,
@@ -303,7 +303,7 @@ function UsersScreen() {
       if (grantQuestionnaire) body.canManageQuestionnaire = true;
       if (grantDataset) body.canDownloadDataset = true;
       if (Object.keys(body).length === 0) {
-        setAdminMessage("Pick at least one of: admin access, questionnaire or dataset download to grant.");
+        setAdminMessage("Pick at least one capability.");
         setApplying(false);
         return;
       }
@@ -551,10 +551,9 @@ function UsersScreen() {
       deleteConfirm(
         "Delete this account?",
         <>
-          <span className="font-medium text-ink-900">{user.name || user.email}</span> loses access immediately and
-          cannot sign in again. This action cannot be undone.
+          <span className="font-medium text-ink-900">{user.name || user.email}</span> loses access immediately. This can&apos;t be undone.
         </>,
-        "Records they documented are kept, still attributed to them."
+        "Their records are kept."
       )
     );
     if (!ok) return;
@@ -575,7 +574,7 @@ function UsersScreen() {
     <>
       <PageHeader
         title="Users"
-        description={`Promotions from Professor upward; creating password accounts and looking after their passwords for ${provisionerTierPhrase()}; deleting accounts and granting capabilities for admins alone.`}
+        description="Accounts, roles and access."
         icon={<ShieldCheck className="h-5 w-5" aria-hidden />}
       />
       {error ? (
@@ -599,7 +598,7 @@ function UsersScreen() {
             It works once and expires {new Date(issuedLink.link.expiresAt).toLocaleString()}. Withdraw it if it went
             to the wrong address.
           </p>
-          <div className="flex flex-wrap items-center gap-2">
+          <ActionGroup>
             <button
               type="button"
               className="field-button-secondary"
@@ -621,7 +620,7 @@ function UsersScreen() {
             <button type="button" className="field-button-secondary" onClick={() => setIssuedLink(null)}>
               Done
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : issuedLink ? (
         <div className="mb-4 grid gap-2 rounded-md border border-line-200 bg-field-50 px-3 py-3">
@@ -640,7 +639,7 @@ function UsersScreen() {
               onFocus={(event) => event.currentTarget.select()}
               className="field-input min-w-0 flex-1 font-mono text-xs"
             />
-            <button
+            <ActionGroup className="max-sm:w-full"><button
               type="button"
               className="field-button-secondary"
               onClick={async () => {
@@ -686,13 +685,13 @@ function UsersScreen() {
               }}
             >
               Done
-            </button>
+            </button></ActionGroup>
           </div>
           {/* TERSE, per the owner's instruction of 2026-08-30 — but this sentence is not
               decoration: nothing can show this link again, and an admin who closes the panel
               without copying it has to issue another one. */}
           <p className="text-xs leading-5 text-ink-500">
-            Copy it now and send it yourself — it is shown once, works once, and expires{" "}
+            Shown once. Send it yourself — it works once and expires{" "}
             {new Date(issuedLink.link.expiresAt).toLocaleString()}.
           </p>
         </div>
@@ -717,12 +716,11 @@ function UsersScreen() {
                 <p className="text-sm leading-6 text-ink-700">
                   They sign in with Google, Microsoft or Yahoo using{" "}
                   <span className="break-all font-medium text-ink-900">{created.account.email}</span>, at{" "}
-                  <span className="break-all font-medium text-ink-900">{created.signInAt}</span>. Nothing else to hand
-                  over.
+                  <span className="break-all font-medium text-ink-900">{created.signInAt}</span>.
                 </p>
                 {created.passwordLink ? (
                   <p className="text-sm leading-6 text-ink-700">
-                    A link to set a password was e-mailed to them as well. It works once and expires{" "}
+                    A password link was also emailed; it expires{" "}
                     {new Date(created.passwordLink.expiresAt).toLocaleString()}.
                   </p>
                 ) : null}
@@ -731,8 +729,7 @@ function UsersScreen() {
             ) : created.temporaryPassword ? (
               <>
                 <p className="text-sm leading-6 text-ink-700">
-                  Their temporary password is below. It is shown only now — copy it and hand it over, not in the same
-                  message as the address they sign in with,{" "}
+                  Temporary password below, shown once. Send it separately from their address,{" "}
                   <span className="break-all font-medium text-ink-900">{created.account.email}</span>. They sign in at{" "}
                   <span className="break-all font-medium text-ink-900">{created.signInAt}</span>.
                 </p>
@@ -783,7 +780,7 @@ function UsersScreen() {
             {/* An account at the creator's own tier is one the link route refuses them (403 every
                 time), so the panel says why there is no button rather than offering one. */}
             {createdLinkNote ? <p className="text-sm leading-6 text-ink-700">{createdLinkNote}</p> : null}
-            <div className="flex flex-wrap items-center gap-2">
+            <ActionGroup>
               {createdLinkOffered ? (
                 <button
                   type="button"
@@ -814,7 +811,7 @@ function UsersScreen() {
               >
                 Done
               </button>
-            </div>
+            </ActionGroup>
           </section>
         ) : null}
       </div>
@@ -830,13 +827,13 @@ function UsersScreen() {
               Add a person
             </h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              Their name, address and role, and how they will sign in — in one step.{" "}
+              Name, address, role and sign-in.{" "}
               {/* Two readers, two true sentences: an admin's create admits the address on "Who may
                   sign in" whatever stood there, while a ministry admin's is refused (409) for an
                   address an admin refused or suspended — overturning that is an admin's decision. */}
               {admin
-                ? "Creating the account also admits the address on “Who may sign in”."
-                : "Creating the account lets that address sign in too — except an address an admin has refused or suspended: only an admin can let that one back in."}
+                ? "Also adds the address to “Who may sign in”."
+                : "Also lets the address sign in, unless an admin refused it."}
             </p>
           </div>
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
@@ -901,14 +898,14 @@ function UsersScreen() {
             </Field>
           </div>
           {role === "" && prefill.email ? (
-            <p className="text-xs leading-5 text-ink-500">Choose the role yourself: the link filled in the address only.</p>
+            <p className="text-xs leading-5 text-ink-500">Choose a role.</p>
           ) : null}
           {createsPeerAccount(currentUser, role) ? (
             // Said BEFORE the account exists: afterwards the row only reads "Peer tier".
             <p className={CAUTION_CLASS}>
               {isMasterAdmin(currentUser)
-                ? "Master admins are peers: once this account exists, no master admin can set its password, issue it a link or correct it here."
-                : "This is your own role: once the account exists you cannot set its password, issue it a link or correct it — only a higher role can."}
+                ? "Once created, other master admins can't manage its password."
+                : "Your own role — once created, only a higher role can manage it."}
             </p>
           ) : null}
           <fieldset className="grid gap-2">
@@ -987,13 +984,7 @@ function UsersScreen() {
             one fewer name than there are roles. The count is `.length` and the names come from
             `ROLES_BY_RANK` (already highest-first) through `roleLabel`, so this sentence cannot
             disagree with the picker three lines below it that is built from the same array. */}
-        {ROLES_BY_RANK.length} roles: {ROLES_BY_RANK.map(roleLabel).join(" → ")}. You can promote
-        users up to your own role, and manage only users below your role. Every role from
-        Professor upward may change the role of anyone below it. {provisionerTierPhrase()} also create
-        password accounts, set temporary passwords, issue password links and correct names and addresses;
-        deleting an account, granting a capability and letting back in an address an admin refused or
-        suspended remain admin actions. Professors and above have every capability; the checkboxes
-        give a single capability to somebody with a lower role.
+        {ROLES_BY_RANK.length} roles: {ROLES_BY_RANK.map(roleLabel).join(" → ")}. You can promote up to your own role and manage roles below it.
       </p>
       <p className="mb-4 text-xs text-ink-muted">
         {/* CORRECTED 2026-10-09. This warned that promoting somebody to Designer without empanelling
@@ -1004,24 +995,17 @@ function UsersScreen() {
             somebody a working day, is the exception: `ensure_empanelled` only ever CREATES, so a
             SUSPENDED empanelment stays suspended and the sign-in is refused until an admin restores
             it. */}
-        <span className="font-medium text-ink-700">Designer is the one role with a second half: the designer roster.</span>{" "}
-        An account made a designer here is empanelled for you — at once when it is created on this page, otherwise at its
-        next sign-in. The exception is an address whose empanelment was suspended: it stays suspended, and that
-        person&apos;s sign-in is refused until an admin restores it.{" "}
+        Designers are added to the roster automatically, unless suspended there.{" "}
         {canManageDesignerRoster(currentUser) ? (
           <Link href="/admin/designers" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
             Open the designer roster
           </Link>
         ) : (
-          <span>Ask an admin if somebody you made a designer cannot sign in.</span>
+          <span>Ask an admin if a designer can&apos;t sign in.</span>
         )}
       </p>
       <p className="mb-4 text-xs text-ink-muted">
-        Two things depend on role alone and have no checkbox: adding or editing crafts and
-        workshops (Professor and above; deleting either is admin-only), and creating artisans,
-        products, tools, processes and interviews (Researcher and above). Field contributors and
-        volunteers keep answering existing interviews, uploading media and commenting. To give
-        someone one of these, promote them.
+        Editing crafts and workshops needs Professor; creating records needs Researcher.
       </p>
       <div className="mb-4">
         <SearchInput
@@ -1202,7 +1186,7 @@ function UsersScreen() {
                             </button>
                           ) : null}
                           {offers.remove ? (
-                            <button type="button" className={rowAction("danger")} onClick={() => remove(user)}>
+                            <button type="button" data-danger className={rowAction("danger")} onClick={() => remove(user)}>
                               Delete
                             </button>
                           ) : null}
@@ -1226,16 +1210,14 @@ function UsersScreen() {
           password an administrator has required a change of — and invited a needless temporary
           password, which WOULD have made a shared secret. */}
       <p className="mt-2 text-xs text-ink-muted">
-        “{ACCOUNT_STATUS_LABEL.MUST_CHOOSE_NEW_PASSWORD}” means the account must replace its password at its next
-        sign-in — either because a provisioner typed it (a temporary password somebody else knows) or because a
-        change was required of the owner&apos;s own. “{ACCOUNT_STATUS_LABEL.NEVER_SIGNED_IN}” means no sign-in has been
-        recorded for the account.
+        “{ACCOUNT_STATUS_LABEL.MUST_CHOOSE_NEW_PASSWORD}”: a new password is required at next sign-in — because a provisioner typed it, or because a change was
+        required of the owner&apos;s own. “{ACCOUNT_STATUS_LABEL.NEVER_SIGNED_IN}”: no sign-in yet.
       </p>
       {masterControls ? (
         <section className="panel mt-6 p-4">
           <h2 className="font-display font-bold text-xl text-ink">Admin management</h2>
           <p className="mt-1 text-sm text-ink-muted">
-            Select one or more existing users, then grant them administrator access and decide their individual privileges in one action. Privileges are additive here — revoke individually in the table above.
+            Grant capabilities to selected users. Revoke them in the table above.
           </p>
           {adminMessage ? <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{adminMessage}</div> : null}
           <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
@@ -1287,8 +1269,8 @@ function UsersScreen() {
           setError(null);
           setNotice(
             mustChange
-              ? `Temporary password set for ${who}, who has been signed out everywhere. Send it to them yourself; at their next sign-in they choose their own.`
-              : `Password set for ${who}, who has been signed out everywhere. Send it to them yourself; it stays theirs until they change it.`
+              ? `Temporary password set for ${who}; they're signed out. Send it yourself.`
+              : `Password set for ${who}; they're signed out. Send it yourself.`
           );
           load();
         }}
@@ -1301,7 +1283,7 @@ function UsersScreen() {
           const who = updated.name || updated.email;
           setRequiring((current) => ({ ...current, open: false }));
           setError(null);
-          setNotice(`${who} must choose a new password at their next sign-in, and has been signed out everywhere.`);
+          setNotice(`${who} is signed out and must choose a new password.`);
           load();
           // AFTER the flag: the decision stands whether or not the link is then issued, and a refused
           // link reaches the alert at the top of the page with the server's own sentence.
@@ -1315,7 +1297,7 @@ function UsersScreen() {
         description={viewing?.email}
         footer={
           viewing ? (
-            <div className="flex flex-wrap justify-end gap-2">
+            <ActionGroup align="end">
               <button type="button" className="field-button-secondary" onClick={() => setViewing(null)}>
                 Close
               </button>
@@ -1333,7 +1315,7 @@ function UsersScreen() {
                   Update
                 </button>
               ) : null}
-            </div>
+            </ActionGroup>
           ) : null
         }
       >

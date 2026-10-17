@@ -380,7 +380,7 @@ export const DESIGN_WORKSHOP_SCAN_COPY: Record<
     // to. See this type's header.
     headline: "You have not been added to this workshop yet",
     detail:
-      "Only an admin can add somebody to a workshop. Show them this code — it names the right one exactly — and ask to be put on it. Nothing you have recorded on this device is affected.",
+      "Show this code to an admin and ask to be added. Your work here is kept.",
     canOpen: false
   },
   UNKNOWN_NO_SIGNAL: {

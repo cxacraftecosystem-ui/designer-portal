@@ -21,6 +21,7 @@ import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { canEditOthersRecord, hasRank, isAdmin, roleLabel } from "@/lib/permissions";
 import { reviewRecordViewHref } from "@/lib/recordView";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * One row of the review queue. The backend only returns records whose creator ranks strictly
@@ -258,8 +259,8 @@ export default function ReviewPage() {
   async function approveSelected(rows: PendingItem[]) {
     const ok = await confirm({
       title: `Approve ${rows.length} record${rows.length === 1 ? "" : "s"}?`,
-      body: "Each one is approved exactly as it stands, with no note.",
-      note: "Approvals can't be undone here. Send anything that needs a change for revision one at a time.",
+      body: "Each is approved as it stands.",
+      note: "This can't be undone here.",
       confirmLabel: `Approve ${rows.length}`
     });
     if (!ok) return;
@@ -286,8 +287,7 @@ export default function ReviewPage() {
     const approved = rows.length - failed.length;
     if (failed.length) {
       setError(
-        `${approved} approved, ${failed.length} could not be. The ones that failed are still ticked — ` +
-          "they may have been decided by another reviewer already."
+        `${approved} approved, ${failed.length} failed (still ticked — maybe already decided).`
       );
     } else {
       setInfo(`${approved} record${approved === 1 ? "" : "s"} approved.`);
@@ -340,7 +340,7 @@ export default function ReviewPage() {
             <span className="font-medium text-ink-900">{item.label}</span> will show as rejected to the contributor.
           </>
         ),
-        note: "If you want them to fix it and resubmit, close this and use Send for revision instead.",
+        note: "To have it fixed, use Send for revision instead.",
         tone: "danger",
         confirmLabel: "Reject record"
       });
@@ -399,7 +399,7 @@ export default function ReviewPage() {
         </button>
         <button
           type="button"
-          className={rowAction("danger", activeAction === "reject" ? "bg-red-50 dark:bg-red-950/40" : undefined)}
+          data-danger className={rowAction("danger", activeAction === "reject" ? "bg-red-50 dark:bg-red-950/40" : undefined)}
           onClick={() => toggleAction(item, "reject")}
           disabled={submitting}
         >
@@ -452,11 +452,10 @@ export default function ReviewPage() {
         />
         {activeAction === "revise" ? (
           <p id={noteHelpId} className="mt-1 text-xs text-ink-500">
-            Comments are required — the record goes back to the contributor as &quot;Needs revision&quot; and
-            returns to Pending once they edit it.
+            Required. The contributor sees it as &quot;Needs revision&quot;.
           </p>
         ) : null}
-        <div className="mt-2 flex flex-wrap gap-2">
+        <ActionGroup className="mt-2">
           <button
             type="button"
             className="field-button h-9 min-h-0 px-3 text-xs pointer-coarse:h-11"
@@ -476,7 +475,7 @@ export default function ReviewPage() {
           >
             Cancel
           </button>
-        </div>
+        </ActionGroup>
       </>
     );
   }
@@ -511,7 +510,7 @@ export default function ReviewPage() {
   function lockNote(item: PendingItem) {
     return editLocked(item) ? (
       <p className="mt-1 max-w-md text-xs text-amber-800 dark:text-amber-100">
-        Submitted outside its workshop&apos;s dates — only an admin or master admin can edit or approve it.
+        Outside its workshop&apos;s dates — admins only.
       </p>
     ) : null;
   }
@@ -532,8 +531,8 @@ export default function ReviewPage() {
         title="Review"
         description={
           hasRank(user, "PROFESSOR")
-            ? "Approve, fix in place with Update, send for revision, or reject pending submissions from contributors you may review."
-            : "Approve, send for revision, or reject pending submissions from contributors you may review."
+            ? "Approve, update, send back or reject pending records."
+            : "Approve, send back or reject pending records."
         }
         icon={<ClipboardCheck className="h-5 w-5" aria-hidden />}
       />
@@ -567,7 +566,7 @@ export default function ReviewPage() {
           <div className="p-4">
             <EmptyState
               title="No pending submissions"
-              body="Records submitted by people whose role is below yours will appear here for review."
+              body="Records from roles below yours appear here."
             />
           </div>
         ) : (
@@ -578,7 +577,7 @@ export default function ReviewPage() {
                   {chosen.length} record{chosen.length === 1 ? "" : "s"} selected
                   {bulkProgress ? ` · approving ${bulkProgress.done + 1} of ${bulkProgress.total}…` : ""}
                 </span>
-                <div className="flex items-center gap-3">
+                <ActionGroup>
                   <button
                     type="button"
                     className="text-xs font-semibold text-ink-500 pointer-coarse:min-h-11 pointer-coarse:px-2"
@@ -595,7 +594,7 @@ export default function ReviewPage() {
                     <Check className="h-3.5 w-3.5" aria-hidden />
                     Approve {chosen.length}
                   </button>
-                </div>
+                </ActionGroup>
               </div>
             ) : null}
             {/* PHONES: ONE CARD PER RECORD (UX audit DW-07). At 390px the 920px table showed two of its

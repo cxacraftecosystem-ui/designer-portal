@@ -207,7 +207,7 @@ export function WorkshopAccessQueuePanel({ refreshToken, onChanged }: { refreshT
                   <div className="mt-3">
                     <RowActions>
                       <button
-                        className={rowAction("danger")}
+                        data-danger className={rowAction("danger")}
                         disabled={busy === row.id}
                         onClick={() => decide(row, "DENIED")}
                         type="button"

@@ -407,9 +407,7 @@ export function ReportAccentPicker({
         <div className="min-w-0">
           <h3 className="font-display text-base font-bold text-ink-900">Report colour</h3>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
-            One accent colour. The headings, the table headers, the rules, the zebra stripes and the figures are all derived
-            from it, so the whole document stays one palette and the table header&apos;s text is always readable on it. The
-            pages below are redrawn as you choose.
+            One accent colour for headings, tables and figures.
           </p>
         </div>
       </div>
@@ -498,11 +496,11 @@ export function ReportAccentPicker({
             ? "Keeping this colour on the workshop…"
             : !chosen
               ? saved
-                ? "Using the colour saved on stage 20 for this file."
-                : "No colour chosen — the report keeps the template’s own."
+                ? "Saved colour from stage 20."
+                : "Template colour."
               : preset
-                ? `${preset.label} — this file only. Stage 20 is untouched.`
-                : "A custom colour, for this file only. Stage 20 is untouched."}
+                ? `${preset.label} — this file only.`
+                : "Custom — this file only."}
         </span>
       </div>
 
@@ -628,8 +626,7 @@ export function ReportAccentPicker({
               Use this colour
             </button>
             <p className="text-xs leading-5 text-ink-muted">
-              Closing this panel keeps the colour too — nothing you have chosen here is thrown away. It is applied to this
-              file and saved as the workshop&apos;s colour.
+              Closing keeps the colour and saves it to the workshop.
             </p>
           </div>
         ) : null}
@@ -640,9 +637,8 @@ export function ReportAccentPicker({
         // accent is a heading nobody can read, and the alternative to darkening it was refusing
         // the colour outright — which is not what somebody standing in a district office needs.
         <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-          That colour is too pale to read as a heading on white paper, so the report uses{" "}
-          <code className="font-mono text-xs">{palette.accent.toUpperCase()}</code> — the same colour, darkened just enough
-          to be legible. The swatches and the pages below show what the file will actually contain.
+          Too pale to read, so the report uses{" "}
+          <code className="font-mono text-xs">{palette.accent.toUpperCase()}</code>, slightly darker.
         </p>
       ) : null}
     </div>

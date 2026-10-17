@@ -93,7 +93,7 @@ async function heldPostsOn(workshopId: string, user: User): Promise<WorkshopPost
 }
 
 /** Said where held controls would be while the answer is out. Never into a live region: see below. */
-export const HELD_POST_PENDING = "Checking whether you hold a post on this workshop…";
+export const HELD_POST_PENDING = "Checking your access…";
 
 /**
  * The sentence for a component that prints its reason where its buttons would be: the refusal, the
@@ -184,9 +184,9 @@ export function recordFilingHold(stored: HeldPostRefusal, chosen: HeldPostRefusa
   const saveHeld = recordHeld || writesHeld(chosen);
   const notice: HeldPostRefusal =
     typeof stored === "string"
-      ? `This ${noun} is filed under a design workshop you hold a post on, so it cannot be changed or deleted here. ${stored}`
+      ? `This ${noun} belongs to a workshop you oversee, so it can't be changed or deleted. ${stored}`
       : typeof chosen === "string"
-        ? `The workshop chosen for this ${noun} is one you hold a post on, so it cannot be filed there — choose another. ${chosen}`
+        ? `You oversee that workshop, so this ${noun} can't be filed there — choose another. ${chosen}`
         : saveHeld
           ? undefined
           : null;
@@ -254,10 +254,10 @@ export function mediaWriteHold(holds: readonly HeldPostRefusal[]): HeldPostRefus
 export const MEDIA_HELD_LABEL = "Read-only to you";
 
 /** Said in place of a held file's own control text; the sentence why is in the list's notice. */
-export const MEDIA_HELD_REASON = "Read-only to you: this file is part of a design workshop you hold a post on.";
+export const MEDIA_HELD_REASON = "Read-only: part of a workshop you oversee.";
 
 /** {@link HELD_POST_PENDING}, for a list whose files belong to several workshops. */
-export const HELD_POST_PENDING_FILES = "Checking whether you hold a post on the workshops these files belong to…";
+export const HELD_POST_PENDING_FILES = "Checking your access…";
 
 /** What a held file's control says where its own text would be: the reason, pending, or nothing. */
 export function mediaHeldReason(hold: HeldPostRefusal): string | null {
@@ -278,8 +278,7 @@ export function mediaListNotice(holds: readonly HeldPostRefusal[], acts: string)
   const sentences = [...new Set(holds.filter((hold): hold is string => typeof hold === "string"))];
   if (sentences.length) {
     return (
-      `Files marked “${MEDIA_HELD_LABEL}” are part of a design workshop you hold a post on, so they cannot be ${acts} ` +
-      `here. ${sentences.join(" ")}`
+      `Files marked “${MEDIA_HELD_LABEL}” belong to a workshop you oversee and can't be ${acts}. ${sentences.join(" ")}`
     );
   }
   return holds.some((hold) => hold === undefined) ? undefined : null;
@@ -303,14 +302,12 @@ export function mediaListNotice(holds: readonly HeldPostRefusal[], acts: string)
 export function mediaUploadHold(chosen: HeldPostRefusal, linked: HeldPostRefusal): HeldPostRefusal {
   if (typeof chosen === "string") {
     return (
-      "The design workshop chosen for these files is one you hold a post on, so they cannot be filed under it — " +
-      `choose another, or none. ${chosen}`
+      `You oversee that workshop, so these files can't be filed under it — choose another, or none. ${chosen}`
     );
   }
   if (typeof linked === "string") {
     return (
-      "The record chosen for these files is filed under a design workshop you hold a post on, so they cannot be " +
-      `attached to it — choose another. ${linked}`
+      `That record belongs to a workshop you oversee, so these files can't be attached to it — choose another. ${linked}`
     );
   }
   return chosen === undefined || linked === undefined ? undefined : null;
@@ -329,8 +326,7 @@ export function mediaUploadHold(chosen: HeldPostRefusal, linked: HeldPostRefusal
 export function attachHold(hold: HeldPostRefusal, subject: string): HeldPostRefusal {
   if (typeof hold !== "string") return hold;
   return (
-    `The design workshop chosen for ${subject} is one you hold a post on, so ${subject} cannot be attached to it — ` +
-    `choose another, or leave it unattached. ${hold}`
+    `You oversee that workshop, so ${subject} can't be attached to it — choose another, or none. ${hold}`
   );
 }
 
@@ -372,11 +368,10 @@ export function reviewEditHold(hold: HeldPostRefusal, recordType: string): HeldP
   const kind = recordType.trim().toLowerCase();
   const subject =
     kind === "media"
-      ? "This file is part of a design workshop you hold a post on"
-      : `This ${REVIEW_NOUNS[kind] ?? kind} is filed under a design workshop you hold a post on`;
+      ? "This file belongs to a workshop you oversee"
+      : `This ${REVIEW_NOUNS[kind] ?? kind} belongs to a workshop you oversee`;
   return (
-    `${subject}, so its fields cannot be edited here — approving it, rejecting it or sending it back for ` +
-    `revision is still yours. ${hold}`
+    `${subject}, so its fields can't be edited — you can still approve, reject or send it back. ${hold}`
   );
 }
 

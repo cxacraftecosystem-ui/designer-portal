@@ -97,10 +97,10 @@ function describeFailure(error: unknown, user: User | null | undefined): string 
   }
   if (oversightRefusalMeansNoPosts(error, user)) {
     // An admin the server will not yet show this surface to holds no post anywhere — so none here.
-    return "You haven't been named Assistant Director or Regional Director on any workshop, so this one isn't open to you. A Ministry Admin, an Admin or the Master Admin names them on Workshop oversight.";
+    return "You aren't an Assistant or Regional Director on any workshop yet. An admin names officers on Workshop oversight.";
   }
   if (error.status === 404) {
-    return "This workshop isn't open to you. You may not have been named its Assistant Director or Regional Director, or it may have been deleted. A Ministry Admin, an Admin or the Master Admin names them on Workshop oversight.";
+    return "This workshop isn't open to you, or was deleted. An admin names officers on Workshop oversight.";
   }
   return error.message;
 }
@@ -394,9 +394,7 @@ export default function WorkshopUnderOversightPage({
             Officer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Only someone named on a workshop as its Assistant Director or Regional Director can open
-            it here: an Assistant Director, a Regional Director, a Ministry Admin, an Admin or the
-            Master Admin. Designers open their design &amp; prototype workshops from Design workshops.
+            For officers named on this workshop. Designers: use Design workshops.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as{" "}

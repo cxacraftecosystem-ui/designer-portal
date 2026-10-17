@@ -176,15 +176,15 @@ export function WorkshopSearchPanel({
         {!ready
           ? "Reading this workshop from this device…"
           : result.status === "IDLE"
-            ? `Searches every written answer on this device — ${index.fieldCount} across ${index.stageCount} stage${index.stageCount === 1 ? "" : "s"}. No connection needed.`
+            ? `Searches ${index.fieldCount} answers across ${index.stageCount} stage${index.stageCount === 1 ? "" : "s"}. Works offline.`
             : result.status === "TOO_SHORT"
               ? `Type at least ${MIN_QUERY_CHARS} characters.`
               : result.status === "NO_TERMS"
                 ? "There are no words or numbers in that to search for."
                 : result.total === 0
-                  ? `Nothing in this workshop holds ${result.terms.length === 1 ? "that word" : "all of those words"}. Every answer saved on this device was searched — ${index.fieldCount} of them.`
+                  ? `No matches in ${index.fieldCount} answers.`
                   : result.truncated
-                    ? `Showing the ${MAX_HITS} closest of ${result.total} matching answers. Add another word to narrow it.`
+                    ? `Top ${MAX_HITS} of ${result.total}. Add a word to narrow.`
                     : `${result.total} matching answer${result.total === 1 ? "" : "s"}.`}
       </p>
 

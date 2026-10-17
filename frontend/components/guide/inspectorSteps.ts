@@ -97,16 +97,16 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     summary:
       "Your list of the design & prototype workshops you have been assigned to inspect.",
     why:
-      "Inspections are assigned one workshop at a time, so you see only the workshops you are responsible for. If a workshop isn't here, it hasn't been assigned to you.",
+      "You see only the workshops assigned to you.",
     fields: [
       "Search — by title, craft, cluster or workshop code, across your assignments only",
       "Each row: the workshop's title, its code, craft and cluster, its dates and its status",
       "Filters — status, submission round, state, type of workshop, and the days it started between; each narrows your assignments and none can add one, and Clear filters puts them all back"
     ],
     watch: [
-      "Inspections are assigned by a Ministry Admin, an Admin or the Master Admin, one workshop at a time. To be assigned a workshop, ask one of them.",
-      "A Ministry Admin, an Admin or the Master Admin can also be assigned to inspect a workshop. Like you, they see only the workshops assigned to them.",
-      "You can't be assigned a workshop you worked on, because an inspection has to be independent. If a workshop you expected is missing, that may be why.",
+      "Ministry Admins and admins assign inspections. Ask one of them.",
+      "Admins can be assigned to inspect too, and see only their assigned workshops.",
+      "You can't inspect a workshop you worked on.",
       "If no workshop has been assigned to you yet, the page says so. If the list couldn't be loaded, it says that instead."
     ]
   },
@@ -119,7 +119,7 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     summary:
       "One workshop opened: all 22 stages as the designers recorded them, with who wrote each field and how complete it is.",
     why:
-      "The report goes to the Development Commissioner's office, where its readers didn't attend the workshop, so who wrote each field matters. Each value shows its author exactly as the designer sees it on their own form.",
+      "Report readers weren't at the workshop, so each value shows who wrote it.",
     fields: [
       "Dates, Designer, Venue — as stage 1 recorded them",
       "Required fields answered — a percentage across every stage",
@@ -131,9 +131,9 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     watch: [
       "This page is read-only: you can read every stage but not change it.",
       "You can open the photographs, recordings, videos and attachments, but not change them. If a file stops opening, select Refresh files.",
-      "The completeness figure counts required fields answered — it doesn't say the answers are right. A stage that a workshop may skip is marked beside its count.",
-      "Values chosen from a record are copied when the stage is saved, so the record may have been corrected since. The line under the value names the record it came from.",
-      "Each workshop's own questions are shown with their answers and who gave them. A question that is no longer asked still shows its answer.",
+      "Completeness counts answered fields, not correct ones.",
+      "Values chosen from a record are copies; the record may have changed since.",
+      "Each workshop's own questions are shown with their answers.",
     ]
   },
   {
@@ -145,7 +145,7 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     summary:
       "Where you write a note about a stage or about the whole report, and send the report back to its designers if it needs work.",
     why:
-      "Your note is recorded under your name against this round of submission, and you decide whether the report stays where it is or goes back to its designers. Notes are permanent, so the record of corrections stays complete.",
+      "Your note is recorded under your name. Notes can't be edited later.",
     // The one card on this surface whose `fields` ARE real labels, because this panel is the only
     // place on it that asks an inspector for anything. Read off the panel in screen order.
     fields: [
@@ -155,10 +155,10 @@ export const INSPECTOR_STEPS: GuideStep[] = [
       "“Send the report back” — moves it to Needs revision"
     ],
     watch: [
-      "The two buttons do different things. File a suggestion records your note and leaves the report where it is. Send the report back records the note and moves the report to Needs revision, so its designers act on it.",
-      "A note can't be edited or withdrawn once it is filed. If you change your mind, file another; both stay on the record.",
-      "You can file notes once the designers have handed the report in for inspection. Until then, the panel says it hasn't been handed in yet.",
-      "Nothing you do here changes a workshop's content — no stage value, photograph or record. Sending a report back changes only its status; the designers correct the stages, and it returns to Pre-submission for another look.",
+      "File a suggestion keeps the report where it is. Send it back moves it to Needs revision.",
+      "Notes can't be edited or withdrawn. File another if you change your mind.",
+      "You can file notes once the report is handed in.",
+      "Nothing here changes a workshop's content; sending back changes only its status.",
     ]
   },
   {
@@ -170,18 +170,18 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     summary:
       "The queue of submitted records waiting for a decision — the “Reviewer” half of your role.",
     why:
-      "Besides your assigned workshops, you review records — artisans, products, processes, tools and interviews — and approve them, reject them or send them back for revision.",
+      "You also review records — approve, reject or send back for revision.",
     fields: [
       "The queue, newest first, with the record's type, title and who submitted it",
       "Approve · Reject · Send for revision",
       "A comment — mandatory on Send for revision"
     ],
     watch: [
-      "Your queue holds records submitted by Designers, Researchers, Field Contributors and Crowdsource Volunteers — not by other Inspector / Reviewers or more senior roles.",
-      "You review other people's records but don't edit them. To get something fixed, use Send for revision and say what to change; the person who recorded it corrects it and resubmits.",
-      "Send for revision needs a comment. Reject ends the record, so if it can be fixed, Send for revision is usually the better choice.",
-      "You can tick several records and approve them together. Reject and Send for revision are done one record at a time, each with its own note.",
-      "These are archive records, not workshop stages. Approving an artisan here doesn't change any workshop stage that copied that artisan — the stage keeps the copy taken when it was saved."
+      "Your queue holds records from roles below yours.",
+      "You don't edit others' records. Use Send for revision and say what to change.",
+      "Send for revision needs a comment. Prefer it to Reject when a record can be fixed.",
+      "You can approve several records at once; reject and send back one at a time.",
+      "Approving a record doesn't change workshop stages that copied it."
     ]
   }
 ];

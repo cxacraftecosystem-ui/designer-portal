@@ -93,6 +93,7 @@ import { loadStageReferences } from "@/lib/referenceCache";
 import { workshopRecordTypeLabel, type WorkshopCodeRef, type WorkshopRecordType } from "@/lib/workshopCodes";
 // §3.5's cached-and-stale sentence, shared with the workshop pickers so one fact has one wording.
 import { cachedListLine } from "@/lib/workshopOptions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /*
   THE CODE SCANNER IS LOADED WHEN A DESIGNER OPENS IT. It brings the QR decoder and the image
@@ -301,7 +302,7 @@ export function scopeNoticeLines(
   }
   if (field.refScope === "WORKSHOP" && !payload.scopedToWorkshop) {
     lines.push(
-      "This design workshop is not linked to a workshop record yet, so every documented record is offered rather than only this workshop's."
+      "Not linked to a workshop yet — showing all records."
     );
   }
   /*
@@ -326,7 +327,7 @@ export function scopeNoticeLines(
   */
   if (field.refScope === "WORKSHOP" && payload.scopedToWorkshop && !payload.filtered && !payload.options.length) {
     lines.push(
-      "Nothing is documented under this design workshop’s linked workshop yet. Create the record here, or link the existing one to the workshop and it will appear."
+      "No records in the linked workshop yet. Create one here."
     );
   }
   /*
@@ -368,8 +369,8 @@ export function scopeNoticeLines(
     */
     lines.push(
       showsTentative
-        ? `Only the first ${REFERENCE_PAGE} matches are listed, tentative ones first — type more of the name to narrow them.`
-        : `Only the first ${REFERENCE_PAGE} matches are listed — type more of the name to narrow them.`
+        ? `First ${REFERENCE_PAGE} matches, tentative first. Type more to narrow.`
+        : `First ${REFERENCE_PAGE} matches. Type more to narrow.`
     );
   }
   return lines;
@@ -635,8 +636,7 @@ export function inlineSeed({
  * outbox owns the entry now.
  */
 const QUEUED_OFFLINE_NOTICE =
-  "There is no connection, so this record has been saved on this device and will upload when you are back online. " +
-  "It can be linked here once it has uploaded — reopen this list then and choose it.";
+  "Saved on this device. Once it uploads, choose it here to link it.";
 
 /**
  * The two things the craft picker can say about a craft that is not in the register, by rank.
@@ -648,7 +648,7 @@ const QUEUED_OFFLINE_NOTICE =
  * a designer looking for signal instead of at the craft register. When the handset gains its half it
  * must carry these words, not a second phrasing of them.
  */
-const CRAFT_REGISTER_LINK = "Add or correct a craft on the crafts page (opens in a new tab)";
+const CRAFT_REGISTER_LINK = "Edit crafts (new tab)";
 
 const CRAFT_REGISTER_BLOCKED =
   "Adding a craft to the register needs craft-creation access — ask the master admin. This link is optional: type " +
@@ -750,14 +750,12 @@ export function scanTypeRefusal(field: DwField, ref: WorkshopCodeRef): string | 
   const scanned = workshopRecordTypeLabel(ref.recordType).toLowerCase();
   if (!wanted) {
     return (
-      `That code names ${article(scanned)} ${scanned}. “${field.label}” holds a row recorded in this design ` +
-      `workshop, and entries of that kind carry no printed code — choose one from the list instead.`
+      `That code is for ${article(scanned)} ${scanned}. “${field.label}” entries have no printed code — choose one from the list.`
     );
   }
   const noun = pickerNoun(field);
   return (
-    `That code names ${article(scanned)} ${scanned}, and “${field.label}” takes ${article(noun)} ${noun}. ` +
-    `Scan the ${noun}’s own card or tag, or search for it in the list.`
+    `That code is for ${article(scanned)} ${scanned}; “${field.label}” takes ${article(noun)} ${noun}.`
   );
 }
 
@@ -780,9 +778,7 @@ export type ScanLookup = { ok: true; option: DwReferenceOption } | { ok: false; 
  */
 function outOfScopeRefusal(option: DwReferenceOption): string {
   return (
-    `That code names “${option.label}”, which is documented under a different workshop — and this box offers only ` +
-    `records linked to this design workshop’s workshop. Nothing on this row has been changed. Link that record to ` +
-    `this workshop and scan again, or choose one of the records that already belong to it.`
+    `“${option.label}” belongs to a different workshop. Nothing on this row has been changed. Link that record to this workshop, or choose another.`
   );
 }
 
@@ -816,8 +812,7 @@ function unresolvedRefusal(field: DwField, cascadeLabel: string): string {
     ...(cascadeLabel ? [`it may not belong to the ${cascadeLabel.toLowerCase()} chosen on this row`] : [])
   ];
   return (
-    `No ${noun} this box can offer matches that code — ${reasons.join(", or ")}. Nothing on this row has been ` +
-    `changed; search for it by name in the list instead.`
+    `No ${noun} here matches that code — ${reasons.join(", or ")}. Search by name instead.`
   );
 }
 
@@ -901,12 +896,11 @@ export function scanLookupOutcome({
  * a code that decoded to the wrong record type in its own words.
  */
 const SCAN_OFFLINE_NOTICE =
-  "No connection, so that code could not be looked up. The row is unchanged — scan again when there is signal, or " +
-  "search by name.";
+  "No connection. Scan again later, or search by name.";
 
 /** The server answered, and not with an answer. Says what did NOT happen, which is the useful half. */
 const SCAN_LOOKUP_FAILED_NOTICE =
-  "That code could not be looked up just now. The row is unchanged — try the scan again, or search by name.";
+  "Couldn't look up that code. Try again, or search by name.";
 
 /**
  * ONE CARD READER OPEN AT A TIME, ACROSS EVERY PICKER ON THE STAGE — a correctness rule and not
@@ -965,7 +959,7 @@ type PickerNotice = { tone: "warn" | "done"; text: string };
 export function refusedByUnsavedWork(retry: string): PickerNotice {
   return {
     tone: "warn",
-    text: `A form on this stage has unsaved work, so this row was left as it was. Answer the prompt on screen, then ${retry}.`
+    text: `Unsaved work on this stage. Answer the prompt, then ${retry}.`
   };
 }
 
@@ -1027,13 +1021,12 @@ export function scanCommitDecision({
     return {
       commit: null,
       notice:
-        "The record this list depends on changed while that code was being looked up, so nothing was chosen. " +
-        "Nothing on this row has been changed — scan the card again to choose from the new list."
+        "The list changed while that code was being looked up. Nothing on this row has been changed — scan again."
     };
   }
   return {
     commit: held.option,
-    notice: `“${held.option.label}” is now chosen for “${field.label}” on this row.`
+    notice: `“${held.option.label}” is now chosen for “${field.label}”.`
   };
 }
 
@@ -1519,7 +1512,7 @@ export function StageReferenceSelect({
         // save", and the next move is to edit it again.
         setNotice({
           tone: "warn",
-          text: "Your changes were saved to the record, but its details couldn't be loaded just now, so the boxes on this row still show what it said before. Re-open the list and pick it again to refresh them."
+          text: "Saved, but this row didn't refresh. Pick the record again to update it."
         });
         return;
       }
@@ -1583,7 +1576,7 @@ export function StageReferenceSelect({
         // words on a guess.
         setNotice({
           tone: "warn",
-          text: "Your changes were saved. Boxes on this row that were already filled in have been left as they are — check them against the record if you changed something they show."
+          text: "Saved. Boxes you'd already filled in were left as they are."
         });
       }
     },
@@ -1615,8 +1608,8 @@ export function StageReferenceSelect({
         setNotice({
           tone: "warn",
           text: previous
-            ? "The record was saved and linked, but its details couldn't be loaded just now, so the boxes the previous record filled in have been cleared. Fill them in by hand, or reopen the list and search for it."
-            : "The record was saved and linked, but its details couldn't be loaded just now, so the boxes it would have filled in are still blank. Fill them in by hand, or reopen the list and search for it — a required box left blank will stop the stage being submitted."
+            ? "Saved and linked, but its details didn't load, so the old values were cleared. Fill them in, or pick it again."
+            : "Saved and linked, but its details didn't load. Fill the boxes in, or pick it again."
         });
       }
 
@@ -1701,7 +1694,7 @@ export function StageReferenceSelect({
         // resolve the id against the whole table — one artisan's product, landed on another's row.
         return {
           ok: false,
-          message: `Answer “${cascadeLabel}” on this row first — a scan into this box is narrowed to it exactly as the list is.`
+          message: `Answer “${cascadeLabel}” first.`
         };
       }
       let payload: DwReferencePayload;
@@ -1778,12 +1771,12 @@ export function StageReferenceSelect({
 
   const emptyLine = useMemo(() => {
     if (awaitingCascade) {
-      return `Answer “${cascadeLabel}” on this row first — this list holds only the records belonging to it.`;
+      return `Answer “${cascadeLabel}” first.`;
     }
     if (loading) return "Searching…";
     if (problem) return problem;
     if (payload?.filtered && !options.length) {
-      return "That record has nothing documented under it yet. Anything typed in by hand here stays typed in — it is not a mistake.";
+      return "Nothing recorded under it yet.";
     }
     if (query.trim()) return `Nothing matches “${query.trim()}”.`;
     return "No records to choose from yet.";
@@ -1805,7 +1798,7 @@ export function StageReferenceSelect({
               the control's only text, and ink-300 is 2.44:1 on the card — below AA. See the same
               note on `SearchableSelect`'s trigger. */}
           <span className={chosenLabel ? "min-w-0 flex-1 truncate text-ink-900" : "min-w-0 flex-1 truncate text-ink-500"}>
-            {chosenLabel || (selectedId ? "A record is selected — open the list to see which" : "Search and select")}
+            {chosenLabel || (selectedId ? "Selected" : "Search and select")}
           </span>
           <ChevronDown className="h-4 w-4 shrink-0 text-ink-500" aria-hidden />
         </button>
@@ -2023,7 +2016,7 @@ export function StageReferenceSelect({
           </button>
           {awaitingCascade ? (
             <span className="text-xs text-ink-500">
-              Answer “{cascadeLabel}” on this row first — a scan into this box is narrowed to it too.
+              Answer “{cascadeLabel}” first.
             </span>
           ) : null}
         </div>
@@ -2046,14 +2039,14 @@ export function StageReferenceSelect({
           <WorkshopCodeScanner
             resolve={resolveScan}
             onResolved={commitScan}
-            description={`A card or tag printed by this app for ${article(pickerNoun(field))} ${pickerNoun(field)}. The record it names is chosen for “${field.label}” on this row and fills the row in, exactly as picking it from the list would.`}
+            description={`Scan ${article(pickerNoun(field))} ${pickerNoun(field)}'s card or tag.`}
           />
         </div>
       ) : null}
 
       {selectedId ? (
         <div className="flex flex-wrap items-center gap-2">
-          <button
+          <ActionGroup className="max-sm:w-full"><button
             type="button"
             className="inline-flex items-center gap-1 text-xs font-medium text-ink-500 underline"
             disabled={disabled}
@@ -2126,9 +2119,9 @@ export function StageReferenceSelect({
               <Pencil className="h-3 w-3" aria-hidden />
               Edit this {INLINE_MODEL_NOUN[field.refModel as InlineCreatableModel]}
             </button>
-          ) : null}
+          ) : null}</ActionGroup>
           <span className="text-xs text-ink-500">
-            Clearing the link keeps the details it filled in — they are part of this record now.
+            Unlinking keeps the details it filled in.
           </span>
         </div>
       ) : null}
@@ -2429,7 +2422,7 @@ export function StageReferenceMultiPicker({
       setDescribing(null);
       if (!option) {
         setCreateProblem(
-          "The record was saved, but its details couldn't be loaded just now, so it has not been ticked. Search for its name above and tick it there."
+          "Saved, but not ticked. Search for it above and tick it."
         );
         return;
       }
@@ -2612,7 +2605,7 @@ export function StageReferenceMultiPicker({
             <span className="text-xs text-ink-500" id={`${baseId}-count`}>
               {picked.length ? `${picked.length} selected` : "Nothing selected yet"}
             </span>
-            <div className="flex items-center gap-2">
+            <ActionGroup>
               <button type="button" className="text-xs font-medium text-ink-500 underline" onClick={() => setOpen(false)}>
                 Cancel
               </button>
@@ -2629,7 +2622,7 @@ export function StageReferenceMultiPicker({
               >
                 Add {picked.length || ""}
               </button>
-            </div>
+            </ActionGroup>
           </div>
         </div>
       ) : null}

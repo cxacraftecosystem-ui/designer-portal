@@ -78,8 +78,7 @@ export function GetTheAppPanel() {
         <p className="text-xs text-ink-500">Checking for the latest version…</p>
       ) : status === "none" ? (
         <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs text-ink-500">
-          No version has been published yet. A master admin publishes one — from &ldquo;Publish an Android
-          update&rdquo; on this page, or from &ldquo;Push update to all&rdquo; on the phone — and it appears here.
+          No version published yet.
         </p>
       ) : (
         <div className="grid gap-2">

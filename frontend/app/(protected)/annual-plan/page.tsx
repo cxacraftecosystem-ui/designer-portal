@@ -84,6 +84,7 @@ import { PlanUploadReport as UploadReportPanel } from "./PlanUploadReport";
 import { PromoteDialog } from "./PromoteDialog";
 import { RegionalStatesPanel } from "./RegionalStatesPanel";
 import { UploadPlanDialog } from "./UploadPlanDialog";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The label under which the standing column reads, plus the tone it is drawn in.
@@ -217,7 +218,7 @@ export default function AnnualPlanPage() {
             ? `${entry.workshopNo} was withdrawn from the plan`
             : `${entry.workshopNo} is back in the plan`,
         description:
-          what === "withdraw" ? "Nothing was deleted. It returns if a later sheet names it." : undefined,
+          what === "withdraw" ? "It returns if a later sheet lists it." : undefined,
         tone: "success"
       });
     } catch (caught) {
@@ -276,7 +277,7 @@ export default function AnnualPlanPage() {
     <>
       <PageHeader
         title="Annual plan"
-        description="The ministry's directory of the workshops planned for the year — number, date, state, district and venue. An entry here is a plan, not a workshop: it becomes one only when somebody opens it."
+        description="This year's planned workshops."
         icon={<CalendarRange className="h-5 w-5" aria-hidden />}
         actions={
           manager ? (
@@ -336,8 +337,8 @@ export default function AnnualPlanPage() {
       {!manager && rows ? (
         <p className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           {regionalStates && regionalStates.length
-            ? `You see the rows of ${regionalStates.join(", ")}, the state${regionalStates.length === 1 ? "" : "s"} assigned to you, and may correct their remarks.`
-            : "No state is assigned to you, so there are no rows to show. A Ministry Admin assigns Regional Directors their states on this screen."}
+            ? `Your state${regionalStates.length === 1 ? "" : "s"}: ${regionalStates.join(", ")}. You can edit remarks.`
+            : "No states assigned to you yet."}
         </p>
       ) : null}
 
@@ -489,12 +490,12 @@ export default function AnnualPlanPage() {
       {planYear == null && years != null && years.length === 0 && !manager ? (
         <EmptyState
           title="No rows for your states"
-          body="Either no state is assigned to you, or the plan holds no row in yours. A Ministry Admin assigns Regional Directors their states on this screen."
+          body="No rows in your states."
         />
       ) : planYear == null && years != null && years.length === 0 ? (
         <EmptyState
           title="No plan has been uploaded yet"
-          body="Download the pro-forma, type the ministry's directory into it, and upload it. Correcting it later is the same act: upload the corrected sheet again."
+          body="Download the pro-forma, fill it in and upload it."
         />
       ) : rows == null ? (
         <p className="text-sm text-ink-muted">Loading…</p>
@@ -502,12 +503,12 @@ export default function AnnualPlanPage() {
         manager ? (
           <EmptyState
             title="Nothing in this year's plan yet"
-            body="Download the pro-forma, type the ministry's directory into it, and upload it. Correcting it later is the same act: upload the corrected sheet again."
+            body="Download the pro-forma, fill it in and upload it."
           />
         ) : (
           <EmptyState
             title="No rows for your states"
-            body="This year's plan has no row in the states assigned to you, or none matches the filters above."
+            body="None in your states match."
           />
         )
       ) : (
@@ -576,7 +577,7 @@ export default function AnnualPlanPage() {
                       ) : null}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-2">
+                      <ActionGroup>
                         <button
                           type="button"
                           className="field-button-secondary min-h-8! px-2.5! py-1! text-xs"
@@ -621,7 +622,7 @@ export default function AnnualPlanPage() {
                             Reinstate
                           </button>
                         ) : null}
-                      </div>
+                      </ActionGroup>
                     </td>
                   </tr>
                   {editingId === entry.id ? (
@@ -638,9 +639,9 @@ export default function AnnualPlanPage() {
                           onChange={(event) => setDraft(event.currentTarget.value)}
                         />
                         <p className="mt-1 text-xs text-ink-muted">
-                          The next upload of the plan replaces these remarks if its Remarks column for this row is filled in.
+                          A later upload with remarks replaces these.
                         </p>
-                        <div className="mt-2 flex gap-2">
+                        <ActionGroup className="mt-2">
                           <button
                             type="button"
                             className="field-button min-h-8! px-2.5! py-1! text-xs"
@@ -657,7 +658,7 @@ export default function AnnualPlanPage() {
                           >
                             Cancel
                           </button>
-                        </div>
+                        </ActionGroup>
                       </td>
                     </tr>
                   ) : null}
@@ -721,7 +722,7 @@ export default function AnnualPlanPage() {
           void refreshYears();
           toast({
             title: `${result.entry.workshopNo} is now a workshop`,
-            description: "Correcting the plan from now on corrects the directory, never the workshop.",
+            description: "Later plan changes won't affect the workshop.",
             tone: "success"
           });
         }}

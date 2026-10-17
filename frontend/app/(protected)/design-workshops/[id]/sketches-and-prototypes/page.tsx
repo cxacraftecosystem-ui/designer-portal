@@ -110,7 +110,7 @@ function SketchesAndPrototypes({ workshopId }: { workshopId: string }) {
     <div>
       <PageHeader
         title="Sketches and Prototypes"
-        description="Everything this workshop has drawn and made, in one place — added on the Upload tab, judged and ranked on the Review tab."
+        description="Upload, rate and rank this workshop's pieces."
         icon={<PencilRuler className="h-5 w-5" aria-hidden />}
       />
 

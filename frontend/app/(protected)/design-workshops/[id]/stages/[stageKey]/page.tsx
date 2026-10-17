@@ -165,6 +165,7 @@ import { readStageFocus } from "@/lib/workshopSearch";
   having been handed the route param instead of the resolved id.
 */
 import { reportServerId } from "../../report/reportTarget";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * A collection table that is skipped when none of its props changed — which, with the props this page
@@ -815,8 +816,7 @@ function DesignWorkshopStagePageBody({
         if (cancelled) return;
         if (!draft) {
           setError(
-            "This workshop was started on another device or in another browser and isn't saved on this one. " +
-              "Open it on the device it was started on, or wait until it has been uploaded."
+            "This workshop isn't on this device yet. Open it where it was started, or wait for it to upload."
           );
           setLoading(false);
           return;
@@ -991,8 +991,7 @@ function DesignWorkshopStagePageBody({
         // response they never saw.
         if (isUnreachable(err)) {
           setNotice(
-            "You're offline, so this stage shows what's saved on this device. Anything you change is kept " +
-              "here and will upload when you're back online."
+            "Offline — changes are saved here and upload when you reconnect."
           );
           if (stageNeverRead(draft, stageKey)) setNeverDownloaded(true);
           return;
@@ -1011,8 +1010,7 @@ function DesignWorkshopStagePageBody({
         const verdict = triageFailure(err);
         if (verdict.kind === "transient") {
           setError(
-            `This stage couldn't be loaded right now: ${verdict.answered?.message ?? "No reason was given."} ` +
-              "What's shown below is the copy saved on this device. Try again in a moment."
+            `Couldn't load this stage: ${verdict.answered?.message ?? "no reason given."} Showing the copy on this device.`
           );
           if (stageNeverRead(draft, stageKey)) setNeverDownloaded(true);
           return;
@@ -1039,9 +1037,8 @@ function DesignWorkshopStagePageBody({
         setError(
           err instanceof ApiError && err.status === 404
             ? err.message === "Unknown stage"
-              ? `Stage "${stageKey}" isn't available right now. Try again later.`
-              : `That stage couldn't be opened: ${err.message} The workshop may not exist, or you may not have ` +
-                "access to it — an administrator can give you access."
+              ? `Stage "${stageKey}" isn't available. Try again later.`
+              : `Couldn't open this stage: ${err.message}`
             : err instanceof Error
               ? err.message
               : "Unable to load this stage"
@@ -1484,8 +1481,7 @@ function DesignWorkshopStagePageBody({
       */
       if (!(await flushLocal())) {
         setError(
-          "This browser couldn't save this stage, so it hasn't been kept on this device or sent. Copy what's in " +
-            "the boxes somewhere safe before leaving this page."
+          "This browser couldn't save the stage. Copy your answers somewhere safe before leaving."
         );
         return;
       }
@@ -1524,11 +1520,11 @@ function DesignWorkshopStagePageBody({
         setNotice(
           submit
             ? localScore.isComplete
-              ? "Saved on this device. Every required field in this stage is filled in; it will be checked again when it uploads."
-              : `Saved on this device. ${localScore.requiredTotal - localScore.requiredFilled} required field(s) are still empty: ${localScore.missing.join(", ")}.`
+              ? "Saved on this device. All required fields are filled in."
+              : `Saved on this device. Still empty: ${localScore.missing.join(", ")}.`
             : !remoteId
-              ? "Saved on this device. The workshop will be created online, with everything in it, as soon as you're connected."
-              : "Saved on this device. You're offline, so it will upload when you're back online."
+              ? "Saved on this device. The workshop is created online when you connect."
+              : "Saved on this device. It uploads when you're online."
         );
         return;
       }
@@ -1545,8 +1541,7 @@ function DesignWorkshopStagePageBody({
         // Saying so is the honest answer; the alternative is "Stage saved — 0 added, 0 updated" on
         // a screen whose fields may not be empty at all on the server.
         setNotice(
-          "There's nothing in this stage on this device to send. If it was filled in elsewhere, it hasn't been " +
-            "downloaded here — open it again with a connection to see it."
+          "Nothing to send from this device. Reconnect to see answers saved elsewhere."
         );
         return;
       }
@@ -1612,8 +1607,8 @@ function DesignWorkshopStagePageBody({
       if (marked || unplacedLines.length) {
         setError(
           marked
-            ? "Some answers were not accepted. The fields that need attention are marked below; everything else was saved."
-            : "Some answers were not accepted. They are listed below; everything else was saved."
+            ? "Some answers need fixing — marked below. Everything else was saved."
+            : "Some answers need fixing — listed below. Everything else was saved."
         );
         return;
       }
@@ -1662,14 +1657,11 @@ function DesignWorkshopStagePageBody({
         number of sync passes performs one.
       */
       const held = sweep.withheld.length
-        ? ` You deleted ${sweep.withheld.length === 1 ? "an entry" : "entries"} from ${sweep.withheld.join(", ")} on this ` +
-          "device, and that deletion hasn't been sent yet, because this stage hasn't been downloaded to this device. " +
-          "It will be sent on your first save after you open this stage again with a connection. Everything you typed " +
-          "has been saved."
+        ? ` Deletions in ${sweep.withheld.join(", ")} will be sent next time you save online.`
         : "";
       setNotice(
         (submit
-          ? "Stage saved and every required field is filled in."
+          ? "Saved. All required fields are filled in."
           : `Stage saved — ${result.created} added, ${result.updated} updated${result.removed ? `, ${result.removed} removed` : ""}.`) +
           held
       );
@@ -1694,7 +1686,7 @@ function DesignWorkshopStagePageBody({
       // no error on screen, and left the queue re-sending the same rejection for ever.
       if (isUnreachable(err)) {
         setNotice(
-          "Saved on this device. Couldn't connect, so this stage will upload when you're back online."
+          "Saved on this device. It uploads when you're online."
         );
         return;
       }
@@ -1724,9 +1716,7 @@ function DesignWorkshopStagePageBody({
       if (verdict.kind === "transient") {
         setError(
           `${stage.number}. ${stage.title} couldn't be saved: ` +
-            `${verdict.answered?.message ?? "No reason was given."} It's safe on this device and ` +
-            "nothing has been thrown away. Trying again without changes won't help — check the answers named above, or " +
-            "report this stage."
+            `${verdict.answered?.message ?? "No reason given."} It's safe on this device. Check the answers above.`
         );
         return;
       }
@@ -1758,9 +1748,7 @@ function DesignWorkshopStagePageBody({
         const { marked, unplacedLines } = applyStageResult(refusal, rowKeys);
         const message = err instanceof Error ? err.message : "Some answers were not accepted.";
         const wrote = stageRefusalWroteCount(refusal)
-          ? ` The rest of the stage was saved — ${refusal.created ?? 0} added, ${refusal.updated ?? 0} updated${
-              refusal.removed ? `, ${refusal.removed} removed` : ""
-            } — so nothing you typed has been thrown away.`
+          ? ` Everything else was saved.`
           : "";
         setError(
           (marked
@@ -2021,12 +2009,10 @@ function DesignWorkshopStagePageBody({
         />
         <section className="panel grid gap-3 p-4">
           <p className="text-sm font-medium text-ink-900">
-            There is no design workshop at this address that you can open.
+            Workshop not found.
           </p>
           <p className="text-sm leading-6 text-ink-700">
-            Either no such workshop exists, or it belongs to another designer and hasn&rsquo;t been shared with you. If
-            a colleague sent you this link, ask them to add you as a viewer of their workshop — an administrator can
-            also do it — and then open the link again.
+            It doesn&rsquo;t exist or hasn&rsquo;t been shared with you. Ask its designer or an admin to add you.
           </p>
         </section>
       </>
@@ -2057,9 +2043,7 @@ function DesignWorkshopStagePageBody({
           under the tab) are both ones a retry cannot clear on its own.
         */
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700">
-          This browser couldn&rsquo;t save this stage, so what&rsquo;s in the boxes below is the only copy. It hasn&rsquo;t
-          been kept on this device or sent. Don&rsquo;t close this tab: copy anything you&rsquo;ve just typed somewhere safe,
-          then check that this browser has storage space and isn&rsquo;t set to clear site data on close.
+          Not saved — this browser couldn&rsquo;t store the stage. Don&rsquo;t close this tab; copy your answers somewhere safe.
         </div>
       ) : null}
       {/* Why every box below is locked, for a reader who holds a post on this workshop. Above the save
@@ -2152,9 +2136,7 @@ function DesignWorkshopStagePageBody({
         // its own. Without this sentence a designer standing in a village looks at seven empty
         // boxes on a stage that was written up in the office and concludes the work was lost.
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          This stage hasn&rsquo;t been downloaded to this device yet, so it may look empty even if it has been filled in
-          elsewhere. Anything you fill in here is kept on this device and added to what&rsquo;s already saved online;
-          nothing you leave blank will overwrite an answer recorded elsewhere.
+          Not downloaded yet — it may look empty. Blank fields won&rsquo;t overwrite answers saved elsewhere.
         </div>
       ) : null}
       {refused ? (
@@ -2179,9 +2161,7 @@ function DesignWorkshopStagePageBody({
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           <p>
             {unplaced.length + stranded.length} answer
-            {unplaced.length + stranded.length === 1 ? " wasn't" : "s weren't"} accepted and can&rsquo;t be shown against
-            a field on screen — the entry may no longer be here. Everything else was saved.{" "}
-            {unplaced.length + stranded.length === 1 ? "It is" : "They are"} listed here:
+            {unplaced.length + stranded.length === 1 ? " wasn't" : "s weren't"} accepted. Everything else was saved:
           </p>
           <ul className="mt-1 list-disc pl-5">
             {[...unplaced, ...stranded].map((line) => (
@@ -2189,8 +2169,7 @@ function DesignWorkshopStagePageBody({
             ))}
           </ul>
           <p className="mt-1">
-            Save this stage again to check it once more. If the same answers aren&rsquo;t accepted again, report this
-            stage.
+            Save again to retry. If it fails again, report this stage.
           </p>
         </div>
       ) : null}
@@ -2211,8 +2190,7 @@ function DesignWorkshopStagePageBody({
         // section, and the people who read that banner would learn to ignore the one message that matters.
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
           {droppedCustom.length} of this workshop&apos;s own question{droppedCustom.length === 1 ? "" : "s"}{" "}
-          couldn&rsquo;t be saved because the questions have been changed since this page loaded:{" "}
-          {droppedCustom.join(", ")}. Reload this stage with a connection to see the current questions.
+          changed since this page loaded and weren&rsquo;t saved: {droppedCustom.join(", ")}. Reload to see them.
         </div>
       ) : null}
 
@@ -2225,7 +2203,7 @@ function DesignWorkshopStagePageBody({
       {stage?.optionalStage ? (
         <p className="mb-4 flex flex-wrap items-center gap-2 text-sm leading-6 text-ink-muted">
           <span className="rounded-full bg-field-200 px-2 py-0.5 text-xs font-medium text-ink-700">Optional stage</span>
-          A workshop that leaves this stage empty still counts as complete.
+          Can be left empty.
         </p>
       ) : null}
 
@@ -2296,12 +2274,12 @@ function DesignWorkshopStagePageBody({
             ? // Said plainly, because the wait is deliberate and only happens once per stage per
               // device: this browser has no copy of this stage, and drawing an empty form before
               // the repository has answered is what let a blank copy be saved over a full one.
-              "Loading this stage. It isn't on this device yet, so the form will appear once it has loaded — after this it opens instantly, with or without a connection."
+              "Downloading this stage…"
             : "Loading this stage…"}
         </div>
       ) : !stage ? (
         <div className="panel p-4 text-sm text-ink-700">
-          This stage (“{stageKey}”) isn&rsquo;t available. Reload the page to update the app.
+          Stage “{stageKey}” isn&rsquo;t available. Reload to update the app.
         </div>
       ) : (
         <div className="grid gap-5">
@@ -2454,15 +2432,16 @@ function DesignWorkshopStagePageBody({
 
             {removedFrom.length ? (
               <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-                Saving will also delete the entries removed above, and any entry someone else added to{" "}
+                Saving deletes the entries removed above. Anything added to{" "}
                 {removedFrom
                   .map((key) => stage.entities.find((entity) => entity.key === key)?.title ?? key)
                   .join(", ")}{" "}
-                since this page loaded would go with them. Reload first if that is a risk.
+                by someone else since you loaded this page goes too.
               </p>
             ) : null}
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid gap-2">
+              <ActionGroup>
               <button
                 type="button"
                 className="field-button"
@@ -2484,17 +2463,18 @@ function DesignWorkshopStagePageBody({
               >
                 Save and check required fields
               </button>
+              </ActionGroup>
               {/* The honest three-state readout. Wording, not colour, carries it: a designer deciding
                   whether they can pack up needs to know the difference between "on this laptop" and
                   "in the repository", and a chip that only changed hue would not survive greyscale,
                   colour-blindness or the glare of a courtyard at noon. */}
               {unsent ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                <span className="inline-flex w-fit items-center gap-1.5 justify-self-center rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
                   <CloudOff className="h-3.5 w-3.5" aria-hidden />
                   Saved on this device only
                 </span>
               ) : stageSync?.lastPushedAt ? (
-                <span className="text-xs text-ink-500">
+                <span className="justify-self-center text-xs text-ink-500">
                   Uploaded at {new Date(stageSync.lastPushedAt).toLocaleTimeString()}
                 </span>
               ) : null}

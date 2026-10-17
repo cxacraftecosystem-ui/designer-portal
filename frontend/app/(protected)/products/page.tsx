@@ -246,7 +246,7 @@ export default function ProductsPage() {
                           Discuss
                         </button>
                         {adminMode ? (
-                          <button className={rowAction("danger")} onClick={() => remove(product.id)}>
+                          <button data-danger className={rowAction("danger")} onClick={() => remove(product.id)}>
                             Delete
                           </button>
                         ) : null}

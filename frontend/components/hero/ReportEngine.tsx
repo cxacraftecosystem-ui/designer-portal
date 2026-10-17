@@ -179,25 +179,25 @@ const FACTS = [
     icon: ScrollText,
     title: "Read as paper, not as cards",
     copy:
-      "The preview lays the document onto A4 or Letter sheets at their real size — the cover on its own page, a running head and foot after it, and a visible mark at every page break the template sets. You can see whether the cover table has pushed the photograph onto the next page before anyone prints it. Each stage's part of the report can also be previewed from its own form, and it shows what has been saved."
+      "The preview shows real A4 or Letter pages, with every page break marked — so you see the layout before anyone prints it."
   },
   {
     icon: Palette,
     title: "Six templates, and colour you can see before you commit",
     copy:
-      `A DCH submission, a DIC submission, an implementing agency's, a compact summary, a detailed technical report and a photograph catalogue — with ${ACCENT_PRESETS.length} named accent colours and a colour picker beside them. Pick one and every sheet on screen changes at once: headings, rules, table headers, row shading and the live figures. The other seven colours are derived from the one you choose, so nobody has to generate a file to find out they dislike the colour.`
+      `DCH, DIC, implementing agency, compact summary, technical report and photo catalogue — with ${ACCENT_PRESETS.length} accent colours that restyle the preview instantly.`
   },
   {
     icon: FileWarning,
     title: "Warnings sit beside the download, never inside the file",
     copy:
-      "A required field nobody filled in, or a photograph that could not be embedded, produces a warning — and the file is generated anyway, because a designer needs the pages that are ready. The warnings never travel inside the document: the officer who opens it next month should not find a note about what was missing on the day."
+      "Missing fields or photos are flagged next to the download. The file is still generated, and stays clean."
   },
   {
     icon: Smartphone,
     title: "Generated on the phone, with no signal needed",
     copy:
-      "The phone builds the document from its own draft and writes the .docx and the PDF on the device, so a fortnight in a cluster ends in a finished document, even far from a signal. The browser does the same with no connection, from the workshop it holds."
+      "The phone and the browser write the .docx and PDF from the local draft, even with no signal."
   },
   /*
     ── THE FIFTH CARD: REPORT HISTORY ─────────────────────────────────────────────────────────────
@@ -225,7 +225,7 @@ const FACTS = [
     icon: FileClock,
     title: "Every file you have generated, and what provably did not change",
     copy:
-      "A report goes to a ministry and comes back for revision three or four times. Every file generated is listed — its size, its page count, the template it used and when it was made, including the ones a phone wrote with no signal — and any two can be compared. A stage nobody saved between two files is marked unchanged; a stage that was saved is marked as edited."
+      "Every generated file is listed with its template, pages and date. Compare any two: stages nobody saved in between are marked unchanged, saved ones as edited."
   },
   /*
     ── THE SIXTH CARD: THE FIGURES ────────────────────────────────────────────────────────────────
@@ -264,7 +264,7 @@ const FACTS = [
     icon: BarChart3,
     title: "Figures the report draws for itself",
     copy:
-      "Who the market survey actually asked, and what those people said they would pay; where the money went, head by head; the price bands the workshop's own cost sheets fall into; sketches against prototypes against final products, and how the review decided on each one; and how many products were still being made at three, six and twelve months. Seven figures, each drawn straight from its stage wherever the chosen template includes that stage — so a chart always matches the table above it. A cost head nobody entered is left off rather than drawn as zero: “Transport ₹ 0” would read as a claim that transport was free."
+      "Seven charts — survey respondents and prices, cost by head, price bands, sketches to products, and follow-up adoption — each drawn from its own stage, so it always matches the table above it."
   }
 ];
 
@@ -301,9 +301,8 @@ export default function ReportEngine() {
             made it six. Change `RENDERERS` and this heading together — plus the `lg` column count
             below, which is the list's length and not a number of its own. */}
         <motion.p variants={item} className="mt-4 max-w-2xl text-base leading-relaxed text-ink-500">
-          The {STAGE_COUNT_WORD_LOWER} stages are assembled once into a single document, and each of
-          the eight below draws that same document — so what you check in the preview is what the
-          ministry receives. With no signal, the browser and the phone build it from the workshop they hold.
+          The {STAGE_COUNT_WORD_LOWER} stages become one document. What you preview is what the
+          ministry receives — even when built offline.
         </motion.p>
 
         {/* The fan. One label, a short rule, then the six — a diagram made of a border and a

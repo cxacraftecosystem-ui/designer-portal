@@ -121,7 +121,7 @@ export async function discardUnfiledRecord(bucket: string, id: string): Promise<
  * differently — the dialog closes on success and the panel is what the admin actually reads.
  */
 export function filedNotice(result: FiledRecord): string {
-  return `“${result.title}” is now filed under ${result.workshopTitle}. It appears under that workshop everywhere: the search box, the map, the data browser, the exports and the completion matrix.`;
+  return `“${result.title}” is now filed under ${result.workshopTitle}.`;
 }
 
 export function discardedNotice(result: DiscardedRecord): string {

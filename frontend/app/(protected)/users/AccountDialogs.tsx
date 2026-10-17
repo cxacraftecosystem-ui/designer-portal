@@ -54,8 +54,7 @@ export function RequireChangeNote({ required, when }: { required: boolean; when:
     <div aria-live="polite">
       {required ? (
         <p className="text-xs leading-5 text-ink-500">
-          The password you type works until their {when} sign-in, where they choose their own before they can do
-          anything else.
+          They choose their own at their {when} sign-in.
         </p>
       ) : (
         <p className={CAUTION_CLASS}>
@@ -71,7 +70,7 @@ export function RequireChangeNote({ required, when }: { required: boolean; when:
 export function EdgeSpaceNote() {
   return (
     <p className={CAUTION_CLASS}>
-      This password begins or ends with a space. It is kept exactly as typed, so they must type that space too.
+      Starts or ends with a space — they must type it too.
     </p>
   );
 }
@@ -179,8 +178,7 @@ export function TemporaryPasswordDialog({
             </p>
           ) : null}
           <p className="text-sm leading-6 text-ink-700">
-            <strong className="font-medium text-ink-900">Saving signs {who} out everywhere</strong> — every session they
-            have open, on the web and on the phone, ends at once.
+            <strong className="font-medium text-ink-900">Saving signs {who} out everywhere.</strong>
           </p>
           {hasPassword(target) ? null : (
             <p className="text-sm leading-6 text-ink-700">
@@ -213,7 +211,7 @@ export function TemporaryPasswordDialog({
               <PasswordRevealButton revealed={revealed} onToggle={() => setRevealed((value) => !value)} size={18} />
             </div>
             <p className="text-xs leading-5 text-ink-500">
-              {passwordRuleLine("Send it to them yourself — once saved, nothing shows it again.")}
+              {passwordRuleLine("Send it yourself; it isn't shown again.")}
             </p>
           </div>
           {edgeSpace ? <EdgeSpaceNote /> : null}
@@ -330,15 +328,14 @@ export function RequirePasswordChangeDialog({
             sign-in must choose a new password before they can do anything else.
           </p>
           <p className="text-sm leading-6 text-ink-700">
-            Their current password still works once, to reach the screen where they choose a new one.
-            Somebody who signs in with Google is asked for it too; if they do not know it, they need a password link.
+            Their current password works once, to set a new one. Somebody who signs in with Google is asked for it too;
+            if they don&apos;t know it, they need a password link.
           </p>
           <Toggle
             checked={withLink}
             disabled={busy}
             onChange={setWithLinkChoice}
-            label="Also issue a password link"
-            description="Shown to you once, on this page, to send them yourself."
+            label="Also issue a password link (shown once)"
           />
         </div>
       ) : null}
@@ -460,7 +457,7 @@ export function AccountDetailsDialog({
             />
           </div>
           <p className="text-xs leading-5 text-ink-500">
-            A corrected address becomes the one they sign in with, and their access moves with it.
+            They&apos;ll sign in with the new address.
           </p>
         </form>
       ) : null}

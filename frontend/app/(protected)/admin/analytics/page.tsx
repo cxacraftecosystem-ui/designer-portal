@@ -253,7 +253,7 @@ export default function WorkshopAnalyticsPage() {
   const header = (
     <PageHeader
       title="Cross-workshop analytics"
-      description="What the archive says together: which crafts and clusters produce designs that are taken up, how the 3, 6 and 12-month follow-ups stand, what products are costed against, and which design opportunities recur."
+      description="Adoption, follow-ups, costs and recurring opportunities across workshops."
       icon={<ChartNoAxesCombined className="h-5 w-5" aria-hidden />}
       actions={
         <Link href="/design-workshops" className="field-button-secondary">
@@ -278,7 +278,7 @@ export default function WorkshopAnalyticsPage() {
         {header}
         <RestrictedPanel
           title="Admin access required"
-          body="Comparing adoption, costs and outcomes across workshops aggregates fieldwork from clusters and designers beyond your own, so it is available to admins and the master admin."
+          body="Admins only."
         />
       </>
     );
@@ -345,7 +345,7 @@ export default function WorkshopAnalyticsPage() {
         <Stat
           label="With any follow-up"
           value={coverage.workshopsWithFollowUp.toLocaleString("en-IN")}
-          hint="Stage 22. Everything about adoption below describes only these."
+          hint="Stage 22. Adoption figures use only these."
         />
         <Stat
           label="With cost sheets"
@@ -383,9 +383,7 @@ export default function WorkshopAnalyticsPage() {
 
       <h2 className="mt-8 font-display text-xl font-bold text-ink-900">Adoption</h2>
       <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-500">
-        Each workshop is counted once, at the latest follow-up interval it reached, so a workshop
-        visited three times does not outweigh one visited once. A design under trial counts against
-        adoption and never for it.
+        Each workshop counts once, at its latest follow-up. Under trial counts as not adopted.
       </p>
 
       <section className="panel mt-4 p-4">
@@ -417,7 +415,7 @@ export default function WorkshopAnalyticsPage() {
       <AdoptionTable
         title="By cluster"
         columnLabel="Cluster"
-        description="Which clusters come back with results, and which are yet to be revisited."
+        description="Which clusters have results."
         groups={data.byCluster}
         excluded={coverage.missingDimension.cluster}
         noun="cluster"
@@ -425,7 +423,7 @@ export default function WorkshopAnalyticsPage() {
       <AdoptionTable
         title="By state"
         columnLabel="State"
-        description="The same outcomes rolled up to the state on each workshop's cover sheet."
+        description="Outcomes by state."
         groups={data.byState}
         excluded={coverage.missingDimension.state}
         noun="state"
@@ -437,8 +435,7 @@ export default function WorkshopAnalyticsPage() {
         At 3, 6 and 12 months
       </h2>
       <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-500">
-        These are cross-sections — how the designs stood at each interval — and not a survival curve.
-        The designs seen at 12 months are not necessarily the designs seen at 3.
+        Snapshots at each interval, not a survival curve.
       </p>
 
       <section className="mt-4 grid gap-3 md:grid-cols-3">
@@ -468,7 +465,7 @@ export default function WorkshopAnalyticsPage() {
             <Stat
               label="Not revisited after 3"
               value={String(survival.unobservedAfter3)}
-              hint="Not counted in either direction — nobody went back."
+              hint="Not revisited."
             />
             {/*
               Shown even when it is zero. A tile that appears only when rows were excluded reads,
@@ -478,7 +475,7 @@ export default function WorkshopAnalyticsPage() {
             <Stat
               label="No product reference"
               value={String(survival.rowsWithoutProduct)}
-              hint="Records that can join no cohort, so they are outside the three figures beside this one."
+              hint="Not in any cohort."
             />
           </div>
         ) : null}
@@ -490,9 +487,9 @@ export default function WorkshopAnalyticsPage() {
         What products cost against what they fetch
       </h2>
       <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-500">
-        The expected price as a multiple of the total cost to make, per cluster. 1.0× is at cost.
+        Price as a multiple of cost, per cluster. 1.0× is at cost.
         {costRatios.sheetsWithoutCluster > 0
-          ? ` ${costRatios.sheetsWithoutCluster} cost sheet${costRatios.sheetsWithoutCluster === 1 ? "" : "s"} belong to workshops with no cluster recorded and ${costRatios.sheetsWithoutCluster === 1 ? "is" : "are"} not compared here.`
+          ? ` ${costRatios.sheetsWithoutCluster} sheet${costRatios.sheetsWithoutCluster === 1 ? "" : "s"} without a cluster left out.`
           : ""}
       </p>
 
@@ -503,8 +500,7 @@ export default function WorkshopAnalyticsPage() {
         <section className="panel mt-4 p-4">
           <h3 className="font-display font-bold text-ink-900">No cluster has costed products yet</h3>
           <p className="mt-1 text-sm leading-6 text-ink-500">
-            Stage 17 cost sheets exist, but none belongs to a workshop with a cluster on its cover
-            sheet.
+            No cost sheets with a cluster yet.
           </p>
         </section>
       ) : (
@@ -565,8 +561,7 @@ export default function WorkshopAnalyticsPage() {
       </h2>
       <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-500">
         From the {opportunities.workshopsNaming.toLocaleString("en-IN")} workshop
-        {opportunities.workshopsNaming === 1 ? "" : "s"} that named any. A theme has not recurred
-        until it appears in two different workshops.
+        {opportunities.workshopsNaming === 1 ? "" : "s"}. Recurring means two or more workshops.
       </p>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -574,12 +569,12 @@ export default function WorkshopAnalyticsPage() {
           <div className="border-b border-line-200 px-4 py-3">
             <h3 className="font-display font-bold text-ink-900">Target categories</h3>
             <p className="text-sm text-ink-500">
-              A closed list, so two workshops choosing the same one have chosen the same thing.
+              From a fixed list.
             </p>
           </div>
           {opportunities.categories.length === 0 ? (
             <div className="p-4 text-sm text-ink-500">
-              No product category has been named as a target by more than one workshop yet.
+              None recurring yet.
             </div>
           ) : (
             <ul className="divide-y divide-line-200">
@@ -603,13 +598,12 @@ export default function WorkshopAnalyticsPage() {
               It is a place to look; the examples beside it are what a reader actually judges.
             */}
             <p className="text-sm text-ink-500">
-              A word count over the opportunity titles, not a grouping by meaning. Two designers
-              writing “bag” may not have meant the same product.
+              Word counts from titles, not meanings.
             </p>
           </div>
           {opportunities.terms.length === 0 ? (
             <div className="p-4 text-sm text-ink-500">
-              No word appears in the design opportunities of more than one workshop yet.
+              None recurring yet.
             </div>
           ) : (
             <ul className="divide-y divide-line-200">
@@ -668,7 +662,7 @@ export default function WorkshopAnalyticsPage() {
         Limits of this data
       </h2>
       <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-500">
-        Comparisons that need information the record forms do not capture.
+        Needs data the forms don&rsquo;t capture yet.
       </p>
       <section className="panel mt-4 divide-y divide-line-200">
         {data.notComputed.map((entry) => (

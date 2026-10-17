@@ -258,10 +258,8 @@ def can_record_sanction_orders(user: Any) -> bool:
 #: reads both files off disk and pins all three byte-for-byte, because the reword-one-forget-the-
 #: others failure is the one this repository has shipped most often.
 SANCTION_ORDER_REFUSAL = (
-    "Recording a sanction order is a ministry officer's act — Assistant Director and above. It "
-    "opens a workshop, creates the designer's account and issues their sign-in link, so it is not "
-    "something a designer or a professor can do for themselves. Ask the officer who holds the "
-    "order to record it; the workshop will appear in your list as soon as they do."
+    "Only an Assistant Director or above records sanction orders. Ask the officer holding yours "
+    "— the workshop appears in your list once they do."
 )
 
 
@@ -352,8 +350,8 @@ SANCTION_DESIGNER_CANNOT_RUN_WORKSHOPS = (
 )
 
 #: AUTHOR AND APPROVER ARE NOT ONE PERSON, and this is the only place that rule is enforced rather
-#: than merely stated. :data:`SANCTION_ORDER_REFUSAL` already says the act is "not something a
-#: designer can do for themselves"; without this refusal an officer could do it for themselves the
+#: than merely stated. :data:`SANCTION_ORDER_REFUSAL` already says only an officer may do
+#: it; without this refusal an officer could do it for themselves the
 #: long way round, by naming a second mailbox they control and redeeming the invite link the 201
 #: hands straight back to them. See :func:`_refuse_if_the_officer_named_themselves`.
 SANCTION_SELF_NAMED = (

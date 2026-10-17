@@ -47,7 +47,7 @@ export default function DesignWorkshopCustomSectionsPage({ params }: { params: P
     <>
       <PageHeader
         title="This workshop's own questions"
-        description="Questions you add to a stage of this workshop only, answered on the stage form beside the standard ones, counted towards that stage's completeness and printed in the report. A question that has been answered keeps its wording — an answer means what it meant when it was given."
+        description="Extra questions for this workshop's stages."
         icon={<ListPlus className="h-5 w-5" aria-hidden />}
         actions={
           <Link href={`/design-workshops/${id}`} className="field-button-secondary">

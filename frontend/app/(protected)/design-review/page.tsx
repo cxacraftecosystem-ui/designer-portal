@@ -177,6 +177,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The two kinds of piece a pool round can be read over.
@@ -204,7 +205,7 @@ const ENTITIES: ReadonlyArray<{ key: RateableEntityKey; label: string; hint: str
   {
     key: "sketch",
     label: "Sketches",
-    hint: "The sketches in this workshop's pool round — including the ones it never prototyped."
+    hint: "Including ones never prototyped."
   }
 ];
 
@@ -366,8 +367,8 @@ function DesignReview() {
             if (cancelled) return;
             setPoolFailure(
               isUnreachable(error)
-                ? "The workshops open to the pool could not be loaded — check the connection and try again."
-                : "The workshops open to the pool could not be loaded. Try again."
+                ? "No connection — couldn't load open workshops."
+                : "Couldn't load open workshops. Try again."
             );
           });
       },
@@ -441,7 +442,7 @@ function DesignReview() {
           unreachable: offline,
           note: offline
             ? null
-            : refusalText(error, "The design workshops you can open couldn't be loaded.")
+            : refusalText(error, "Couldn't load your workshops.")
         });
       }
     })();
@@ -641,21 +642,20 @@ function DesignReview() {
           </div>
           <h1 className="font-display text-xl font-bold tracking-tight text-ink-900">Designer access required</h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Rating another workshop&apos;s finished pieces is part of the design work, so it is open to designers,
-            Assistant Directors, Regional Directors, Ministry Admins, admins and the master admin.
+            For designers, ministry officers and admins.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>. An admin can
             raise your access.
           </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <ActionGroup className="mt-7">
             <Link href="/dashboard" className="field-button">
               Back to dashboard
             </Link>
             <Link href="/guide" className="field-button-secondary">
               Open the walkthrough
             </Link>
-          </div>
+          </ActionGroup>
         </section>
       </div>
     );
@@ -700,7 +700,7 @@ function DesignReview() {
           reader that a piece on this screen has been released, when for their own workshops it has
           not.
         */
-        description="Sketches and prototypes from another workshop's round: for a workshop you are a member of, or any workshop if you are an admin, the same pieces its own Review tab lists; for everyone else, the ones it has declared finished and opened beyond itself. Rate them, say what you would change, and see where the scores put them."
+        description="Rate sketches and prototypes from other workshops."
         icon={<Globe2 className="h-5 w-5" aria-hidden />}
       />
 
@@ -716,8 +716,7 @@ function DesignReview() {
           ) : null}
         </div>
         <p className="max-w-3xl text-sm leading-6 text-ink-muted">
-          Every workshop that has declared at least one sketch or prototype finished and opened it to designers outside
-          the workshop. Choose one to read and rate what it has opened.
+          Workshops that opened finished pieces for review.
         </p>
         <input
           className="field-input max-w-md"
@@ -745,7 +744,7 @@ function DesignReview() {
           <p className="text-sm text-ink-700" aria-live="polite">
             {poolQuery.trim()
               ? `No workshop open to the pool matches “${poolQuery.trim()}”.`
-              : "No workshop has opened a sketch or a prototype to the pool yet."}
+              : "None yet."}
           </p>
         ) : (
           <ul className="grid gap-2 sm:grid-cols-2">
@@ -780,6 +779,7 @@ function DesignReview() {
           </ul>
         )}
         {pool && pool.pages > 1 ? (
+          // A pager (Previous · page · Next), not an action row — it stays out of ActionGroup.
           <div className="flex items-center gap-2 text-xs text-ink-500">
             <button
               type="button"
@@ -916,13 +916,10 @@ function DesignReview() {
             advanceOnSelect={false}
           />
           <p id="design-review-scope" className="max-w-3xl text-sm leading-6 text-ink-muted">
-            This list holds the design workshops <em>you can already open</em> — the ones you created, the ones an
-            admin granted you, and every workshop on the platform if you are an admin. Workshops other designers have
-            opened to the pool are listed above, under Workshops open to the pool.
+            Workshops you can open.
           </p>
           <p className="max-w-3xl text-xs leading-5 text-ink-500">
-            For a workshop you belong to, you see the same pieces its own Review tab lists, scored by the wider pool
-            of designers.
+            Same pieces as its Review tab.
           </p>
           {asking ? (
             // "Still asking", in words. Never a bare spinner — that says something is happening
@@ -953,12 +950,12 @@ function DesignReview() {
             <div className="rounded-md border border-line-200 bg-field-100 px-3 py-2" aria-live="polite">
               <p className="text-xs leading-5 text-ink-700">
                 {listFailure.unreachable
-                  ? "Couldn't connect, so your workshops couldn't be listed. Opening a round needs a connection too. Check your connection and try again."
+                  ? "No connection. Try again."
                   : listFailure.note}
               </p>
               {listFailure.unreachable ? null : (
                 <p className="mt-1 text-xs leading-5 text-ink-500">
-                  You can still open a round from its link or id in the box below.
+                  You can still paste a link below.
                 </p>
               )}
               <button type="button" className="field-button-secondary mt-2" onClick={retry}>
@@ -979,8 +976,8 @@ function DesignReview() {
             // paragraph below needs no live region — its trigger is enabled and carries the id.
             <p id="design-review-empty" className="text-xs leading-5 text-ink-500" aria-live="polite">
               {titleQuery.trim()
-                ? `None of your design workshops matches “${titleQuery.trim()}”. To open a round somebody sent you, paste its link or id in the box below.`
-                : "No design workshops are listed for your account. An admin creates them and gives you access. You can still open a round from its link or id in the box below."}
+                ? `Nothing matches “${titleQuery.trim()}”.`
+                : "No workshops yet. You can paste a link below."}
             </p>
           ) : null}
           {workshopCut ? (
@@ -1004,8 +1001,7 @@ function DesignReview() {
               workshop picker in the app prints; the rest is the part only this list can say.
             */
             <p id="design-review-truncation" className="text-xs leading-5 text-ink-500">
-              {workshopCut} These are the {set.drawn} added most recently, sorted by the day each workshop
-              ran. You can also paste another workshop&apos;s link or id below, or open it from{" "}
+              {workshopCut} The {set.drawn} added most recently, sorted by workshop date. Paste a link below, or use{" "}
               <Link href="/design-workshops" className="underline">
                 Design workshops
               </Link>
@@ -1023,7 +1019,7 @@ function DesignReview() {
         */}
         <form onSubmit={open} className="grid gap-1">
           <label className="grid gap-1">
-            <span className="field-label">Or any other workshop, from its link or its id</span>
+            <span className="field-label">Or paste a workshop link or id</span>
             <input
               className="field-input"
               value={typed}
@@ -1033,8 +1029,7 @@ function DesignReview() {
             />
           </label>
           <p id="design-review-why" className="max-w-3xl text-sm leading-6 text-ink-muted">
-            Each round belongs to one workshop and ranks that workshop&apos;s own pieces. Paste a link or id someone sent
-            you here; every workshop open to the pool is also listed at the top of this page.
+            Each round ranks one workshop&apos;s pieces.
           </p>
           <div>
             <button type="submit" className="field-button" disabled={!typed.trim()}>
@@ -1144,8 +1139,7 @@ function DesignReview() {
         </>
       ) : (
         <p className="panel px-4 py-6 text-center text-sm text-ink-muted">
-          Nothing is open yet. Choose a workshop open to the pool or one of your own workshops above, or paste the
-          link a workshop&apos;s designers sent you, to read its finished sketches and prototypes.
+          Choose a workshop above, or paste a link.
         </p>
       )}
     </div>

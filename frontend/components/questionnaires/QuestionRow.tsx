@@ -31,6 +31,7 @@ import {
   type QForm,
   type QFormQuestion
 } from "@/lib/questionnaireForms";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 export function QuestionRow({
   questionnaireId,
@@ -131,8 +132,8 @@ export function QuestionRow({
             <p className="text-sm text-ink-700 line-through decoration-ink-300">{question.prompt}</p>
             <p className="mt-1 text-xs leading-5 text-ink-500">
               {question.supersededById
-                ? "Retired and replaced by the question that follows it. Its original wording and the answers given under it are kept — an answer means what it meant when it was given."
-                : "Retired. It is no longer asked, and the answers recorded against it are still in the record."}
+                ? "Retired — replaced by the next question. Its wording and answers are kept."
+                : "Retired. Its answers are kept."}
             </p>
           </div>
         </div>
@@ -148,9 +149,8 @@ export function QuestionRow({
             // Shown while the box is still EMPTY of changes, not after Save. amber-100/amber-800 are
             // the brand rungs; amber-50 and amber-200 are stock Tailwind and do not pair with them.
             <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-              This question already has answers. Changing its wording will keep the original question and its answers, and
-              add your new wording as a NEW question in the same place — nothing is overwritten. Help text and the required
-              flag can be changed freely.
+              Already answered. New wording becomes a new question here; the original and its answers are kept. Help text
+              and Required can change freely.
             </p>
           ) : null}
           <label className="grid gap-1">
@@ -166,7 +166,7 @@ export function QuestionRow({
             <span className="field-label">Help text</span>
             <input className="field-input" value={helpText} onChange={(event) => setHelpText(event.target.value)} />
           </label>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <button type="button" className="field-button" onClick={save} disabled={busy || !prompt.trim()}>
               {busy ? "Saving…" : question.hasAnswers && prompt.trim() !== question.prompt ? "Save as a new question" : "Save"}
             </button>
@@ -182,7 +182,7 @@ export function QuestionRow({
             >
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </div>
       ) : (
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -200,7 +200,7 @@ export function QuestionRow({
             ) : null}
           </div>
           {mayEdit ? (
-            <div className="flex flex-wrap justify-end gap-2">
+            <ActionGroup align="end">
               <button type="button" className={rowAction("edit")} onClick={() => setEditing(true)} disabled={busy}>
                 Update
               </button>
@@ -212,7 +212,7 @@ export function QuestionRow({
                 does to the URL. Offering "Delete" on a question the server will retire instead is
                 the single most misleading control this screen could carry.
               */}
-              <button type="button" className={rowAction("danger")} onClick={remove} disabled={busy}>
+              <button type="button" data-danger className={rowAction("danger")} onClick={remove} disabled={busy}>
                 {question.hasAnswers ? (
                   <>
                     <Lock className="h-3 w-3" aria-hidden />
@@ -222,7 +222,7 @@ export function QuestionRow({
                   "Delete"
                 )}
               </button>
-            </div>
+            </ActionGroup>
           ) : null}
         </div>
       )}

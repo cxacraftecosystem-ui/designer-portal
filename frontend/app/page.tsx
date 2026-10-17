@@ -79,7 +79,7 @@ import HeroLanding from "@/components/hero/HeroLanding";
 export const metadata: Metadata = {
   title: { absolute: "Design Prototype Workshop — The workshop ends. The report is already written." },
   description:
-    "A capture-to-report tool for craft and textile designers: every stage of a design & prototype development workshop recorded at Basic, Standard and Advanced tiers, with photographs, costings and structured interviews — a microphone on every narrative box, and artisans, products, processes, tools, media and interviews filed under the workshop they were captured at. Rendered as a .docx or PDF report, with every file it has generated kept beside it, and the workshop readable stage by stage by an appointed inspector. Captured offline, and generated on the phone itself."
+    "Capture every stage of a craft design & prototype workshop — photos, costings and interviews, even offline — and get the .docx or PDF report as you go."
 };
 
 export default async function Home() {

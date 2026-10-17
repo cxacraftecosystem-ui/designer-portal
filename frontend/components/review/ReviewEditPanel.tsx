@@ -21,6 +21,7 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { INTERVIEW_LANGUAGE_PLACEHOLDER, interviewLanguageOptions } from "@/lib/interviewLanguages";
 import { readableError } from "@/components/review/reviewErrors";
 import { RequiredMark } from "@/components/ui/RequiredMark";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * Fix a pending record's field values from inside the review queue, instead of bouncing it back to
@@ -251,9 +252,8 @@ export function ReviewEditPanel({
       <p className="text-xs text-ink-500">
         {/* The explicit {" "} is load-bearing: the JSX transform drops the leading space of the text
             node that follows an inline element, so without it this reads "does notapprove it". */}
-        Fix the values here instead of bouncing the record back. Saving does <strong>not</strong>{" "}
-        approve it — the status stays pending and the change is recorded against your name in the edit history. Status,
-        workshop, location and linked records are changed from the record&apos;s own edit screen.
+        Fix values here instead of sending it back. Saving does <strong>not</strong>{" "}
+        approve it; the edit is logged under your name.
       </p>
       {/* ABOVE THE BOXES IT HOLDS, unlike the error below: a held field is greyed before anything is
           typed, and the reason has to be where the eye lands on it. Mounted from the first paint, so
@@ -277,7 +277,7 @@ export function ReviewEditPanel({
             />
           </label>
           {feedback}
-          <div className="flex flex-wrap items-center gap-2">
+          <ActionGroup>
             {/* Both Saves are held for a post holder, and name the reason while it is on screen. */}
             <button
               type="button"
@@ -304,7 +304,7 @@ export function ReviewEditPanel({
             <button type="button" className="field-button-secondary h-9 min-h-0 px-3 text-xs" disabled={busy} onClick={onClose}>
               Cancel
             </button>
-          </div>
+          </ActionGroup>
         </>
       )}
     </div>

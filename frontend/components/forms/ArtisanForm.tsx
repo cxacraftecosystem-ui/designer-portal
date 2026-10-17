@@ -44,6 +44,7 @@ import { deriveAge, deriveExperienceYears } from "@/lib/recordDerivations";
 import { EMAIL_PATTERN, emailValidationError } from "@/lib/textFormats";
 import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
 import { RequiredMark } from "@/components/ui/RequiredMark";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 // Android parity (MainActivity.kt genderOptions).
 const genderOptions = ["Male", "Female", "Transgender", "Other"];
@@ -91,7 +92,7 @@ const PEHCHAN_NO = "false";
  * (flip the answer to No), which is the half a researcher without a card in hand actually needs.
  */
 const PEHCHAN_NUMBER_REQUIRED =
-  "Enter the Artisan Pehchan Card number, or set the card to 'No' if the artisan does not hold one.";
+  "Enter the Pehchan number, or set the card to 'No'.";
 
 /** The `detail` of an API error response, whatever shape the server chose for it. */
 function errorDetail(error: unknown): unknown {
@@ -259,10 +260,10 @@ function PehchanFields({
         />
         <p id={hintId} className="text-xs text-ink-muted">
           {!available
-            ? 'Disabled because this artisan holds no Pehchan card. Switch "available" to Yes to enter a number.'
+            ? 'No Pehchan card. Switch "available" to Yes to enter one.'
             : keptMask
-              ? "On file, but hidden from you: the full card number is shown only to the researcher who recorded this artisan and to professors upwards. Saving leaves it exactly as it is."
-              : "The PM Vishwakarma artisan ID printed on the card."}
+              ? "On file but hidden. Saving leaves it unchanged."
+              : "The PM Vishwakarma ID on the card."}
           {keptMask ? (
             <>
               {" "}
@@ -352,7 +353,7 @@ function StatusField({
       <span className="field-label">Status</span>
       <span
         className="inline-flex h-10 w-fit items-center rounded-full border border-line-200 bg-surface-50 px-4 text-sm font-medium text-ink"
-        title="Submitted for review — a reviewer sets the final status."
+        title="A reviewer sets the final status."
       >
         {text}
       </span>
@@ -843,7 +844,7 @@ export function ArtisanForm({
       const craftId = textValue(form, "craftId");
       const newCraftName = textValue(form, "newCraftName");
       if (!craftId && !newCraftName) {
-        setError("Select an existing craft or enter a new craft name.");
+        setError("Choose a craft or enter a new one.");
         setSaving(false);
         return;
       }
@@ -984,8 +985,7 @@ export function ArtisanForm({
         setUploadProgress(null);
         if (failed.length) {
           setError(
-            `${failed.length} of ${mediaFiles.length} file(s) failed to upload: ${failed.map((f) => f.name).join(", ")}. ` +
-              "The artisan record was saved; re-open it to retry those files."
+            `Saved, but these didn't upload: ${failed.map((f) => f.name).join(", ")}. Reopen to retry.`
           );
           setSaving(false);
           /*
@@ -1045,9 +1045,9 @@ export function ArtisanForm({
       <div className="grid gap-6">
         <div className="panel p-4">
           <p className="text-sm font-medium text-ink">
-            Saved &ldquo;{savedRecord.name}&rdquo;. Continue documenting with the same context, or add another artisan.
+            Saved &ldquo;{savedRecord.name}&rdquo;.
           </p>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <ActionGroup className="mt-3">
             {/*
               EVERY BOX THIS FORM KEEPS IN REACT STATE HAS TO BE CLEARED HERE, and the list used to
               be one item long.
@@ -1084,7 +1084,7 @@ export function ArtisanForm({
             <button type="button" className="field-button-secondary" onClick={() => { router.push("/artisans"); router.refresh(); }}>
               Back to artisans
             </button>
-          </div>
+          </ActionGroup>
         </div>
         {/*
           THE CODE FOR THE RECORD THAT WAS JUST MADE, at the one moment somebody wants it.
@@ -1360,8 +1360,8 @@ export function ArtisanForm({
               max={todayIso}
               hint={
                 derivedAge === null
-                  ? "The workshop's participant table shows an age, worked out from this."
-                  : `Age ${derivedAge}. The workshop's participant table shows an age, worked out from this.`
+                  ? "Used to show age."
+                  : `Age ${derivedAge}.`
               }
             />
           </div>
@@ -1383,8 +1383,8 @@ export function ArtisanForm({
               max={todayIso}
               hint={
                 derivedExperience === null
-                  ? "The date the artisan took up the craft. The years of experience are worked out from it."
-                  : `${derivedExperience} years of experience, worked out from this — the figure the workshop and the report use.`
+                  ? "When they took up the craft."
+                  : `${derivedExperience} years of experience.`
               }
             />
           </div>
@@ -1420,8 +1420,8 @@ export function ArtisanForm({
             hint={
               <p id={experienceHintId} className="text-xs leading-5 text-ink-muted">
                 {derivedExperience === null
-                  ? "Used when there is no “practising since” date: a stated answer, which does not change as the years pass. Leave a box on “Not recorded” rather than answering 0 — they mean different things."
-                  : `The date above sets the years — ${derivedExperience} years is what the workshop and the report print. A number chosen here is used only when that date is empty. Months are stored as chosen; the participant table and the exports print the years only.`}
+                  ? "Used if there is no “practising since” date. Leave “Not recorded” rather than 0."
+                  : `The date above sets this (${derivedExperience} years).`}
               </p>
             }
           >
@@ -1583,11 +1583,10 @@ export function ArtisanForm({
                 Identity
               </h3>
               <p className="mt-0.5 text-xs text-ink-muted">
-                Government identifiers, kept so the same artisan documented at two workshops resolves
-                to one record. Stored securely and masked on every shared or exported view.
+                Prevents duplicate artisans. Masked in shared and exported views.
                 {aadhaarRequired
                   ? ""
-                  : " This record can be saved without an Aadhaar number — add it only if the artisan is willing."}
+                  : " Aadhaar is optional — add it only if the artisan agrees."}
               </p>
             </div>
             <AadhaarField
@@ -1613,13 +1612,13 @@ export function ArtisanForm({
           <DosDontsField
             name="dos"
             label="Do's"
-            helper="Lessons from years at the craft — the things the artisan has learnt to do. Press Enter for each new point."
+            helper="One point per line."
             defaultValue={initial?.dos}
           />
           <DosDontsField
             name="donts"
             label="Don'ts"
-            helper="Lessons from years at the craft — the things the artisan has learnt not to do / to avoid. Press Enter for each new point."
+            helper="One point per line."
             defaultValue={initial?.donts}
           />
           <StatusField canSetStatus={canSetStatus} initialStatus={initial?.status} onDirty={markDirty} />
@@ -1635,7 +1634,7 @@ export function ArtisanForm({
             markDirty();
           }}
           title="Artisan media"
-          description="Attach or capture artisan images, audio introductions, videos, and documents. Photo details (date, place, camera) are kept and summarised in notes."
+          description="Photos, audio, video and documents."
         />
         {/*
           `statedPlace` is the free-text box the researchers used while there was no district column
@@ -1661,7 +1660,7 @@ export function ArtisanForm({
         {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
         {/* Why Save is held, beside it — see `filing`. */}
         <HeldPostNotice refusal={filing.notice} id={filingNoticeId} className="" sayPending />
-        <div className="flex justify-end gap-2">
+        <ActionGroup align="end">
           <button type="button" className="field-button-secondary" onClick={handleBack}>
             Cancel
           </button>
@@ -1672,7 +1671,7 @@ export function ArtisanForm({
           >
             {checkingDuplicate ? "Checking..." : saving ? "Saving..." : initial ? "Update artisan" : "Save artisan"}
           </button>
-        </div>
+        </ActionGroup>
       </form>
       <DuplicateArtisanDialog
         open={duplicatePromptOpen}

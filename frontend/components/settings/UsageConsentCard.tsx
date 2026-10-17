@@ -58,6 +58,7 @@ import {
   type UsageConsentDecision,
   type UsageConsentResult
 } from "@/lib/usage";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * The current answer as one line of chrome.
@@ -428,7 +429,7 @@ export function UsageConsentCard() {
             affirmative answer to the question this card is asking must be the control a keyboard or
             screen-reader user reaches first; putting the destructive one ahead of it would make
             "delete everything you hold about me" the default response to a reworded paragraph. */}
-        {showAgree ? (
+        <ActionGroup className="max-sm:w-full">{showAgree ? (
           <button type="button" className="field-button" onClick={agree} disabled={busy}>
             {busy ? "Working…" : granted ? "Agree to the updated notice" : "Agree to be recorded"}
           </button>
@@ -441,7 +442,7 @@ export function UsageConsentCard() {
           // because the recipe has none of its own, and utilities beat `@layer components`.
           <button
             type="button"
-            className="field-danger disabled:cursor-not-allowed disabled:opacity-60"
+            data-danger className="field-danger disabled:cursor-not-allowed disabled:opacity-60"
             onClick={withdraw}
             disabled={busy}
           >
@@ -450,7 +451,7 @@ export function UsageConsentCard() {
         ) : null}
         {/* Stated beside the control rather than only in the notice, because this is the sentence
             somebody hesitating over the button needs, and it is the one that makes the gate at
-            sign-in defensible rather than merely documented. */}
+            sign-in defensible rather than merely documented. */}</ActionGroup>
         <p className="w-full text-xs leading-5 text-ink-500">{state.notice.withdrawal.costsNothing}</p>
       </div>
 

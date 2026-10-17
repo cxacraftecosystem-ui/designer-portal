@@ -48,39 +48,39 @@ const TIER_COUNT_WORD_LOWER = TIER_COUNT_WORD.toLowerCase();
 const FAQS = [
   {
     q: "Who can sign in?",
-    a: `Only addresses an administrator has admitted. Signing in — by password or with Google — checks your address against the approved list first; if it is not on the list, your request goes to the administrators for approval. Once you are admitted you are given a role, and an admin raises it (field contributor, researcher, designer, inspector/reviewer, professor, admin) as your part in the project grows.`
+    a: "Only addresses an administrator has approved. Anyone else can request access when they sign in."
   },
   {
     q: "I signed in with Google and was told I need approval. Why?",
-    a: "Google sign-in checks the same approved list as passwords; if your address isn't approved, your request goes to an administrator. You will be able to sign in once they approve it."
+    a: "Google sign-in uses the same approved list. You can sign in once an administrator approves you."
   },
   {
     q: "What happens to my recordings?",
-    a: "They upload to secure storage and join the transcription queue, where they are transcribed and translated into English automatically. The finished transcript is linked back to the artisan, craft, and workshop it belongs to."
+    a: "They upload to private storage and are transcribed and translated into English. Each transcript is linked to its artisan, craft and workshop."
   },
   {
     q: "How does review work?",
-    a: "Every record enters a peer-review ladder. A reviewer can approve it, reject it, or send it back for revision with mandatory comments — and each role reviews the work of the roles below it, with the master admin able to review everyone's."
+    a: "Each role reviews the roles below it. A reviewer approves, rejects, or sends a record back with comments."
   },
   {
     q: "Who can download the data?",
-    a: "The full dataset opens at Professor and above. Anyone below that needs the dataset-download permission granted explicitly, or a per-record share from the owner. Sharing between researchers is tiered too: download, comment, or edit — requested by one side and granted, changed, or revoked by the other."
+    a: "Professors and above. Others need a download grant or a share from the record's owner."
   },
   {
     q: "What can a brand-new account actually do?",
-    a: "A newly admitted account starts as a Crowdsource Volunteer, unless the administrator who admitted it chose a higher role, and can take interviews, upload media, and comment on existing records. Creating artisans, products, processes and tools begins at Researcher; Crowdsource Volunteers and Field Contributors fill in existing records. A Field Contributor can also review a volunteer's work. An admin raises the role when the person's part in the project grows."
+    a: "Take interviews, upload media and comment on records. Creating artisans, products, processes and tools starts at Researcher."
   },
   {
     q: "What is a design & prototype workshop?",
-    a: `A sanctioned fortnight in a craft cluster, recorded as ${STAGE_COUNT_WORD_LOWER} stages: setup, the administrative papers and who is in the room; the cluster's craft background, its traditional process and the products already being made; a market survey and the design direction it produces; a brief, sketches and their shortlisting; prototypes through iteration, testing and validation; the final product documented; costing, packaging and market linkage; outcomes, inspection and closing; then the report, a data-quality pass and the follow-up. The stages are the report — every section of the printed document is one of them — so there is no writing-up phase after the workshop ends.`
+    a: `A sanctioned fortnight in a craft cluster, recorded as ${STAGE_COUNT_WORD_LOWER} stages — from setup and market survey to prototypes, costing and follow-up. The stages are the report, so there is no writing-up afterwards.`
   },
   {
     q: "Who can start a design workshop, and who does the work inside it?",
-    a: `Admins and the master admin start one; designers, Assistant Directors, Regional Directors, Ministry Admins, admins and the master admin work inside it. Professors and inspectors do not run workshops. If you are a designer, ask an admin to create the workshop for your cluster and give you access — you can then fill in all ${STAGE_COUNT_WORD_LOWER} stages, add artisans, products and photographs, and generate the report. Any workshop you already have access to is open to you now.`
+    a: "Admins start one. Designers, ministry officers and admins work inside it — designers, ask an admin to add you."
   },
   {
     q: "Will an unfilled field stop me submitting a workshop?",
-    a: "No. A workshop is submitted when the designer says it is, and an empty field never refuses it — a readiness screen ranks what is still outstanding and links straight to the box holding each gap. It is built from the local draft, so the question can be asked on the last afternoon with no signal. One thing does refuse: a single stage's own “Save and check required fields”, and it refuses that stage alone. Standard- and Advanced-tier fields add depth and never block anything."
+    a: "No. You submit when you're ready; a readiness screen lists what's still missing, even offline."
   },
   {
     // AMENDED, and the amendment is a correction rather than an addition. The last sentence read
@@ -114,11 +114,11 @@ const FAQS = [
       still said "uploading": a permanent dead end that looked like progress.
     */
     q: "Does it work offline?",
-    a: "The Android app is offline-first — capture interviews, media, and GPS positions with no signal at all, and everything syncs when you are back online. Corrections wait to upload as well as new records, and anything that cannot be sent is listed with its reason and retried one at a time. The handset also builds a workshop's report on itself, from its own draft. The web portal complements it for review, browsing, and administration, and it keeps a design & prototype workshop's draft in the browser too, so its stages can be filled in, scored and checked for readiness with no connection, and its report can be previewed and downloaded as a .docx or .pdf too. You can create your own questionnaire with no signal — it is saved with its name and its workshop and uploads when you are back online, and you add its questions after that. An existing questionnaire opens offline so you can read the questions you are about to ask; recording the answers needs a connection."
+    a: "Yes. The Android app and the web portal both record workshops and build reports offline, and sync when you're back online. Recording questionnaire answers needs a connection."
   },
   {
     q: "What about privacy?",
-    a: `Access is governed by ${TIER_COUNT_WORD_LOWER} roles, each with its own permissions. Sharing between researchers is opt-in per grant, and every edit carries an audited revision history. Media lives in private cloud storage that only signed-in, authorized users can reach. National identifiers are masked wherever a record leaves its owner: an artisan's Aadhaar number is used to make sure the same person documented at two workshops becomes one record, not two, but it renders as XXXX XXXX 9012 on every shared and exported surface — the data browser, CSV, and the .xlsx report — and only the researcher who recorded that artisan, or a professor and above, can read it in full.`
+    a: `Access follows ${TIER_COUNT_WORD_LOWER} roles, every edit is audited, and media is private. Aadhaar numbers show as XXXX XXXX 9012 everywhere they are shared or exported.`
   }
 ];
 

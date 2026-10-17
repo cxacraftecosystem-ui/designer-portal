@@ -139,8 +139,8 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         if (cancelled) return;
         setError(
           err instanceof Error
-            ? `The list of stages couldn't be loaded, and there's no copy saved on this device: ${err.message}`
-            : "The list of stages couldn't be loaded, and there's no copy saved on this device."
+            ? `Couldn't load the stages: ${err.message}`
+            : "Couldn't load the stages."
         );
         return;
       }
@@ -169,7 +169,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         // already drawn from the local copy must not be replaced by an error box.
         if (isUnreachable(err)) {
           setOffline(true);
-          if (!local) setError("You're offline and this workshop isn't saved on this device.");
+          if (!local) setError("You're offline and this workshop isn't on this device.");
           return;
         }
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
@@ -290,7 +290,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
     <>
       <PageHeader
         title="Cards & tags"
-        description="Join cards that put a colleague on this workshop, printable codes for the artisans on its roster and for every prototype in it, and a scanner that reads one back. A scan is what stops two days of work being attached to the wrong prototype."
+        description="Join cards, artisan cards and prototype tags."
         icon={<QrCode className="h-5 w-5" aria-hidden />}
         actions={
           <>
@@ -313,8 +313,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         // Which copy is on screen is not guessable from the sheet, and it decides whether a
         // missing tag means "nobody has entered that prototype" or "this device has not seen it".
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          You&rsquo;re offline, so these are the artisans and prototypes saved on this device. Printing works the same;
-          anything recorded on another device will appear once you reconnect.
+          Offline — showing what&rsquo;s on this device.
         </div>
       ) : null}
 
@@ -347,7 +346,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         resolve={resolve}
         // A media file is named here too: `lookUpWorkshopCode` resolves one, so leaving it out of the
         // sentence understates what this box answers by exactly one record type.
-        description="A tag or card printed here, for any kind of record — a prototype or an artisan from this workshop, or a craft, product, process, tool, interview or media file from the records. The code holds only a reference to the record, not its details."
+        description="Scan any card or tag printed by this app."
       />
       {/* Only for a record that HAS a page. A prototype is a row inside this workshop's draft and has
           no route of its own, so a prototype scan reports and stops there — which is correct: the
@@ -365,8 +364,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
           /* Not the same as "there is nothing to print", and confusing the two would send a
              designer looking for rows they never entered instead of reporting a broken build. */
           <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-            {kind === "prototype" ? "Prototype tags" : "Artisan cards"} can&rsquo;t be printed right now. Nothing is missing
-            from your workshop — reload the page to update the app.
+            {kind === "prototype" ? "Prototype tags" : "Artisan cards"} can&rsquo;t be printed. Reload to update the app.
           </p>
         ) : (
           <WorkshopCodeSheet
@@ -374,8 +372,8 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
             cards={cards}
             emptyMessage={
               kind === "prototype"
-                ? "No prototypes have been recorded in this workshop yet. Add them at the prototype development stage and the tags appear here."
-                : "No artisans are on this workshop's roster yet. Enrol them on the participants stage and their cards appear here."
+                ? "No prototypes yet."
+                : "No artisans on the roster yet."
             }
           />
         )}

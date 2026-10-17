@@ -261,11 +261,8 @@ export function WorkshopMappingPanel() {
             Records not filed under a workshop
           </h2>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-ink-500">
-            A record with no workshop does not appear when you choose a workshop — in the search box, the map,
-            the data browser, the exports or the completion matrix — though it still appears under{" "}
-            <span className="font-medium text-ink-700">All records</span>. This finds those records and files
-            each one where the evidence points: the record it belongs to, the artisans in it, or the workshop
-            whose dates it was recorded within.
+            Records without a workshop only show under <span className="font-medium text-ink-700">All records</span>.
+            This files them where the evidence points.
             Records filed under a design &amp; prototype workshop are not listed here.
           </p>
         </div>
@@ -357,8 +354,8 @@ export function WorkshopMappingPanel() {
                             <p className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-100">
                               <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
                               {canAct
-                                ? "Left alone — open one to file it by hand or discard it"
-                                : "Left alone — open the record and choose its workshop by hand"}
+                                ? "Skipped — file or discard by hand"
+                                : "Skipped — file by hand"}
                             </p>
                             {canAct ? (
                               /* A GRID OF CARDS, one per row. Two columns from `sm` up: these titles
@@ -414,9 +411,7 @@ export function WorkshopMappingPanel() {
                             {stuck.length < bucket.unresolved ? (
                               <p className="mt-1.5 text-[11px] leading-4 text-ink-500">
                                 {bucket.unresolved - stuck.length} more{" "}
-                                {bucket.unresolved - stuck.length === 1 ? "is" : "are"} not shown here — only
-                                one page of each record type is listed at a time. Re-check after filing these to
-                                see the rest.
+                                {bucket.unresolved - stuck.length === 1 ? "is" : "are"} hidden. Re-check after filing these.
                               </p>
                             ) : null}
                           </div>
@@ -435,8 +430,7 @@ export function WorkshopMappingPanel() {
                       : `File ${totals.resolved} record${totals.resolved === 1 ? "" : "s"} under its workshop`}
                   </button>
                   <p className="text-[11px] leading-4 text-ink-500">
-                    Only ever fills an empty workshop — nothing already filed is moved or cleared, and
-                    pressing it twice changes nothing.
+                    Only fills empty workshops. Safe to repeat.
                   </p>
                 </div>
               ) : null}
@@ -460,8 +454,8 @@ export function WorkshopMappingPanel() {
               {applied === 0
                 ? heldBack
                   ? "Nothing was filed."
-                  : "Nothing left to file — every record the evidence could settle was already filed."
-                : `${applied} record${applied === 1 ? "" : "s"} filed. They now appear under their workshop everywhere: the search box, the map, the data browser, the exports and the completion matrix.`}
+                  : "Nothing left to file."
+                : `${applied} record${applied === 1 ? "" : "s"} filed.`}
             </p>
           ) : null}
           {/* WHAT THE SAME PRESS LEFT ALONE, AND WHY — the server's sentence, said whenever it reports
@@ -489,8 +483,7 @@ export function WorkshopMappingPanel() {
             </ul>
           ) : (
             <p className="mt-3 text-[11px] leading-4 text-ink-500">
-              No workshop has dates, so nothing can be filed by when it was recorded. Add a start and end date
-              to a workshop to use them.
+              No workshop has dates, so none can be matched by date.
             </p>
           )}
         </>

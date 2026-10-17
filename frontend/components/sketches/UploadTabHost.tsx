@@ -204,9 +204,8 @@ type Target = {
 function fullNotice(said: string, names: string[]): string {
   const one = names.length === 1;
   return (
-    `${said} ${one ? "was" : "were"} not attached because that field is already full: ${names.join(", ")}. ` +
-    "Remove something it already holds on the stage form, then " +
-    `attach ${one ? "it" : "them"} again.`
+    `${said} ${one ? "was" : "were"} not attached — the field is full: ${names.join(", ")}. ` +
+    "Remove a file on the stage, then try again."
   );
 }
 
@@ -364,8 +363,8 @@ function useMeasurablePhotos(refs: string[]): MeasurePhotos {
         setState({
           status: "failed",
           reason: offline
-            ? "There is no connection, so photographs already uploaded for this piece can't be shown here. A photograph still on this device can be measured without a connection."
-            : "None of this piece's files could be opened here — usually because your account doesn't have access to them."
+            ? "Offline — uploaded photos can't be shown. Photos on this device can still be measured."
+            : "Couldn't open this piece's files. You may not have access."
         });
         return;
       }
@@ -783,7 +782,7 @@ export function UploadTabHost({
         await reload();
       } catch {
         if (!cancelled) {
-          setProblem("This workshop's sketches and prototypes couldn't be loaded on this device.");
+          setProblem("Couldn't load sketches and prototypes.");
         }
       }
     })();
@@ -837,7 +836,7 @@ export function UploadTabHost({
         const stage = draft?.stages[target.stageKey];
         if (!draft || !stage) {
           setProblem(
-            "This file wasn't attached because its stage hasn't been loaded on this device. Open that stage once while you have a connection, then try again."
+            "Not attached — open its stage once online first."
           );
           return false;
         }
@@ -847,7 +846,7 @@ export function UploadTabHost({
           // The row went away between this tab reading it and the file being handed over — another
           // tab, or a colleague's deletion arriving on a sync. Naming it is the only honest answer.
           setProblem(
-            "This file wasn't attached because the piece it was for is no longer in this workshop. Reload the tab and choose another."
+            "Not attached — that piece is gone. Reload and choose another."
           );
           return false;
         }
@@ -904,7 +903,7 @@ export function UploadTabHost({
         if (turnedAway.length) setProblem(fullNotice(what(turnedAway.length), turnedAway));
       } catch {
         setProblem(
-          "Nothing could be written to this device's storage. If the browser is in private mode or its storage is full, use a normal window or free some space, then try again."
+          "Couldn't save to this device. Leave private mode or free some space."
         );
         return false;
       } finally {
@@ -935,15 +934,15 @@ export function UploadTabHost({
             // a courtyard photograph cannot be re-taken. So on every outcome except a confirmed
             // landing, say that the copy here is kept — that is what makes the wait safe rather than
             // merely long.
-            (syncPassLanded(result) ? "" : " The copy on this device is kept until the upload is confirmed.")
+            (syncPassLanded(result) ? "" : " Kept on this device until it uploads.")
         );
       } catch (error) {
         // The file IS on this device — that happened above and is not in doubt here. Only the sending
         // is, so only the sending is what this sentence is about.
         setNotice(
           isUnreachable(error)
-            ? `${what(took)} is saved on this device. It will upload when you're back online, and the copy here is kept until the upload is confirmed.`
-            : `${what(took)} is saved on this device, but it didn't finish uploading. It will upload with the next sync — the banner at the top of the page shows its progress — and the copy here is kept until the upload is confirmed.`
+            ? `${what(took)} is saved on this device and will upload when you're back online.`
+            : `${what(took)} is saved on this device and will upload on the next sync.`
         );
       }
       /*
@@ -1016,8 +1015,7 @@ export function UploadTabHost({
         setProblem(
           "This workshop's " +
             (entityKey === "sketch" ? "sketches" : "prototypes") +
-            " haven't been loaded on this device yet, so a new one can't be added here. " +
-            "Open the workshop once while you have a connection, then come back."
+            " aren't on this device yet. Open the workshop once online."
         );
         return;
       }
@@ -1045,8 +1043,7 @@ export function UploadTabHost({
         if (entityKey === "sketch") setSketchRow(key);
         else setPrototypeRow(key);
         setNotice(
-          `A new ${entityKey} was added to this workshop on this device. Attach its files here; name it, ` +
-            "and fill in the rest, on its stage."
+          `New ${entityKey} added. Attach files here; fill in the rest on its stage.`
         );
         // THE SECOND PHASE, AND ITS OWN SENTENCE. "It is on this device" and "the repository has it"
         // are different facts with different remedies — the rule this file's header states — so the
@@ -1060,7 +1057,7 @@ export function UploadTabHost({
           setNotice((current) => `${current ?? ""} It will upload when you're back online.`.trim());
         }
       } catch {
-        setProblem(`A new ${entityKey} could not be created on this device.`);
+        setProblem(`Couldn't add a ${entityKey}.`);
       } finally {
         setBusy(false);
       }
@@ -1194,7 +1191,7 @@ export function UploadTabHost({
         const stage = draft?.stages[target.stageKey];
         if (!draft || !stage) {
           setProblem(
-            `That measurement wasn't saved because the stage “${field.label}” belongs to hasn't been loaded on this device. Open that stage once while you have a connection, then try again.`
+            `Not saved — open the stage for “${field.label}” once online first.`
           );
           return;
         }
@@ -1204,7 +1201,7 @@ export function UploadTabHost({
           // The row went away between the picker reading it and the button being pressed — another
           // tab, or a colleague's deletion arriving on a sync. Naming it is the only honest answer.
           setProblem(
-            "That measurement wasn't saved because the piece it was for is no longer in this workshop. Reload the tab and choose another."
+            "Not saved — that piece is gone. Reload and choose another."
           );
           return;
         }
@@ -1220,7 +1217,7 @@ export function UploadTabHost({
         setNotice(`“${field.label}” on “${landed}” now reads ${shown} on this device. Uploading…`);
       } catch {
         setProblem(
-          "That measurement couldn't be saved on this device. If the browser is in private mode or its storage is full, use a normal window or free some space, then try again."
+          "Couldn't save to this device. Leave private mode or free some space."
         );
         return;
       } finally {
@@ -1233,15 +1230,15 @@ export function UploadTabHost({
         await reload();
         setNotice(
           `“${field.label}” on “${landed}” now reads ${shown}. ${syncPassNote(result, "this measurement is")}` +
-            (syncPassLanded(result) ? "" : " The copy on this device is kept until the upload is confirmed.")
+            (syncPassLanded(result) ? "" : " Kept on this device until it uploads.")
         );
       } catch (error) {
         // The figure IS on this device — that happened above and is not in doubt here. Only the
         // sending is, so only the sending is what this sentence is about.
         setNotice(
           isUnreachable(error)
-            ? `“${field.label}” on “${landed}” now reads ${shown} on this device. It will upload when you're back online, and the copy here is kept until the upload is confirmed.`
-            : `“${field.label}” on “${landed}” now reads ${shown} on this device, but it didn't finish uploading. It will upload with the next sync — the banner at the top of the page shows its progress.`
+            ? `“${field.label}” on “${landed}” is ${shown} on this device. It uploads when you're online.`
+            : `“${field.label}” on “${landed}” is ${shown} on this device. It uploads with the next sync.`
         );
       }
     },
@@ -1286,7 +1283,7 @@ export function UploadTabHost({
         ? `${said}: there are no ${half}s in this workshop yet. Add one on its stage first.`
         : !chosen
           ? `${said}: choose which ${half} it belongs to first.`
-          : `${said}: the ${half} stage hasn't been loaded on this device. Open it once while you have a connection, then try again.`
+          : `${said}: open the ${half} stage once online first.`
     );
   }
 
@@ -1298,8 +1295,7 @@ export function UploadTabHost({
       <div className="panel p-4">
         <h2 className="font-display text-lg font-bold text-ink-900">Where this goes</h2>
         <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-muted">
-          A drawing or a model belongs to one piece, so that everything about it — its images, its notes, its ratings
-          and its place in the ranking — stays on one record. Choose the piece, then add the file below.
+          Choose the piece, then add the file.
         </p>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -1336,10 +1332,10 @@ export function UploadTabHost({
         {chosenSketch && (sketchImageHeld > 0 || sketchLineArtHeld > 0) ? (
           <p className="mt-3 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">
             {sketchImageHeld > 0 && sketchLineArtHeld > 0
-              ? `“${rowLabel(chosenSketch, chosenSketchIndex)}” already holds a ${sketchImage?.label ?? "sketch image"} and a ${lineArt?.label ?? "line art file"}. Both are single files, so attaching another of either REPLACES the one that is there.`
+              ? `Attaching replaces the current ${sketchImage?.label ?? "sketch image"} or ${lineArt?.label ?? "line art file"}.`
               : sketchImageHeld > 0
-                ? `“${rowLabel(chosenSketch, chosenSketchIndex)}” already holds a ${sketchImage?.label ?? "sketch image"}. It is a single file, so attaching a photograph here REPLACES it.`
-                : `“${rowLabel(chosenSketch, chosenSketchIndex)}” already holds a ${lineArt?.label ?? "line art file"}. It is a single file, so attaching traced line art here REPLACES it.`}
+                ? `Attaching a photo replaces the current ${sketchImage?.label ?? "sketch image"}.`
+                : `Attaching line art replaces the current ${lineArt?.label ?? "line art file"}.`}
           </p>
         ) : null}
 
@@ -1347,8 +1343,7 @@ export function UploadTabHost({
           <p className="mt-3 flex items-start gap-2 rounded-md border border-line-200 bg-amber-100 px-3 py-2 text-sm text-amber-800">
             <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             <span>
-              These stages haven&apos;t been loaded on this device, so nothing can be attached from here. Open the stage
-              once while you have a connection, or try again when you have signal.
+              Open these stages once online to attach from here.
             </span>
           </p>
         ) : null}
@@ -1647,8 +1642,8 @@ export function UploadTabHost({
         */
         <p className="panel px-4 py-6 text-sm text-ink-muted">
           {registry === null
-            ? "The form couldn't be loaded, so nothing can be attached or measured here. Open the workshop once while you have a connection."
-            : "Nothing can be attached or measured here right now. Reload the page to update the app, then try again."}
+            ? "Couldn't load the form. Open the workshop once online."
+            : "Unavailable. Reload to update the app."}
         </p>
       )}
     </div>

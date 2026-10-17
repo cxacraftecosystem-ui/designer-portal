@@ -401,7 +401,7 @@ export function DictationButton({
       // the browser does not reliably distinguish the two — so the sentence covers both doors rather
       // than asserting which one is shut.
       setProblem(
-        "The microphone could not be opened. Allow microphone access for this site, check that a microphone is connected, then try again."
+        "Couldn't open the microphone. Allow access for this site and try again."
       );
       setListening(false);
     }

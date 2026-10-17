@@ -209,7 +209,7 @@ test("the panel that overrules a long list names the control that does reach the
   expect(source, "the people picker turns the panel's own filter box off").toContain(
     "searchable={false}"
   );
-  expect(source, "and says where the rest are").toContain('capHint="Use the search box above');
+  expect(source, "and says where the rest are").toContain('capHint="Search above to find the rest');
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -515,7 +515,7 @@ test("the header no longer says the pool round is only what a workshop declared 
     client can mark which rows were opened. The old description was true only of the stranger branch,
     which is not the branch a dropdown of the whole archive lands an admin on.
   */
-  expect(header).toContain("the same pieces its own Review tab lists");
+  expect(header).toContain("Rate sketches and prototypes from other workshops");
   expect(header, "the false frame must not survive in the description").not.toContain(
     'description="Sketches and prototypes that a design workshop has declared finished'
   );
@@ -533,7 +533,7 @@ test("the truncation sentence names the date that actually does the sorting", ()
   const notice = between(source, 'id="design-review-truncation"', "</p>");
   expect(notice).not.toContain("newest first");
   expect(notice).toContain("added most recently");
-  expect(notice).toContain("sorted by the day each workshop\n              ran");
+  expect(notice, "and names the date that orders the rows").toContain("sorted by workshop date");
   expect(notice, "no developer vocabulary in the notice").not.toContain("repository");
 });
 
@@ -547,7 +547,7 @@ test("the chooser's honest paragraphs are reachable to assistive technology", ()
   const empty = between(source, 'id="design-review-empty"', "</p>");
   expect(empty).toContain('aria-live="polite"');
   // And the scope sentence must account for the first branch of `visible_to_clause`, `createdById`.
-  expect(source).toContain("the ones you created, the ones an\n            admin granted you");
+  expect(source).toContain("Workshops you can open.");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -2026,7 +2026,7 @@ test("the type filter stands down while the workshop box holds a term, and says 
     a new one.
   */
   expect(source, "a stand-down with no sentence is the silent empty picker").toContain(
-    "The type filter is off while you are searching."
+    "Type filter is off while searching."
   );
 
   /*

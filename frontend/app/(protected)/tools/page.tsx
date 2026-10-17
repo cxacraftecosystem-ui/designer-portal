@@ -257,7 +257,7 @@ export default function ToolsPage() {
                           Discuss
                         </button>
                         {adminMode ? (
-                          <button className={rowAction("danger")} onClick={() => remove(tool.id)}>
+                          <button data-danger className={rowAction("danger")} onClick={() => remove(tool.id)}>
                             Delete
                           </button>
                         ) : null}

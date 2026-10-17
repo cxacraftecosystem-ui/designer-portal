@@ -692,11 +692,8 @@ MINISTRY_DASHBOARD_ROLES = frozenset(
 #: no alternative teaches the reader the product is broken rather than that a rule exists — this
 #: repository's standing rule for every gate it draws.
 MINISTRY_DASHBOARD_REFUSAL = (
-    "The ministry dashboard gathers every design & prototype workshop and every other workshop on "
-    "the platform, with each designer's progress, for the ministry's own posts — Assistant "
-    "Director, Regional Director and Ministry Administrator — and the master admin. Admins see the "
-    "same workshops on Cross-workshop analytics in the settings hub; designers see their own "
-    "workshops on Design workshops."
+    "For Assistant Directors, Regional Directors, Ministry Admins and the master admin. "
+    "Admins: use Cross-workshop analytics. Designers: use Design workshops."
 )
 
 

@@ -108,7 +108,7 @@ export function workshopNameCreateLabel(term: string) {
  * reason as the row above — two boxes, one column, one sentence.
  */
 export const WORKSHOP_NAME_REASSURANCE =
-  "You can still type the name — the list only saves you from typing it differently twice.";
+  "You can still type the name.";
 
 /**
  * The distinct titles among `rows`, newest first, with the count of sittings sharing each one.

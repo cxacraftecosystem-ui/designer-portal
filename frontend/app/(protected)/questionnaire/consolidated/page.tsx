@@ -75,7 +75,7 @@ export default function ConsolidatedIndexPage() {
     <div className="pb-16">
       <PageHeader
         title="Consolidated questionnaire"
-        description="An interview is stored once per exact set of artisans, so most artisans' answers are spread across several entries. Pick an artisan to read everything they contributed as one document, with each answer still naming the interview it came from."
+        description="Pick an artisan to read all their answers in one place."
         icon={<Layers className="h-5 w-5" aria-hidden />}
       />
 

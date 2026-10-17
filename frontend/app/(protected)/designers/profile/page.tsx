@@ -85,9 +85,7 @@ function WelcomeNotice() {
       <div className="min-w-0 text-sm leading-6 text-ink-700">
         <p className="font-medium text-ink-900">Welcome — start here.</p>
         <p className="mt-0.5">
-          Everything on this page is copied into every design workshop report you generate, so filling
-          it in once saves retyping it in every workshop. You can leave now and come back from the
-          menu at any time — we will not keep bringing you back as you move around the app.
+          Fill this in once; it&rsquo;s copied into your reports. You can finish later from the menu.
         </p>
       </div>
     </div>
@@ -117,7 +115,7 @@ export default function MyDesignerProfilePage() {
     <>
       <PageHeader
         title="My designer profile"
-        description="Typed once and copied into every design workshop you start — the name, institution, qualifications, contact details, empanelment identifiers, photograph, signature and CV your reports are signed with."
+        description="Your details for workshop reports."
         icon={<IdCard className="h-5 w-5" aria-hidden />}
         actions={
           // The roster is the OTHER designer fact and the two are constantly confused, so an admin

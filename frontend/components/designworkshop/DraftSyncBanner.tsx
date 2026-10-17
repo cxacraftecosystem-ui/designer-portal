@@ -274,8 +274,7 @@ export function DesignWorkshopDraftBanner() {
             tone: outcome.tone,
             title: outcome.title,
             description: result.credentialExpired
-              ? `Your sign-in expired before everything was sent. ${result.pending} workshop(s) still ` +
-                "waiting on this device, and nothing has been thrown away. Sign in again to send them."
+              ? `Signed out — ${result.pending} workshop(s) still waiting. Sign in to send them.`
               : result.pending
                 ? `${result.pending} workshop(s) still waiting.`
                 : "Everything on this device has been sent."
@@ -301,13 +300,13 @@ export function DesignWorkshopDraftBanner() {
             title: outcome.title,
             description:
               outcome.kind === "refused"
-                ? "Nothing has been thrown away. Each one is listed below with what it needs."
+                ? "Nothing was lost. See what each one needs below."
                 : outcome.kind === "offline"
-                  ? "Everything is still waiting on this device. Try again once you have signal."
+                  ? "Still waiting on this device. Try again with signal."
                   : outcome.kind === "expired"
-                    ? "Nothing has been sent and nothing has been thrown away — everything is still on this device. Sign in again to send it."
+                    ? "Nothing sent; it's safe on this device. Sign in again."
                     : outcome.kind === "password"
-                      ? "Nothing has been sent and nothing has been thrown away. It will send once you've set your new password."
+                      ? "Nothing sent. It sends after you set your new password."
                       : undefined
           });
         }
@@ -401,8 +400,8 @@ export function DesignWorkshopDraftBanner() {
           <h2 className="font-display text-sm font-bold">This browser&rsquo;s storage isn&rsquo;t responding</h2>
           <p className="mt-0.5 text-xs text-ink-700">
             {health.writeFailedAt
-              ? "Your latest edits may not have been saved on this device, and the list of work waiting to upload may be incomplete. This usually means the disk is full or you're using a private window. Free some space, then reload the page before typing anything else."
-              : "Your design-workshop work on this device couldn't be read, so we can't show what's still waiting to upload. Don't clear this browser's data or hand the laptop on — your work may still be recoverable. Reload the page, and if this keeps happening, contact your administrator."}
+              ? "Recent edits may not be saved — storage is full or this is a private window. Free space and reload before typing more."
+              : "Couldn't read your saved work. Don't clear browser data — reload, and contact an admin if it persists."}
           </p>
         </div>
       </div>
@@ -434,8 +433,8 @@ export function DesignWorkshopDraftBanner() {
             </h2>
             <p className="mt-0.5 text-xs text-ink-700">
               {waiting
-                ? "They were saved without a connection and will upload when you're back online. Until then they're only in this browser, so don't clear its data or hand the laptop on."
-                : "Nothing is waiting for a connection. The workshops below couldn't be saved and need your attention."}
+                ? "Saved offline; they upload when you reconnect. Don't clear browser data."
+                : "These couldn't be saved and need attention."}
             </p>
           </div>
         </div>

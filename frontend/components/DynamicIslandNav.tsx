@@ -1142,6 +1142,8 @@ export function DynamicIslandNav() {
                   </Link>
                 ))}
               </div>
+              {/* The menu's account footer (toggle · who you are · sign out), not an action row —
+                  deliberately not an ActionGroup. */}
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line-200 pt-4">
                 {canAdmin ? (
                   <ToggleSwitch label="Admin view" showLabel checked={adminMode} onChange={() => toggleAdminView()} />
@@ -1150,7 +1152,7 @@ export function DynamicIslandNav() {
                   <div className="font-medium text-ink-900">{user.name}</div>
                   <div className="text-ink-500">{roleLabel(user.role)}</div>
                 </div>
-                <button onClick={handleLogout} className="field-danger">
+                <button onClick={handleLogout} data-danger className="field-danger">
                   <LogOut className="h-4 w-4" aria-hidden />
                   Logout
                 </button>

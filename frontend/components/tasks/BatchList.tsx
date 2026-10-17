@@ -103,7 +103,7 @@ export function BatchList({
               </span>
               <button
                 type="button"
-                className={rowAction("danger")}
+                data-danger className={rowAction("danger")}
                 disabled={busyKey === batch.key}
                 onClick={() => remove(batch)}
               >

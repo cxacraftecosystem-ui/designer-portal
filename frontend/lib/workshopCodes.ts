@@ -464,7 +464,7 @@ export function encodeWorkshopCode(ref: {
     return {
       ok: false,
       reason: "NO_ID",
-      message: "This record has no identifier yet, so there is nothing to print on a code. Save it first."
+      message: "Save the record first."
     };
   }
 
@@ -481,7 +481,7 @@ export function encodeWorkshopCode(ref: {
       ok: false,
       reason: "ID_LOOKS_SENSITIVE",
       message:
-        "That is a number, not a record identifier. Aadhaar and Pehchan card numbers must never be printed in a QR code — a card is a public object once it leaves the room."
+        "Identity numbers can't be printed in a QR code."
     };
   }
   if (/^[A-Z0-9]+$/.test(stripped) && stripped.length <= 20 && /[A-Z]/.test(stripped)) {
@@ -492,7 +492,7 @@ export function encodeWorkshopCode(ref: {
       ok: false,
       reason: "ID_LOOKS_SENSITIVE",
       message:
-        "That looks like a card number rather than a record identifier. Aadhaar and Pehchan card numbers must never be printed in a QR code."
+        "Identity numbers can't be printed in a QR code."
     };
   }
 
@@ -507,7 +507,7 @@ export function encodeWorkshopCode(ref: {
       ok: false,
       reason: "ID_IS_DEVICE_LOCAL",
       message:
-        "This workshop exists only on this device, so there is nothing for anybody else to scan yet — a code for it would open nothing on their phone. It gets a shareable code once it has uploaded: connect this device, let it sync, and print the code then."
+        "Not uploaded yet — sync, then print its code."
     };
   }
 
@@ -516,7 +516,7 @@ export function encodeWorkshopCode(ref: {
       ok: false,
       reason: "ID_NOT_AN_IDENTIFIER",
       message:
-        "That isn't a record identifier, so no code can be printed for it. Identifiers are the lower-case ids a record is given when it is saved."
+        "Not a record identifier."
     };
   }
 
@@ -571,7 +571,7 @@ export function decodeWorkshopCode(input: string | null | undefined): DecodeResu
       ok: false,
       reason: "NOT_A_WORKSHOP_CODE",
       message:
-        "That is not a workshop card or tag. Workshop codes begin “DPW”; a shop barcode, a payment code or a web address will not open a record here."
+        "Not a workshop code. They begin “DPW”."
     };
   }
 
@@ -580,7 +580,7 @@ export function decodeWorkshopCode(input: string | null | undefined): DecodeResu
     return {
       ok: false,
       reason: "NOT_A_WORKSHOP_CODE",
-      message: "That is not a workshop card or tag. Workshop codes begin “DPW” followed by a version number."
+      message: "Not a workshop code. They begin “DPW”."
     };
   }
   const version = Number(versionText);
@@ -590,7 +590,7 @@ export function decodeWorkshopCode(input: string | null | undefined): DecodeResu
     return {
       ok: false,
       reason: "NEWER_VERSION",
-      message: `This card was printed by a newer version of the app (code format ${version}). Reload the page to update the app, then try again, or open the record from the list instead.`
+      message: `Newer code format (${version}). Reload to update the app.`
     };
   }
 
@@ -599,7 +599,7 @@ export function decodeWorkshopCode(input: string | null | undefined): DecodeResu
     return {
       ok: false,
       reason: "UNKNOWN_RECORD_TYPE",
-      message: "This is a workshop code, but it points at a kind of record that can't be opened here. Reload the page to update the app, then try again."
+      message: "Can't open this kind of record. Reload to update the app."
     };
   }
 
@@ -614,14 +614,14 @@ export function decodeWorkshopCode(input: string | null | undefined): DecodeResu
       ok: false,
       reason: "DEVICE_LOCAL",
       message:
-        "That code names a workshop that had not been shared yet when it was written down — it only ever meant anything on the device that made it. Ask whoever created the workshop to sync their device and send you the code it prints then."
+        "This code was made before the workshop uploaded. Ask its creator to sync and send a new code."
     };
   }
   if (!ID_PATTERN.test(id)) {
     return {
       ok: false,
       reason: "MALFORMED",
-      message: "This code is damaged or was typed incompletely — the identifier in it is not a whole one. Check it against the card."
+      message: "Incomplete or damaged. Check each character."
     };
   }
 
@@ -638,7 +638,7 @@ export function decodeWorkshopCode(input: string | null | undefined): DecodeResu
       ok: false,
       reason: "CHECK_FAILED",
       message:
-        "This code does not check out, so one of its characters is wrong. Read it off the card again, character by character — a single wrong character points at a different record, and nothing later would notice."
+        "A character is wrong. Check each one."
     };
   }
 
@@ -676,7 +676,7 @@ export function unresolvedWorkshopCodeMessage(recordType: WorkshopRecordType): s
   if (recordType === "prototype") {
     // A prototype is a row inside one design workshop rather than a repository record, so the two
     // places it can be — another workshop, or a device this one has not synced with — are named.
-    return "No prototype in this workshop matches that tag. It may belong to another workshop, or it may not be on this device yet — open the workshop that made it, or find the prototype in the list.";
+    return "No prototype here matches that tag. Find it in the list.";
   }
   if (recordType === "designWorkshop") {
     /*
@@ -699,10 +699,10 @@ export function unresolvedWorkshopCodeMessage(recordType: WorkshopRecordType): s
       themselves on a workshop even with a perfect connection. The honest instruction is to ask an
       admin, and any UI over this must not dress that up as a submitted request.
     */
-    return "No design workshop you can open matches that code. If a colleague has just shared it with you, the workshop is there and you have not been added to it yet — only an admin can do that, so send them the code and ask to be put on it. Everything you have already recorded on this device stays where it is.";
+    return "No workshop you can open matches this code. Ask an admin to add you — your work here is kept.";
   }
   const noun = TYPE_LABEL[recordType].toLowerCase();
-  return `No ${noun} you can open matches that code. It may not have been recorded, or it may belong to work you don't have access to — search for the ${noun} by name instead.`;
+  return `No ${noun} you can open matches. Search by name instead.`;
 }
 
 /**

@@ -56,6 +56,7 @@ import { AlertTriangle, CheckCircle2, HelpCircle, Plus, X } from "lucide-react";
 
 import { Field, TextInput } from "@/components/FormControls";
 import { formatSanctionAmount, type SanctionImportPreview, type SanctionImportRow } from "@/lib/sanctionOrders";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** One designer as the officer has resolved them. Name and address, because that is all an order needs. */
 type Pair = { name: string; email: string };
@@ -211,7 +212,7 @@ export function SanctionImportReview({
             decision · {preview.refused.length} cannot be recorded
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <ActionGroup className="shrink-0">
           <button type="button" className="field-button-secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
@@ -220,7 +221,7 @@ export function SanctionImportReview({
               ? "Recording…"
               : `Record ${willRecord} order${willRecord === 1 ? "" : "s"}`}
           </button>
-        </div>
+        </ActionGroup>
       </div>
 
       {outstanding > 0 ? (
@@ -416,10 +417,8 @@ export function SanctionImportReview({
             Cannot be recorded ({preview.refused.length})
           </h3>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
-            There is nothing to decide about these. An address an administrator has barred, an
-            empanelment an administrator has ended, an account that is not a designer&apos;s, your own
-            address, or a row the sheet did not give enough of. Correct the sheet, or the roster, and
-            upload again.
+            Barred or ended addresses, non-designer accounts, your own address, or incomplete rows.
+            Fix the sheet or roster and upload again.
           </p>
           <ul className="mt-2 rounded-md border border-line-200 bg-surface-50">
             {preview.refused.map((row) => (

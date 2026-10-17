@@ -833,9 +833,8 @@ export function FieldInput({
   const dictationNotice =
     dictationDropped > 0 ? (
       <p className="text-xs font-medium leading-5 text-error-600">
-        What you just dictated was not added: it would make this answer {dictationDropped} character
-        {dictationDropped === 1 ? "" : "s"} longer than the {field.maxLength} characters this field allows. The box is
-        unchanged — shorten what is in it, then dictate again.
+        Dictation not added — {dictationDropped} character{dictationDropped === 1 ? "" : "s"} over the {field.maxLength}
+        limit. Shorten the text, then dictate again.
       </p>
     ) : null;
 
@@ -1245,9 +1244,8 @@ export function FieldInput({
               than raising an alarm.
             */
             <p className="text-xs leading-5 text-ink-500">
-              Only the last four digits of this number are stored. Saving this stage replaces what is in the box with
-              “XXXX XXXX {inputValue(value).replace(/\D/g, "").slice(-4) || "####"}”, which is also all the report
-              prints — so check the number against the card now, not afterwards.
+              Only the last four digits are kept: “XXXX XXXX {inputValue(value).replace(/\D/g, "").slice(-4) || "####"}”.
+              Check it against the card before saving.
             </p>
           ) : field.storeMasked && isAadhaarMaskValue(inputValue(value)) ? (
             /*
@@ -1271,9 +1269,7 @@ export function FieldInput({
               go looking for the rest of it here.
             */
             <p className="text-xs leading-5 text-ink-500">
-              This box is holding a mask, not a number: “{inputValue(value)}” is all this stage stores and all the
-              report prints. The full number is on the artisan record. Typing or pasting a mask here stores exactly
-              that — four digits nobody has checked against a card.
+              Masked: “{inputValue(value)}” is stored and printed. The full number is on the artisan record.
             </p>
           ) : null}
         </>
@@ -1914,8 +1910,7 @@ export function FieldInput({
             value={inputValue(value)}
           />
           <p id={noteId} className="text-xs leading-5 text-ink-500">
-            This question can&apos;t be shown here. Reload the page to update the app. Whatever is already
-            recorded against it is kept and is not changed by anything you do here.
+            Can&apos;t show this question. Reload to update the app — its answer is kept.
           </p>
         </>
       );
@@ -2337,7 +2332,7 @@ function TagsField({
         <p id={capId} className="text-xs leading-5 text-ink-500">
           {declaredCap - tags.length <= 0
             ? `Full at ${declaredCap}. Remove one to add another.`
-            : `Up to ${declaredCap} — ${declaredCap - tags.length} more can be added.`}
+            : `${declaredCap - tags.length} of ${declaredCap} left.`}
         </p>
       ) : null}
       {/* MOUNTED FROM FIRST PAINT AND HIDDEN WHEN EMPTY, never conditionally rendered: assistive
@@ -2416,7 +2411,7 @@ function orphanRow(id: string): DropdownOption {
   return {
     value: id,
     label: `Linked record ${id.slice(0, 8)}`,
-    hint: "already on this field, and not in the current list"
+    hint: "already on this field, not in the current list"
   };
 }
 
@@ -2563,7 +2558,7 @@ export function referenceMultiNotice({
   cachedAt?: string | null;
 }): string {
   if (awaitingCascade) {
-    return `Choose ${parentLabel || "the field above"} first — this list holds only the records that belong to it.`;
+    return `Choose ${parentLabel || "the field above"} first — this list depends on it.`;
   }
   if (problem) {
     /*
@@ -2572,7 +2567,7 @@ export function referenceMultiNotice({
       can still be removed — so the sentence says which of the two is true, rather than leaving an
       empty panel to imply the first.
     */
-    return `${problem} Nothing can be added until this list loads; what is already chosen is still listed and can be removed.`;
+    return `${problem} What's chosen is still listed and can be removed.`;
   }
   if (!payload) return loading ? "Loading the records this field can link to…" : "";
   const lines = scopeNoticeLines(field, payload, cachedAt);
@@ -2610,7 +2605,7 @@ export function referenceMultiNotice({
         loading
           ? "Searching…"
           : scopeExplainsEmpty
-            ? `Nothing matches “${term}” here. This list only shows records documented under this design workshop's linked workshop.`
+            ? `Nothing matches “${term}” in this design workshop's linked workshop.`
             : `Nothing matches “${term}”.`
       );
     } else if (payload.filtered) {
@@ -2620,13 +2615,11 @@ export function referenceMultiNotice({
         same reason: that reading invites the designer to clear a parent which is perfectly correct.
       */
       lines.push(
-        `Nothing is documented under the ${
-          parentLabel || "record chosen above"
-        } on this row, so there is nothing to link here yet.`
+        `Nothing recorded under the ${parentLabel || "record chosen above"} yet.`
       );
     } else if (!scopeExplainsEmpty) {
       lines.push(
-        `Nothing this field can link to has been documented yet, so ${field.label} cannot be answered from this list. Create the record first, then link it here — this list links to records, it does not create them.`
+        `Nothing to link for ${field.label} yet. Create the record elsewhere first, then link it here.`
       );
     }
   }
@@ -2952,8 +2945,8 @@ function ReferenceMultiSelect({
         // And therefore this sentence, in both of the states the box can be in.
         capHint={
           awaitingCascade
-            ? `Answer ${parentLabel || "the field above"} first — this list is narrowed to the record chosen there.`
-            : "Use the search box above to find the rest — it searches every record this field can link to."
+            ? `Answer ${parentLabel || "the field above"} first.`
+            : "Search above to find the rest."
         }
         confirmLabel="Confirm"
       />
@@ -3126,7 +3119,7 @@ function MultiEnumField({
         <p id={capId} className="text-xs leading-5 text-ink-500">
           {declaredCap - values.length <= 0
             ? `Full at ${declaredCap}. Remove one to add another.`
-            : `Up to ${declaredCap} — ${declaredCap - values.length} more can be added.`}
+            : `${declaredCap - values.length} of ${declaredCap} left.`}
         </p>
       ) : null}
       {/* Present from first paint, hidden when empty — see the identical paragraph in TagsField. */}
@@ -3638,7 +3631,7 @@ function MediaField({
     }
     onChange(multiple ? [...ids, ...refs] : refs[0]);
     setNotice(
-      `${refs.length} file${refs.length === 1 ? " is" : "s are"} saved on this device only. ${refs.length === 1 ? "It uploads" : "They upload"} when the connection returns, and the copy here is kept until the upload is confirmed.`
+      `${refs.length} file${refs.length === 1 ? "" : "s"} saved on this device. ${refs.length === 1 ? "It uploads" : "They upload"} when you're online.`
     );
   }
 
@@ -3771,7 +3764,7 @@ function MediaField({
         // the ones that did not make it.
         if (failed.length) {
           setProblem(
-            `${failed.length} of ${chosen.length} file(s) did not upload: ${failed.map((item) => item.name).join(", ")}. Attach those again.`
+            `Didn't upload: ${failed.map((item) => item.name).join(", ")}. Attach again.`
           );
         }
       } catch (err) {
@@ -3786,8 +3779,8 @@ function MediaField({
           } catch (stageError) {
             setProblem(
               stageError instanceof Error
-                ? `The upload failed, and the file couldn't be kept on this device either: ${stageError.message}`
-                : "The upload failed, and the file couldn't be kept on this device either."
+                ? `Upload failed and the file couldn't be kept: ${stageError.message}`
+                : "Upload failed and the file couldn't be kept."
             );
             return;
           }
@@ -4440,10 +4433,10 @@ function MediaField({
                           // photograph was gone in the second between attaching it and the read
                           // returning. Both sentences are the truth about a different moment.
                           local === null
-                          ? "This file was kept on this device and can no longer be found here."
+                          ? "File no longer on this device."
                           : "Reading this file off this device…"
                         : file === null
-                          ? "This file is no longer readable from here."
+                          ? "File can't be read."
                           : "Looking this file up…"}
                 </span>
                 {local ? (
@@ -4652,7 +4645,7 @@ function MediaField({
         <p id={capId} className="text-xs leading-5 text-ink-500">
           {room === 0
             ? `${field.label} is full at ${declaredCap} file${declaredCap === 1 ? "" : "s"}. Remove one to attach another.`
-            : `Up to ${declaredCap} file${declaredCap === 1 ? "" : "s"} — ${room} more can be attached.`}
+            : `${room} of ${declaredCap} left.`}
         </p>
       ) : null}
 
@@ -4717,8 +4710,8 @@ function MediaField({
         title={multiple ? `Add to ${field.label.toLowerCase()}` : field.label}
         description={
           multiple
-            ? "Every file attached here uploads straight away and joins this field once it has uploaded. Audio is then transcribed."
-            : "The file attached here uploads straight away and replaces whatever this field held. Audio is then transcribed."
+            ? "Files upload straight away. Audio is transcribed."
+            : "Replaces the current file. Audio is transcribed."
         }
         allowedTypes={ALLOWED_TYPES[field.type]}
         allowDocuments={field.type === "FILE"}

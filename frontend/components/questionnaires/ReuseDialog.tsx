@@ -380,7 +380,7 @@ export function ReuseDialog({
       onClose={close}
       busy={busy}
       title="Reuse this questionnaire at another workshop"
-      description="You get a new questionnaire of your own carrying these questions. The original is untouched, and no recorded answer is copied."
+      description="Copies the questions, not the answers."
       icon={<CopyPlus className="h-5 w-5" aria-hidden />}
       footer={
         <>
@@ -413,17 +413,13 @@ export function ReuseDialog({
         <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           <ul className="grid gap-1">
             <li>
-              <span className="font-medium text-ink-900">The questions come across.</span> Sections, order, help text and
-              required flags, exactly as they are now. Retired questions do not — they are kept where their answers are,
-              not because they are still asked.
+              <span className="font-medium text-ink-900">Questions are copied</span>, except retired ones.
             </li>
             <li>
-              <span className="font-medium text-ink-900">The answers do not.</span> Every sitting recorded against the
-              original stays on the original, under the names of the people who recorded it. Your copy starts empty.
+              <span className="font-medium text-ink-900">Answers are not.</span> Your copy starts empty.
             </li>
             <li>
-              <span className="font-medium text-ink-900">The two are separate from here on.</span> Rewording a question on
-              one does not change the other, so a correction made after this point has to be made in both places.
+              <span className="font-medium text-ink-900">They&rsquo;re separate.</span> Later edits apply to one only.
             </li>
           </ul>
         </div>
@@ -502,8 +498,7 @@ export function ReuseDialog({
                 </p>
               ) : null}
               <p className="text-sm leading-6 text-ink-700">
-                No design workshop is on offer here, so the copy is made unattached. You can attach it from its own
-                page afterwards.
+                No workshops to attach to. You can attach it later.
               </p>
             </div>
           )}
@@ -541,9 +536,7 @@ export function ReuseDialog({
           </p>
         ) : sameWorkshop ? (
           <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-            That is the workshop this questionnaire is already attached to. Perfectly allowed — a follow-up round is a
-            second copy, because a sitting has no notion of which round it belongs to — and both copies will print in that
-            workshop&rsquo;s report annexure.
+            Already attached here. Both copies will print in the report.
           </p>
         ) : null}
       </div>

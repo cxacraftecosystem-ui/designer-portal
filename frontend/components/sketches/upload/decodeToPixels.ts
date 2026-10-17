@@ -140,8 +140,7 @@ export async function decodeToPixels(
   if (typeof createImageBitmap === "undefined") {
     return {
       reason:
-        "This browser cannot decode images in the page, so a drawing cannot be traced here. " +
-        "The photograph itself is unaffected — attach it as it is, or trace it on a handset."
+        "This browser can't trace images. Attach the photo as it is."
     };
   }
 
@@ -153,7 +152,7 @@ export async function decodeToPixels(
     const sourceWidth = full.width;
     const sourceHeight = full.height;
     if (sourceWidth < 1 || sourceHeight < 1) {
-      return { reason: "That file decoded to an empty image. Try another photograph." };
+      return { reason: "That image is empty. Try another." };
     }
 
     const working = workingSizeFor(sourceWidth, sourceHeight, maxEdge);
@@ -166,8 +165,7 @@ export async function decodeToPixels(
     if (data === null) {
       return {
         reason:
-          "This browser would not give the page a drawing surface to read the photograph back from, " +
-          "so it cannot be traced here."
+          "This browser can't trace this photo."
       };
     }
 
@@ -185,8 +183,7 @@ export async function decodeToPixels(
     // file from an interrupted transfer. The two want the same answer from the designer's side.
     return {
       reason:
-        `This browser could not read that image. It reads ${TRACEABLE_IMAGE_TYPES} where the ` +
-        "platform supports them; a photograph in another format can still be attached as it is."
+        `Can't read that image. Use ${TRACEABLE_IMAGE_TYPES}, or attach it as it is.`
     };
   } finally {
     full?.close();

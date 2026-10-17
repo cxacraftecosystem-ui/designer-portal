@@ -318,7 +318,7 @@ export const FRAME_PRESETS: readonly FramePreset[] = [
   {
     id: "middle-two-thirds",
     label: "Middle two-thirds",
-    hint: "Drops the border of table, hands and floor a phone photograph usually has.",
+    hint: "Trims the edges.",
     rect: (frame) => {
       const w = Math.round(frame.width * (2 / 3));
       const h = Math.round(frame.height * (2 / 3));
@@ -328,7 +328,7 @@ export const FRAME_PRESETS: readonly FramePreset[] = [
   {
     id: "middle-square",
     label: "Middle square",
-    hint: "The largest square in the centre — a sheet shot square-on from above.",
+    hint: "The largest centred square.",
     rect: (frame) => {
       const side = Math.min(Math.round(frame.width), Math.round(frame.height));
       return {
@@ -342,7 +342,7 @@ export const FRAME_PRESETS: readonly FramePreset[] = [
   {
     id: "top-half",
     label: "Top half",
-    hint: "For two drawings on one sheet, or a sheet with notes below it.",
+    hint: "Two drawings on one sheet.",
     rect: (frame) => ({ x: 0, y: 0, width: Math.round(frame.width), height: Math.round(frame.height / 2) })
   },
   {
@@ -357,7 +357,7 @@ export const FRAME_PRESETS: readonly FramePreset[] = [
   {
     id: "left-half",
     label: "Left half",
-    hint: "For a spread photographed open, or two sheets side by side.",
+    hint: "Two sheets side by side.",
     rect: (frame) => ({ x: 0, y: 0, width: Math.round(frame.width / 2), height: Math.round(frame.height) })
   },
   {

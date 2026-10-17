@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 
+import { ActionGroup } from "@/components/ui/ActionGroup";
+
 /**
  * The standard action cluster every list row ends with: separate rounded buttons, one per action,
  * never a dropdown or a bare text link. Edit sits first in the brand outline, Discuss (comments +
@@ -44,7 +46,11 @@ export function rowAction(tone: RowActionTone = "neutral", extra?: string): stri
   return `${BASE} ${TONE[tone]}${extra ? ` ${extra}` : ""}`;
 }
 
-/** Right-aligned wrapper for a row's action buttons; wraps rather than overflowing on small screens. */
+/** A row's action buttons, laid out by the shared `ActionGroup` rule. */
 export function RowActions({ children }: { children: ReactNode }) {
-  return <div className="flex flex-wrap justify-end gap-2">{children}</div>;
+  return (
+    <ActionGroup align="end" inline>
+      {children}
+    </ActionGroup>
+  );
 }

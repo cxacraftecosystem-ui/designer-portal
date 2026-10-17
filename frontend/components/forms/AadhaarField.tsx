@@ -99,7 +99,7 @@ export function isMaskedIdentityNumber(value: string | null | undefined): boolea
  * government ID number.
  */
 const AADHAAR_REQUIRED =
-  "Enter the artisan's 12-digit Aadhaar number — it is what stops the same artisan being recorded twice.";
+  "Enter the 12-digit Aadhaar number.";
 
 /**
  * Long enough that a fast typist finishes the last group before we ask the server, short enough that
@@ -333,8 +333,7 @@ export function AadhaarField({
         </p>
       ) : keptMask ? (
         <p id={hintId} className="text-xs text-ink-muted">
-          On file, but hidden from you: the full number is shown only to the researcher who recorded
-          this artisan and to professors upwards. Saving leaves it exactly as it is.{" "}
+          On file but hidden. Saving leaves it unchanged.{" "}
           <button type="button" className="font-semibold text-purple-700 dark:text-purple-300 underline" onClick={replaceStoredNumber}>
             Replace this number
           </button>
@@ -342,8 +341,8 @@ export function AadhaarField({
       ) : (
         <p id={hintId} className="text-xs text-ink-muted">
           {required
-            ? "Required: 12 digits from the artisan's card. It stops the same artisan being recorded twice — that is the reason to give when you ask for it."
-            : "12 digits from the artisan's card. Used to recognise someone another researcher has already documented."}
+            ? "Required. Prevents duplicate artisans."
+            : "Prevents duplicate artisans."}
           {digits.length > 0 && !complete ? ` ${digits.length} of ${AADHAAR_LENGTH} entered.` : ""}
         </p>
       )}
@@ -412,8 +411,7 @@ export function AadhaarField({
             </Link>
           )}
           <p className="mt-1 text-xs">
-            You can still save, but a duplicate will not be accepted — {onUseExisting ? "use" : "open"} the existing
-            record if this is the same person.
+            Duplicates aren&apos;t accepted — {onUseExisting ? "use" : "open"} the existing record if it&apos;s the same person.
           </p>
         </div>
       ) : null}

@@ -308,7 +308,7 @@ test("a LINKED workshop with nothing under it says the list is narrowed, not tha
   expect(lines.length).toBe(1);
   expect(lines[0]).toContain("linked workshop yet");
   // And it must say what to DO, or it is only a better-worded dead end.
-  expect(lines[0]).toContain("Create the record here");
+  expect(lines[0]).toContain("Create one here");
 });
 
 test("a list that came back with records says nothing at all", () => {
@@ -333,7 +333,7 @@ test("an UNLINKED workshop still gets the sentence it always got, and only that 
   */
   const lines = scopeNoticeLines(WORKSHOP_SCOPED, payload({ scopedToWorkshop: false, options: [] }));
   expect(lines.length).toBe(1);
-  expect(lines[0]).toContain("not linked to a workshop record yet");
+  expect(lines[0]).toContain("Not linked to a workshop yet");
 });
 
 test("an ALL-scoped picker is never told anything about workshops", () => {
@@ -348,7 +348,7 @@ test("the truncation sentence still comes through, and can share the line", () =
   // silence the other, because a list that quietly stops is this codebase's most repeated bug class.
   const lines = scopeNoticeLines(WORKSHOP_SCOPED, payload({ scopedToWorkshop: false, truncated: true }));
   expect(lines.length).toBe(2);
-  expect(lines[1]).toContain("matches are listed");
+  expect(lines[1]).toContain("First 50 matches");
 });
 
 test("the stage page puts the linked workshop within the pickers' reach", () => {
@@ -665,7 +665,7 @@ test("the refused exit is carried, and every control that is refused hands one o
     const line = refusedByUnsavedWork(retry);
     expect(line.tone, "a refusal is not a confirmation").toBe("warn");
     expect(line.text).toBe(
-      `A form on this stage has unsaved work, so this row was left as it was. Answer the prompt on screen, then ${retry}.`
+      `Unsaved work on this stage. Answer the prompt, then ${retry}.`
     );
   }
   /*
@@ -776,7 +776,7 @@ test("no record form titles a screen its host has already titled", () => {
   expect(source).not.toContain("const hosted = Boolean(onCreated);");
   // The PARAGRAPH under it stays on every host: it says what a process record is, which no host
   // repeats. Only the heading was a claim about the screen.
-  expect(source).toContain("Capture how a product is made, step by step.");
+  expect(source).toContain("How a product is made, step by step.");
 });
 
 test("the one capture card that outlives its own mount names a staging owner that does too", () => {
@@ -1076,8 +1076,8 @@ test("the picker says a queued record was saved, is unlinked, and what to do nex
   const notice = source.slice(source.indexOf("const QUEUED_OFFLINE_NOTICE"), source.indexOf("Single select"));
   // Three claims, all load-bearing: saved (or they create a duplicate), NOT linked (or they submit
   // the stage believing it is), and the way out.
-  expect(notice).toContain("saved on this device");
-  expect(notice).toContain("It can be linked here once it has uploaded");
+  expect(notice).toContain("Saved on this device");
+  expect(notice).toContain("Once it uploads");
   expect(notice).toContain("choose it");
   // Both pickers say it, so a designer meets one explanation of this state rather than two.
   expect(source.match(/QUEUED_OFFLINE_NOTICE/g)?.length).toBeGreaterThanOrEqual(3);
@@ -1376,7 +1376,7 @@ test("the craft picker offers the crafts page in a new tab, and only to somebody
   expect(head).toContain('target="_blank"');
   expect(head).toContain('rel="noopener"');
   expect(head).toContain("{CRAFT_REGISTER_LINK}");
-  expect(source).toContain('const CRAFT_REGISTER_LINK = "Add or correct a craft on the crafts page (opens in a new tab)";');
+  expect(source).toContain('const CRAFT_REGISTER_LINK = "Edit crafts (new tab)";');
 
   /*
    * AND THE RANK GATE, which is the half that was missing and which turned this control into a dead

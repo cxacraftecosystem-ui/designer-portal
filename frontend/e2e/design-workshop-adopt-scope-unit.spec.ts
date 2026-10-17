@@ -187,8 +187,8 @@ test("it says plainly what linking does, including what happens on a COLLISION",
     why local-wins is the right way round — the draft is the answer given in the room, the target's
     is a seed or a desk edit — is in the component's own header.
   */
-  expect(dialog).toContain("Nothing is deleted and nothing is retyped");
-  expect(dialog).toContain("answers already in\n          that workshop are kept");
+  expect(dialog).toContain("Nothing is deleted");
+  expect(dialog).toContain("answers already in that workshop are kept");
   expect(dialog).toContain("where both have the same box, this device");
   expect(dialog).toContain("It can only be done once");
 });

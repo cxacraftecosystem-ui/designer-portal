@@ -67,12 +67,13 @@ import { apiFetch } from "@/lib/api";
 // Through `@/lib/offline`, which is the path every screen in this client asks the network question
 // on — see that file's re-export note for why the path did not move when the answer was unified.
 import { triageFailure } from "@/lib/offline";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** Editorial copy stays here; names and key state come from the server so the two cannot drift. */
 const BLURBS: Record<string, string> = {
-  elevenlabs: "Strongest on Indian-language and accented speech. Slower, and the most expensive per minute.",
-  deepgram: "Fastest and cheapest. Very good on clear audio, weaker under heavy background noise.",
-  whisper: "The dependable fallback. Handles almost anything, with no diarisation of its own."
+  elevenlabs: "Best for Indian languages. Slowest and priciest.",
+  deepgram: "Fastest and cheapest. Weaker with background noise.",
+  whisper: "Reliable fallback. No speaker labels."
 };
 
 /** Mirrors `app_settings.STT_KEY_*`. */
@@ -197,8 +198,8 @@ function describeTrouble(error: unknown, action: string): Trouble {
   }
   if (status === 403) {
     return {
-      headline: "Your account is not allowed to see or change this ranking.",
-      advice: `Ranking transcription engines needs Admin or above. Ask a master admin.`,
+      headline: "You can't change this ranking.",
+      advice: `Admins only.`,
       technical,
       retryable: false
     };
@@ -206,7 +207,7 @@ function describeTrouble(error: unknown, action: string): Trouble {
   if (verdict.kind === "credential-expired") {
     return {
       headline: "Your session has ended.",
-      advice: `Sign in again and come back to this page; the ranking itself is untouched.`,
+      advice: `Sign in again.`,
       technical,
       retryable: false
     };
@@ -218,7 +219,7 @@ function describeTrouble(error: unknown, action: string): Trouble {
   if (verdict.kind === "transient") {
     return {
       headline: "Something went wrong on our side.",
-      advice: `Wait a minute and press Try again. If it keeps happening, tell an administrator.`,
+      advice: `Wait a minute, then Try again.`,
       technical,
       retryable: true
     };
@@ -228,14 +229,14 @@ function describeTrouble(error: unknown, action: string): Trouble {
   if (verdict.kind === "unreachable") {
     return {
       headline: "Couldn't connect.",
-      advice: `Check this device is online, then press Try again.`,
+      advice: `Check your connection, then Try again.`,
       technical,
       retryable: true
     };
   }
   return {
     headline: `Couldn't ${action} the provider order.`,
-    advice: serverSentence || `Press Try again, and tell an administrator if it keeps happening.`,
+    advice: serverSentence || `Try again.`,
     technical,
     retryable: true
   };
@@ -433,13 +434,13 @@ export function ProviderOrderPanel() {
       const after = updated.providers.find((candidate) => candidate.id === provider.id);
       if (after?.keyState === "PASSING") {
         // The thaw is the point: it has already happened in the rows above by the time this reads.
-        setNotice(`${provider.name} answered. It is verified now and can be ranked wherever you like.`);
+        setNotice(`${provider.name} passed and can be ranked.`);
         setAnnouncement(`${provider.name} passed its test and is now rankable.`);
       } else {
         setWarning(
           `${provider.name} did not pass: ${
             after?.testError ?? "the provider refused the key"
-          }. It stays below the engines that did.`
+          }.`
         );
         setAnnouncement(`${provider.name} failed its test.`);
       }
@@ -479,15 +480,14 @@ export function ProviderOrderPanel() {
     if (runnable.length === 0) {
       out.push({
         tone: "warn",
-        body: <>No engine has an API key, so nothing can be transcribed. Add a key and test it; this order then applies.</>
+        body: <>No engine has a key, so nothing can be transcribed. Add and test a key.</>
       });
     } else if (verified.length === 0) {
       out.push({
         tone: "info",
         body: (
           <>
-            Nothing has been tested yet, so nothing is frozen. Press <span className="font-semibold">Test</span> on the
-            engine you want first.
+            Nothing tested yet. Press <span className="font-semibold">Test</span> on the engine you want first.
           </>
         )
       });
@@ -523,8 +523,7 @@ export function ProviderOrderPanel() {
         tone: "warn",
         body: (
           <>
-            {join(failing.map((provider) => provider.name))} {failing.length === 1 ? "has" : "have"} a failing key, so
-            every job is delayed while {failing.length === 1 ? "it fails" : "they fail"} first. Replace or remove{" "}
+            {join(failing.map((provider) => provider.name))} {failing.length === 1 ? "has" : "have"} a failing key, delaying jobs. Replace or remove{" "}
             {failing.length === 1 ? "it" : "them"}.
           </>
         )
@@ -547,8 +546,8 @@ export function ProviderOrderPanel() {
           carries its own key state) and does not need narrating above them.
         */}
         <p className="mt-1 text-sm leading-6 text-ink-500">
-          Drag or use the arrows to rank; the top engine with a working key takes each job. An engine can be ranked
-          only after <span className="font-medium text-ink-700">Test</span> passes. This order applies to everyone.
+          The top engine with a working key takes each job. <span className="font-medium text-ink-700">Test</span> an
+          engine before ranking it.
         </p>
       </div>
 
@@ -590,7 +589,7 @@ export function ProviderOrderPanel() {
           {trouble ? (
             <p className="text-xs font-medium text-ink-500" data-testid="provider-order-stale-note">
               {
-                "Default order shown — the saved ranking could not be loaded. The controls below are paused until it loads."
+                "Showing the default order — the saved ranking didn't load."
               }
             </p>
           ) : null}
@@ -706,7 +705,7 @@ export function ProviderOrderPanel() {
                       )}
                     </button>
 
-                    <div className="flex gap-1">
+                    <ActionGroup>
                       <MoveButton
                         direction="up"
                         provider={provider}
@@ -727,7 +726,7 @@ export function ProviderOrderPanel() {
                         register={(node) => buttons.current.set(`${provider.id}:down`, node)}
                         onMove={() => move(index, index + 1)}
                       />
-                    </div>
+                    </ActionGroup>
                   </div>
                 </li>
               );
@@ -779,7 +778,7 @@ export function ProviderOrderPanel() {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" className="field-button" disabled={!live || !dirty || saving} onClick={save}>
+        <ActionGroup className="max-sm:w-full"><button type="button" className="field-button" disabled={!live || !dirty || saving} onClick={save}>
           {saving ? "Saving…" : "Save order"}
         </button>
         {dirty && live ? (
@@ -790,7 +789,7 @@ export function ProviderOrderPanel() {
           >
             Reset
           </button>
-        ) : null}
+        ) : null}</ActionGroup>
         {live && !dirty && !loading && runnableChain.length > 0 ? (
           <p className="text-xs text-ink-500" data-testid="effective-chain">
             Currently transcribing with{" "}
@@ -835,7 +834,7 @@ function MoveButton({
 }) {
   const Icon = direction === "up" ? ChevronUp : ChevronDown;
   const label = blocked
-    ? `Move ${provider.name} ${direction} — not allowed until it passes a provider test`
+    ? `Move ${provider.name} ${direction} — test it first`
     : // Just the direction. Naming the destination position ("up to position 0" on a disabled first
       // row) reads as nonsense; where it landed is announced instead.
       `Move ${provider.name} ${direction}`;

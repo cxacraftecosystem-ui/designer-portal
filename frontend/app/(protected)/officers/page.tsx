@@ -170,6 +170,7 @@ import {
   type DwWorkshopStaffing
 } from "./oversight";
 import { officerOptionsForPost, officersOfferedTo } from "./pickers";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** 300 ms, this app's number, for the reason every other debounced search here gives. */
 const SEARCH_DEBOUNCE_MS = 300;
@@ -183,7 +184,7 @@ const SEARCH_DEBOUNCE_MS = 300;
  */
 function describeFailure(error: unknown, subject: string): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return `Couldn't connect, so ${subject} couldn't be loaded. Check your connection and try again.`;
+    return `No connection — couldn't load ${subject}.`;
   }
   return error.message;
 }
@@ -199,9 +200,9 @@ function describeFailure(error: unknown, subject: string): string {
  */
 function describeRefusal(error: unknown, subject: string): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "Couldn't connect, so nothing was changed. Check your connection and try again.";
+    return "No connection — nothing changed.";
   }
-  return error.message || `${subject.charAt(0).toUpperCase()}${subject.slice(1)} couldn't be saved. Please try again.`;
+  return error.message || `Couldn't save ${subject}. Try again.`;
 }
 
 /** A debounced value, so every search box on this page behaves identically. */
@@ -286,22 +287,19 @@ export default function WorkshopOversightPage() {
             Ministry Admin access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Naming the designers, the Assistant Director, the Regional Director and the inspectors on
-            a design &amp; prototype workshop — and uploading that workshop&rsquo;s artisan list — is
-            done by a Ministry Admin, an admin or the master admin. An Assistant Director or Regional
-            Director reads the workshops they have been assigned on Workshops I monitor.
+            For Ministry Admins and admins. Directors see theirs on Workshops I monitor.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
           </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <ActionGroup className="mt-7">
             <Link href="/dashboard" className="field-button">
               Back to dashboard
             </Link>
             <Link href="/officers/monitored" className="field-button-secondary">
               Workshops I monitor
             </Link>
-          </div>
+          </ActionGroup>
         </section>
       </div>
     );
@@ -311,7 +309,7 @@ export default function WorkshopOversightPage() {
     <div>
       <PageHeader
         title="Workshop oversight"
-        description="Open a design & prototype workshop or choose one, then say who it is for, who supervises it, who inspects it, and who is on its artisan roster."
+        description="Staff a workshop: designers, directors, inspectors and artisans."
         icon={<UserCheck className="h-5 w-5" aria-hidden />}
       />
 
@@ -384,8 +382,7 @@ export default function WorkshopOversightPage() {
         </>
       ) : (
         <section className="panel mt-4 p-4 text-sm text-ink-700">
-          Choose a workshop above, or start one. Everything on this page is about one workshop at a
-          time — who it is for, who supervises it, who inspects it, and who is on its roster.
+          Choose or start a workshop above.
         </section>
       )}
     </div>
@@ -482,10 +479,10 @@ function WorkshopPicker({
       ? "No workshop matches that search and that staffing."
       : "No workshop matches that search."
     : staffed === "unstaffed"
-      ? "Every design & prototype workshop has a designer named on it."
+      ? "Every workshop has a designer."
       : staffed === "staffed"
-        ? "No design & prototype workshop has a designer named on it yet."
-        : "There are no design & prototype workshops yet. Start one above.";
+        ? "No workshop has a designer yet."
+        : "No workshops yet. Start one above.";
 
   /** Where a post the reader holds on the chosen workshop lets them read it, or null. */
   const readPath = chosen ? heldPostReadPath(posts, chosen.id) : null;
@@ -573,7 +570,7 @@ function WorkshopPicker({
             </Link>
           ) : (
             <span className="text-xs leading-5 text-ink-500">
-              You can staff this workshop here, but you don&apos;t have access to open it.
+              You can staff it but not open it.
             </span>
           )}
           <button type="button" className="field-button-secondary" onClick={() => onChoose(null)}>
@@ -674,7 +671,7 @@ function WorkshopPicker({
             // SAID, ALWAYS. A list that quietly stops is indistinguishable from a place with no more
             // records, and this one stops at twenty.
             <p className="mt-2 text-xs text-ink-500">
-              Only the twenty most recent workshops are listed. Search to reach the rest.
+              Showing the latest 20. Search for others.
             </p>
           ) : null}
         </>
@@ -806,9 +803,7 @@ function StartWorkshopForm({
           Start a design workshop
         </h3>
         <p className="mt-1 text-xs leading-5 text-ink-500">
-          Only the title is needed to begin. The other fields here are also in stage 1 — fill in what
-          is already on the sanction order now, and the rest can be added there. The workshop opens as
-          a draft and is selected on this page.
+          Only the title is required.
         </p>
       </div>
 
@@ -872,11 +867,11 @@ function StartWorkshopForm({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
+      <ActionGroup>
         <button className="field-button" disabled={creating} type="submit">
           {creating ? "Opening…" : "Open this workshop"}
         </button>
-      </div>
+      </ActionGroup>
     </form>
   );
 }
@@ -1086,8 +1081,8 @@ function DesignerPanel({
       ? ""
       : held.length === 0
         ? "Nobody is named on this workshop. Nothing unsaved."
-        : `${held.length} designer${held.length === 1 ? "" : "s"} on this workshop. Nothing unsaved.`
-    : `${selected.length} designer${selected.length === 1 ? "" : "s"} selected, not yet saved. ${added.length} to add, ${removed.length} to remove${leadMoved ? ", and the report's designer changes" : ""}.`;
+        : `${held.length} designer${held.length === 1 ? "" : "s"}.`
+    : `${selected.length} selected — unsaved (+${added.length}, −${removed.length}${leadMoved ? ", new lead" : ""}).`;
 
   async function save() {
     // `emptiesTheWorkshop` is deliberately absent from this list: it is a WARNING, not a refusal,
@@ -1133,7 +1128,7 @@ function DesignerPanel({
           answer.removedDesigners.length
             ? `${answer.removedDesigners
                 .map((row) => personLabel(row))
-                .join(", ")} can no longer open it. Anything they had not yet sent is still on their own device.`
+                .join(", ")} can no longer open it.`
             : ""
         ]
           .filter(Boolean)
@@ -1170,14 +1165,9 @@ function DesignerPanel({
         first. See this panel's header for why the control is composed rather than forked.
       */}
       <p className="mt-1 text-xs leading-5 text-ink-500">
-        Everybody ticked below can open this workshop and fill in its stages; unticking somebody
-        removes their access when you save. One of them — the lead, chosen in the box under the
-        picker — is the designer whose profile is copied into stages 1 and 3 and whose name the
-        report carries. While other designers stay ticked, the lead cannot simply be dropped: choose
-        a different lead instead. You can also untick everybody — the workshop is then left with no
-        named designer, its report names nobody on the cover, and what has already been copied into
-        stages 1 and 3 stays as it is. If the report has already been handed in, saving isn&apos;t
-        allowed and the message says what to do instead.
+        Ticked designers can work on this workshop; the lead&apos;s name goes on the report. While
+        other designers stay ticked, the lead cannot simply be dropped — pick another lead. You can
+        also untick everybody. If the report has already been handed in, saving isn&apos;t allowed.
       </p>
 
       {refusal ? (
@@ -1271,25 +1261,22 @@ function DesignerPanel({
               it. Save is disabled under the refusal and ENABLED under the warning. */}
           {dropsTheLeadWithNoReplacement ? (
             <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
-              {labelById.get(baselineLead) ?? "That designer"} is the designer the report names. To
-              take them off, first choose a new lead in the box under the picker.
+              {labelById.get(baselineLead) ?? "That designer"} is the lead. Choose a new lead first.
             </p>
           ) : overCap ? (
             <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
-              {selected.length} designers are selected and a workshop may be opened for at most{" "}
-              {MAX_NAMED_DESIGNERS}. Untick {selected.length - MAX_NAMED_DESIGNERS} of them to save.
+              Maximum {MAX_NAMED_DESIGNERS}. Untick {selected.length - MAX_NAMED_DESIGNERS} to save.
             </p>
           ) : emptiesTheWorkshop ? (
             <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
-              Saving now will leave this workshop with no named designer. Only an admin and whoever
-              created it will be able to open it, and its report will name nobody on the cover. The
-              designer details already copied into stages 1 and 3 stay exactly as they are; only the
-              name is cleared. You can tick a designer here again at any time.
+              Saving will leave this workshop with no named designer: only admins and its creator can
+              open it, and its report will name nobody on the cover. Details copied into stages 1 and 3
+              stay exactly as they are.
             </p>
           ) : null}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
+            <ActionGroup className="max-sm:w-full"><button
               className="field-button"
               // `emptiesTheWorkshop` is NOT in this list, and that is the whole of the fix: the
               // notice above explains the consequence and the officer decides.
@@ -1315,7 +1302,7 @@ function DesignerPanel({
                 Discard changes
               </button>
             ) : null}
-            {/* Colour never carries the meaning on its own — the word "unsaved" does. */}
+            {/* Colour never carries the meaning on its own — the word "unsaved" does. */}</ActionGroup>
             {dirty ? (
               <span className="text-xs text-amber-800 dark:text-amber-100">
                 {added.length + removed.length + (leadMoved ? 1 : 0)} unsaved change
@@ -1515,13 +1502,7 @@ function OversightPanel({
         Assistant Director and Regional Director
       </h2>
       <p className="mt-1 text-xs leading-5 text-ink-500">
-        One of each per workshop. They can read every stage of this workshop but change none of it,
-        even if they could before. Each post may be held by an Assistant Director or Regional Director
-        respectively, or by a Ministry Admin, an Admin or the Master Admin — but not by you, not by the
-        same person as the other post, and not by somebody who worked on or inspects this workshop.
-        Choosing &ldquo;Nobody is assigned&rdquo; takes the post off this workshop. Each change is
-        saved straight away. A post you hold yourself stays as it is until another administrator
-        changes it.
+        One of each. Read-only access. Changes save immediately.
       </p>
 
       {refusal ? (
@@ -1599,14 +1580,13 @@ function OversightPanel({
         // reader, who is left out above, so a list holding only them is an empty one to read.
         <p className="mt-3 text-sm text-ink-700">
           {applied
-            ? "Nobody else who may hold either post matches that search."
-            : "Nobody else can be named in either post. This list offers Assistant Directors, Regional Directors, Ministry Admins, Admins and the Master Admin — an admin sets a person's role on Users."}
+            ? "No matches."
+            : "No eligible officers. Roles are set on Users."}
         </p>
       ) : null}
       {truncated ? (
         <p className="mt-2 text-xs text-ink-500">
-          Not everyone is listed. Type a name in either box to find officers further down the
-          alphabet.
+          Not everyone is listed — type a name to search.
         </p>
       ) : null}
     </section>
@@ -1795,12 +1775,12 @@ function ArtisanListPanel({
       setRefusal(
         `${failed.join(", ")} could not be taken off this workshop's roster, so ${
           failed.length === 1 ? "that record is" : "those records are"
-        } still on it. Nothing else was changed.`
+        } still on it.`
       );
       return;
     }
     setRosterSaved(
-      `${taken === 1 ? "One artisan is" : `${taken} artisans are`} no longer on this workshop's roster. Their records, photographs and interviews are untouched. Their entry in stage 3's participant list stays until a designer removes it there.`
+      `${taken === 1 ? "One artisan" : `${taken} artisans`} removed from the roster. Their records are kept.`
     );
   }
 
@@ -1811,8 +1791,7 @@ function ArtisanListPanel({
         // THE REASON, ON THE PANEL WHOSE CONTROLS IT SWITCHES OFF. The page says it once above the
         // panels; a disabled upload with no sentence beside it reads as a broken upload.
         <p className="mt-1 text-xs leading-5 text-ink-500">
-          You can&rsquo;t change this workshop&rsquo;s artisan list while you hold a post on it.
-          You can still read it.
+          Read-only while you hold a post on this workshop.
         </p>
       ) : null}
 
@@ -1821,10 +1800,7 @@ function ArtisanListPanel({
         label="Artisans on this workshop"
         hint={
           <p className="text-xs leading-5 text-ink-500">
-            Everybody ticked is on this workshop&rsquo;s roster. Unticking somebody and saving only
-            takes them off the roster — their record, photographs, products and interviews are
-            untouched, and nobody is deleted. Their entry in stage 3&rsquo;s participant list stays
-            until a designer removes it there. To add artisans, use the pro-forma below.
+            Unticking removes from the roster only; records are kept. Add artisans with the pro-forma below.
           </p>
         }
       >
@@ -1832,8 +1808,7 @@ function ArtisanListPanel({
           <p className="text-sm text-ink-700">Loading…</p>
         ) : roster.length === 0 ? (
           <p className="text-sm text-ink-700">
-            No artisan is filed against this workshop yet. Download the pro-forma below, type the
-            list into it and upload it.
+            No artisans yet. Use the pro-forma below.
           </p>
         ) : (
           <MultiSelectDropdown
@@ -1855,8 +1830,7 @@ function ArtisanListPanel({
 
       {rosterTruncated ? (
         <p className="mt-2 text-xs leading-5 text-ink-500">
-          Showing the 200 most recent artisans on this workshop; older ones can&rsquo;t be taken off
-          from here. The upload history below counts everyone ever added.
+          Showing the latest 200.
         </p>
       ) : null}
 
@@ -1888,7 +1862,7 @@ function ArtisanListPanel({
 
       {comingOff.length ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
+          <ActionGroup className="max-sm:w-full"><button
             className="field-button"
             disabled={removing || locked}
             onClick={removeUnticked}
@@ -1905,7 +1879,7 @@ function ArtisanListPanel({
           >
             Discard changes
           </button>
-          {/* Colour never carries the meaning on its own — the word does. */}
+          {/* Colour never carries the meaning on its own — the word does. */}</ActionGroup>
           <span className="text-xs text-amber-800 dark:text-amber-100">
             {comingOff.length} artisan{comingOff.length === 1 ? "" : "s"} unticked, not yet saved
           </span>
@@ -1917,22 +1891,18 @@ function ArtisanListPanel({
         Add artisans from the pro-forma
       </h3>
       <p className="mt-1 text-xs leading-5 text-ink-500">
-        Download the pro-forma, type the list into it, and upload it. Every artisan gets a record and
-        an entry in this workshop&rsquo;s stage 3 participant list. Nobody is added twice: anyone
-        already recorded is linked to this workshop and their existing record is left as it is.
+        Download, fill in and upload. Existing artisans are linked, not duplicated.
       </p>
       <p className="mt-2 rounded-md border border-amber-100 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-        The pro-forma carries Aadhaar numbers, which are regulated personal data. Do not email the
-        filled-in file or leave it in a shared folder, and delete it once the upload is confirmed.
-        The file itself is never kept — only its name, the counts, and the rows that could not be
-        read.
+        Contains Aadhaar numbers. Don&rsquo;t email or share the filled file; delete it after uploading. The file
+        isn&rsquo;t stored.
       </p>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <ActionGroup className="mt-3">
         <button type="button" className="field-button-secondary" disabled={downloading} onClick={download}>
           {downloading ? "Preparing…" : "Download the pro-forma"}
         </button>
-      </div>
+      </ActionGroup>
 
       {refusal ? (
         <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -1963,7 +1933,7 @@ function ArtisanListPanel({
         <p className="mt-1 text-sm text-ink-700">Loading…</p>
       ) : history.length === 0 ? (
         <p className="mt-1 text-sm text-ink-700">
-          No artisan list has been uploaded into this workshop yet.
+          No uploads yet.
         </p>
       ) : (
         <ul className="mt-1 divide-y divide-line-200 rounded-md border border-line-200">

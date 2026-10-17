@@ -48,6 +48,7 @@ import {
   type DwValue
 } from "@/lib/designWorkshops";
 import { isUnreachable } from "@/lib/offline";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** The stage and the entity these settings live in. Both are backend keys, not display strings. */
 export const REPORT_STAGE_KEY = "REPORT_GENERATION";
@@ -175,7 +176,7 @@ export function ReportSettingsPanel({
         // exactly the sentence the download handler on this page's parent was written to stop
         // telling people. A server that spoke gets its own words shown.
         isUnreachable(err)
-          ? "Connect to the internet to save these settings. Nothing has been lost — the boxes still hold what you typed."
+          ? "Needs a connection to save. Your entries are kept."
           : err instanceof Error
             ? err.message
             : "Unable to save the report settings"
@@ -205,12 +206,11 @@ export function ReportSettingsPanel({
             <div className="min-w-0">
               <h2 className="font-display text-base font-bold text-ink-900">Report settings</h2>
               <p className="mt-1 text-sm leading-6 text-ink-muted">
-                Saved on stage 20 and used when this report is built. The transcript annexure, the page size
-                and the running head and foot are also applied to the file this page generates.
+                Saved on stage 20 and used for every report.
               </p>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <ActionGroup className="shrink-0">
             <Link href={`/design-workshops/${workshopId}/stages/${REPORT_STAGE_KEY}`} className="field-button-secondary">
               Open stage 20
             </Link>
@@ -223,13 +223,12 @@ export function ReportSettingsPanel({
               <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} aria-hidden />
               {open ? "Hide settings" : "Change settings"}
             </button>
-          </div>
+          </ActionGroup>
         </div>
 
         {draftPending ? (
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-            Stage 20 has changes saved on this device that haven&rsquo;t been uploaded yet, and they would replace anything
-            saved here, so Save is off until they have — open stage 20 and let it upload, then come back.
+            Stage 20 has unsent changes. Let them upload before saving here.
           </p>
         ) : null}
 
@@ -269,7 +268,7 @@ export function ReportSettingsPanel({
                 {saved ? (
                   <span className="inline-flex items-center gap-1.5 text-success-600 dark:text-emerald-400">
                     <CheckCircle2 className="h-4 w-4" aria-hidden />
-                    Saved. The preview below has been rebuilt from them.
+                    Saved.
                   </span>
                 ) : (
                   "Nothing changed yet."
@@ -277,7 +276,7 @@ export function ReportSettingsPanel({
               </span>
             ) : (
               <span className="text-sm text-ink-muted">
-                Unsaved. The preview below still shows the saved settings.
+                Unsaved.
               </span>
             )}
           </div>
@@ -355,7 +354,7 @@ export function TranscriptAnnexurePanel({ transcripts }: { transcripts: DwTransc
         </ul>
       ) : (
         <p className="text-sm text-ink-700">
-          This workshop has no recordings, so the annexure would be empty and no pages are added.
+          No recordings, so no annexure.
         </p>
       )}
 
@@ -363,8 +362,7 @@ export function TranscriptAnnexurePanel({ transcripts }: { transcripts: DwTransc
         // Every gap is stated. An annexure a designer explicitly asked for that is quietly two
         // recordings short is the failure the whole panel exists to prevent.
         <p className="text-sm leading-6 text-ink-muted">
-          {pending.length} recording{pending.length === 1 ? " is" : "s are"} still being transcribed and will be missing from
-          the annexure if the file is generated now. The report itself will not say so.
+          {pending.length} recording{pending.length === 1 ? " is" : "s are"} still transcribing and would be missing now.
         </p>
       ) : null}
     </section>

@@ -152,9 +152,9 @@ export function UploadSanctionDialog({
         validate={(file) =>
           /\.(xlsx|xlsm|xltx)$/i.test(file.name)
             ? file.size > MAX_BYTES
-              ? `"${file.name}" is larger than 4 MB. A sheet of two hundred sanction orders is a few dozen kilobytes — check you have chosen the sheet and not a scanned copy of the orders.`
+              ? `"${file.name}" is over 4 MB. Choose the sheet, not a scan.`
               : null
-            : `"${file.name}" is not an Excel workbook. Use File > Save As in Excel and choose "Excel Workbook (.xlsx)".`
+            : `"${file.name}" isn't an Excel workbook. Save it as .xlsx.`
         }
         onFiles={(files) => {
           setChosen(files[0] ?? null);

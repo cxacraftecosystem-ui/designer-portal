@@ -67,6 +67,7 @@ import {
   workshopRecordTypeLabel,
   type WorkshopRecordType
 } from "@/lib/workshopCodes";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
  * Error correction level Q — a quarter of the symbol recoverable.
@@ -193,7 +194,7 @@ async function savePng(entry: Extract<Rendered, { ok: true }>): Promise<void> {
   canvas.width = side;
   canvas.height = side;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("This browser could not draw the code as a picture. Download the SVG instead.");
+  if (!context) throw new Error("Couldn't make a picture. Download the SVG.");
 
   // The quiet zone is painted, for the reason svgSource gives: it is part of the symbol, not the
   // absence of one.
@@ -208,7 +209,7 @@ async function savePng(entry: Extract<Rendered, { ok: true }>): Promise<void> {
   }
 
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob) throw new Error("This browser could not save the code as a picture. Download the SVG instead.");
+  if (!blob) throw new Error("Couldn't save a picture. Download the SVG.");
   saveBlob(blob, fileName(entry.code, "png"));
 }
 
@@ -323,7 +324,7 @@ export function RecordCodeCard({
   const startPrint = useCallback(() => {
     if (!document.getElementById("main-content")) {
       setProblem(
-        "This can't be printed from here. Download the code as a PNG or an SVG and print the file instead."
+        "Can't print from here. Download the PNG or SVG and print that."
       );
       return;
     }
@@ -343,7 +344,7 @@ export function RecordCodeCard({
     } catch {
       // A refused clipboard is not worth an error box: the code is on screen in full, selectable,
       // and typing it back is the path it was printed for in the first place.
-      setProblem("This browser did not allow the code to be copied. It is written out above — it can be selected and copied by hand.");
+      setProblem("Couldn't copy. Select the code above and copy it.");
     }
   }, []);
 
@@ -358,8 +359,7 @@ export function RecordCodeCard({
             {typeLabel} code
           </h2>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
-            Scan this to open this {typeLabel.toLowerCase()} on any device with the app. The code holds nothing about the
-            record itself — no name, no place, no identity number.
+            Scan to open this {typeLabel.toLowerCase()}. The code holds no personal details.
           </p>
         </div>
       </div>
@@ -383,11 +383,10 @@ export function RecordCodeCard({
               {entry.printed}
             </p>
             <p className="mt-1 text-xs leading-5 text-ink-muted">
-              The last four characters are a check. Typed into the scanner, they are what stops one wrong character opening a
-              different record.
+              The last four characters are a check.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" className="field-button-secondary" onClick={() => setExpanded(true)}>
+              <ActionGroup className="max-sm:w-full"><button type="button" className="field-button-secondary" onClick={() => setExpanded(true)}>
                 <Maximize2 className="h-4 w-4" aria-hidden />
                 Expand
               </button>
@@ -399,7 +398,7 @@ export function RecordCodeCard({
               <button type="button" className="field-button-secondary" onClick={startPrint} disabled={printing}>
                 <Printer className="h-4 w-4" aria-hidden />
                 {printing ? "Printing…" : "Print"}
-              </button>
+              </button></ActionGroup>
               <DownloadButtons entry={entry} onProblem={setProblem} compact />
               <button type="button" className="field-button-secondary" onClick={() => copy(entry.code)}>
                 {copied ? "Copied" : "Copy code"}
@@ -461,7 +460,7 @@ export function RecordCodeCard({
             </div>
             <p className="break-all text-center font-mono text-sm leading-6 text-ink-700">{entry.printed}</p>
             <p className="text-center text-xs leading-5 text-ink-muted">
-              Hold a camera over it, or type the characters into the scanner. Spaces and capitals do not matter.
+              Scan it, or type it. Spaces and capitals don&apos;t matter.
             </p>
           </div>
         </FieldDialog>

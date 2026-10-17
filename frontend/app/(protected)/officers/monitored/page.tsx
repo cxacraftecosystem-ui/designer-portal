@@ -54,6 +54,7 @@ import {
   oversightEmptyState,
   oversightRefusalMeansNoPosts
 } from "../oversight";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 20;
 
@@ -141,22 +142,20 @@ export default function WorkshopsIMonitorPage() {
             Officer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Workshops I monitor lists the design &amp; prototype workshops you have been named on as
-            Assistant Director or Regional Director. It is open to Assistant Directors, Regional
-            Directors, Ministry Admins, Admins and the Master Admin. Designers open their workshops from
-            Design workshops; Assistant and Regional Directors are named on Workshop oversight.
+            For Assistant Directors, Regional Directors, Ministry Admins and admins. Designers: use
+            Design workshops.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
           </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <ActionGroup className="mt-7">
             <Link href="/dashboard" className="field-button">
               Back to dashboard
             </Link>
             <Link href="/design-workshops" className="field-button-secondary">
               Design workshops
             </Link>
-          </div>
+          </ActionGroup>
         </section>
       </div>
     );

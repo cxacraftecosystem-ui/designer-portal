@@ -192,7 +192,7 @@ export function describeSpeechError(code: string): string {
  * bug. One sentence turns "broken" into "not here, and here is what does work".
  */
 export const NO_RECOGNISER_SENTENCE =
-  "Dictation is not available in this browser. Chrome, Edge and Safari have built-in speech recognition; Firefox does not. Type the answer in, or open this page in one of those.";
+  "Dictation isn't available in this browser (Firefox has none). Type the answer in, or use Chrome, Edge or Safari.";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The lifecycle — written once, used by both dictation components
