@@ -6752,11 +6752,32 @@ def workshop_completeness(entries: list[Any], *, definition: Any = None) -> dict
 # --------------------------------------------------------------------------------------
 
 
-def assemble_workshop_data(record: Any, entries: list[Any]) -> WorkshopData:
+async def report_survey_sittings(record: Any) -> int | None:
+    """The sitting count ``assemble_workshop_data`` re-counts stage 8 with; ``None`` once frozen.
+
+    A handed-on report is the document that was approved, so a sitting recorded afterwards must not
+    move its figure. Everything else re-counts from the rows the frozen record already holds.
+    """
+    if design_workshop_approvals.frozen_refusal(
+        getattr(record, "status", None), getattr(record, "handedOnAt", None)
+    ):
+        return None
+    return await stage_computed.market_survey_sittings(record.id)
+
+
+def assemble_workshop_data(
+    record: Any, entries: list[Any], *, survey_sittings: int | None = None
+) -> WorkshopData:
     """Turn stage entry rows into the shape the report builder reads.
 
     The same shape the phone assembles from its local draft, which is what makes the on-device
     report and the server report the same document rather than two similar ones.
+
+    COMPUTED COUNTS ARE RE-COUNTED HERE (owner, C7/C8): the save stores each one only when its own
+    stage is saved, so the report reads ``stage_computed.refresh_counts`` rather than a figure that
+    went stale when stage 3's attendance or a questionnaire sitting changed. ``survey_sittings`` is
+    the market-survey sitting count (``stage_computed.market_survey_sittings``); ``None`` leaves
+    stage 8's stored figure as it is.
     """
     cardinality = {e.key: e.cardinality for s in stages() for e in s.entities}
     singletons: dict[str, dict[str, Any]] = {}
@@ -6815,6 +6836,15 @@ def assemble_workshop_data(record: Any, entries: list[Any]) -> WorkshopData:
             singletons[row.stageKey] = data
         else:
             collections.setdefault(row.stageKey, {}).setdefault(row.entityKey, []).append(data)
+
+    stage_computed.refresh_counts(
+        singletons,
+        collections,
+        sittings=survey_sittings,
+        client_keys={
+            row.id: key for row in entries if (key := getattr(row, "clientKey", None))
+        },
+    )
 
     return WorkshopData(
         workshop_id=record.id,

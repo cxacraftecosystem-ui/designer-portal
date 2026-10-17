@@ -585,31 +585,50 @@ def group_rows(
 
 
 async def _sittings(workshop_id: str) -> list[dict[str, Any]]:
+    """Each market-survey form's sitting count and latest date: one form read and one grouped count.
+
+    NO RESPONDENT NAMES. This answers anyone who may read the workshop, a wider audience than the
+    questionnaire's own sittings route admits (owner, admin or co-designer), and neither client
+    shows a name here; ``respondents`` stays in the payload, empty, for clients that read it.
+    """
     from app.core.db import db
 
     forms = await db.questionnaire.find_many(
         where={"designWorkshopId": workshop_id, "isActive": True, "kind": "MARKET_SURVEY"},
         order={"createdAt": "asc"},
     )
+    if not forms:
+        return []
+    groups = await db.questionnaireformentry.group_by(
+        by=["questionnaireId"],
+        where={"questionnaireId": {"in": [f.id for f in forms]}},
+        count=True,
+        max={"createdAt": True},
+    )
+    by_form = {str(g.get("questionnaireId") or ""): g for g in groups}
     out = []
     for form in forms:
-        entries = await db.questionnaireformentry.find_many(
-            where={"questionnaireId": form.id}, order={"createdAt": "desc"}
-        )
+        group = by_form.get(form.id) or {}
+        latest = (group.get("_max") or {}).get("createdAt")
         out.append(
             {
                 "questionnaireId": form.id,
                 "title": form.title,
-                "count": len(entries),
-                "latest": entries[0].createdAt.date().isoformat() if entries else None,
-                "respondents": [
-                    str(e.respondentName)
-                    for e in entries[:5]
-                    if str(e.respondentName or "").strip()
-                ],
+                "count": int((group.get("_count") or {}).get("_all") or 0),
+                "latest": _latest_day(latest),
+                "respondents": [],
             }
         )
     return out
+
+
+def _latest_day(value: Any) -> str | None:
+    """A grouped ``createdAt`` maximum as yyyy-mm-dd; Prisma hands it back as a datetime or text."""
+    if value is None:
+        return None
+    if hasattr(value, "date"):
+        return value.date().isoformat()
+    return str(value)[:10] or None
 
 
 async def _media_counts(workshop_id: str) -> dict[str, int]:

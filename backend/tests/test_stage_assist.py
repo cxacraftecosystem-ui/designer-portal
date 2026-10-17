@@ -194,6 +194,78 @@ def test_nothing_to_count_never_overwrites_a_typed_legacy_value():
     assert sc.survey_responses([], 0) is None
 
 
+def test_a_typed_legacy_days_attended_stands_until_the_row_is_ticked():
+    """C7: an older workshop's typed 3 of 5 is never read back as "All present"."""
+    legacy = {"name": "Asha", "attendedDays": 3}
+    assert sc.is_legacy_attendance(legacy)
+    assert sc.attended_days(legacy, [1, 2, 3, 4, 5]) is None
+    # Not formed while any typed row remains, so a typed completion count stands too.
+    assert sc.roster_values([legacy, {"name": "Ravi"}], [1, 2, 3])["ROSTER_COMPLETED"] is None
+    # Ticked — even "All present", an empty list — it is counted.
+    ticked = {**legacy, "absentDays": []}
+    assert not sc.is_legacy_attendance(ticked)
+    assert sc.attended_days(ticked, [1, 2, 3, 4, 5]) == 5
+    # A new row with nothing typed is not legacy.
+    assert not sc.is_legacy_attendance({"name": "Ravi", "attendedDays": ""})
+
+
+def test_an_empty_tick_list_survives_validation():
+    from app.services.stage_schema import validate_entry
+
+    entity = stage(sc.ROSTER_STAGE).entity(sc.PARTICIPANT)
+    cleaned, errors = validate_entry(entity, {"name": "Asha", "absentDays": []})
+    assert errors == {}
+    assert cleaned["absentDays"] == []
+    cleaned, _ = validate_entry(entity, {"name": "Asha"})
+    assert "absentDays" not in cleaned
+
+
+def _report_shape():
+    singletons = {
+        sc.SETUP_STAGE: dict(SETUP),
+        sc.ROSTER_STAGE: {"totalArtisans": 9},
+        sc.CLOSING_STAGE: {"participantsCompleted": 2},
+        sc.SURVEY_STAGE: {"responsesCollected": 1},
+    }
+    collections = {
+        sc.ROSTER_STAGE: {
+            sc.PARTICIPANT: [
+                {"_entryId": "e-a", "name": "Asha", "absentDays": ["2"], "attendedDays": 5},
+                {"_entryId": "e-b", "name": "Ravi", "absentDays": [], "attendedDays": 5},
+            ]
+        },
+        sc.CLOSING_STAGE: {
+            sc.CERTIFICATE: [
+                {"participantRef": "c-a", "daysAttended": 5},
+                {"participantRef": "e-b", "daysAttended": 5},
+            ]
+        },
+        sc.SURVEY_STAGE: {sc.SURVEY_RESPONSE: [{"response": "x"}]},
+    }
+    return singletons, collections
+
+
+def test_the_report_recounts_what_a_later_stage_stored():
+    """C7/C8: an absence ticked on stage 3 reaches stage 19's figures without a stage 19 save."""
+    singletons, collections = _report_shape()
+    sc.refresh_counts(singletons, collections, sittings=4, client_keys={"e-a": "c-a"})
+    assert singletons[sc.CLOSING_STAGE]["participantsCompleted"] == 1
+    assert [c["daysAttended"] for c in collections[sc.CLOSING_STAGE][sc.CERTIFICATE]] == [4, 5]
+    assert collections[sc.ROSTER_STAGE][sc.PARTICIPANT][0]["attendedDays"] == 4
+    assert singletons[sc.ROSTER_STAGE]["totalArtisans"] == 2
+    assert singletons[sc.SURVEY_STAGE]["responsesCollected"] == 5
+
+
+def test_a_filed_report_keeps_its_survey_figure_and_legacy_rows_keep_theirs():
+    singletons, collections = _report_shape()
+    collections[sc.ROSTER_STAGE][sc.PARTICIPANT][0].pop("absentDays")
+    collections[sc.ROSTER_STAGE][sc.PARTICIPANT][0]["attendedDays"] = 3
+    sc.refresh_counts(singletons, collections, sittings=None)
+    assert singletons[sc.SURVEY_STAGE]["responsesCollected"] == 1
+    assert collections[sc.ROSTER_STAGE][sc.PARTICIPANT][0]["attendedDays"] == 3
+    assert singletons[sc.CLOSING_STAGE]["participantsCompleted"] == 2
+
+
 def test_survey_responses_add_the_sittings_to_the_rows():
     """C8: counted and summarised, never duplicated as rows."""
     assert sc.survey_responses([{"response": "a"}, {"response": "b"}], 12) == 14
@@ -475,7 +547,14 @@ async def test_a_roster_save_stores_its_counts_over_whatever_was_typed(client):
             {
                 "entityKey": "participant",
                 "ordinal": 1,
-                "data": {"_clientKey": "p-b", "name": "Ravi", "gender": "Male", "attendedDays": 1},
+                "data": {
+                    "_clientKey": "p-b",
+                    "name": "Ravi",
+                    "gender": "Male",
+                    "attendedDays": 1,
+                    # Ticked "All present": counted, so the stale 1 is replaced.
+                    "absentDays": [],
+                },
             },
         ],
     )
@@ -517,6 +596,96 @@ async def test_a_roster_save_stores_its_counts_over_whatever_was_typed(client):
     assert closing
     stored = client.get(f"/api/design-workshops/{workshop}/stages/{sc.CLOSING_STAGE}").json()
     assert stored["singleton"]["participantsCompleted"] == 2
+
+
+@needs_db
+@pytest.mark.anyio
+async def test_a_legacy_typed_days_attended_survives_both_saves(client):
+    """C7: a schedule plus a typed 3 and no tick-list keeps 3 through stage 3 and stage 19 saves."""
+    workshop = client.post("/api/design-workshops", json={"title": "Assist typed"}).json()["id"]
+    _put(client, workshop, sc.SETUP_STAGE, [{"entityKey": "workshopSetup", "data": SETUP}])
+    schedule = [
+        {"entityKey": sc.SCHEDULE_DAY, "ordinal": n, "data": {"dayNumber": n}} for n in range(1, 6)
+    ]
+    roster = [
+        {
+            "entityKey": "participant",
+            "ordinal": 0,
+            "data": {"_clientKey": "lg-a", "name": "Asha", "attendedDays": 3},
+        }
+    ]
+    _put(client, workshop, sc.ROSTER_STAGE, schedule + roster)
+    _put(client, workshop, sc.ROSTER_STAGE, schedule + roster)
+    stored = client.get(f"/api/design-workshops/{workshop}/stages/{sc.ROSTER_STAGE}").json()
+    assert [p["attendedDays"] for p in stored["collections"]["participant"]] == [3]
+    _put(
+        client,
+        workshop,
+        sc.CLOSING_STAGE,
+        [
+            {"entityKey": "closing", "data": {"participantsCompleted": 0}},
+            {
+                "entityKey": sc.CERTIFICATE,
+                "ordinal": 0,
+                "data": {"participantRef": "lg-a", "daysAttended": 3},
+            },
+        ],
+    )
+    stored = client.get(f"/api/design-workshops/{workshop}/stages/{sc.CLOSING_STAGE}").json()
+    assert stored["singleton"]["participantsCompleted"] == 0
+    assert [c["daysAttended"] for c in stored["collections"][sc.CERTIFICATE]] == [3]
+
+
+@needs_db
+@pytest.mark.anyio
+async def test_the_report_counts_an_absence_stage_19_never_saw(client):
+    """C7: tick an absence on stage 3, preview the report without re-saving stage 19."""
+    import json
+
+    workshop = client.post("/api/design-workshops", json={"title": "Assist report"}).json()["id"]
+    _put(client, workshop, sc.SETUP_STAGE, [{"entityKey": "workshopSetup", "data": SETUP}])
+    people = [
+        {"entityKey": "participant", "ordinal": i, "data": {"_clientKey": key, "name": name}}
+        for i, (key, name) in enumerate((("rp-a", "Asha"), ("rp-b", "Ravi")))
+    ]
+    _put(client, workshop, sc.ROSTER_STAGE, people)
+    _put(client, workshop, sc.CLOSING_STAGE, [{"entityKey": "closing", "data": {}}])
+    stored = client.get(f"/api/design-workshops/{workshop}/stages/{sc.CLOSING_STAGE}").json()
+    assert stored["singleton"]["participantsCompleted"] == 2
+    people[0]["data"]["absentDays"] = ["2"]
+    _put(client, workshop, sc.ROSTER_STAGE, people)
+
+    preview = client.get(f"/api/design-workshops/{workshop}/report/preview")
+    assert preview.status_code == 200, preview.text
+    text = json.dumps(preview.json()["blocks"], ensure_ascii=False)
+    assert "Participants who completed" in text
+    at = text.index("Participants who completed")
+    assert '"1"' in text[at : at + 200] or ": 1" in text[at : at + 200], text[at : at + 200]
+
+
+@needs_db
+@pytest.mark.anyio
+async def test_stage_8_counts_the_sittings_and_names_nobody(client):
+    """C8: one grouped count per form, its latest date, and no respondent names on this route."""
+    workshop = client.post("/api/design-workshops", json={"title": "Assist sittings"}).json()["id"]
+    form = client.post(
+        "/api/questionnaires",
+        json={"title": "Market survey", "designWorkshopId": workshop, "kind": "MARKET_SURVEY"},
+    )
+    assert form.status_code == 201, form.text
+    form_id = form.json()["id"]
+    for name in ("Asha", "Ravi"):
+        sitting = client.post(
+            f"/api/questionnaires/{form_id}/entries", json={"respondentName": name}
+        )
+        assert sitting.status_code == 201, sitting.text
+    assist = client.get(f"/api/design-workshops/{workshop}/stages/{sc.SURVEY_STAGE}/assist")
+    assert assist.status_code == 200, assist.text
+    [found] = assist.json()["sittings"]
+    assert found["count"] == 2
+    assert found["latest"] and len(found["latest"]) == 10
+    assert found["respondents"] == []
+    assert assist.json()["computed"]["singleton"]["responsesCollected"] == 2
 
 
 @needs_db

@@ -207,6 +207,7 @@ from app.services.design_workshops import (
     REFERENCE_LIMIT_DEFAULT,
     REFERENCE_LIMIT_MAX,
     assemble_workshop_data,
+    report_survey_sittings,
     assert_every_designer_may_be_named,
     attach_district_anchors,
     attach_report_ai_layers,
@@ -5634,7 +5635,9 @@ async def _report_inputs(
     a client wrote there — see ``design_workshops.media_resolver``.
     """
     entries = await entry_rows(workshop_id)
-    data = assemble_workshop_data(record, entries)
+    data = assemble_workshop_data(
+        record, entries, survey_sittings=await report_survey_sittings(record)
+    )
     # THE SIGN-OFF LINES (2026-10-10): who approved the report and where it went, printed under the
     # Certification signatures. One name lookup, and none for a report nobody has approved.
     if getattr(record, "approvedAt", None) is not None:

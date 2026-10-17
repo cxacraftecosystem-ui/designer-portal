@@ -9,8 +9,16 @@ typed boxes are REPLACED: both clients draw these read-only and the save overwri
 A count that cannot be formed — no roster rows, no workshop days — is ``None``, and ``None`` never
 overwrites. That is what keeps a number typed on an older workshop readable.
 
+A LEGACY ROW IS ONE THE TICK-LIST HAS NEVER TOUCHED AND WHOSE DAYS WERE TYPED: no ``absentDays``
+list at all, and a stored ``attendedDays``. Reading it as "All present" would turn a typed 3 of 5
+into 5 on the next save, so :func:`attended_days` answers ``None`` for it and the completion count
+is not formed while any such row remains. A row the new flow writes always carries ``absentDays``
+(``[]`` for all present; ``validate_entry`` keeps that empty list), so it is never mistaken for one.
+
 The pure half (everything above :func:`apply_on_save`) is ported to ``frontend/lib/stageComputed.ts``
-and Android's ``DwStageComputed.kt`` so the figure appears while the designer ticks.
+and Android's ``DwStageCapture.kt`` (``DwStageComputed``) so the figure appears while the designer
+ticks. :func:`refresh_counts` is what the report runs, so a count whose own stage was not re-saved
+after its inputs changed still prints what the rows come to.
 """
 
 from __future__ import annotations
@@ -81,6 +89,17 @@ def workshop_days(
     return list(range(1, duration + 1)) if duration else []
 
 
+def _blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def is_legacy_attendance(participant: Mapping[str, Any]) -> bool:
+    """A row whose days attended were typed before the tick-list existed and never ticked since."""
+    return not isinstance(participant.get("absentDays"), list) and not _blank(
+        participant.get("attendedDays")
+    )
+
+
 def absent_days(participant: Mapping[str, Any]) -> set[str]:
     raw = participant.get("absentDays")
     if not isinstance(raw, list):
@@ -89,7 +108,7 @@ def absent_days(participant: Mapping[str, Any]) -> set[str]:
 
 
 def attended_days(participant: Mapping[str, Any], days: Sequence[int]) -> int | None:
-    if not days:
+    if not days or is_legacy_attendance(participant):
         return None
     absent = absent_days(participant)
     return sum(1 for day in days if str(day) not in absent)
@@ -107,7 +126,12 @@ def roster_values(
     people = _named(participants)
     if not people:
         return {"ROSTER_COUNT": None, "ROSTER_WOMEN": None, "ROSTER_COMPLETED": None}
-    completed = sum(1 for p in people if attended_days(p, days) == len(days)) if days else None
+    # Not formed while a legacy row remains: its typed days cannot say whether it completed.
+    completed = (
+        sum(1 for p in people if attended_days(p, days) == len(days))
+        if days and not any(is_legacy_attendance(p) for p in people)
+        else None
+    )
     return {
         "ROSTER_COUNT": len(people),
         "ROSTER_WOMEN": sum(1 for p in people if is_woman(p.get("gender"))),
@@ -132,6 +156,55 @@ def participant_for(
         return None
     wanted = str(ref)
     return next((p for p in participants if wanted in _row_keys(p)), None)
+
+
+def refresh_counts(
+    singletons: dict[str, dict[str, Any]],
+    collections: Mapping[str, Mapping[str, list[dict[str, Any]]]],
+    *,
+    sittings: int | None = None,
+    client_keys: Mapping[str, str] | None = None,
+) -> None:
+    """Bring every stored computed count in a report's data up to what the rows come to, in place.
+
+    The save stores each count only when ITS stage is saved, so ticking an absence on stage 3 left
+    stage 19's completions and certificates as they were, and a new questionnaire sitting left stage
+    8's responses, until someone re-opened and re-saved those stages. The report and the browser's
+    offline source read this instead of the stale figure. Shaped like ``WorkshopData`` (stage key ->
+    singleton; stage key -> entity key -> rows). ``sittings`` is ``None`` to leave stage 8 as stored
+    (a filed report); ``client_keys`` maps an entry id to its client key, which a certificate's
+    ``participantRef`` may name instead of the id.
+    """
+    keys = client_keys or {}
+
+    def keyed(row: dict[str, Any]) -> dict[str, Any]:
+        found = keys.get(str(row.get("_entryId") or ""))
+        return {**row, "_clientKey": found} if found and not row.get("_clientKey") else row
+
+    roster = collections.get(ROSTER_STAGE) or {}
+    participants = roster.get(PARTICIPANT) or []
+    days = workshop_days(roster.get(SCHEDULE_DAY) or [], singletons.get(SETUP_STAGE))
+    for person in participants:
+        _set(person, "attendedDays", attended_days(person, days))
+    values = roster_values(participants, days)
+    plan = singletons.get(ROSTER_STAGE)
+    if plan is not None and values["ROSTER_COUNT"] is not None:
+        _set(plan, "totalArtisans", values["ROSTER_COUNT"])
+        _set(plan, "womenParticipants", values["ROSTER_WOMEN"])
+
+    closing = singletons.get(CLOSING_STAGE)
+    if closing is not None:
+        _set(closing, "participantsCompleted", values["ROSTER_COMPLETED"])
+    people = [keyed(p) for p in participants]
+    for certificate in (collections.get(CLOSING_STAGE) or {}).get(CERTIFICATE) or []:
+        person = participant_for(certificate.get("participantRef"), people)
+        if person is not None:
+            _set(certificate, "daysAttended", attended_days(person, days))
+
+    summary = singletons.get(SURVEY_STAGE)
+    if sittings is not None and summary is not None:
+        responses = (collections.get(SURVEY_STAGE) or {}).get(SURVEY_RESPONSE) or []
+        _set(summary, "responsesCollected", survey_responses(responses, sittings))
 
 
 # --------------------------------------------------------------------------------------
@@ -199,7 +272,12 @@ async def apply_on_save(
         days = workshop_days(survivors.get(SCHEDULE_DAY, []), setup)
         for item in pending:
             if item.entity.key == PARTICIPANT:
-                _set(item.data, "attendedDays", attended_days(item.data, days))
+                value = attended_days(item.data, days)
+                if value is not None:
+                    _set(item.data, "attendedDays", value)
+                    # Marks the row as counted, so it is never read back as a typed legacy one.
+                    if not isinstance(item.data.get("absentDays"), list):
+                        item.data["absentDays"] = []
         values = roster_values(participants, days)
         if values["ROSTER_COUNT"] is not None:
             plan = singleton_for("workshopPlan")

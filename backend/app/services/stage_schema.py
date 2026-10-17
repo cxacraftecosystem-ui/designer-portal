@@ -2613,6 +2613,13 @@ def validate_entry(
         if error:
             errors[spec.key] = error
             continue
+        if spec.widget == "ATTENDANCE" and isinstance(raw, list) and not raw:
+            # "ALL PRESENT" IS AN ANSWER, NOT A BLANK. An empty tick-list list is what tells a row
+            # the attendance card counted apart from one whose days were typed on an older
+            # workshop (`stage_computed.is_legacy_attendance`); dropping it would turn every
+            # all-present row into a legacy one on its next save.
+            cleaned[spec.key] = []
+            continue
         if value is None or (isinstance(value, list) and not value):
             # BLANK AND DERIVABLE MEANS COMPUTE IT, which is what the field's own help text has
             # been promising. `durationDays` says "Leave blank to derive it from the start and end
