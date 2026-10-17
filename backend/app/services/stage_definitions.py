@@ -480,12 +480,14 @@ STAGE_1 = StageSpec(
                     A,
                     phase_note="Reviewer: “Phase 2 work”.",
                 ),
+                # STANDARD since 2026-10-17 (owner, C12): the artisan-list import refuses a workshop
+                # without it, so an Advanced tier hid a box another screen depends on. Both clients
+                # ask for it on the first stage 1 save, and a photo's position fills it in one tap.
                 f(
                     "venueLocation",
                     "Venue location",
                     GEO,
-                    A,
-                    phase_note="Reviewer: “Phase 2 work”.",
+                    S,
                     help="Captured from the device once, at the venue.",
                 ),
                 f(
@@ -795,6 +797,8 @@ STAGE_3 = StageSpec(
                     report_role=BULLETS,
                     help="One official per line, with designation.",
                 ),
+                # COUNTED FROM THE ROSTER below (owner, C7) — the typed box is replaced. A workshop
+                # with no roster rows keeps whatever was typed before, readable and unchanged.
                 f(
                     "totalArtisans",
                     "Artisans enrolled",
@@ -802,6 +806,7 @@ STAGE_3 = StageSpec(
                     S,
                     min_value=0,
                     report_role=METRIC,
+                    computed_kind="ROSTER_COUNT",
                     help="Leave blank to count the participant list below.",
                 ),
                 f(
@@ -811,6 +816,7 @@ STAGE_3 = StageSpec(
                     S,
                     min_value=0,
                     report_role=METRIC,
+                    computed_kind="ROSTER_WOMEN",
                 ),
                 *photos("openingPhotos", "Opening photographs", B, "Opening photograph caption"),
                 *photos("eventPhotos", "Event photographs", S, "Event photograph caption"),
@@ -830,8 +836,17 @@ STAGE_3 = StageSpec(
                     min_value=1,
                     report_role=COL,
                     column_width_pct=8.0,
+                    auto_number="#",
                 ),
-                f("date", "Date", DATE, B, report_role=COL, column_width_pct=14.0),
+                f(
+                    "date",
+                    "Date",
+                    DATE,
+                    B,
+                    report_role=COL,
+                    column_width_pct=14.0,
+                    auto_date_from_day="dayNumber",
+                ),
                 f(
                     "session",
                     "Session",
@@ -1431,7 +1446,16 @@ STAGE_3 = StageSpec(
                 # and a referenced record's files are entitlement-gated per file). Same shape and same
                 # bound as `traditionalProcess.recordMediaNote`.
                 fromref("recordMediaNote", "Media on the artisan record", T, S, max_length=200),
-                f("attendedDays", "Days attended", INT, S, min_value=0),
+                # COUNTED FROM THE DAILY TICK-LIST (`absentDays`, below): every workshop day the
+                # participant was not marked absent on. Read-only on both clients.
+                f(
+                    "attendedDays",
+                    "Days attended",
+                    INT,
+                    S,
+                    min_value=0,
+                    computed_kind="ATTENDANCE_DAYS",
+                ),
                 fromref("photo", "Photograph", IMG, S, report_role=GALLERY),
                 # WHATEVER THE REPOSITORY HOLDS AGAINST THE CHOSEN PHOTOGRAPH, which is not always a
                 # sentence somebody wrote about that picture. `MediaFile.caption` is typed once per
@@ -1447,6 +1471,19 @@ STAGE_3 = StageSpec(
                 # fix belongs where the caption is stored, not on one of the forms that stores it.
                 fromref(
                     "photoCaption", "Photograph caption", T, S, caption_for="photo", report_role=CAP
+                ),
+                # THE DAILY ATTENDANCE TICK-LIST (owner, C7). The workshop days — schedule day
+                # numbers, else 1..duration — this participant was ABSENT on, so an untouched roster
+                # reads "All present". Edited on stage 3's attendance card, never as a box; it feeds
+                # `attendedDays`, the certificates' days attended and the completion count.
+                f(
+                    "absentDays",
+                    "Absent on days",
+                    TAGS,
+                    S,
+                    report_role=HIDDEN,
+                    max_length=4,
+                    widget="ATTENDANCE",
                 ),
             ),
             label_field="name",
@@ -3384,6 +3421,7 @@ STAGE_8 = StageSpec(
                     S,
                     min_value=0,
                     report_role=METRIC,
+                    computed_kind="SURVEY_RESPONSES",
                 ),
                 f("consumerPreferences", "Consumer preferences", RICH, S, report_role=NARR),
                 f(
@@ -3880,6 +3918,7 @@ STAGE_11 = StageSpec(
                     required=True,
                     report_role=COL,
                     column_width_pct=12.0,
+                    auto_number="S",
                 ),
                 f(
                     "name",
@@ -4277,6 +4316,7 @@ STAGE_13 = StageSpec(
                     required=True,
                     report_role=COL,
                     column_width_pct=12.0,
+                    auto_number="P",
                 ),
                 f(
                     "name",
@@ -4647,6 +4687,8 @@ STAGE_14 = StageSpec(
                     min_value=1,
                     report_role=COL,
                     column_width_pct=10.0,
+                    auto_number="#",
+                    auto_number_within="prototypeRef",
                 ),
                 f(
                     "changesMade",
@@ -4913,6 +4955,7 @@ STAGE_16 = StageSpec(
                     required=True,
                     report_role=COL,
                     column_width_pct=12.0,
+                    auto_number="D",
                 ),
                 fromref(
                     "name",
@@ -5461,6 +5504,7 @@ STAGE_19 = StageSpec(
                     S,
                     min_value=0,
                     report_role=METRIC,
+                    computed_kind="ROSTER_COMPLETED",
                 ),
                 *photos("closingPhotos", "Closing photographs", B, "Closing photograph caption"),
                 f("summaryVideo", "Video summary", VIDEO, A),
@@ -5527,6 +5571,7 @@ STAGE_19 = StageSpec(
                     min_value=0,
                     report_role=COL,
                     column_width_pct=16.0,
+                    computed_kind="ATTENDANCE_DAYS",
                 ),
                 # THE SIGNED SHEET, CAPTURED RATHER THAN PHOTOGRAPHED. Attendance was delivered for
                 # most of this project's life as a photograph of a paper register, which is a picture
@@ -5937,6 +5982,36 @@ STAGE_22 = StageSpec(
                 f("supportNeeded", "Support needed", RICH, S, report_role=NARR),
                 f("recordedBy", "Recorded by", T, S),
                 *photos("evidencePhotos", "Evidence photographs", S, "Photograph caption"),
+            ),
+            label_field="productRef",
+        ),
+        # PLANNED VISITS, NOT RESULTS (owner, B10). "Plan follow-ups" stores a due date per
+        # product and interval and nothing else, so no adoption figure is ever written in advance —
+        # a pre-made "Not known" row would have counted against the ministry's adoption numbers.
+        # Opening a due visit creates the `followUp` row above with the product, interval and date
+        # set; the designer picks the outcome. Never printed.
+        many(
+            "plannedFollowUp",
+            "DwPlannedFollowUp",
+            "Planned follow-ups",
+            (
+                f(
+                    "productRef",
+                    "Product",
+                    REF,
+                    S,
+                    ref_model="DwFinalProduct",
+                    report_role=HIDDEN,
+                ),
+                f(
+                    "interval",
+                    "Interval",
+                    ENUM,
+                    S,
+                    enum="FOLLOWUP_INTERVAL",
+                    report_role=HIDDEN,
+                ),
+                f("dueDate", "Due", DATE, S, report_role=HIDDEN),
             ),
             label_field="productRef",
         ),

@@ -2761,6 +2761,23 @@ async def get_stage(
     return payload
 
 
+@router.get("/{workshop_id}/stages/{stage_key}/assist")
+async def get_stage_assist(
+    workshop_id: str, stage_key: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """One-tap suggestions and the computed counts for one stage. Read-only; see `stage_assist`.
+
+    Answers every stage, with an empty list where it has nothing to offer, so a client can ask on
+    every open without knowing which stages carry suggestions.
+    """
+    from app.services.stage_assist import load_assist
+
+    record = await load_workshop_or_404(workshop_id, current_user)
+    if not any(s.key == stage_key for s in stages()):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown stage")
+    return await load_assist(record, stage_key)
+
+
 @router.get("/{workshop_id}/provenance")
 async def workshop_provenance(
     workshop_id: str, current_user: Any = Depends(get_current_user)

@@ -5103,6 +5103,7 @@ def test_every_internal_ref_is_either_hydrated_or_refused_in_writing():
         "finalProduct.artisanRef",
         "followUp.productRef",
         "materialUsage.prototypeRef",
+        "plannedFollowUp.productRef",
         "prototype.artisanRef",
         "prototype.sketchRef",
         "prototypeIteration.prototypeRef",
@@ -5502,6 +5503,7 @@ def test_the_picker_sends_the_keys_the_mapping_reads_and_no_others(monkeypatch):
     """
     assert dw._internal_carry_keys(dw._dw_entity("DwPrototype")) == (
         "name",
+        "artisanRef",
         "materials",
         "lengthCm",
         "widthCm",
@@ -5511,7 +5513,16 @@ def test_the_picker_sends_the_keys_the_mapping_reads_and_no_others(monkeypatch):
         "processSummary",
         "makingTimeDays",
     )
-    for model in ("DwSketch", "DwParticipant", "DwFinalProduct", "DwCostSheet"):
+    # THE ONE-TAP SUGGESTIONS (owner, C10) read the sketch's name, materials and intended size off
+    # the same payload. Never `isTentative` (asserted below): no suggestion names it.
+    assert dw._internal_carry_keys(dw._dw_entity("DwSketch")) == (
+        "name",
+        "materials",
+        "lengthCm",
+        "widthCm",
+        "heightCm",
+    )
+    for model in ("DwParticipant", "DwFinalProduct", "DwCostSheet"):
         assert dw._internal_carry_keys(dw._dw_entity(model)) == (), (
             f"{model} started travelling in a picker payload; every REF pointing at it was refused, "
             "so either a mapping was added without its ledger row or this allowlist has widened"
