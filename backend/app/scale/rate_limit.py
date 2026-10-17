@@ -42,6 +42,7 @@ bcrypt; the real defence is still the password's own entropy and, above this box
 """
 
 import hashlib
+import logging
 import time
 from collections import OrderedDict
 from typing import Any
@@ -52,6 +53,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.scale import keys
 from app.scale.cache import shared_window_hit
 from app.scale.flags import rate_limit_enabled, settings
+
+logger = logging.getLogger(__name__)
 
 # Distinct callers tracked in-process. Each entry is a key string and two floats; 4096 of them is a
 # few hundred kilobytes. The bound is what stops a caller who varies their identity every request
@@ -314,6 +317,29 @@ def _forwarded_entries(scope: Scope) -> list[str]:
     return entries
 
 
+#: Set once the hop check below has said its piece, so it is one line per process, not per request.
+_hop_mismatch_logged = False
+
+
+def _note_hop_mismatch(scope: Scope, hops: int, entries: list[str]) -> None:
+    """One WARNING per process when ``FORWARDED_CLIENT_HOPS`` counts a CloudFront hop that this
+    request did not come through. CloudFront always adds ``X-Amz-Cf-Id`` on its way to the origin;
+    an address chain without it means the box is reachable some other way (or runs without
+    CloudFront), and then the entry being trusted is one the caller could have typed."""
+    global _hop_mismatch_logged
+    if _hop_mismatch_logged or hops < 2 or not entries:
+        return
+    if any(name == b"x-amz-cf-id" for name, _value in scope.get("headers", [])):
+        return
+    _hop_mismatch_logged = True
+    logger.warning(
+        "rate limits: FORWARDED_CLIENT_HOPS=%d but a forwarded request arrived without passing "
+        "through CloudFront; per-address limits may be keyed on a caller-supplied address. Lock the "
+        "origin to CloudFront, or set FORWARDED_CLIENT_HOPS=1 on a box with only nginx in front.",
+        hops,
+    )
+
+
 def client_address(scope: Scope) -> str:
     """The network address a request came from, for the ANONYMOUS limits — never a bearer digest,
     and never the left-most ``X-Forwarded-For`` entry.
@@ -330,6 +356,7 @@ def client_address(scope: Scope) -> str:
 
     hops = max(1, int(get_settings().forwarded_client_hops or 1))
     entries = _forwarded_entries(scope)
+    _note_hop_mismatch(scope, hops, entries)
     if len(entries) >= hops:
         return "ip:" + entries[-hops]
     client = scope.get("client")

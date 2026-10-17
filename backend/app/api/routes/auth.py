@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import time
 from datetime import UTC, datetime
@@ -1510,6 +1511,34 @@ FIRST_PASSWORD_NEEDS_CODE_DETAIL = "Enter the code from your authenticator app t
 
 _PROVIDER_LABELS = {"GOOGLE": "Google", "MICROSOFT": "Microsoft", "YAHOO": "Yahoo"}
 
+#: Microsoft and Yahoo proofs that verified, keyed on a hash of (account, session, provider, code),
+#: valid until the proof's own five minutes run out. A Microsoft or Yahoo code can be redeemed only
+#: ONCE, and it is redeemed before the second step is checked, so without this a missing or wrong
+#: two-step code burned the proof and sent the person back to the provider. The client resends the
+#: same proof with the corrected code; this remembers that it already verified for THIS session. In
+#: memory (one worker): a restart forgets it, and the retry then asks for the provider again.
+_CONFIRMED_PROOFS: dict[str, float] = {}
+_CONFIRMED_PROOFS_CAP = 10_000
+
+
+def _proof_marker(account: Any, session: str, provider: str, code: str) -> str:
+    raw = "\x1f".join((str(account.id), session, provider, code))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _remember_confirmed_proof(marker: str) -> None:
+    now = time.monotonic()
+    for key in [k for k, until in _CONFIRMED_PROOFS.items() if until <= now]:
+        _CONFIRMED_PROOFS.pop(key, None)
+    if len(_CONFIRMED_PROOFS) >= _CONFIRMED_PROOFS_CAP:
+        _CONFIRMED_PROOFS.pop(next(iter(_CONFIRMED_PROOFS)))
+    _CONFIRMED_PROOFS[marker] = now + PROVIDER_PROOF_MAX_AGE_SECONDS
+
+
+def _already_confirmed(marker: str) -> bool:
+    until = _CONFIRMED_PROOFS.get(marker)
+    return until is not None and until > time.monotonic()
+
 
 def _confirm_detail(provider: str) -> str:
     label = _PROVIDER_LABELS.get(provider, "the account you sign in with")
@@ -1676,7 +1705,8 @@ async def _set_first_password(
     a fingerprint — and this one continues on the token handed back in ``X-Session-Token``, exactly as
     a change does. The owner is told at their own address (``mailer.PASSWORD_ADDED``).
     """
-    await _require_fresh_provider_proof(payload, current_user)
+    session = credentials.credentials if credentials is not None else ""
+    await _require_fresh_provider_proof(payload, current_user, session)
     if getattr(current_user, "twoFactorEnabled", False):
         await _require_first_password_code(payload, current_user)
     password_hash = hash_password(payload.newPassword)
@@ -1718,7 +1748,9 @@ def _issued_recently(issued_at: Any, now: float | None = None) -> bool:
     )
 
 
-async def _require_fresh_provider_proof(payload: ChangePasswordRequest, account: Any) -> None:
+async def _require_fresh_provider_proof(
+    payload: ChangePasswordRequest, account: Any, session: str = ""
+) -> None:
     """The request carries a provider sign-in made just now, for THIS account. Raises otherwise.
 
     GOOGLE: an ID token, verified exactly as sign-in verifies it (:func:`verify_google_token` —
@@ -1732,6 +1764,10 @@ async def _require_fresh_provider_proof(payload: ChangePasswordRequest, account:
     THE ACCOUNT STORES NO PROVIDER ``sub``, so the verified mailbox is the identity — the same one
     sign-in trusts to decide which account a provider sign-in opens. A proof for any other mailbox is
     refused, so somebody holding a stolen session cannot answer with their own Google account.
+
+    A Microsoft/Yahoo proof that verified is remembered for this session (:data:`_CONFIRMED_PROOFS`),
+    so the same proof sent again with a corrected two-step code is accepted without a second
+    redemption, which the provider would refuse.
     """
     provider = _auth_provider(account)
     if provider not in _PROVIDER_LABELS:
@@ -1756,6 +1792,9 @@ async def _require_fresh_provider_proof(payload: ChangePasswordRequest, account:
             payload.oidcRedirectUri or ""
         ):
             raise _refuse_proof(name, _confirm_again_detail(name))
+        marker = _proof_marker(account, session, name, payload.oidcCode or "")
+        if session and _already_confirmed(marker):
+            return
         try:
             proved = await oidc_sign_in.prove(
                 name,
@@ -1772,6 +1811,8 @@ async def _require_fresh_provider_proof(payload: ChangePasswordRequest, account:
         ).strip().lower():
             logger.info("auth: a first-password %s proof was refused for %s", name, account.id)
             raise _refuse_proof(name, _confirm_again_detail(name))
+        if session:
+            _remember_confirmed_proof(marker)
         return
     raise _refuse_proof(provider, _confirm_detail(provider))
 
@@ -1783,6 +1824,10 @@ async def _require_first_password_code(payload: ChangePasswordRequest, account: 
     budget here uses — and a wrong code spends ONLY ``rate_limit.first_password_code_attempt``: no
     slot of ``two_factor.CODE_BUDGET`` or ``RECOVERY_BUDGET`` is claimed, so nothing here can write
     the lock that shuts the sign-in door. The code is still SPENT when right, like everywhere else.
+
+    The sign-in's lock is still RESPECTED: while the budget this code would spend at sign-in is
+    locked, this refuses without checking anything, so this door never adds guesses on top of a
+    locked one. Reading the lock writes nothing, so N3 holds.
     """
     code = (payload.twoFactorCode or "").strip()
     if not code:
@@ -1790,6 +1835,17 @@ async def _require_first_password_code(payload: ChangePasswordRequest, account: 
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=FIRST_PASSWORD_NEEDS_CODE_DETAIL,
             headers={TWO_FACTOR_REQUIRED_HEADER: "1"},
+        )
+    budget = two_factor.budget_for(code)
+    if two_factor.is_locked(account, budget):
+        until = getattr(account, budget.locked_until, None)
+        if until is not None and until.tzinfo is None:
+            until = until.replace(tzinfo=UTC)
+        wait = (until - datetime.now(UTC)).total_seconds() if until is not None else 60
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=two_factor.TOO_MANY_ATTEMPTS_DETAIL,
+            headers={"Retry-After": str(max(1, int(wait)))},
         )
     allowed, retry = first_password_code_attempt(account.id)
     if not allowed:

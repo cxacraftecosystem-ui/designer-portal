@@ -37,6 +37,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -233,7 +234,12 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
     // so an account that already has a password never binds a browser service.
     val activity = LocalContext.current.componentActivity()
     val oidcClient = remember(activity) { activity?.let { lazy { OidcAuthClient(it) } } }
-    var pendingNonce by remember { mutableStateOf<String?>(null) }
+    // Saveable: the browser tab can outlive this activity (rotation, or the process reclaimed while
+    // it is open), and the nonce is the one thing the result does not carry back.
+    var pendingNonce by rememberSaveable { mutableStateOf<String?>(null) }
+    // The proof that went with a send refused only for its two-step code. Sent again with the
+    // corrected code: the server remembers that it already verified, so no second provider trip.
+    var heldProof by remember { mutableStateOf<FirstPasswordProof?>(null) }
     val confirmWith = confirmProviderFor(user)
 
     suspend fun send(proof: FirstPasswordProof?) {
@@ -244,6 +250,7 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
             repository.saveOwnPassword(if (hadPassword) current else null, next, if (askCode) code else null, proof)
         }
             .onSuccess {
+                heldProof = null
                 saved = passwordSavedLine(hadPassword)
                 current = ""
                 next = ""
@@ -254,9 +261,11 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
             .onFailure { failure ->
                 if (failure is ProviderConfirmationRequired) {
                     // Stale, or for another mailbox: tapping Set password asks the provider again.
+                    heldProof = null
                     error = failure.message
                 } else if (failure is TwoFactorCodeRequired) {
-                    // Only the code is emptied: the passwords were not refused.
+                    // Only the code is emptied: the passwords and the provider proof were not refused.
+                    heldProof = proof
                     error = failure.message
                     code = ""
                 } else {
@@ -271,6 +280,7 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
         pendingNonce = null
         val client = oidcClient?.value
         if (rawNonce == null || client == null) {
+            error = firstPasswordConfirmCancelled(confirmWith)
             busy = false
             return@rememberLauncherForActivityResult
         }
@@ -388,6 +398,10 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
                         return@Button
                     }
                     // A first password: confirm with the provider first, then send with its proof.
+                    heldProof?.let { held ->
+                        scope.launch { send(held) }
+                        return@Button
+                    }
                     if (activity == null) {
                         error = firstPasswordConfirmCancelled(confirmWith)
                         return@Button

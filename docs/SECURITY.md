@@ -968,7 +968,11 @@ locked every two-step account out of its authenticator. The key is now its own s
 - **Boot**: a malformed key stops the API. With the key unset the legacy key is used and a WARNING
   says how many two-step accounts depend on `JWT_SECRET` — deploying the code before the secret
   exists locks nobody out. With `TWO_FACTOR_KEY_REQUIRED=true` (the deploy sets it together with
-  the key) a missing key and any two-step account **refuse to boot**. Values no configured key
+  the key) a missing key and any two-step account **refuse to boot**. And whatever that flag says,
+  a missing key while any stored value is labelled `v2:` **refuses to boot**: such a value was
+  sealed under a key, so the key was lost (a deleted or emptied GitHub secret), not the transition.
+  The deploy also fails before switching over when the secret is empty but the live release has a
+  key. Values no configured key
   opens are counted at ERROR; those accounts need a recovery code or an administrator's reset.
 
 **First introduction** (once): generate a key —

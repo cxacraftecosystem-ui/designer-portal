@@ -213,7 +213,19 @@ ACCOUNTS: dict[str, tuple[str, bool]] = {
     "rekey": ("GOOGLE", True),
     "backfillA": ("GOOGLE", True),
     "backfillB": ("GOOGLE", True),
+    "yahoo": ("YAHOO", False),
+    "ordering": ("GOOGLE", True),
+    "microsoftTwoStep": ("MICROSOFT", True),
+    "locked": ("GOOGLE", True),
 }
+
+
+#: This module's accounts holding a value sealed under a (test-only, random) key.
+_SEEDED_SEALED: dict[str, Any] = {
+    "email": {"startswith": "authlim-"},
+    "OR": [{"twoFactorSecret": {"startswith": "v2:"}}, {"twoFactorPendingSecret": {"startswith": "v2:"}}],
+}
+_UNSEALED: dict[str, Any] = {"twoFactorSecret": None, "twoFactorPendingSecret": None, "twoFactorEnabled": False}
 
 
 @pytest.fixture(scope="module")
@@ -230,6 +242,9 @@ def world():
     async def seed() -> dict[str, Any]:
         await db.connect()
         try:
+            # An interrupted earlier run can leave values sealed under a random key no longer
+            # configured; the boot rightly refuses those (the key was lost), so clear them first.
+            await db.user.update_many(where=_SEEDED_SEALED, data=_UNSEALED)
             now = datetime.now(UTC)
             people: dict[str, Any] = {}
             for slug, (provider, two_step) in ACCOUNTS.items():
@@ -266,6 +281,8 @@ def world():
     people = asyncio.run(seed())
     with TestClient(app) as client:
         yield {"client": client, "people": people, "address": address}
+        # Tests here seal values under random keys; left behind, they would stop the next boot.
+        _read(client, db.user.update_many, where=_SEEDED_SEALED, data=_UNSEALED)
 
 
 @pytest.fixture
@@ -482,3 +499,135 @@ def test_the_backfill_prints_counts_only_and_refuses_without_a_key(keys, capsys)
     assert asyncio.run(backfill.main([])) == 2
     out = capsys.readouterr().out
     assert "not set" in out and "@" not in out
+
+
+# ==================================================================================================
+# Review follow-ups (2026-10-17)
+# ==================================================================================================
+
+
+def test_boot_fails_without_a_key_when_values_were_sealed_under_one(keys, monkeypatch):
+    # TWO_FACTOR_KEY_REQUIRED is off: a release .env that lost the key also lost the flag.
+    monkeypatch.setattr(get_settings(), "two_factor_key_required", False)
+    monkeypatch.setattr(two_factor, "encryption_census", _census(enabled=2, unreadable=2, versioned=2))
+    with pytest.raises(RuntimeError, match="key was lost"):
+        asyncio.run(two_factor.check_keys_at_boot())
+
+
+def test_the_census_counts_versioned_values_even_when_they_no_longer_open(keys, monkeypatch):
+    keys(_new_key())
+    sealed = two_factor.encrypt_secret(SECRET)
+    keys(None)
+    row = type("Row", (), {"twoFactorEnabled": True, "twoFactorSecret": sealed, "twoFactorPendingSecret": None})
+
+    async def find_many(**_kwargs: Any) -> list[Any]:
+        return [row]
+
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(two_factor, "db", SimpleNamespace(user=SimpleNamespace(find_many=find_many)))
+    census = asyncio.run(two_factor.encryption_census())
+    assert (census.versioned, census.unreadable) == (1, 1)
+
+
+def test_a_proof_issued_beyond_the_future_leeway_is_not_fresh():
+    from app.api.routes import auth as auth_routes
+
+    now = time.time()
+    assert auth_routes._issued_recently(now + auth_routes.PROVIDER_PROOF_LEEWAY_SECONDS - 1, now)
+    assert not auth_routes._issued_recently(now + auth_routes.PROVIDER_PROOF_LEEWAY_SECONDS + 5, now)
+    assert not auth_routes._issued_recently(True, now), "a bool is not a timestamp"
+
+
+def test_a_hop_count_without_cloudfront_is_warned_once(monkeypatch, caplog):
+    monkeypatch.setattr(rate_limit, "_hop_mismatch_logged", False)
+    monkeypatch.setattr(get_settings(), "forwarded_client_hops", 2)
+    direct = {"headers": [(b"x-forwarded-for", b"1.2.3.4, 5.6.7.8")], "client": ("127.0.0.1", 1)}
+    via_edge = {"headers": [(b"x-forwarded-for", b"1.2.3.4, 5.6.7.8"), (b"x-amz-cf-id", b"abc")]}
+    with caplog.at_level(logging.WARNING, logger="app.scale.rate_limit"):
+        assert rate_limit.client_address(via_edge) == "ip:1.2.3.4"
+        assert not caplog.records
+        rate_limit.client_address(direct)
+        rate_limit.client_address(direct)
+    assert len([r for r in caplog.records if "FORWARDED_CLIENT_HOPS" in r.message]) == 1
+
+
+@needs_db
+def test_a_google_token_issued_in_the_future_is_refused(world, monkeypatch):
+    early = _google(monkeypatch, world["address"]("mismatch"), age_seconds=-5 * 60)
+    refused = _first_password(world, "mismatch", **early)
+    assert refused.status_code == 400
+    assert refused.headers.get("x-confirm-provider") == "GOOGLE"
+    assert _row(world, "mismatch").passwordHash is None
+
+
+@needs_db
+def test_a_fresh_yahoo_code_sets_the_password(world, monkeypatch):
+    idp = FakeIdP().install(monkeypatch)
+    idp.issue(idp.sign(idp.yahoo_claims(world["address"]("yahoo"))))
+    answer = _first_password(world, "yahoo", **login_body("YAHOO"))
+    assert answer.status_code == 200, answer.text
+    assert _row(world, "yahoo").passwordHash is not None
+
+
+@needs_db
+def test_a_code_without_a_proof_spends_nothing(world):
+    rate_limit.reset_account_credential_budget()
+    wrong = _wrong(two_factor.current_totp(SECRET))
+    for _ in range(6):
+        refused = _first_password(world, "ordering", twoFactorCode=wrong)
+        assert refused.status_code == 400
+        assert refused.headers.get("x-confirm-provider") == "GOOGLE"
+    account = world["people"]["ordering"].id
+    assert [rate_limit.first_password_code_attempt(account)[0] for _ in range(5)] == [True] * 5
+    rate_limit.reset_account_credential_budget()
+
+
+@needs_db
+def test_a_microsoft_proof_survives_a_wrong_code_without_a_second_redemption(world, monkeypatch):
+    rate_limit.reset_account_credential_budget()
+    idp = FakeIdP().install(monkeypatch)
+    idp.issue(idp.sign(idp.microsoft_claims(world["address"]("microsoftTwoStep"))))
+    # One session throughout, as a client holds one token: the remembered proof is bound to it.
+    session = _as(world, "microsoftTwoStep")
+
+    def send(code: str) -> Any:
+        return world["client"].post(
+            "/api/auth/change-password",
+            json={"newPassword": "first-password-ms-1", **login_body("MICROSOFT", code="single-use"), "twoFactorCode": code},
+            headers=session,
+        )
+
+    wrong = send(_wrong(two_factor.current_totp(SECRET)))
+    assert wrong.status_code == 400
+    assert wrong.headers.get("x-two-factor-required") == "1"
+    # The provider would refuse the code a second time.
+    idp.next_answer = (400, {"error": "invalid_grant"})
+    right = send(two_factor.current_totp(SECRET))
+    assert right.status_code == 200, right.text
+    assert len(idp.redemptions) == 1
+    rate_limit.reset_account_credential_budget()
+
+
+@needs_db
+def test_a_locked_sign_in_also_holds_the_first_password_door(world, monkeypatch):
+    from datetime import timedelta
+
+    from app.core.deps import invalidate_cached_user
+
+    rate_limit.reset_account_credential_budget()
+    person = world["people"]["locked"]
+    _read(
+        world["client"],
+        db.user.update,
+        where={"id": person.id},
+        data={"twoFactorLockedUntil": datetime.now(UTC) + timedelta(minutes=10)},
+    )
+    invalidate_cached_user(person.id)
+    proof = _google(monkeypatch, world["address"]("locked"))
+    refused = _first_password(world, "locked", **proof, twoFactorCode=two_factor.current_totp(SECRET))
+    assert refused.status_code == 429
+    assert int(refused.headers["retry-after"]) > 60
+    assert _row(world, "locked").passwordHash is None
+    assert [rate_limit.first_password_code_attempt(person.id)[0] for _ in range(5)] == [True] * 5
+    rate_limit.reset_account_credential_budget()

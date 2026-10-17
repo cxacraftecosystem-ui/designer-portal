@@ -1758,11 +1758,13 @@ jobs:
 
       # The two-step verification key (2026-10-17): the AES key every stored authenticator secret is
       # encrypted under, independent of JWT_SECRET (backend/app/services/two_factor.py). Actions
-      # SECRETS, on ssh's STDIN like the provider secrets above. WRITTEN ONLY WHEN THE SECRET EXISTS:
-      # an unset secret leaves whatever BACKEND_ENV carried untouched, because deleting a key that
-      # secrets were already sealed under would lock every two-step account out. When it is written,
-      # TWO_FACTOR_KEY_REQUIRED=true goes with it, so a later box missing the key refuses to boot
-      # instead of falling back to the legacy key. Rotation: docs/SECURITY.md.
+      # SECRETS, on ssh's STDIN like the provider secrets above. WRITTEN ONLY WHEN THE SECRET EXISTS,
+      # with TWO_FACTOR_KEY_REQUIRED=true beside it. Every release .env is rebuilt from BACKEND_ENV, so
+      # an unset secret would ship a release with NO key: if the live release already has a key (or
+      # the required flag), the secret was lost, and this step FAILS before anything switches over,
+      # because booting without it would lock every two-step account out. Only a box that never had
+      # a key passes with a warning (the transition). The app also refuses to boot when stored
+      # secrets are under a versioned key and no key is set. Rotation: docs/SECURITY.md.
       - name: Pin the two-step verification key
         env:
           SHA: ${{ env.REL_ID }}
@@ -1770,6 +1772,11 @@ jobs:
           TWO_FACTOR_PREVIOUS_KEYS: ${{ secrets.TWO_FACTOR_PREVIOUS_KEYS }}
         run: |
           if [ -z "$TWO_FACTOR_ENCRYPTION_KEY" ]; then
+            live=$(ssh ubuntu@${{ secrets.EC2_HOST }} "grep -c -E '^(TWO_FACTOR_ENCRYPTION_KEY=.|TWO_FACTOR_KEY_REQUIRED=true)' /home/ubuntu/app/current/backend/.env 2>/dev/null || true")
+            if [ "${live:-0}" != "0" ]; then
+              echo "::error::The TWO_FACTOR_ENCRYPTION_KEY secret is empty or missing, but the live release has a two-step key. Restore the secret before deploying; shipping without it would lock every two-step account out (docs/SECURITY.md)."
+              exit 1
+            fi
             echo "::warning::TWO_FACTOR_ENCRYPTION_KEY is not set; the box keeps the legacy two-step key"
             exit 0
           fi

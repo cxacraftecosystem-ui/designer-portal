@@ -494,6 +494,8 @@ class EncryptionCensus:
     previous: int
     legacy: int
     unreadable: int
+    #: Values labelled ``v2:`` (sealed under SOME configured key), whether or not they open now.
+    versioned: int = 0
 
 
 async def encryption_census() -> EncryptionCensus:
@@ -501,13 +503,15 @@ async def encryption_census() -> EncryptionCensus:
     rows = await db.user.find_many(
         where={"OR": [{"twoFactorSecret": {"not": None}}, {"twoFactorPendingSecret": {"not": None}}]}
     )
-    counts = {"current": 0, "previous": 0, "legacy": 0, "unreadable": 0}
+    counts = {"current": 0, "previous": 0, "legacy": 0, "unreadable": 0, "versioned": 0}
     enabled = 0
     for row in rows:
         enabled += 1 if getattr(row, "twoFactorEnabled", False) else 0
         for stored in (row.twoFactorSecret, row.twoFactorPendingSecret):
             if not stored:
                 continue
+            if stored.startswith(VERSIONED_PREFIX):
+                counts["versioned"] += 1
             opened = _opened(stored)
             if opened is None:
                 counts["unreadable"] += 1
@@ -521,13 +525,20 @@ async def encryption_census() -> EncryptionCensus:
 
 
 async def check_keys_at_boot() -> None:
-    """After the database connects. RAISES (the boot fails) only when ``TWO_FACTOR_KEY_REQUIRED`` is
-    on, the key is unset, and somebody has two-step verification on. Otherwise every finding is a log
-    line: during the transition the legacy key is used and a WARNING says so, so deploying the code
-    before the secret is set never locks anybody out."""
+    """After the database connects. With the key unset it RAISES (the boot fails) when any stored
+    value is labelled ``v2:`` — such a value was sealed under a key, so a missing key means the key
+    was LOST, never the transition — and when ``TWO_FACTOR_KEY_REQUIRED`` is on and somebody has
+    two-step verification on. Otherwise every finding is a log line: during the transition the legacy
+    key is used and a WARNING says so, so deploying the code before the secret is set never locks
+    anybody out."""
     settings = get_settings()
     census = await encryption_census()
     if keyring().current is None:
+        if census.versioned:
+            raise RuntimeError(
+                f"TWO_FACTOR_ENCRYPTION_KEY is not set but {census.versioned} stored two-step "
+                "secret(s) were sealed under it, so the key was lost. Restore it; see docs/SECURITY.md."
+            )
         if census.enabled and getattr(settings, "two_factor_key_required", False):
             raise RuntimeError(
                 f"TWO_FACTOR_ENCRYPTION_KEY is not set and {census.enabled} account(s) have two-step "
