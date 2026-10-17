@@ -130,7 +130,7 @@ def world() -> Any:
             for name, owner, status in (
                 ("earlier", "author", "IN_PROGRESS"),
                 ("current", "author", "DRAFT"),
-                ("theirs", "other", "APPROVED"),
+                ("theirs", "other", "COMPLETE"),
             ):
                 facts[name] = await db.designworkshop.create(
                     data={
