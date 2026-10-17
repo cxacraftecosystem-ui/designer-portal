@@ -246,7 +246,7 @@ STAGE_1 = StageSpec(
     number=1,
     key="WORKSHOP_SETUP",
     title="Workshop Setup & Cover Information",
-    purpose="What the workshop is called, its sanction, craft, place, dates and team — the report's cover.",
+    purpose="Name, sanction, craft, place, dates and team — the report's cover.",
     entities=(
         single(
             "workshopSetup",
@@ -521,7 +521,7 @@ STAGE_2 = StageSpec(
     number=2,
     key="INTRODUCTORY_ADMIN_DOCUMENTATION",
     title="Introduction & Administrative Documentation",
-    purpose="Why the workshop was held, who supported it, and what it set out to deliver.",
+    purpose="Why it was held, who supported it, and what it set out to deliver.",
     # Source document: the Advanced tier of this stage was marked “Phase 2 work”. That is a
     # build-scheduling decision — it shaped nothing here, so there is no stage note to carry it.
     entities=(
@@ -592,7 +592,7 @@ STAGE_3 = StageSpec(
     number=3,
     key="WORKSHOP_PLAN_PARTICIPANTS_OPENING",
     title="Workshop Plan, Participants & Opening",
-    purpose="The day-by-day plan, the artisans taking part, the designer and the opening session.",
+    purpose="The daily plan, the artisans, the designer and the opening session.",
     # Source document: the Standard tier here was marked “Important for us” — an emphasis on the
     # priority of building it, which changed no field and tells a designer nothing.
     entities=(
@@ -1467,7 +1467,7 @@ STAGE_4 = StageSpec(
     number=4,
     key="CLUSTER_CRAFT_BACKGROUND",
     title="Cluster, Area & Craft Background",
-    purpose="Where the cluster is, how the craft is practised there, and what it has traditionally made.",
+    purpose="The cluster, how its craft is practised, and what it has traditionally made.",
     # The split this note describes was asked for on the source document: traditional and
     # contemporary DESIGNS belong to the design brief, not to the cluster background. Stage 10
     # carries the matching sentence, so a designer meets the boundary from either side.
@@ -1483,10 +1483,8 @@ STAGE_4 = StageSpec(
     # two vocabularies explicitly and keeps the direction where it was, which is the only reading
     # under which a designer meeting the boundary from either side is told the same thing twice.
     notes=(
-        "Motifs, forms and colours are recorded here as the cluster's existing craft vocabulary — "
-        "the traditional motifs, and the contemporary ones the cluster has already taken up. "
-        "Design direction — which of them this work will follow — belongs to the design brief at "
-        "stage 10, not here."
+        "Records the cluster's existing motifs, forms and colours, traditional and contemporary. "
+        "Design direction belongs in the design brief at stage 10."
     ),
     entities=(
         single(
@@ -1774,13 +1772,12 @@ STAGE_5 = StageSpec(
     number=5,
     key="TRADITIONAL_PROCESS_BASELINE",
     title="Traditional Process, Tools & Raw Materials",
-    purpose="How the craft is made today: the steps, tools, materials and the problems artisans name.",
+    purpose="How the craft is made today: steps, tools, materials and artisans' problems.",
     # Out of order is a real capture rule, not a convenience: the source document expected stages
     # 5 and 6 to “come later when they actually go to the field after market and consumer survey”.
     # Stage 6 says the same thing, because a designer who reaches either one first needs to know.
     notes=(
-        "This stage can be completed out of order — recording the traditional process after the "
-        "market and consumer survey, alongside stage 6, is a normal way to run a workshop."
+        "Can be done out of order — after the market survey, alongside stage 6, is common."
     ),
     entities=(
         single(
@@ -2637,7 +2634,7 @@ STAGE_6 = StageSpec(
     number=6,
     key="EXISTING_PRODUCTS_BASELINE",
     title="Existing Products & Artisan Baseline",
-    purpose="What the cluster already makes and sells, before any new design work.",
+    purpose="What the cluster makes and sells before any new design work.",
     # The 360-degree capture and automated quality assessment in the Advanced tier were referred
     # to a later plug-in on the source document. What is declared here is the DATA such a feature
     # would consume — `turntablePhotos`, and the named `viewFront`/`viewBack`/`viewDetail` slots —
@@ -2650,9 +2647,8 @@ STAGE_6 = StageSpec(
     # filled — a designer who wanted no multi-view record is not nagged three times — and speaks
     # only once at least one, but not all, are present.
     notes=(
-        "This stage can be completed out of order, with stage 5. Front, back and detail are "
-        "separate photograph slots; once you have started the set, the app points out which of "
-        "them is still missing."
+        "Can be done out of order, with stage 5. Front, back and detail are separate photo slots; "
+        "the app flags any still missing."
     ),
     entities=(
         # ── THE ARTISAN HALF OF THIS STAGE, WHICH THE TITLE HAS PROMISED AND THE REGISTRY LACKED ──
@@ -3208,7 +3204,7 @@ STAGE_7 = StageSpec(
     number=7,
     key="SURVEY_PLANNING",
     title="Market Survey Planning",
-    purpose="What the survey will find out, who will be asked, where, and with which questions.",
+    purpose="The survey's aims, respondents, places and questions.",
     # Source document: the Advanced tier here was to be “a simple upload tool and phase 2 work”.
     # The upload slot exists (`questionnaireFile`, with the remark kept on its `phase_note`); the
     # phasing is not a designer's business.
@@ -3370,7 +3366,7 @@ STAGE_8 = StageSpec(
     number=8,
     key="MARKET_SURVEY_CAPTURE",
     title="Market Survey & Field Data",
-    purpose="What the survey found: responses, market photographs, prices and competing products.",
+    purpose="Survey findings: responses, market photos, prices and competing products.",
     # WHY THIS STAGE IS AS PLAIN AS IT IS. The source document asked for “a basic structure with
     # text and image fields at the beginning. Later we can refine.”, and deferred voice
     # transcription and competitor image matching to “Phase 3 and only 1 or 2 features”. That is
@@ -3551,7 +3547,7 @@ STAGE_9 = StageSpec(
     number=9,
     key="MARKET_ANALYSIS_DIRECTION",
     title="Market Analysis & Design Direction",
-    purpose="What the survey means: the SWOT, price bands and the design opportunities that follow.",
+    purpose="The SWOT, price bands and design opportunities the survey points to.",
     # Source document: most Standard-tier items here were marked optional — which is why almost
     # nothing below is `required=True` — and the AI-assisted Advanced tier was deferred to
     # “Phase 3 and some of them by the AI team”.
@@ -3722,14 +3718,14 @@ STAGE_10 = StageSpec(
     number=10,
     key="DESIGN_BRIEF",
     title="Design Brief & Concept",
-    purpose="What will be made and why: the concept, its market, and its material, colour and motifs.",
+    purpose="What will be made and why: concept, market, material, colour and motifs.",
     # Source document: the Standard tier was “some of these and only as optional fields”, and the
     # structured, evidence-generated brief was deferred to “phase 4” — which is why the brief here
     # is prose the designer writes rather than something assembled from stages 8 and 9. The
     # boundary in the note is the other half of stage 4's.
     notes=(
-        "Traditional and contemporary design direction belongs here, in the brief — not in the "
-        "cluster's craft background at stage 4, which records what the cluster already makes."
+        "Design direction, traditional and contemporary, goes here — not in the craft background at "
+        "stage 4."
     ),
     entities=(
         single(
@@ -3806,7 +3802,7 @@ STAGE_11 = StageSpec(
     number=11,
     key="SKETCH_DEVELOPMENT",
     title="Sketch Development",
-    purpose="The design sketches produced during the workshop, each with its intent.",
+    purpose="The workshop's design sketches, each with its intent.",
     # Source document: the Standard tier was marked “optional fields”, and the Advanced
     # image-processing tier was pointed at another team's existing app. That remark survives
     # verbatim on `lineArtFile`'s `phase_note`, which is where deferred provenance belongs — and it
@@ -3858,12 +3854,10 @@ STAGE_11 = StageSpec(
     # here that cannot be deduced from the screen, and the one that costs a photograph when it is
     # got wrong.
     notes=(
-        "“Sketch image” holds the photograph of the sheet and “Line art / vector file” holds the "
-        "drawing made from it — two fields, so tracing never replaces the photograph. On the "
-        "line-art field this device can straighten a photographed sheet and trace it into line "
-        "art with no connection, and shows the result before anything is attached, so keeping the "
-        "sheet exactly as photographed costs one press. A vector file made elsewhere goes in the "
-        "same field."
+        "“Sketch image” holds the photo of the sheet; “Line art / vector file” holds the drawing, "
+        "so tracing never replaces the photo. The line-art field can straighten and trace a sheet "
+        "with no connection, and shows the result first, so keeping the original takes one press. A "
+        "vector file made elsewhere goes there too."
     ),
     entities=(
         many(
@@ -4093,7 +4087,7 @@ STAGE_12 = StageSpec(
     number=12,
     key="SKETCH_REVIEW",
     title="Sketch Review & Shortlisting",
-    purpose="Which sketches go forward to prototyping, and on whose judgement.",
+    purpose="Which sketches go to prototyping, and on whose judgement.",
     optional_stage=True,
     # WHY THIS STAGE STILL EXISTS. The source document proposed “we may consider deleting this
     # entire section for now”. It was kept and marked `optional_stage=True` instead, because the
@@ -4110,8 +4104,7 @@ STAGE_12 = StageSpec(
     # was given its own pill. If a third client appears, it renders `optionalStage` or this note has
     # to carry the words again.
     notes=(
-        "The reason a sketch is taken forward or set aside is recorded only here — no other "
-        "stage captures why a design was dropped."
+        "Only this stage records why a sketch goes forward or is set aside."
     ),
     entities=(
         many(
@@ -4250,7 +4243,7 @@ STAGE_13 = StageSpec(
     number=13,
     key="PROTOTYPE_DEVELOPMENT",
     title="Prototype Development",
-    purpose="How each prototype was made: by whom, from what, in what time and at what cost.",
+    purpose="Each prototype's maker, materials, time and cost.",
     # Source document: “let's simplify” against the Basic tier, which is why the required set
     # below is short. The Advanced measurement tier was referred to another team, with the remark
     # “the system we used in the workshop app… we can supply a PDF of measurements to be printed”
@@ -4611,7 +4604,7 @@ STAGE_14 = StageSpec(
     number=14,
     key="PROTOTYPE_ITERATION",
     title="Prototype Iteration & Testing",
-    purpose="Every change to a prototype after its first making, why, and what it cost.",
+    purpose="Each change to a prototype after it was first made, why, and its cost.",
     # Source document: the Standard tier here was marked “optional fields”, which is why only the
     # iteration's identity and its change are required below.
     entities=(
@@ -4734,7 +4727,7 @@ STAGE_15 = StageSpec(
     number=15,
     key="PROTOTYPE_VALIDATION",
     title="Prototype Selection & Validation",
-    purpose="Which prototypes were accepted, on what assessment, and with whose approval.",
+    purpose="Which prototypes were accepted, on what assessment and by whom.",
     # Source document: the Standard tier here was marked “optional fields”; of the Advanced tier,
     # “at the beginning — just crowdsourced designer feedback mechanism. Reset for Phase 4.” The
     # remark survives on `prototypeValidation.buyerFeedback`'s `phase_note`, which is the free-text
@@ -4880,7 +4873,7 @@ STAGE_16 = StageSpec(
     number=16,
     key="FINAL_PROTOTYPE_DOCUMENTATION",
     title="Final Product Documentation",
-    purpose="The catalogue record of each accepted product: name, code, photographs and specification.",
+    purpose="Each accepted product's name, code, photographs and specification.",
     # Source document: the Advanced catalogue-asset tier was referred to another team's plug-in.
     # The slots that plug-in would fill are declared (`catalogPhotos`, `turntablePhotos`, with the
     # remark on their `phase_note`); nothing here generates them.
@@ -5014,14 +5007,14 @@ STAGE_17 = StageSpec(
     number=17,
     key="COSTING_MARKET_LINKAGE",
     title="Costing, Packaging & Market Linkage",
-    purpose="What each product costs to make, what it should sell for, and how it will reach a buyer.",
+    purpose="Each product's making cost, selling price and route to a buyer.",
     # Source document: several Standard-tier items here were marked optional. Storing the cost
     # calculator's INPUTS rather than only its totals was not asked for and is the reason the
     # cost-head rows below exist at all — a ministry report that prints a selling price has to be
     # able to show the arithmetic when someone asks.
     notes=(
-        "The cost sheet stores the quantities and rates you enter, not only the totals, so any "
-        "figure printed in the report can be traced back to the line items it came from."
+        "Quantities and rates are kept, not just totals, so every report figure traces to its line "
+        "items."
     ),
     entities=(
         many(
@@ -5313,7 +5306,7 @@ STAGE_18 = StageSpec(
     number=18,
     key="WORKSHOP_OUTCOMES",
     title="Workshop Outcomes, Problems & Feedback",
-    purpose="What the workshop achieved, what went wrong, and what the artisans and designer say.",
+    purpose="Outcomes, problems, and what the artisans and designer say.",
     # The Advanced tier below is “just option for voice and transcript — if you think it apt”
     # from the source document, kept verbatim on `outcomes.feedbackAudio`'s `phase_note`.
     #
@@ -5322,9 +5315,8 @@ STAGE_18 = StageSpec(
     # report prints. `countOverrideReason` is what makes that traceable, and its own help text
     # says it is required — the note is the stage-level warning that the counts are derived at all.
     notes=(
-        "The design and prototype counts are worked out from the records you have entered. The "
-        "override fields exist only to replace a derived number, and an override must carry a "
-        "reason, which is printed in the report beneath the figure it changed."
+        "Design and prototype counts come from your records. An override replaces a derived number "
+        "and needs a reason, printed beneath it in the report."
     ),
     entities=(
         single(
@@ -5415,7 +5407,7 @@ STAGE_19 = StageSpec(
     number=19,
     key="INSPECTION_CLOSING",
     title="Inspection & Closing",
-    purpose="The closing session, the certificates issued and the inspecting officer's remarks.",
+    purpose="The closing session, certificates issued and the inspecting officer's remarks.",
     entities=(
         single(
             "closing",
@@ -5553,11 +5545,10 @@ STAGE_20 = StageSpec(
     number=20,
     key="REPORT_GENERATION",
     title="Report Generation & Submission",
-    purpose="Choose the template and contents, generate the report, and keep every file produced.",
+    purpose="Pick the template and contents, generate the report, and keep every file.",
     notes=(
-        "This stage configures the report rather than appearing in it, so no template prints "
-        "it. Every export ever generated is recorded below, with its checksum, so a file "
-        "submitted to an office can later be matched against the record it came from."
+        "This stage sets up the report and does not appear in it. Every export is listed below with "
+        "its checksum, so a submitted file can be matched to its record."
     ),
     entities=(
         single(
@@ -5726,7 +5717,7 @@ STAGE_21 = StageSpec(
     number=21,
     key="DATA_QUALITY_ARCHIVE",
     title="Data Quality & Archive",
-    purpose="Confirm the record and its media are preserved, and note any photo quality problems.",
+    purpose="Confirm the record and media are preserved, and note photo quality problems.",
     # WHAT THE NOTE BELOW MUST STAY TRUE TO, AND WHERE TO CHECK IT.
     #
     # These flags are only half a feature in this file: the ENUM declares seven of them, and the
@@ -5744,10 +5735,9 @@ STAGE_21 = StageSpec(
     # findings on the photo screen at capture time; these rows are entered by hand afterwards, and
     # the note says so rather than implying the stage fills itself in.
     notes=(
-        "As photographs are taken, this device checks them for blur, low resolution, duplicates "
-        "and missing views. Overexposure, underexposure and wrong subject are not checked — judge "
-        "those by eye. Rows here are entered by hand either way; tick “Detected automatically” "
-        "for the ones the app raised."
+        "Photos are checked for blur, low resolution, duplicates and missing views as they are "
+        "taken; judge exposure and subject by eye. Rows here are entered by hand — tick “Detected "
+        "automatically” for the ones the app raised."
     ),
     entities=(
         single(
@@ -5816,11 +5806,10 @@ STAGE_22 = StageSpec(
     number=22,
     key="POST_WORKSHOP_FOLLOWUP",
     title="Post-Workshop Follow-up",
-    purpose="Whether the designs were taken up: what is produced, what has sold, what artisans still need.",
+    purpose="Whether designs were taken up: what is made, what sold, what artisans still need.",
     notes=(
-        "One record per product per monitoring interval, which is what makes design-survival "
-        "analysis possible across workshops. Nothing here is required of the workshop itself — "
-        "follow-up happens months later, and a workshop must be able to close without it."
+        "One record per product per monitoring interval, so design survival can be compared across "
+        "workshops. Not needed to close the workshop — follow-up comes months later."
     ),
     entities=(
         single(
