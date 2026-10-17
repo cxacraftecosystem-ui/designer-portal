@@ -1356,14 +1356,17 @@ def test_the_motif_help_names_the_faults_that_are_measured_and_the_ones_that_are
     """
     background = _entity("clusterBackground")
     for key, floor in FLOORED_GALLERIES.items():
-        help_text = background.field(key).help
-        assert f"All {floor} are required" in help_text, help_text
-        for measured in ("blur", "low resolution", "duplicates"):
+        # The line under the box keeps the floor; the faults are named behind its "i" (``details``),
+        # since 2026-10-17's one-line help rule. Both halves reach the designer on both clients.
+        spec = background.field(key)
+        assert f"All {floor} are required" in spec.help, spec.help
+        help_text = f"{spec.help} {spec.details}".lower()
+        for measured in ("blur", "low-resolution", "duplicate"):
             assert measured in help_text, (
                 f"{key}'s help does not name {measured!r}, which the detector does measure: "
                 f"{help_text!r}"
             )
-        assert "Exposure and subject are not checked" in help_text, (
+        assert "exposure and subject are not checked" in help_text, (
             f"{key}'s help claims a quality check without naming the two judgements nothing in "
             f"this product makes: {help_text!r}"
         )
@@ -1393,7 +1396,9 @@ def test_the_photos_helper_puts_its_help_on_the_gallery_and_never_on_the_caption
         f"{entity.key}.{field.key}"
         for _stage, entity in all_entities()
         for field in entity.fields
-        if field.type is FieldType.IMAGE_LIST and field.help
+        # ``details`` counts as well: since 2026-10-17 the reference-carry sentence lives there,
+        # behind the field's "i", and a leak through either keyword is the same leak.
+        if field.type is FieldType.IMAGE_LIST and (field.help or field.details)
     }
     assert galleries_with_help == {
         "clusterBackground.motifPhotos",
@@ -1426,7 +1431,7 @@ def test_the_photos_helper_puts_its_help_on_the_gallery_and_never_on_the_caption
         "existingProduct.productPhotosCaption",
     }
     captions = [
-        (f"{entity.key}.{field.key}", field.help)
+        (f"{entity.key}.{field.key}", field.help or field.details)
         for _stage, entity in all_entities()
         for field in entity.fields
         if field.caption_for and field.key == f"{field.caption_for}Caption"

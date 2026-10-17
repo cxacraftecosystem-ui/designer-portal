@@ -105,9 +105,10 @@ export function designWorkshopDefaultNote(value: DesignWorkshopDefault | null): 
   if (!value?.workshopId || !value.reason) return null;
   const when = readableDay(value.accessAt);
   const tail = when ? ` on ${when}` : "";
+  // Android's words (`designWorkshopPrefillNote`), word for word since 2026-10-17 (DW-14).
   return value.reason === "GRANTED"
-    ? `Filled in because it is the design workshop you were most recently added to${tail}. Change it if this record belongs somewhere else.`
-    : `Filled in because it is the design workshop you most recently opened${tail}. Change it if this record belongs somewhere else.`;
+    ? `Your latest assigned workshop${tail}. Change if needed.`
+    : `Your latest opened workshop${tail}. Change if needed.`;
 }
 
 /**

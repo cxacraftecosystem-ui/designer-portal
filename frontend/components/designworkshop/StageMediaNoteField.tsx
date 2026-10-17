@@ -202,7 +202,7 @@ export function StageMediaNoteField({
    * one to listen to"), the field is not a closed list in any mode, and a sentence is the one kind of
    * value a recogniser is good at.
    */
-  dictation?: React.ReactNode;
+  dictation?: (control: React.ReactNode) => React.ReactNode;
 }) {
   /** The id of the record whose files the sentence counts — "" when nothing is linked yet. */
   const refId = inputValue(row[role.refField.key]).trim();
@@ -391,33 +391,30 @@ export function StageMediaNoteField({
   );
 
   /** The note itself. Always present, always editable, in every state below. */
-  const noteBox = (
-    <>
-      <input
-        className="field-input"
-        type="text"
-        maxLength={field.maxLength || undefined}
-        // `aria-labelledby` and not a `<label htmlFor>`: this control contains a dropdown and two
-        // buttons, so `FieldInput` wraps it with `unlabelled` — a `<span className="field-label">`
-        // whose id arrives here. A wrapping `<label>` would forward a stray click into the menu and
-        // slam it shut after one pick.
-        aria-labelledby={labelId}
-        aria-describedby={describedBy}
-        aria-invalid={invalid}
-        value={current}
-        disabled={disabled}
-        onChange={(event) => {
-          onChange(event.target.value);
-          // A hand edit is a different answer from the one the ticks describe, so the ticks stop
-          // claiming to describe it. Clearing them here rather than leaving them is the honest
-          // direction: a chooser showing three files over a sentence somebody has since rewritten is
-          // a control lying about the box beneath it.
-          if (picked.length) setPicked([]);
-          setRefusedOverrun(0);
-        }}
-      />
-      {dictation}
-    </>
+  const noteBox = (dictation ?? ((control: React.ReactNode) => control))(
+    <input
+      className="field-input"
+      type="text"
+      maxLength={field.maxLength || undefined}
+      // `aria-labelledby` and not a `<label htmlFor>`: this control contains a dropdown and two
+      // buttons, so `FieldInput` wraps it with `unlabelled` — a `<span className="field-label">`
+      // whose id arrives here. A wrapping `<label>` would forward a stray click into the menu and
+      // slam it shut after one pick.
+      aria-labelledby={labelId}
+      aria-describedby={describedBy}
+      aria-invalid={invalid}
+      value={current}
+      disabled={disabled}
+      onChange={(event) => {
+        onChange(event.target.value);
+        // A hand edit is a different answer from the one the ticks describe, so the ticks stop
+        // claiming to describe it. Clearing them here rather than leaving them is the honest
+        // direction: a chooser showing three files over a sentence somebody has since rewritten is
+        // a control lying about the box beneath it.
+        if (picked.length) setPicked([]);
+        setRefusedOverrun(0);
+      }}
+    />
   );
 
   /* ── The reference is not linked, so there is no record to list ──────────────────────────────── */

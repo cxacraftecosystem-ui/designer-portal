@@ -509,8 +509,7 @@ export function DesignWorkshopSelect({
             never has.
           */}
           <p className="text-[11px] leading-4 text-ink-500">
-            Files this record under a design and prototype workshop so it appears in that workshop&apos;s
-            lists. It does not change who can read the record.
+            Files this record under a design workshop. Doesn&apos;t change who can read it.
           </p>
         </>
       }

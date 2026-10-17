@@ -130,12 +130,16 @@ internal fun DwGeoField(
     error: String?,
     onChange: (JsonElement?) -> Unit,
     onMessage: (String) -> Unit,
+    /** Drawn in place of [help] when set — the stage form's `FieldCaption`, with its "i". */
+    helpRow: (@Composable () -> Unit)? = null,
 ) {
     val current = remember(value) { dwLocationFromValue(value) }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(requiredMarked(label), color = MaterialTheme.field.muted, fontSize = 12.sp)
-        if (help.isNotBlank()) {
+        if (helpRow != null) {
+            helpRow()
+        } else if (help.isNotBlank()) {
             Text(help, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
         if (repository == null) {

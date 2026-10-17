@@ -129,16 +129,18 @@ W_SCOPE, ALL_SCOPE = REF_SCOPE_WORKSHOP, REF_SCOPE_ALL
 # [record not found]" because the join could not be followed is a report that has lost the one
 # fact it most needed to carry. The id beside it stays the join key for the research queries;
 # this text is the copy that survives the id.
-FROM_REF = (
-    "Filled in from the linked record when one is chosen. It is stored on this entry "
-    "as well as the link, so the report still prints it if that record is later "
-    "changed or removed."
-)
+#
+# IT LIVES IN ``details``, NOT ``help`` (2026-10-17). ``help`` is the one line under a box and says
+# only what the person needs to fill it; this sentence is the same on every hydrated field, so on
+# ``help`` it turned a stage into a wall of identical paragraphs. In ``details`` it sits behind the
+# field's "i" disclosure, still on every field it is true of, and still the marker
+# ``test_a_field_that_promises_to_fill_itself_in_actually_does`` reads.
+FROM_REF = "Filled in from the linked record; edits here stay on this report."
 
 
-def _with_ref_note(help_text: str) -> str:
-    """``help`` for a field the picker populates, keeping whatever guidance it already had."""
-    return f"{help_text} {FROM_REF}" if help_text else FROM_REF
+def _with_ref_note(details: str) -> str:
+    """``details`` for a field the picker populates, keeping whatever it already said."""
+    return f"{details} {FROM_REF}" if details else FROM_REF
 
 
 def f(key: str, label: str, type: FieldType = T, tier: Tier = S, **kw) -> FieldSpec:
@@ -146,8 +148,8 @@ def f(key: str, label: str, type: FieldType = T, tier: Tier = S, **kw) -> FieldS
 
 
 def fromref(key: str, label: str, type: FieldType = T, tier: Tier = S, **kw) -> FieldSpec:
-    """A field the reference picker hydrates. Identical to :func:`f` but for the help text."""
-    kw["help"] = _with_ref_note(str(kw.get("help", "")))
+    """A field the reference picker hydrates. Identical to :func:`f` but for its ``details``."""
+    kw["details"] = _with_ref_note(str(kw.get("details", "")))
     return FieldSpec(key=key, label=label, type=type, tier=tier, **kw)
 
 
@@ -196,6 +198,7 @@ def photos(
     max_items: int = 0,
     min_items: int = 0,
     help: str = "",
+    details: str = "",
 ) -> tuple[FieldSpec, FieldSpec]:
     """A gallery and the caption printed under it.
 
@@ -216,7 +219,8 @@ def photos(
     logs or 422s: the symptom is simply that no workshop can ever be finished. Two galleries
     declare one. ``tests/test_stage_schema.py`` asserts the set by equality, in both directions.
 
-    ``help`` lands on the gallery and not on the caption. The caption's own guidance is its label.
+    ``help`` and ``details`` land on the gallery and not on the caption. The caption's own guidance
+    is its label.
     """
     return (
         f(
@@ -228,6 +232,7 @@ def photos(
             max_items=max_items,
             min_items=min_items,
             help=help,
+            details=details,
         ),
         f(f"{key}Caption", caption_label, T, tier, caption_for=key, report_role=CAP),
     )
@@ -241,11 +246,7 @@ STAGE_1 = StageSpec(
     number=1,
     key="WORKSHOP_SETUP",
     title="Workshop Setup & Cover Information",
-    purpose=(
-        "Identify the workshop: what it is called, under which scheme and sanction, for which "
-        "craft and cluster, where and when it runs, and who is responsible for it. These "
-        "fields become the cover page of every report generated from this record."
-    ),
+    purpose="What the workshop is called, its sanction, craft, place, dates and team — the report's cover.",
     entities=(
         single(
             "workshopSetup",
@@ -260,8 +261,11 @@ STAGE_1 = StageSpec(
                     required=True,
                     report_role=COVER,
                     max_length=220,
-                    help="As written on the sanction order, e.g. “Design & Prototype Development "
-                    "Workshop — Sambalpuri Ikat”.",
+                    help="As written on the sanction order.",
+                    details=(
+                        "For example, “Design & Prototype Development Workshop — Sambalpuri "
+                        "Ikat”."
+                    ),
                 ),
                 # THE SECOND HALF OF THE PAIR THE OWNER ASKED FOR — "two dropdowns, type of workshop
                 # and name of workshop" — and it is declared here, immediately under the title,
@@ -299,7 +303,6 @@ STAGE_1 = StageSpec(
                     required=True,
                     enum="WORKSHOP_KIND",
                     report_role=COVER,
-                    help="The kind of workshop this is. The scheme funding it is the box below.",
                 ),
                 f(
                     "schemeName",
@@ -309,8 +312,10 @@ STAGE_1 = StageSpec(
                     required=True,
                     report_role=COVER,
                     max_length=180,
-                    help="The scheme funding the workshop, e.g. National Handicrafts Development "
-                    "Programme.",
+                    help=(
+                        "The scheme funding the workshop, such as the National Handicrafts "
+                        "Development Programme."
+                    ),
                 ),
                 fromref(
                     "craftName", "Craft", T, B, required=True, report_role=COVER, max_length=160
@@ -321,8 +326,7 @@ STAGE_1 = StageSpec(
                     T,
                     S,
                     report_role=COVER,
-                    help="Written in the local script. It is printed in the report exactly as "
-                    "typed.",
+                    help="In the local script, exactly as it should print in the report.",
                 ),
                 f(
                     "craftRef",
@@ -332,8 +336,7 @@ STAGE_1 = StageSpec(
                     ref_model="Craft",
                     ref_scope=ALL_SCOPE,
                     report_role=HIDDEN,
-                    help="Choose the craft from the crafts already documented. The cover fields above "
-                    "are filled in from it.",
+                    help="Choose a documented craft to fill in the cover fields.",
                 ),
                 # ── WHAT ELSE THE CRAFT RECORD HOLDS, EACH IN A BOX OF ITS OWN ────────────────────
                 #
@@ -416,7 +419,7 @@ STAGE_1 = StageSpec(
                     min_value=1,
                     max_value=365,
                     report_role=COVER,
-                    help="Leave blank to derive it from the start and end dates.",
+                    help="Leave blank to work it out from the start and end dates.",
                     derived_kind="DAYS_BETWEEN",
                     derived_from=("startDate", "endDate"),
                 ),
@@ -471,7 +474,7 @@ STAGE_1 = StageSpec(
                     S,
                     report_role=COVER,
                     max_length=60,
-                    help="The implementing agency’s own reference for this workshop.",
+                    help="The implementing agency’s own reference.",
                 ),
                 f(
                     "sanctionDocument",
@@ -486,7 +489,7 @@ STAGE_1 = StageSpec(
                     GEO,
                     A,
                     phase_note="Reviewer: “Phase 2 work”.",
-                    help="Captured from the device once, at the venue.",
+                    help="Captured once, at the venue.",
                 ),
                 f(
                     "coverPhoto",
@@ -494,7 +497,7 @@ STAGE_1 = StageSpec(
                     IMG,
                     S,
                     report_role=GALLERY,
-                    help="Printed large on the cover page of the report.",
+                    help="Printed large on the report’s cover.",
                 ),
                 f(
                     "coverPhotoCaption",
@@ -518,10 +521,7 @@ STAGE_2 = StageSpec(
     number=2,
     key="INTRODUCTORY_ADMIN_DOCUMENTATION",
     title="Introduction & Administrative Documentation",
-    purpose=(
-        "The prose that opens the report: why the workshop was held, who supported it, what it "
-        "set out to deliver. Written once and reused across the agency's reports."
-    ),
+    purpose="Why the workshop was held, who supported it, and what it set out to deliver.",
     # Source document: the Advanced tier of this stage was marked “Phase 2 work”. That is a
     # build-scheduling decision — it shaped nothing here, so there is no stage note to carry it.
     entities=(
@@ -537,7 +537,10 @@ STAGE_2 = StageSpec(
                     B,
                     required=True,
                     report_role=NARR,
-                    help="Whom the workshop thanks: the sanctioning office, the cluster, the artisans.",
+                    help=(
+                        "Whom the workshop thanks: the sanctioning office, the cluster, the "
+                        "artisans."
+                    ),
                 ),
                 f(
                     "briefIntroduction",
@@ -589,10 +592,7 @@ STAGE_3 = StageSpec(
     number=3,
     key="WORKSHOP_PLAN_PARTICIPANTS_OPENING",
     title="Workshop Plan, Participants & Opening",
-    purpose=(
-        "The day-by-day plan, the artisans who took part, the designer's own profile, and the "
-        "record of the opening session."
-    ),
+    purpose="The day-by-day plan, the artisans taking part, the designer and the opening session.",
     # Source document: the Standard tier here was marked “Important for us” — an emphasis on the
     # priority of building it, which changed no field and tells a designer nothing.
     entities=(
@@ -739,8 +739,8 @@ STAGE_3 = StageSpec(
                     IMG,
                     S,
                     report_role=GALLERY,
-                    help="Printed with the report’s photographs, under its own heading. Attach a scan or "
-                    "a photograph of your signature.",
+                    help="A scan or photograph of your signature.",
+                    details="Printed with the report’s photographs, under its own heading.",
                 ),
                 # ⚠ AND THIS ONE PROMISED AN ANNEXURE. Same defect, same day, same correction.
                 #
@@ -782,9 +782,8 @@ STAGE_3 = StageSpec(
                     "Designer’s CV",
                     FILE,
                     S,
-                    help="PDF, .docx or .odt. A PDF is previewable in the app; other formats are stored "
-                    "and downloadable. The report NAMES it rather than carrying it, so send the "
-                    "file alongside the report.",
+                    help="PDF, .docx or .odt.",
+                    details="The report names the CV but doesn’t include it; send the file with it.",
                 ),
                 f("openingNote", "Opening note", RICH, S, report_role=NARR),
                 f(
@@ -839,7 +838,7 @@ STAGE_3 = StageSpec(
                     S,
                     report_role=COL,
                     column_width_pct=18.0,
-                    help="Forenoon, afternoon, full day.",
+                    help="Forenoon, afternoon or full day.",
                 ),
                 f(
                     "activity",
@@ -878,9 +877,8 @@ STAGE_3 = StageSpec(
                     ref_model="Artisan",
                     ref_scope=ALL_SCOPE,
                     report_role=HIDDEN,
-                    help="Search the documented artisans and choose one. The details below are "
-                    "filled in from that record; anything the record does not have can still be "
-                    "typed in.",
+                    help="Choose a documented artisan to fill in the details below.",
+                    details="Anything the record doesn’t have can still be typed in.",
                     phase_note="Reviewer: “Phase 3 — may help for networking artisans”.",
                 ),
                 f("serialNo", "S. No.", INT, B, min_value=1, report_role=COL, column_width_pct=7.0),
@@ -920,7 +918,7 @@ STAGE_3 = StageSpec(
                     unit="years",
                     min_value=10,
                     max_value=110,
-                    help="Recorded against the artisan when they were documented.",
+                    details="The age recorded when the artisan was documented.",
                 ),
                 # THE PM VISHWAKARMA CARD, MASKED. See the note beside `pehchanCardNumber` in
                 # `REFERENCE_MODELS["Artisan"]`: the number arrives as "XXXX XXXX 3456" because a
@@ -958,8 +956,11 @@ STAGE_3 = StageSpec(
                     report_role=COL,
                     column_width_pct=16.0,
                     max_length=PEHCHAN_MAX_LENGTH,
-                    help="The Artisan Pehchan Card number. Shown masked to its last four digits "
-                    "when it is filled in from the linked record.",
+                    help="The Artisan Pehchan Card number.",
+                    details=(
+                        "Shown masked to its last four digits when it comes from the linked "
+                        "record."
+                    ),
                 ),
                 fromref(
                     "pehchanCardAvailable",
@@ -1129,12 +1130,11 @@ STAGE_3 = StageSpec(
                     max_length=20,
                     store_masked=True,
                     text_format=TextFormat.AADHAAR,
-                    help="The artisan’s Aadhaar number — NOT the Artisan Pehchan Card "
-                    "number, which is the “Artisan ID / card number” box above. "
-                    "Only the last four digits are ever stored here, as “XXXX XXXX 9012”: "
-                    "that is what is filled in from the linked record, and if you type the "
-                    "full number in yourself it is masked the same way when the stage is "
-                    "saved. The report prints those four digits, and nothing else of it.",
+                    help="Only the last four digits are kept and printed.",
+                    details=(
+                        "Not the Artisan Pehchan Card number, which goes in “Artisan ID / card "
+                        "number”. A full number is kept as “XXXX XXXX 9012”."
+                    ),
                 ),
                 fromref(
                     "specialisation", "Specialisation", T, S, report_role=COL, column_width_pct=23.0
@@ -1198,10 +1198,11 @@ STAGE_3 = StageSpec(
                     max_value=90,
                     report_role=COL,
                     column_width_pct=12.0,
-                    help="Worked out from the artisan record's “practising since” date when it has "
-                    "one, and read from the number stated on that record when it does not. "
-                    "Both are printed in this report, so if you change this by hand, correct "
-                    "the date beside it too.",
+                    help="Worked out from “Practising since”; correct both if you change it.",
+                    details=(
+                        "When the record has no start date, the number stated on the record is "
+                        "used."
+                    ),
                 ),
                 # THE FEEDER, CARRIED SO THE REPORT CAN SAY WHAT THE NUMBER BESIDE IT IS DERIVED FROM.
                 # A derived figure in a document a ministry officer reads whose basis is stated nowhere
@@ -1246,10 +1247,8 @@ STAGE_3 = StageSpec(
                     DATE,
                     S,
                     report_role=KV,
-                    help="The date the artisan began practising the craft. The experience above is "
-                    "worked out from it: on the artisan's own record every time it is read, and "
-                    "here on the day the artisan was picked — a report already handed in never "
-                    "changes afterwards.",
+                    help="When the artisan began practising the craft.",
+                    details="Experience is worked out from this date.",
                 ),
                 f(
                     "isMasterCraftsperson",
@@ -1326,8 +1325,9 @@ STAGE_3 = StageSpec(
                     "Location of the artisan’s place",
                     GEO,
                     A,
-                    help="The pin a researcher dropped on the artisan’s own place, not the "
-                    "device’s position when the record was typed.",
+                    help=(
+                        "The pin on the artisan’s own place, not where the record was typed."
+                    ),
                 ),
                 # -- THE TWO CONTACT BOXES, WHICH UNTIL NOW WERE CHECKED BY NOBODY ----------------
                 #
@@ -1391,9 +1391,13 @@ STAGE_3 = StageSpec(
                     LT,
                     S,
                     report_role=BULLETS,
-                    help="Guidance recorded against this artisan. One point per line.",
+                    help="One point per line.",
+                    details="Guidance recorded against this artisan.",
                 ),
-                fromref("donts", "Don’ts", LT, S, report_role=BULLETS, help="One point per line."),
+                fromref("donts", "Don’ts", LT, S, report_role=BULLETS, help=(
+                                                                             "One point per "
+                                                                             "line."
+                                                                         )),
                 # `recordNotes` and not `notes`: this is what the RESEARCHER wrote on the artisan
                 # record, and a box called "Notes" on a workshop roster row would be read as somewhere
                 # for the DESIGNER to write. Two different authors must not share one box — the report
@@ -1420,7 +1424,7 @@ STAGE_3 = StageSpec(
                     T,
                     S,
                     max_length=160,
-                    help="The workshop this artisan was documented at, from their record.",
+                    help="The workshop this artisan was documented at.",
                 ),
                 # WHAT ELSE IS ON THE ARTISAN RECORD, WHICH ONE PHOTOGRAPH CANNOT SAY. The record form's
                 # media card asks for "images, audio introductions, videos, and documents" by name, and
@@ -1463,10 +1467,7 @@ STAGE_4 = StageSpec(
     number=4,
     key="CLUSTER_CRAFT_BACKGROUND",
     title="Cluster, Area & Craft Background",
-    purpose=(
-        "The setting: where the cluster is, how the craft is practised there, what it has "
-        "traditionally made, and what the community's dependence on it looks like."
-    ),
+    purpose="Where the cluster is, how the craft is practised there, and what it has traditionally made.",
     # The split this note describes was asked for on the source document: traditional and
     # contemporary DESIGNS belong to the design brief, not to the cluster background. Stage 10
     # carries the matching sentence, so a designer meets the boundary from either side.
@@ -1526,7 +1527,7 @@ STAGE_4 = StageSpec(
                     RICH,
                     S,
                     report_role=NARR,
-                    help="Nearest road, rail and town; how the cluster is reached.",
+                    help="Nearest road, rail and town, and how the cluster is reached.",
                 ),
                 f("communityContext", "Community context", RICH, S, report_role=NARR),
                 f("artisanHouseholds", "Artisan households in the cluster", INT, S, min_value=0),
@@ -1536,7 +1537,9 @@ STAGE_4 = StageSpec(
                     RICH,
                     S,
                     report_role=NARR,
-                    help="What share of household income the craft provides, and for how many.",
+                    help=(
+                        "The share of household income the craft provides, and for how many."
+                    ),
                 ),
                 f("culturalSignificance", "Cultural significance", RICH, S, report_role=NARR),
                 f("giStatus", "GI status", ENUM, S, enum="GI_STATUS"),
@@ -1597,8 +1600,11 @@ STAGE_4 = StageSpec(
                     RICH,
                     S,
                     report_role=BULLETS,
-                    help="One motif per line. The motifs the cluster works today that are not part of "
-                    "its traditional vocabulary.",
+                    help="One motif per line.",
+                    details=(
+                        "Motifs the cluster works today that aren’t part of its traditional "
+                        "vocabulary."
+                    ),
                 ),
                 f(
                     "contemporaryForms",
@@ -1622,8 +1628,11 @@ STAGE_4 = StageSpec(
                     RICH,
                     S,
                     report_role=NARR,
-                    help="Where the contemporary motifs came from — a buyer's specification, a design "
-                    "intervention, a neighbouring craft, the market.",
+                    help="Where the contemporary motifs came from.",
+                    details=(
+                        "A buyer’s specification, a design intervention, a neighbouring craft, "
+                        "the market."
+                    ),
                 ),
                 f(
                     "regionalTerminology",
@@ -1689,11 +1698,12 @@ STAGE_4 = StageSpec(
                     "Traditional motif caption",
                     max_items=25,
                     min_items=25,
-                    help="All 25 are required. Photographs of the cluster's traditional motifs — "
-                    "the contemporary ones have their own gallery. Each photograph is checked "
-                    "on this device before it uploads, for blur, low resolution and "
-                    "duplicates, and one that fails is not sent. Exposure and subject are not "
-                    "checked — judge those by eye.",
+                    help="All 25 are required.",
+                    details=(
+                        "Traditional motifs only; the contemporary ones have their own gallery. "
+                        "Blurred, low-resolution and duplicate photos are refused; exposure and "
+                        "subject are not checked."
+                    ),
                 ),
                 *photos(
                     "contemporaryMotifPhotos",
@@ -1702,11 +1712,12 @@ STAGE_4 = StageSpec(
                     "Contemporary motif caption",
                     max_items=25,
                     min_items=25,
-                    help="All 25 are required. Photographs of the contemporary motifs the cluster "
-                    "works today — the traditional ones have their own gallery. Each "
-                    "photograph is checked on this device before it uploads, for blur, low "
-                    "resolution and duplicates, and one that fails is not sent. Exposure and "
-                    "subject are not checked — judge those by eye.",
+                    help="All 25 are required.",
+                    details=(
+                        "Motifs the cluster works today; the traditional ones have their own "
+                        "gallery. Blurred, low-resolution and duplicate photos are refused; "
+                        "exposure and subject are not checked."
+                    ),
                 ),
                 # A CEILING AND DELIBERATELY NO FLOOR, WHICH IS THE OPPOSITE OF THE TWO GALLERIES
                 # DIRECTLY ABOVE, AND THE DIFFERENCE IS THE OWNER'S OWN WORDS.
@@ -1740,12 +1751,14 @@ STAGE_4 = StageSpec(
                     S,
                     "Lost craft or product caption",
                     max_items=25,
-                    help="Up to 25. Crafts and products the cluster no longer makes — photographs "
-                    "of surviving pieces, archive images, or museum and collection holdings. "
-                    "Say in the caption what it is and where the piece is now. Each "
-                    "photograph is checked on this device before it uploads, for blur, low "
-                    "resolution and duplicates, and one that fails is not sent. Exposure and "
-                    "subject are not checked — judge those by eye.",
+                    help=(
+                        "Up to 25; say in the caption what each piece is and where it is now."
+                    ),
+                    details=(
+                        "Surviving pieces, archive images, or museum and collection holdings of "
+                        "crafts the cluster no longer makes. Blurred, low-resolution and "
+                        "duplicate photos are refused."
+                    ),
                 ),
             ),
         ),
@@ -1761,11 +1774,7 @@ STAGE_5 = StageSpec(
     number=5,
     key="TRADITIONAL_PROCESS_BASELINE",
     title="Traditional Process, Tools & Raw Materials",
-    purpose=(
-        "The craft as it is practised before the workshop intervenes: the sequence of making, "
-        "the tools, the materials and where they come from, and the problems the artisans "
-        "already name."
-    ),
+    purpose="How the craft is made today: the steps, tools, materials and the problems artisans name.",
     # Out of order is a real capture rule, not a convenience: the source document expected stages
     # 5 and 6 to “come later when they actually go to the field after market and consumer survey”.
     # Stage 6 says the same thing, because a designer who reaches either one first needs to know.
@@ -1830,8 +1839,7 @@ STAGE_5 = StageSpec(
                     ref_model="ProductDocumentation",
                     ref_scope=W_SCOPE,
                     report_role=HIDDEN,
-                    help="Which product’s documented process this is. Choosing one narrows the "
-                    "process list below to that product’s documented processes.",
+                    help="Choosing a product narrows the process list below.",
                 ),
                 f(
                     "processRef",
@@ -1842,9 +1850,8 @@ STAGE_5 = StageSpec(
                     ref_filter_by="productRef",
                     ref_scope=W_SCOPE,
                     report_role=HIDDEN,
-                    help="Choose a process already documented for this workshop. Pick the product "
-                    "first to narrow this list. Its name, notes, sub-steps and pre-process "
-                    "answer are filled in below.",
+                    help="Choose a documented process to fill in the details below.",
+                    details="Pick the product first to narrow this list.",
                 ),
                 f(
                     "processOverview",
@@ -1853,7 +1860,7 @@ STAGE_5 = StageSpec(
                     B,
                     required=True,
                     report_role=NARR,
-                    help="The making sequence in outline. Individual steps are recorded below.",
+                    help="The making sequence in outline; record individual steps below.",
                 ),
                 # NOT `processOverview`, AND THE DISTINCTION IS THE WHOLE POINT. `processOverview`
                 # above is a REQUIRED narrative the DESIGNER writes about what they observed at the
@@ -1868,7 +1875,6 @@ STAGE_5 = StageSpec(
                     "Documented for",
                     T,
                     S,
-                    help="The product whose documented process this is.",
                 ),
                 # WHAT THE PROCESS RECORD HAS ON FILE. A researcher who filmed every step of a dye
                 # sequence produced a workshop row that said the sequence existed and showed none of
@@ -1903,7 +1909,7 @@ STAGE_5 = StageSpec(
                     LT,
                     S,
                     report_role=BULLETS,
-                    help="The ordered sub-steps as they were documented, one per line.",
+                    help="One sub-step per line, in order.",
                 ),
                 # THE PRE-PROCESS FLAG, IN THE ONE PLACE IT ANSWERS A QUESTION SOMEBODY ASKED. The
                 # registry's objection to it was never to the value — it was to "Pre-process
@@ -1931,7 +1937,7 @@ STAGE_5 = StageSpec(
                     "Pre-process footage",
                     VIDEO,
                     A,
-                    help="Video of the pre-processing, if it was observed at the workshop.",
+                    help="Video of the pre-processing, if it was observed.",
                 ),
                 *photos(
                     "preProcessPhotos",
@@ -2017,8 +2023,7 @@ STAGE_5 = StageSpec(
                     ref_model="ProductDocumentation",
                     ref_scope=W_SCOPE,
                     report_role=HIDDEN,
-                    help="Which product’s documented process this step came from. Choosing one "
-                    "narrows the process list below to that product’s documented processes.",
+                    help="Choosing a product narrows the process list below.",
                 ),
                 f(
                     "processRef",
@@ -2029,8 +2034,8 @@ STAGE_5 = StageSpec(
                     ref_filter_by="productRef",
                     ref_scope=W_SCOPE,
                     report_role=HIDDEN,
-                    help="Choose a process already documented for this workshop instead of "
-                    "re-describing it. Pick the product first to narrow this list.",
+                    help="Choose a documented process instead of describing it again.",
+                    details="Pick the product first to narrow this list.",
                 ),
                 fromref(
                     "name", "Step name", T, B, required=True, report_role=COL, column_width_pct=24.0
@@ -2053,7 +2058,6 @@ STAGE_5 = StageSpec(
                     "Documented for",
                     T,
                     S,
-                    help="The product whose documented process this step was taken from.",
                 ),
                 fromref(
                     "description", "What happens", LT, S, report_role=COL, column_width_pct=34.0
@@ -2123,8 +2127,7 @@ STAGE_5 = StageSpec(
                     S,
                     ref_model="ToolDocumentation",
                     ref_scope=ALL_SCOPE,
-                    help="Choose tools already documented in the records. Anything typed here "
-                    "earlier is kept and still prints.",
+                    help="Choose from the documented tools.",
                 ),
                 f("problems", "Problems at this step", LT, S),
                 *photos("stepPhotos", "Step photographs", A, "Step photograph caption"),
@@ -2176,8 +2179,8 @@ STAGE_5 = StageSpec(
                     ref_model="ToolDocumentation",
                     ref_scope=ALL_SCOPE,
                     report_role=HIDDEN,
-                    help="Choose a tool already documented anywhere in the records. Its details are "
-                    "filled in below and can be corrected on this row.",
+                    help="Choose a documented tool to fill in the details below.",
+                    details="You can still correct them on this row.",
                 ),
                 fromref(
                     "name", "Tool", T, B, required=True, report_role=COL, column_width_pct=24.0
@@ -2191,8 +2194,11 @@ STAGE_5 = StageSpec(
                     S,
                     report_role=COL,
                     column_width_pct=16.0,
-                    help="What kind of tool this is, in the words the artisans use. Choose the family "
-                    "below as well, so the same tool can be counted across clusters.",
+                    help="The kind of tool, in the artisans’ own words.",
+                    details=(
+                        "Choose the family below too, so the tool can be counted across "
+                        "clusters."
+                    ),
                 ),
                 # ADDED BESIDE `toolType`, NOT INSTEAD OF IT, and the difference is data.
                 #
@@ -2220,8 +2226,7 @@ STAGE_5 = StageSpec(
                     ENUM,
                     S,
                     enum="TOOL_TYPE",
-                    help="The broad category, for counting tools across workshops. Describe the tool "
-                    "itself in “Type” above.",
+                    help="The broad category, for counting tools across workshops.",
                 ),
                 fromref("usedFor", "Used for", LT, S, report_role=COL, column_width_pct=26.0),
                 fromref("material", "Made of", T, S),
@@ -2248,8 +2253,11 @@ STAGE_5 = StageSpec(
                     S,
                     report_role=COL,
                     column_width_pct=16.0,
-                    help="Bought, made by the artisan, inherited. The documented tool record does not "
-                    "record this, so it is not filled in from a linked tool.",
+                    help="Bought, made by the artisan, or inherited.",
+                    details=(
+                        "Not filled in from a linked tool, because the tool record doesn’t hold "
+                        "it."
+                    ),
                 ),
                 fromref(
                     "maker",
@@ -2257,7 +2265,7 @@ STAGE_5 = StageSpec(
                     ENUM,
                     S,
                     enum="MAKER_TYPE",
-                    help="Who made the tool — a different question from where it was obtained.",
+                    help="Who made the tool.",
                 ),
                 fromref(
                     "traditionType", "Traditional or contemporary", ENUM, S, enum="TRADITION_TYPE"
@@ -2322,8 +2330,7 @@ STAGE_5 = StageSpec(
                     "Pinned place on the tool record",
                     GEO,
                     A,
-                    help="The pin a researcher dropped on the place the tool was documented, not "
-                    "the device’s position when the record was typed.",
+                    help="The pin on the place the tool was documented.",
                 ),
                 fromref(
                     "usedByArtisans",
@@ -2331,7 +2338,7 @@ STAGE_5 = StageSpec(
                     LT,
                     S,
                     report_role=BULLETS,
-                    help="Every artisan this tool is assigned to on the tool record. One per line.",
+                    help="Every artisan the tool record assigns it to, one per line.",
                 ),
                 # HOW MUCH FOOTAGE THE TOOL RECORD CARRIES. The record page mounts its media card TWICE —
                 # once for the ordered "Process stages" sequence, whose captures are archived as
@@ -2346,8 +2353,8 @@ STAGE_5 = StageSpec(
                     T,
                     S,
                     max_length=200,
-                    help="How much footage the tool record carries. The files themselves stay on "
-                    "the record.",
+                    help="How much footage the tool record carries.",
+                    details="The files themselves stay on the record.",
                 ),
                 # ── RICH, BECAUSE THESE ARE THE TWO NARRATIVE BOXES ON THE RECORD PAGE ───────────────
                 #
@@ -2441,11 +2448,11 @@ STAGE_5 = StageSpec(
                     T,
                     S,
                     max_length=200,
-                    help="How the tool record's own length, breadth and height were arrived at — a "
-                    "tape reading, marks on a photograph, or a vision model's estimate. It "
-                    "describes the record, not a number you type here. The five "
-                    "“(as recorded)” measurements below carry no method: the record does not "
-                    "store one for them.",
+                    help="How the tool record’s measurements were taken.",
+                    details=(
+                        "A tape reading, marks on a photograph, or an estimate from a photograph. "
+                        "It describes the record, not a number typed here."
+                    ),
                 ),
                 # ── THE THIRD DIMENSION A PHOTOGRAPH CAN READ, WHICH ONCE HAD NOWHERE TO LAND ─────
                 #
@@ -2501,11 +2508,14 @@ STAGE_5 = StageSpec(
                     S,
                     unit="cm",
                     min_value=0,
-                    help="The tool's height with its unit stated — measured at the workshop, or "
-                    "converted from the height in inches on the tool record. The record's "
-                    "other height is below; for a tool documented since the form's boxes "
-                    "were paired it is the same measurement again, and for an older one it "
-                    "is a number in no stated unit.",
+                    help=(
+                        "The height in centimetres, measured here or converted from the record’s "
+                        "inches."
+                    ),
+                    details=(
+                        "For a recently documented tool, “Height (as recorded)” repeats the same "
+                        "measurement."
+                    ),
                 ),
                 fromref(
                     "heightAsRecorded",
@@ -2513,11 +2523,7 @@ STAGE_5 = StageSpec(
                     DEC,
                     S,
                     min_value=0,
-                    help="Copied from the tool record's own height box. That box is labelled "
-                    "“Height (cm)” and paired with “Height (inches)”, so anything saved "
-                    "since the pairing is centimetres — and repeats the measured height "
-                    "above, to within a hundredth. Older rows state no unit at all, which "
-                    "is why this box declares none.",
+                    help="Copied from the tool record, which states no unit.",
                 ),
                 fromref(
                     "widthAsRecorded",
@@ -2525,10 +2531,7 @@ STAGE_5 = StageSpec(
                     DEC,
                     S,
                     min_value=0,
-                    help="Copied from the tool record's own width box. That box is labelled "
-                    "“Width (cm)” and paired with “Breadth (inches)”, so anything saved "
-                    "since the pairing is centimetres. Older rows state no unit at all, "
-                    "which is why this box declares none.",
+                    help="Copied from the tool record, which states no unit.",
                 ),
                 fromref(
                     "thicknessAsRecorded",
@@ -2597,7 +2600,9 @@ STAGE_5 = StageSpec(
                     report_role=COL,
                     column_width_pct=14.0,
                 ),
-                f("costUnit", "Cost per", T, S, max_length=24, help="kg, metre, piece."),
+                f("costUnit", "Cost per", T, S, max_length=24, help=(
+                                                                   "Such as kg, metre or piece."
+                                                               )),
                 f(
                     "availability",
                     "Availability",
@@ -2632,10 +2637,7 @@ STAGE_6 = StageSpec(
     number=6,
     key="EXISTING_PRODUCTS_BASELINE",
     title="Existing Products & Artisan Baseline",
-    purpose=(
-        "What the cluster already makes and sells, recorded before any new design work, so the "
-        "workshop's effect can be measured against it."
-    ),
+    purpose="What the cluster already makes and sells, before any new design work.",
     # The 360-degree capture and automated quality assessment in the Advanced tier were referred
     # to a later plug-in on the source document. What is declared here is the DATA such a feature
     # would consume — `turntablePhotos`, and the named `viewFront`/`viewBack`/`viewDetail` slots —
@@ -2736,8 +2738,9 @@ STAGE_6 = StageSpec(
                     ref_model="QuestionnaireInterview",
                     ref_scope=W_SCOPE,
                     report_role=HIDDEN,
-                    help="Choose an artisan questionnaire interview conducted for this workshop. The "
-                    "citation below is filled in from it.",
+                    help=(
+                        "Choose an interview from this workshop to fill in the citation below."
+                    ),
                 ),
                 # ── EVERY ONE OF THESE IS KEY_VALUE, AND ON A SINGLETON THAT IS THE ONLY ANSWER ───────
                 #
@@ -2778,9 +2781,7 @@ STAGE_6 = StageSpec(
                     T,
                     S,
                     max_length=220,
-                    help="The interview record's own title, as the researcher typed it. It prints "
-                    "in the report exactly as it stands here — if it names the artisans, "
-                    "shorten it to the sitting.",
+                    help="Prints exactly as it stands; shorten it if it names the artisans.",
                 ),
                 # TWO DIFFERENT FACTS, and the pair is the point — when the sitting HAPPENED, and (near
                 # the bottom) when somebody TYPED IT IN. `documentedOn` carries the same distinction on
@@ -2792,7 +2793,7 @@ STAGE_6 = StageSpec(
                     T,
                     S,
                     max_length=220,
-                    help="The sitting’s own free-text place, as the interview record states it.",
+                    help="The place as the interview record states it.",
                 ),
                 fromref("interviewLanguage", "Language of the interview", T, S, max_length=80),
                 # THE COUNT AND NEVER THE NAMES. A sitting may cover artisans who are NOT on this
@@ -2832,9 +2833,8 @@ STAGE_6 = StageSpec(
                     S,
                     min_value=0,
                     unit="sections",
-                    help="Sections of the questionnaire with something recorded against them — an "
-                    "answer typed, or an audio clip or file filed under the section. Blank "
-                    "left by tabbing through a section does not count.",
+                    help="Sections with an answer, audio clip or file recorded against them.",
+                    details="A section only tabbed through doesn’t count.",
                 ),
                 # NO DENOMINATOR AND NO PERCENTAGE COMPLETE. "84 of 112" is refused twice over: the
                 # global instrument is not a relation on the interview so it is not reachable, and the
@@ -2849,8 +2849,9 @@ STAGE_6 = StageSpec(
                     S,
                     min_value=0,
                     unit="questions",
-                    help="Questions with an answer recorded against them. A saved but empty "
-                    "answer is not counted.",
+                    help=(
+                        "Questions with an answer recorded; saved empty answers don’t count."
+                    ),
                 ),
                 fromref("interviewLastAnsweredOn", "Last answered on", DATE, S),
                 # 202 AND NOT 200, AND THE TWO CHARACTERS ARE THE FAMILY FORMULA'S ANSWER FOR A
@@ -2898,8 +2899,10 @@ STAGE_6 = StageSpec(
                     T,
                     S,
                     max_length=202,
-                    help="What the interview record carries — the audio recording of the sitting "
-                    "is the usual one. A sentence counting the files, never the files.",
+                    help=(
+                        "A count of the files on the interview record, usually the sitting’s "
+                        "audio."
+                    ),
                 ),
                 fromref("interviewDocumentedOn", "Interview record entered on", DATE, S),
                 # WHERE THE SITTING CAME FROM, and it is needed even though the picker is
@@ -2932,8 +2935,9 @@ STAGE_6 = StageSpec(
                     ref_model="Artisan",
                     ref_scope=W_SCOPE,
                     report_role=HIDDEN,
-                    help="Whose product this is. Choosing one narrows the product list below to that "
-                    "artisan’s documented products.",
+                    help=(
+                        "Whose product this is; choosing one narrows the product list below."
+                    ),
                 ),
                 f(
                     "productRef",
@@ -2944,8 +2948,8 @@ STAGE_6 = StageSpec(
                     ref_filter_by="artisanRef",
                     ref_scope=W_SCOPE,
                     report_role=HIDDEN,
-                    help="Choose the product record instead of re-entering it. Pick the artisan "
-                    "first to narrow this list.",
+                    help="Choose the product record instead of re-entering it.",
+                    details="Pick the artisan first to narrow this list.",
                 ),
                 fromref("artisanName", "Made by", T, S, report_role=COL, column_width_pct=16.0),
                 f("productCode", "Product code", T, S, report_role=COL, column_width_pct=12.0),
@@ -2965,8 +2969,10 @@ STAGE_6 = StageSpec(
                     enum="PRODUCT_CATEGORY",
                     report_role=COL,
                     column_width_pct=16.0,
-                    help="What the product IS. Only filled in from the linked record when the "
-                    "record’s own type answers this question — see “Type on the record”.",
+                    help="What the product is.",
+                    details=(
+                        "Filled in only when the record’s “Type on the record” answers this."
+                    ),
                 ),
                 # THE SOURCE RECORD'S OWN ANSWER, IN ITS OWN WORDS. `ProductType` has six members and
                 # only two of them mean anything to `PRODUCT_CATEGORY` above: a FINISHED_GOOD may be a
@@ -2979,8 +2985,9 @@ STAGE_6 = StageSpec(
                     ENUM,
                     S,
                     enum="PRODUCT_TYPE",
-                    help="What kind of record this is on the product documentation — a different "
-                    "question from the category above.",
+                    help=(
+                        "The record’s own type, a different question from the category above."
+                    ),
                 ),
                 # ── MEASUREMENTS: THE SOURCE IS IN INCHES AND THESE BOXES SAY CM ────────────────
                 # `_inches_to_cm` in `design_workshops` carries the argument. The short version: the
@@ -3019,9 +3026,11 @@ STAGE_6 = StageSpec(
                     T,
                     S,
                     max_length=200,
-                    help="How the product record's own length, breadth and height were arrived "
-                    "at — a tape reading, marks on a photograph, or a vision model's "
-                    "estimate. It describes the record, not a number you type here.",
+                    help="How the product record’s measurements were taken.",
+                    details=(
+                        "A tape reading, marks on a photograph, or an estimate from a photograph. "
+                        "It describes the record, not a number typed here."
+                    ),
                 ),
                 f("weightG", "Weight", DEC, S, unit="g", min_value=0),
                 fromref(
@@ -3031,8 +3040,8 @@ STAGE_6 = StageSpec(
                     B,
                     report_role=COL,
                     column_width_pct=18.0,
-                    help="Free text, for a product the measured fields do not suit. Filled in "
-                    "from the linked record’s “size”.",
+                    help="Free text, for a product the measured fields don’t suit.",
+                    details="Taken from the record’s “size”.",
                 ),
                 fromref(
                     "price",
@@ -3093,7 +3102,7 @@ STAGE_6 = StageSpec(
                     "Time to make (as recorded)",
                     T,
                     S,
-                    help="As written on the product record, in the researcher’s own words.",
+                    help="As written on the product record.",
                 ),
                 f("monthlyCapacity", "Monthly capacity", INT, S, unit="pieces", min_value=0),
                 # FOUR OF THE FIVE MarketDemand TOKENS CROSS. `UNKNOWN` is the source column's
@@ -3149,8 +3158,7 @@ STAGE_6 = StageSpec(
                     "Pinned place on the product record",
                     GEO,
                     A,
-                    help="The pin a researcher dropped on the place the product was documented, "
-                    "not the device’s position when the record was typed.",
+                    help="The pin on the place the product was documented.",
                 ),
                 # See the note on `material` above for the promotion; this is the fourth of the record
                 # page's narrative boxes, and the one its EXIF summary is appended INTO as a paragraph.
@@ -3200,9 +3208,7 @@ STAGE_7 = StageSpec(
     number=7,
     key="SURVEY_PLANNING",
     title="Market Survey Planning",
-    purpose=(
-        "What the survey is meant to find out, who will be asked, where, and with which questions."
-    ),
+    purpose="What the survey will find out, who will be asked, where, and with which questions.",
     # Source document: the Advanced tier here was to be “a simple upload tool and phase 2 work”.
     # The upload slot exists (`questionnaireFile`, with the remark kept on its `phase_note`); the
     # phasing is not a designer's business.
@@ -3257,8 +3263,7 @@ STAGE_7 = StageSpec(
                     ref_model="Questionnaire",
                     ref_scope=ALL_SCOPE,
                     report_role=HIDDEN,
-                    help="Link the questionnaire already uploaded to this app, if there is one. "
-                    "Its title is filled in below.",
+                    help="Link the questionnaire uploaded to this app, if there is one.",
                 ),
                 fromref("questionnaireName", "Questionnaire title", T, S, report_role=KV),
                 f(
@@ -3268,7 +3273,7 @@ STAGE_7 = StageSpec(
                     B,
                     required=True,
                     report_role=NARR,
-                    help="The questions to be asked. One per line.",
+                    help="The questions to be asked, one per line.",
                 ),
                 f(
                     "questionnaireFile",
@@ -3303,8 +3308,10 @@ STAGE_7 = StageSpec(
                     S,
                     report_role=COL,
                     column_width_pct=20.0,
-                    help="What the place is, as it is known locally. Choose the channel below as well, "
-                    "so places can be compared across surveys.",
+                    help="What the place is, as it’s known locally.",
+                    details=(
+                        "Choose the channel below too, so places can be compared across surveys."
+                    ),
                 ),
                 # MARKET_CHANNEL, NOT A NEW "PLACE_TYPE" LIST, and that is the point of rule 2.
                 #
@@ -3330,8 +3337,11 @@ STAGE_7 = StageSpec(
                     ENUM,
                     S,
                     enum="MARKET_CHANNEL",
-                    help="Which kind of outlet this place is. The same list the products and the buyer "
-                    "links use, so a survey can be compared with them.",
+                    help="Which kind of outlet this place is.",
+                    details=(
+                        "The same list products and buyer links use, so surveys can be compared "
+                        "with them."
+                    ),
                 ),
                 f("cityDistrict", "City / District", T, S, report_role=COL, column_width_pct=20.0),
                 f("plannedDate", "Planned date", DATE, S, report_role=COL, column_width_pct=16.0),
@@ -3360,10 +3370,7 @@ STAGE_8 = StageSpec(
     number=8,
     key="MARKET_SURVEY_CAPTURE",
     title="Market Survey & Field Data",
-    purpose=(
-        "What the survey actually found: responses from each group, photographs of the market, "
-        "prices seen, and the competing products on the shelf."
-    ),
+    purpose="What the survey found: responses, market photographs, prices and competing products.",
     # WHY THIS STAGE IS AS PLAIN AS IT IS. The source document asked for “a basic structure with
     # text and image fields at the beginning. Later we can refine.”, and deferred voice
     # transcription and competitor image matching to “Phase 3 and only 1 or 2 features”. That is
@@ -3433,8 +3440,7 @@ STAGE_8 = StageSpec(
                     "Market survey document",
                     FILE,
                     S,
-                    help="The written-up survey — PDF, .docx or .odt. A PDF is previewable in the app; "
-                    "other formats are stored and downloadable.",
+                    help="The written-up survey: PDF, .docx or .odt.",
                 ),
                 *photos("marketPhotos", "Market photographs", B, "Market photograph caption"),
             ),
@@ -3545,10 +3551,7 @@ STAGE_9 = StageSpec(
     number=9,
     key="MARKET_ANALYSIS_DIRECTION",
     title="Market Analysis & Design Direction",
-    purpose=(
-        "What the survey means: the SWOT, the price bands the market will bear, and the design "
-        "opportunities that follow from the evidence."
-    ),
+    purpose="What the survey means: the SWOT, price bands and the design opportunities that follow.",
     # Source document: most Standard-tier items here were marked optional — which is why almost
     # nothing below is `required=True` — and the AI-assisted Advanced tier was deferred to
     # “Phase 3 and some of them by the AI team”.
@@ -3608,7 +3611,7 @@ STAGE_9 = StageSpec(
                     S,
                     report_role=COL,
                     column_width_pct=30.0,
-                    help="Which survey response or observation supports this.",
+                    help="The survey response or observation that supports this.",
                 ),
             ),
             label_field="point",
@@ -3719,10 +3722,7 @@ STAGE_10 = StageSpec(
     number=10,
     key="DESIGN_BRIEF",
     title="Design Brief & Concept",
-    purpose=(
-        "The designer's own statement of what will be made and why: the concept, the market it "
-        "is for, and the material, colour and motif direction it will follow."
-    ),
+    purpose="What will be made and why: the concept, its market, and its material, colour and motifs.",
     # Source document: the Standard tier was “some of these and only as optional fields”, and the
     # structured, evidence-generated brief was deferred to “phase 4” — which is why the brief here
     # is prose the designer writes rather than something assembled from stages 8 and 9. The
@@ -3771,8 +3771,7 @@ STAGE_10 = StageSpec(
                     RICH,
                     S,
                     report_role=NARR,
-                    help="The traditional designs this work draws on. Recorded here in the brief, not "
-                    "in the cluster background at stage 4.",
+                    help="The traditional designs this work draws on.",
                 ),
                 f(
                     "contemporaryDesignReference",
@@ -3896,8 +3895,7 @@ STAGE_11 = StageSpec(
                     INT,
                     A,
                     min_value=1,
-                    help="Increment when a sketch is redrawn rather than replaced, so the iteration "
-                    "history survives.",
+                    help="Increase it when a sketch is redrawn rather than replaced.",
                 ),
                 f(
                     "supersedesSketch",
@@ -3950,8 +3948,8 @@ STAGE_11 = StageSpec(
                     BOOL,
                     B,
                     report_role=HIDDEN,
-                    help="Not settled yet. Tentative sketches are listed first so they are easy to "
-                    "come back to. Untick when the sketch is final.",
+                    help="Not settled yet; untick when the sketch is final.",
+                    details="Tentative sketches are listed first.",
                 ),
                 f(
                     "category",
@@ -3994,8 +3992,8 @@ STAGE_11 = StageSpec(
                     FILE,
                     A,
                     phase_note="Reviewer: “May be Deepika app for now”.",
-                    help="An SVG or vector export, if one was produced. The panel on this field can "
-                    "trace one from the sketch photograph, on this device.",
+                    help="An SVG or vector export, if one was produced.",
+                    details="The panel here can trace one from the sketch photograph.",
                 ),
                 f("annotations", "Annotations", RICH, A, report_role=NARR),
                 # ── THE OVERRIDE MARKER, AND WHY THE ROW ORDER ALONE CANNOT BE IT ────────────────
@@ -4027,15 +4025,14 @@ STAGE_11 = StageSpec(
                     "Rank fixed by",
                     T,
                     A,
-                    help="Who settled this order, when it was set deliberately rather than left in "
-                    "score order.",
+                    help="Who set this order, when it wasn’t left in score order.",
                 ),
                 f(
                     "rankFixedAt",
                     "Rank fixed on",
                     DATE,
                     A,
-                    help="Leave blank while the order is still the default one.",
+                    help="Blank while the order is still the default.",
                 ),
                 # ── THE SKETCH'S OWN END OF PEER REVIEW ──────────────────────────────────────────
                 #
@@ -4076,8 +4073,10 @@ STAGE_11 = StageSpec(
                     "Peer review closed on",
                     DATE,
                     A,
-                    help="The day this sketch was declared finished and opened to designers outside "
-                    "the workshop. Blank means peer review is still running.",
+                    help=(
+                        "When the sketch opened to designers outside the workshop; blank while "
+                        "peer review runs."
+                    ),
                 ),
             ),
             label_field="name",
@@ -4094,10 +4093,7 @@ STAGE_12 = StageSpec(
     number=12,
     key="SKETCH_REVIEW",
     title="Sketch Review & Shortlisting",
-    purpose=(
-        "Which sketches go forward to prototyping, and on whose judgement — the artisans' and "
-        "the master craftsperson's as much as the designer's."
-    ),
+    purpose="Which sketches go forward to prototyping, and on whose judgement.",
     optional_stage=True,
     # WHY THIS STAGE STILL EXISTS. The source document proposed “we may consider deleting this
     # entire section for now”. It was kept and marked `optional_stage=True` instead, because the
@@ -4254,10 +4250,7 @@ STAGE_13 = StageSpec(
     number=13,
     key="PROTOTYPE_DEVELOPMENT",
     title="Prototype Development",
-    purpose=(
-        "The making of each prototype: who made it, from what, how long it took and what it "
-        "cost, with the record of problems met along the way."
-    ),
+    purpose="How each prototype was made: by whom, from what, in what time and at what cost.",
     # Source document: “let's simplify” against the Basic tier, which is why the required set
     # below is short. The Advanced measurement tier was referred to another team, with the remark
     # “the system we used in the workshop app… we can supply a PDF of measurements to be printed”
@@ -4328,8 +4321,10 @@ STAGE_13 = StageSpec(
                     ref_filter_by="artisanRef",
                     ref_scope=W_SCOPE,
                     report_role=HIDDEN,
-                    help="If this prototype reworks a product the artisan already makes, choose it "
-                    "here. The link is what lets the report show the before and the after.",
+                    help=(
+                        "The product this prototype reworks, if any, so the report shows before "
+                        "and after."
+                    ),
                 ),
                 fromref("productName", "Developed from", T, S),
                 # ── STAYS TAGS, AND THE PROMOTION AUDIT'S OWN CARVE-OUT IS WHY (2026-09-03) ──────────
@@ -4394,8 +4389,7 @@ STAGE_13 = StageSpec(
                     S,
                     ref_model="ToolDocumentation",
                     ref_scope=ALL_SCOPE,
-                    help="Choose tools already documented in the records. Anything typed here "
-                    "earlier is kept and still prints.",
+                    help="Choose from the documented tools.",
                 ),
                 f("processSummary", "Process followed", RICH, S, report_role=NARR),
                 f(
@@ -4447,15 +4441,14 @@ STAGE_13 = StageSpec(
                     "Rank fixed by",
                     T,
                     A,
-                    help="Who settled this order, when it was set deliberately rather than left in "
-                    "score order.",
+                    help="Who set this order, when it wasn’t left in score order.",
                 ),
                 f(
                     "rankFixedAt",
                     "Rank fixed on",
                     DATE,
                     A,
-                    help="Leave blank while the order is still the default one.",
+                    help="Blank while the order is still the default.",
                 ),
                 # ── THE EVENT THAT CLOSES ONE ROUND AND OPENS THE OTHER ──────────────────────
                 #
@@ -4479,8 +4472,10 @@ STAGE_13 = StageSpec(
                     "Peer review closed on",
                     DATE,
                     A,
-                    help="The day this prototype was declared finished and opened to designers outside "
-                    "the workshop. Blank means peer review is still running.",
+                    help=(
+                        "When the prototype opened to designers outside the workshop; blank "
+                        "while peer review runs."
+                    ),
                 ),
             ),
             label_field="name",
@@ -4616,10 +4611,7 @@ STAGE_14 = StageSpec(
     number=14,
     key="PROTOTYPE_ITERATION",
     title="Prototype Iteration & Testing",
-    purpose=(
-        "Every change made to a prototype after its first making, why it was made, and what it "
-        "cost in time and money."
-    ),
+    purpose="Every change to a prototype after its first making, why, and what it cost.",
     # Source document: the Standard tier here was marked “optional fields”, which is why only the
     # iteration's identity and its change are required below.
     entities=(
@@ -4680,7 +4672,7 @@ STAGE_14 = StageSpec(
                     T,
                     S,
                     max_length=80,
-                    help="What went wrong, in your own words. Tick the areas below as well.",
+                    help="What went wrong, in your own words; tick the areas below too.",
                 ),
                 # MULTI_ENUM AND NOT ENUM, decided by the answers already in the box rather than by
                 # the source document's phrasing. It says "material/process/design problem", which
@@ -4699,7 +4691,7 @@ STAGE_14 = StageSpec(
                     MENUM,
                     S,
                     enum="PROBLEM_TYPE",
-                    help="Tick every area the problem touched. More than one is normal.",
+                    help="Tick every area the problem touched.",
                 ),
                 f("costEffect", "Effect on cost", MONEY, S, unit="INR"),
                 f("timeEffectDays", "Effect on time", DEC, S, unit="days"),
@@ -4742,7 +4734,7 @@ STAGE_15 = StageSpec(
     number=15,
     key="PROTOTYPE_VALIDATION",
     title="Prototype Selection & Validation",
-    purpose=("Which prototypes were accepted, on what assessment, and with whose approval."),
+    purpose="Which prototypes were accepted, on what assessment, and with whose approval.",
     # Source document: the Standard tier here was marked “optional fields”; of the Advanced tier,
     # “at the beginning — just crowdsourced designer feedback mechanism. Reset for Phase 4.” The
     # remark survives on `prototypeValidation.buyerFeedback`'s `phase_note`, which is the free-text
@@ -4888,10 +4880,7 @@ STAGE_16 = StageSpec(
     number=16,
     key="FINAL_PROTOTYPE_DOCUMENTATION",
     title="Final Product Documentation",
-    purpose=(
-        "The catalogue record of each accepted product: its name and code, its final "
-        "photographs, dimensions, materials, technique and description."
-    ),
+    purpose="The catalogue record of each accepted product: name, code, photographs and specification.",
     # Source document: the Advanced catalogue-asset tier was referred to another team's plug-in.
     # The slots that plug-in would fill are declared (`catalogPhotos`, `turntablePhotos`, with the
     # remark on their `phase_note`); nothing here generates them.
@@ -5025,10 +5014,7 @@ STAGE_17 = StageSpec(
     number=17,
     key="COSTING_MARKET_LINKAGE",
     title="Costing, Packaging & Market Linkage",
-    purpose=(
-        "What each product costs to make and what it should sell for, built from the line "
-        "items rather than asserted, plus how it will reach a buyer."
-    ),
+    purpose="What each product costs to make, what it should sell for, and how it will reach a buyer.",
     # Source document: several Standard-tier items here were marked optional. Storing the cost
     # calculator's INPUTS rather than only its totals was not asked for and is the reason the
     # cost-head rows below exist at all — a ministry report that prints a selling price has to be
@@ -5073,8 +5059,7 @@ STAGE_17 = StageSpec(
                     min_value=0,
                     report_role=COL,
                     column_width_pct=14.0,
-                    help="The material total for this product — the Amount column of its material "
-                    "lines below, added up.",
+                    help="The material lines below, added up.",
                 ),
                 f(
                     "labourCost",
@@ -5086,8 +5071,7 @@ STAGE_17 = StageSpec(
                     min_value=0,
                     report_role=COL,
                     column_width_pct=14.0,
-                    help="The labour total for this product — the Amount column of its labour lines "
-                    "below, added up.",
+                    help="The labour lines below, added up.",
                 ),
                 f("packagingCost", "Packaging", MONEY, S, unit="INR", min_value=0),
                 f("finishingCost", "Finishing", MONEY, S, unit="INR", min_value=0),
@@ -5329,10 +5313,7 @@ STAGE_18 = StageSpec(
     number=18,
     key="WORKSHOP_OUTCOMES",
     title="Workshop Outcomes, Problems & Feedback",
-    purpose=(
-        "What the workshop achieved, what went wrong, and what the artisans and the designer "
-        "say about it."
-    ),
+    purpose="What the workshop achieved, what went wrong, and what the artisans and designer say.",
     # The Advanced tier below is “just option for voice and transcript — if you think it apt”
     # from the source document, kept verbatim on `outcomes.feedbackAudio`'s `phase_note`.
     #
@@ -5397,8 +5378,8 @@ STAGE_18 = StageSpec(
                     T,
                     S,
                     report_role=HIDDEN,
-                    help="Required if either count above is filled in. It is printed under the "
-                    "headline figure, so it is what an officer reads beside the number.",
+                    help="Required if either count above is filled in.",
+                    details="Printed under the headline figure, beside the number.",
                 ),
                 f("skillsTransferred", "Skills transferred", RICH, S, report_role=BULLETS),
                 f("materialsTested", "Materials tested", TAGS, S),
@@ -5551,8 +5532,10 @@ STAGE_19 = StageSpec(
                     "Signature",
                     IMG,
                     S,
-                    help="Sign on the pad, or attach a photograph of the signed sheet. Attendance is "
-                    "recorded by the fields above and is never held up by this.",
+                    help="Sign on the pad, or attach a photo of the signed sheet.",
+                    details=(
+                        "Attendance is recorded by the fields above and isn’t held up by this."
+                    ),
                 ),
                 f("certificateFile", "Certificate", FILE, A),
             ),
@@ -5570,10 +5553,7 @@ STAGE_20 = StageSpec(
     number=20,
     key="REPORT_GENERATION",
     title="Report Generation & Submission",
-    purpose=(
-        "Choose the template, decide what the report contains, generate it, and keep a record "
-        "of every file that was produced."
-    ),
+    purpose="Choose the template and contents, generate the report, and keep every file produced.",
     notes=(
         "This stage configures the report rather than appearing in it, so no template prints "
         "it. Every export ever generated is recorded below, with its checksum, so a file "
@@ -5599,8 +5579,8 @@ STAGE_20 = StageSpec(
                     ENUM,
                     S,
                     enum="REPORT_ACCENT_PRESET",
-                    help="Twelve colours chosen to stay distinguishable when the report is printed on "
-                    "a black-and-white office printer. Choose “Custom colour” to use the picker.",
+                    help="Twelve colours that stay distinct on a black-and-white printer.",
+                    details="Choose “Custom colour” to use the picker.",
                 ),
                 f(
                     "themeAccent",
@@ -5608,9 +5588,11 @@ STAGE_20 = StageSpec(
                     T,
                     S,
                     max_length=7,
-                    help="The accent as #RRGGBB. Filled in for you when a named colour is chosen; the "
-                    "headings, the table headers, the rules and the figures are all derived from "
-                    "it. Left blank, the report keeps the template’s own colour.",
+                    help="The accent as #RRGGBB; leave blank for the template’s own colour.",
+                    details=(
+                        "Filled in when a named colour is chosen. Headings, table headers, rules "
+                        "and figures all derive from it."
+                    ),
                 ),
                 f(
                     "fontPreset",
@@ -5618,9 +5600,11 @@ STAGE_20 = StageSpec(
                     ENUM,
                     S,
                     enum="REPORT_FONT",
-                    help="Applies to the Word document, which is the file that is submitted and the one "
-                    "an officer edits. The PDF uses a standard typeface that prints Odia, "
-                    "Devanagari and the rupee sign correctly.",
+                    help="Applies to the Word document.",
+                    details=(
+                        "The PDF uses a standard typeface that prints Odia, Devanagari and the "
+                        "rupee sign correctly."
+                    ),
                 ),
                 f(
                     "reportTitle",
@@ -5656,7 +5640,7 @@ STAGE_20 = StageSpec(
                     "Append the recordings’ transcripts",
                     BOOL,
                     S,
-                    help="Adds an annexure containing every transcript the workshop collected.",
+                    help="Adds an annexure with every transcript the workshop collected.",
                 ),
                 f("includeCompletenessAnnexure", "Include the completeness annexure", BOOL, S),
                 f("numberHeadings", "Number the headings", BOOL, S),
@@ -5724,7 +5708,7 @@ STAGE_20 = StageSpec(
                     "Generated on device",
                     BOOL,
                     S,
-                    help="True when the phone produced the file with no network.",
+                    help="True when the phone made the file with no network.",
                 ),
                 f("warnings", "Warnings at generation", LT, S),
             ),
@@ -5742,10 +5726,7 @@ STAGE_21 = StageSpec(
     number=21,
     key="DATA_QUALITY_ARCHIVE",
     title="Data Quality & Archive",
-    purpose=(
-        "Confirm that the record and its media are preserved, and record any quality problem "
-        "found in the photographs before the record is archived."
-    ),
+    purpose="Confirm the record and its media are preserved, and note any photo quality problems.",
     # WHAT THE NOTE BELOW MUST STAY TRUE TO, AND WHERE TO CHECK IT.
     #
     # These flags are only half a feature in this file: the ENUM declares seven of them, and the
@@ -5835,10 +5816,7 @@ STAGE_22 = StageSpec(
     number=22,
     key="POST_WORKSHOP_FOLLOWUP",
     title="Post-Workshop Follow-up",
-    purpose=(
-        "Whether the designs were actually taken up: what is being produced, what has sold, "
-        "and what the artisans still need."
-    ),
+    purpose="Whether the designs were taken up: what is produced, what has sold, what artisans still need.",
     notes=(
         "One record per product per monitoring interval, which is what makes design-survival "
         "analysis possible across workshops. Nothing here is required of the workshop itself — "

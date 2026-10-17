@@ -52,6 +52,8 @@ import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
 import { Paperclip, X } from "lucide-react";
 
 import { DictationButton } from "@/components/designworkshop/Dictation";
+import { InfoPanel, InfoToggle } from "@/components/ui/InfoDisclosure";
+import { hasDetails } from "@/components/ui/infoToggleAria";
 import { MediaAiVerbs } from "@/components/designworkshop/MediaAiVerbs";
 import { MountWhenNear } from "@/components/designworkshop/MountWhenNear";
 import { RichTextEditor } from "@/components/designworkshop/RichTextEditor";
@@ -688,6 +690,9 @@ export function FieldInput({
   const hintId = `${controlId}-hint`;
   const errorId = `${controlId}-error`;
   const formatErrorId = `${controlId}-format`;
+  const detailsId = `${controlId}-details`;
+  /** The "i" beside the label: `field.details`, collapsed until asked for (DW-14). */
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   /**
    * WHY WHAT IS IN THIS BOX WILL NOT SAVE, SAID BEFORE THE SAVE — or null when it will.
@@ -888,11 +893,38 @@ export function FieldInput({
     </p>
   ) : null;
 
+  /**
+   * The label row: the label, then the "i" when the field carries `details`.
+   *
+   * The toggle sits BESIDE the label and never inside it — a `<label>` forwards a click to its
+   * control and folds every named descendant into the control's accessible name. The opened text
+   * is drawn between the label and the control, where it is read before the box is filled.
+   */
+  const labelRow = (label: React.ReactNode) =>
+    hasDetails(field.details) ? (
+      <>
+        <div className="flex min-w-0 items-center gap-1.5">
+          {label}
+          <InfoToggle
+            fieldLabel={field.label}
+            expanded={detailsOpen}
+            panelId={detailsId}
+            onToggle={() => setDetailsOpen((open) => !open)}
+          />
+        </div>
+        {detailsOpen ? <InfoPanel id={detailsId}>{field.details}</InfoPanel> : null}
+      </>
+    ) : (
+      label
+    );
+
   const labelled = (control: React.ReactNode) => (
     <div className="grid min-w-0 gap-1">
-      <label className="field-label" htmlFor={controlId}>
-        {labelText(field)}
-      </label>
+      {labelRow(
+        <label className="field-label" htmlFor={controlId}>
+          {labelText(field)}
+        </label>
+      )}
       {control}
       <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} stamp={stamp} />
       {formatNotice}
@@ -903,9 +935,11 @@ export function FieldInput({
   /** Wrapper for a control that contains a button — see the `<label>` rule in the file header. */
   const unlabelled = (control: React.ReactNode) => (
     <div className="grid min-w-0 gap-1">
-      <span className="field-label" id={labelId}>
-        {labelText(field)}
-      </span>
+      {labelRow(
+        <span className="field-label" id={labelId}>
+          {labelText(field)}
+        </span>
+      )}
       {control}
       <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} stamp={stamp} />
       {formatNotice}
@@ -994,14 +1028,16 @@ export function FieldInput({
             describedBy={describedBy}
             invalid={invalid}
             disabled={disabled}
-            dictation={
+            dictation={(control) => (
               <DictationButton
                 onCommit={appendDictated}
                 disabled={disabled}
                 fieldLabel={field.label}
                 workshopId={workshopId}
-              />
-            }
+              >
+                {control}
+              </DictationButton>
+            )}
           />
         );
       }
@@ -1085,14 +1121,16 @@ export function FieldInput({
             describedBy={describedBy}
             invalid={invalid}
             disabled={disabled}
-            dictation={
+            dictation={(control) => (
               <DictationButton
                 onCommit={appendDictated}
                 disabled={disabled}
                 fieldLabel={field.label}
                 workshopId={workshopId}
-              />
-            }
+              >
+                {control}
+              </DictationButton>
+            )}
           />
         );
       }
@@ -1167,49 +1205,55 @@ export function FieldInput({
        * really did attach, and it is the only one of the two that can offer a real delete.
        */
       const identityTarget = field.type === "TEXT" ? identityNumberField(entity) : null;
+      const textBox = (
+        <input
+          id={controlId}
+          className="field-input"
+          /*
+           * `type` CARRIES THE MOBILE KEYBOARD HERE, AND NOTHING ELSE. A field that opens the
+           * alphabetic keyboard for an email address is a field a designer mistypes on a handset in
+           * a courtyard, so `url` and `email` are worth setting for the `@` and the `.com` key they
+           * put on the soft keyboard.
+           *
+           * THIS COMMENT USED TO END "`url`/`email` also give the browser its own inline validation
+           * for free", AND THAT WAS FALSE AT THIS MOUNT POINT — measured, not suspected. A browser
+           * validates `type="email"` on a SUBMIT EVENT (or an explicit
+           * `checkValidity`/`reportValidity` call). This input is not inside a `<form>`: the stage
+           * page is a set of controls with a "Save stage" button that calls `save()` directly, and
+           * where `StageRecordEmbed` DOES mount a real `<form>` for a record, the mirrored copy of
+           * the same field is rendered OUTSIDE it. So no submit event has ever passed over this box
+           * and the browser has never checked one character of it.
+           *
+           * That sentence is the reason nobody looked. `participant.email` therefore had NO rule
+           * anywhere on this path — not here, not in `coerce_value`, not in `ArtisanCreate` — while
+           * the record page two clicks away had a regex AND a blocking `pattern`, and the handset
+           * refused a missing `@` outright. The refusal now comes from `formatProblem` above, off
+           * the registry's declared `text_format`, which reaches this box whether or not anything
+           * ever submits it.
+           */
+          type={field.type === "URL" ? "url" : field.type === "EMAIL" ? "email" : "text"}
+          maxLength={field.maxLength || undefined}
+          aria-describedby={describedBy}
+          aria-invalid={invalid}
+          value={inputValue(value)}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      );
       return labelled(
         <>
-          <input
-            id={controlId}
-            className="field-input"
-            /*
-             * `type` CARRIES THE MOBILE KEYBOARD HERE, AND NOTHING ELSE. A field that opens the
-             * alphabetic keyboard for an email address is a field a designer mistypes on a handset in
-             * a courtyard, so `url` and `email` are worth setting for the `@` and the `.com` key they
-             * put on the soft keyboard.
-             *
-             * THIS COMMENT USED TO END "`url`/`email` also give the browser its own inline validation
-             * for free", AND THAT WAS FALSE AT THIS MOUNT POINT — measured, not suspected. A browser
-             * validates `type="email"` on a SUBMIT EVENT (or an explicit
-             * `checkValidity`/`reportValidity` call). This input is not inside a `<form>`: the stage
-             * page is a set of controls with a "Save stage" button that calls `save()` directly, and
-             * where `StageRecordEmbed` DOES mount a real `<form>` for a record, the mirrored copy of
-             * the same field is rendered OUTSIDE it. So no submit event has ever passed over this box
-             * and the browser has never checked one character of it.
-             *
-             * That sentence is the reason nobody looked. `participant.email` therefore had NO rule
-             * anywhere on this path — not here, not in `coerce_value`, not in `ArtisanCreate` — while
-             * the record page two clicks away had a regex AND a blocking `pattern`, and the handset
-             * refused a missing `@` outright. The refusal now comes from `formatProblem` above, off
-             * the registry's declared `text_format`, which reaches this box whether or not anything
-             * ever submits it.
-             */
-            type={field.type === "URL" ? "url" : field.type === "EMAIL" ? "email" : "text"}
-            maxLength={field.maxLength || undefined}
-            aria-describedby={describedBy}
-            aria-invalid={invalid}
-            value={inputValue(value)}
-            disabled={disabled}
-            onChange={(event) => onChange(event.target.value)}
-          />
           {/* Prose only. A speech recogniser hands back words, so dictating into a URL, an email
               address or a phone number produces "double you double you double you dot" and a
-              designer who has to delete it — the button is a cost on those three, not a help. The
-              PIN code is the fourth of that kind and is refused the button in `StageAddressField`,
-              where the box itself lives. */}
+              designer who has to delete it. The PIN code is refused the button in
+              `StageAddressField`, where its box lives. On TEXT the microphone sits INSIDE the box,
+              in its end adornment (DW-14). */}
           {field.type === "TEXT" ? (
-            <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} workshopId={workshopId} />
-          ) : null}
+            <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} workshopId={workshopId}>
+              {textBox}
+            </DictationButton>
+          ) : (
+            textBox
+          )}
           {identityTarget?.key === field.key ? (
             <IdentityCardCapture
               kind="PEHCHAN"
@@ -1330,7 +1374,16 @@ export function FieldInput({
         );
       }
       return labelled(
-        <>
+        /* The narrative fields are the ones that come back empty from the field, because nobody
+           types four hundred words on a handset while holding a swatch. This is the whole reason
+           the dictation control exists; it sits top-right inside the box (DW-14). */
+        <DictationButton
+          onCommit={appendDictated}
+          disabled={disabled}
+          fieldLabel={field.label}
+          workshopId={workshopId}
+          multiline
+        >
           <textarea
             id={controlId}
             className="field-input min-h-24"
@@ -1341,11 +1394,7 @@ export function FieldInput({
             disabled={disabled}
             onChange={(event) => onChange(event.target.value)}
           />
-          {/* The narrative fields are the ones that come back empty from the field, because nobody
-              types four hundred words on a handset while holding a swatch. This is the whole reason
-              the dictation control exists. */}
-          <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} workshopId={workshopId} />
-        </>
+        </DictationButton>
       );
 
     case "RICH_TEXT":

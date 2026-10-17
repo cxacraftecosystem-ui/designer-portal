@@ -213,6 +213,8 @@ export type DwField = {
   tier: DwTier;
   required: boolean;
   help?: string;
+  /** Extra guidance behind the field's "i" disclosure — collapsed until asked for (DW-14). */
+  details?: string;
   unit?: string;
   /** Name of the shared list in the registry's `enums` map — present only for ENUM / MULTI_ENUM. */
   enum?: string;

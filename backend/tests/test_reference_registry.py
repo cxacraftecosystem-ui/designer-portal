@@ -488,7 +488,8 @@ def test_the_text_a_reference_fills_in_is_kept_and_says_so():
     ):
         spec = _field(entity_key, field_key)
         assert spec.type is not FieldType.REF
-        assert "linked record" in spec.help, f"{entity_key}.{field_key} does not say where it "\
+        # Said behind the field's "i" since 2026-10-17 (DW-14): `details`, not the one-line help.
+        assert "linked record" in spec.details, f"{entity_key}.{field_key} does not say where it "\
                                              "comes from"
 
 
