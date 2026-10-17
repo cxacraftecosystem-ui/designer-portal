@@ -777,10 +777,12 @@ the record back instead. File: `android/app/src/main/java/com/designprototype/wo
 
 ### [LOW] A report generated on the phone leaves out what the phone does not hold (android) — opened 2026-10-10
 
-It has no transcript annexure even when stage 20 asks for transcripts, no machine-assisted text
-annexure, no plates for photographs the phone never downloaded (it says they are in the online
-workshop record), and custom answers of a type the phone cannot read print as held in the online
-record. The export screen and the document no longer narrate the first two. Files:
+It has no machine-assisted text annexure, no plates for photographs the phone never downloaded (it
+says they are in the online workshop record), and custom answers of a type the phone cannot read
+print as held in the online record. The export screen and the document no longer narrate the first.
+The transcript annexure is built on the phone since DA-29 (2026-10-17), from the copy
+`DwTranscriptStore` keeps; a recording that copy does not hold yet is counted on the export screen.
+Files:
 `android/app/src/main/java/com/designprototype/workshop/report/ReportSettings.kt`,
 `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/ReportScreen.kt`.
 

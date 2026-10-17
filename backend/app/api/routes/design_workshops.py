@@ -962,6 +962,33 @@ async def get_report_templates(_: Any = Depends(get_current_user)) -> list[dict[
 # --------------------------------------------------------------------------------------
 
 
+@router.get("/ocr/identity")
+async def identity_ocr_probe(_: Any = Depends(get_current_user)) -> dict[str, Any]:
+    """Does this deployment read identity cards? **The browser's capability probe, answered 200.**
+
+    ``serverOffersRoute`` in ``frontend/lib/designWorkshops.ts`` asks with a GET and reads only the
+    status — 404 for a deployment that predates the reader, anything else for one that has it. With
+    no GET declared here the router answered that GET with **405**, which the probe read correctly
+    as "the route is there" and which every browser also printed as a red console error on every
+    open of ``/artisans/new``, ``/artisans/{id}/edit`` and ``/designers/profile``. A literal GET
+    makes the same answer a quiet 200, exactly as ``dictation_probe`` did for ``/dictate``.
+
+    It cannot be swallowed by ``GET /{workshop_id}``: a path with a slash in it does not match one
+    segment, which is why this probe was never the 404 the dictation one once was.
+
+    **200 ALWAYS, AND IT DOES NOT SAY WHETHER A VISION PROVIDER IS CONFIGURED**, for
+    ``dictation_probe``'s reason: the answer is cached for the tab, so a "no" would outlive an
+    administrator configuring one, and the honest current answer is the 503 the POST returns at the
+    moment it matters. Gated on ``get_current_user`` alone, like that probe: it is a fact about the
+    BUILD, and who may actually post a card is ``_require_designer``'s decision on the POST.
+    """
+    return {
+        "ocrIdentity": True,
+        "method": "POST",
+        "retentionPath": "/design-workshops/ocr/identity/retention",
+    }
+
+
 @router.post("/ocr/identity")
 async def scan_identity_card(
     request: Request,

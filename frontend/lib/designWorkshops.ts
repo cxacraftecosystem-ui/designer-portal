@@ -2728,11 +2728,14 @@ export function referenceDisplayHint(entity: DwEntity, refField: DwField, row: D
 /**
  * Whether this server offers a route at all, cached per path for the life of the tab.
  *
- * A GET is used as the probe even though both routes are POST-only, because the answer is in the
- * STATUS and a GET has no body to be misread as work: 404 means the deployment predates the
- * feature, 405 (Method Not Allowed) means the route is there. A POST probe with an empty body would
- * reach the handler on a server that has it, and "did nothing harmful this time" is not a property
- * worth relying on across a refactor of somebody else's route.
+ * A GET is used as the probe because the answer is in the STATUS and a GET has no body to be misread
+ * as work: 404 means the deployment predates the feature, anything else means the route is there.
+ * Both probed paths now declare a literal GET that answers 200 — `dictation_probe` and
+ * `identity_ocr_probe` in `routes/design_workshops.py` — because the 405 a POST-only route gives a
+ * GET, though read correctly here, is printed by every browser as a red console error on every page
+ * that mounts the control. A server older than those GETs still answers 405 and is still "there".
+ * A POST probe with an empty body would reach the handler on a server that has it, and "did nothing
+ * harmful this time" is not a property worth relying on across a refactor of somebody else's route.
  *
  * A network failure is deliberately NOT cached as "absent". Out here the connection drops for a
  * minute at a time, and a control that disappeared for the rest of the session because of one bad

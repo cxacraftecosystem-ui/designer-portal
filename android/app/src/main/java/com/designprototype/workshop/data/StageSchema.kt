@@ -2150,6 +2150,12 @@ data class DesignWorkshopDetailDto(
     val customSchemaVersion: String = "",
     val stages: Map<String, StageBucketDto> = emptyMap(),
     val completeness: Map<String, StageCompletenessDto> = emptyMap(),
+    /**
+     * `_transcripts_payload`: every readable recording the stages reference, keyed by media id, text
+     * included. Kept by [DwTranscriptStore] for the phone's transcript annexure. NULL when the server
+     * sent no such key, which is a different answer from an empty map — see [dwTranscriptCacheOf].
+     */
+    val transcripts: Map<String, DwTranscriptItem>? = null,
     /*
       WHETHER THIS WORKSHOP'S RECORDINGS MAY LEAVE THE DEVICE — the same three keys as
       [DesignWorkshopDto], because this payload is `workshop_summary` with the stages folded in, plus
@@ -2241,6 +2247,8 @@ data class StageListDto(
     val schemaVersion: String = "",
     /** See [DesignWorkshopDetailDto.customSchemaVersion]. Never folded into [schemaVersion]. */
     val customSchemaVersion: String = "",
+    /** See [DesignWorkshopDetailDto.transcripts]. */
+    val transcripts: Map<String, DwTranscriptItem>? = null,
 )
 
 @Serializable

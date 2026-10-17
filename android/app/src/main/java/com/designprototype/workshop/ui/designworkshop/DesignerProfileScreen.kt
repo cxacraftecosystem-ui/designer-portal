@@ -93,12 +93,9 @@ import com.designprototype.workshop.ui.formatFieldDate
 import com.designprototype.workshop.ui.listIsAnswerable
 import com.designprototype.workshop.ui.addressListNotice
 import com.designprototype.workshop.ui.rememberAddressReference
-// Reading a `String?` column that may now hold a document. `addressLine` took rich text on the WEB
-// on 2026-08-30 and this screen has no rich editor for it, so it reads through the two functions the
-// record forms already read these columns with — `recordDocFromStored` accepts BOTH shapes on
-// purpose, which is the interoperability guarantee that lets the two clients land in either order —
-// and `looksLikeRichDocument` is the cheap shape test that decides whether to say so on screen.
-import com.designprototype.workshop.ui.looksLikeRichDocument
+// Reading a `String?` column that may hold a document. `addressLine` took rich text on the WEB on
+// 2026-08-30 and on this screen in DA-28; `recordDocFromStored` accepts BOTH shapes on purpose, which
+// is the interoperability guarantee that lets the two clients land in either order.
 import com.designprototype.workshop.ui.recordDocFromStored
 import com.designprototype.workshop.report.toPlain
 import kotlinx.coroutines.CancellationException
@@ -256,11 +253,10 @@ internal fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
     phone = phone.orEmpty(),
     email = email.orEmpty(),
     website = website.orEmpty(),
-    // THE WORDS, NOT THE COLUMN — see [designerProfileAddressText]. This column may hold a document
-    // written by the web's rich-text editor, and `addressLine.orEmpty()` would put its braces in the
-    // box. The raw string is NOT thrown away: the screen keeps it beside the form and [toBody] sends
-    // it back untouched whenever this box still holds exactly what this call made of it.
-    addressLine = designerProfileAddressText(addressLine),
+    // THE COLUMN AS IT IS — prose, or the web's `{"blocks":[…]}` document. The address box is the
+    // rich editor (DA-28), which reads both shapes through `recordDocFromStored` and writes them back
+    // by the web's rule, so nothing is flattened on the way in and nothing is lost on the way out.
+    addressLine = addressLine.orEmpty(),
     city = city.orEmpty(),
     state = state.orEmpty(),
     pincode = pincode.orEmpty(),
@@ -580,17 +576,11 @@ private fun dictates(column: String): Boolean = column in DESIGNER_PROFILE_DICTA
  *
  * ── AND [storedAddressLine], WHICH IS THE SECOND KEY THAT CANNOT SIMPLY BE SENT AS TYPED ────────
  *
- * `addressLine` may hold a rich-text document written on the web, and this screen shows the
- * FLATTENED words of it ([designerProfileAddressText]). Sending what is in the box would therefore
- * overwrite `{"blocks":[…]}` with its own flattening — silently, on a save the designer made to fix
- * a typo in their department, destroying formatting they typed in a browser and never touched here.
- *
- * The test is EXACT EQUALITY against what this screen made of the stored value, not a "dirty" flag:
- * a flag would have to be raised by the box and could be raised by a keystroke that was undone, and
- * a designer who typed a character and deleted it again must not lose their formatting. Where the
- * box still reads back as the stored document's words, the ORIGINAL string is sent, byte for byte.
- * Where it does not, the designer replaced the address on this screen and the plain text they typed
- * is what they meant — which the box says out loud, in a line under it, before they start.
+ * `addressLine` may hold a rich-text document written on the web, and the box edits that document
+ * (DA-28). The editor re-serialises what it is handed, so an untouched document can come back as a
+ * different string meaning the same thing. Where the box holds the SAME DOCUMENT as the stored value
+ * — compared as documents through `recordDocFromStored`, not as strings — the ORIGINAL string is
+ * sent, byte for byte; otherwise the designer edited the address, and what they edited is sent.
  *
  * It is a PARAMETER and not a column on [ProfileForm] on purpose: [ProfileForm] is the set of things
  * a person edits, `DesignerProfileScreenTest` reads it reflectively to require every column to be
@@ -621,9 +611,9 @@ internal fun ProfileForm.toBody(
     phone = phone,
     email = email,
     website = website,
-    // Untouched: the stored string exactly as it came, formatting included. Edited: the plain text
-    // the designer typed on this screen. See the paragraph on [storedAddressLine] above.
-    addressLine = if (addressLine == designerProfileAddressText(storedAddressLine)) {
+    // Untouched — the same DOCUMENT, even if the editor would spell it differently: the stored string
+    // exactly as it came. Edited: what the rich box now holds, formatting included (DA-28).
+    addressLine = if (recordDocFromStored(addressLine) == recordDocFromStored(storedAddressLine)) {
         storedAddressLine
     } else {
         addressLine
@@ -1448,112 +1438,39 @@ fun DesignerProfileScreen(
                         fontSize = 12.sp
                     )
                     /*
-                     * DICTATION HERE IS NO LONGER THE LAST WORD ON THIS SCREEN, AND THE COMMENT
-                     * THAT STOOD IN THIS PLACE SAID IT WAS.
-                     *
-                     * It read "THE SECOND MICROPHONE ON THIS SCREEN, AND THE LAST", and argued that
-                     * dictation belonged where the answer was PROSE — the biography and this
-                     * address — and nowhere else. That was the rule this screen shipped with, it was
-                     * a defensible one, and it is not the rule any more: the owner asked on
-                     * 2026-08-28 for "the existing microphone/dictation functionality" on "all
-                     * applicable fields", excluding "calendar fields and any other special fields
-                     * where dictation is not applicable". The default inverted, and the list now
-                     * lives in [DESIGNER_PROFILE_DICTATED] beside the reasons the other eleven
-                     * columns were left out, where a later reader can tell a decision from an
-                     * omission.
-                     *
-                     * THE HALF OF THE OLD ARGUMENT THAT SURVIVED IS THE EXCLUSION LIST. Its examples
-                     * were right and are kept in substance: a recogniser writes "at" for the @ sign,
-                     * spells digits out in words and punctuates a URL, so a microphone under the
-                     * e-mail, phone, PIN code, website and date boxes would be a control that
-                     * reliably produces a value the field then refuses. What did not survive is the
-                     * inference from it — that a name, an institution or a town is the same kind of
-                     * box. Those are free proper nouns, and they are precisely what somebody
-                     * standing in a courtyard would rather speak than thumb in.
-                     *
-                     * ── WHY IT IS NOT A BARE BOX: STILL TRUE, AND STILL THE OBSTACLE ────────────
-                     *
-                     * `RecordDictationButton` and `rememberRecordDictationAvailable` are private to
-                     * `RecordProseField.kt`, so a bare `OutlinedTextField` has no microphone and no
-                     * route to one. The answer was, and remains, to use that component rather than
-                     * fork the recogniser — and it is now [ProfileText] itself that forwards to it,
-                     * so this box and the twelve beside it are one control instead of two.
-                     *
-                     * ── NEWLINES ARE STILL FOLDED TO SPACES; THE FOLD HAS MOVED ────────────────
-                     *
-                     * `RecordProseField` has no `singleLine` parameter (its boxes are paragraphs),
-                     * so the IME offers a newline key that the old bare box did not.
-                     * `DesignerProfile.addressLine` has never held newlines — `ArtisanForm` uses a
-                     * textarea for ITS address and `Artisan.address` legitimately does, but this one
-                     * is copied into a registry field and typeset on a report cover, and the web
-                     * deliberately kept it single-line for that reason. The rule is unchanged; the
-                     * fold simply lives in [ProfileText] now, where all thirteen single-line
-                     * boxes on this screen get it from one place instead of from thirteen.
-                     */
-                    ProfileText(
-                        "Address line", form.addressLine, canEdit,
+                      THE WEB'S RICH BOX, ON THE HANDSET TOO (DA-28). The web made this column rich
+                      text on 2026-08-30; this box used to show the flattened words and replace the
+                      document with plain text the moment it was edited. It now edits the document
+                      itself and stores it by the web's own rule — prose while nothing is formatted,
+                      `{"blocks":[…]}` once something is ([recordStoredKeepingFormat]) — so a bolded
+                      street survives a save from either client.
+
+                      The microphone is the one inside the editor, as on the web. The 300-character rule is measured on the WORDS, as the server
+                      measures it, never on the document's braces.
+                    */
+                    RecordProseField(
+                        label = "Address line",
+                        value = form.addressLine,
+                        onValueChange = { next -> form = form.copy(addressLine = next) },
+                        enabled = canEdit,
+                        rich = true,
+                        keepFormatting = true,
+                        // Asked of the table for the reason the biography gives: the rich branch
+                        // carries its own microphone, and the call site still states the answer.
                         dictate = dictates("addressLine"),
                         // Re-seed when an admin steps to the next designer in the roster, exactly as
                         // the biography above does.
                         resetKey = targetUserId,
                         below = {
-                            /*
-                              THE FORMATTING THIS SCREEN CANNOT SHOW, SAID BEFORE IT IS LOST RATHER
-                              THAN AFTER.
-
-                              The web put a rich-text editor on this column on 2026-08-30 and this
-                              screen deliberately did not follow it — see [designerProfileAddressText]
-                              for why an address is the wrong shape for `RecordProseField`'s rich
-                              mode. So a designer who bolded part of their address in a browser sees
-                              the WORDS here and no bold, and the stored document survives their next
-                              save untouched ([ProfileForm.toBody]) — but only while they leave this
-                              box alone. The moment they edit it, the plain text replaces the
-                              document, permanently.
-
-                              That is a defensible rule and an indefensible surprise, which is the
-                              whole reason for this line. It is drawn only when the stored value
-                              actually carries formatting, so the profile of a designer who has never
-                              opened the web editor says nothing at all: a warning that is always on
-                              screen is a warning nobody reads by the second visit. `muted` and not
-                              the error colour — nothing is wrong yet, and nothing has been lost.
-                            */
-                            if (designerProfileAddressIsFormatted(storedAddressLine)) {
-                                Text(
-                                    "This address has bold or other styling. It will be saved as plain text.",
-                                    color = MaterialTheme.field.muted,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            /*
-                              THE CEILING, SAID ON SCREEN THE MOMENT IT IS REACHED — never clamped
-                              quietly. A box that silently stops accepting words is indistinguishable
-                              from a microphone that has stopped working, and rule 10 of the frontend
-                              contract ("truncation, caps and skipped work must be stated on screen")
-                              is the same rule on this client. `muted` and not the error colour:
-                              nothing is wrong and nothing was lost — what is in the box is exactly
-                              what will be saved. The sentence is the web's, verbatim.
-
-                              IT COUNTS THE WORDS AND NOT THE COLUMN, which is now a distinction:
-                              `form.addressLine` is the FLATTENED address and `ADDRESS_LINE_MAX` is
-                              the server's `ADDRESS_LINE_PLAIN_MAX`, which is measured on exactly that
-                              flattening. A box that counted a document's braces would announce
-                              itself full at a two-word address.
-                            */
-                            if (form.addressLine.length >= ADDRESS_LINE_MAX) {
+                            if (designerProfileAddressText(form.addressLine).length >= ADDRESS_LINE_MAX) {
                                 Text(
                                     "Full — $ADDRESS_LINE_MAX characters max.",
                                     color = MaterialTheme.field.muted,
                                     fontSize = 11.sp
                                 )
                             }
-                        }
-                    ) { next ->
-                        // The ceiling is applied to the WHOLE value rather than to what arrives,
-                        // because a committed dictation phrase is appended to what is already in the
-                        // box before it reaches this lambda. The newline fold that used to sit
-                        // beside it has moved into `ProfileText`, which every box here now shares.
-                        form = form.copy(addressLine = next.take(ADDRESS_LINE_MAX))
-                    }
+                        },
+                    )
                     // The served list, with a stored value kept at the FRONT until the list arrives —
                     // the same rule the record forms' state dropdown follows. Without it, a profile
                     // that already holds a state shows "Select" over it on a phone that has not
@@ -2059,59 +1976,15 @@ internal fun designerProfileOneLine(value: String): String =
     value.replace('\n', ' ').replace('\r', ' ')
 
 /**
- * The stored address as the WORDS in it — what this screen's box shows.
+ * The stored address as the WORDS in it, on one line — what the 300-character rule measures.
  *
- * ── THE HANDSET HAS NO RICH EDITOR FOR THIS COLUMN, AND THAT IS A DECISION ──────────────────────
- *
- * `DesignerProfile.addressLine` became a rich-text column on the WEB on 2026-08-30. Nothing about
- * the column changed — it is still `String?`, there is no migration, and it holds the same prose it
- * has always held until somebody bolds a word, at which point it holds
- * `{"blocks":[{"kind":"PARAGRAPH","spans":[…]}]}` (`encodeStoredRichText`'s rule: a document is only
- * ever stringified when it is not expressible as plain text).
- *
- * This screen does NOT gain an editor to match, and the reason is the shape of the box rather than
- * the effort. An address is one line typeset on a report cover; [RecordProseField]'s rich mode is a
- * paragraph control, and `recordStoredFromDoc` — the app's only writer of these columns — stores the
- * FLATTENED text by deliberate policy (`ui/RecordProseText.kt` §2, option (b)), so a rich box here
- * would offer a Bold button that throws the bold away on save. Offering formatting that is silently
- * dropped is worse than not offering it.
- *
- * ── SO THE TWO THINGS THE HANDSET MUST DO INSTEAD ───────────────────────────────────────────────
- *
- * 1. **SHOW THE WORDS, NEVER THE BRACES.** Without this the designer opens their profile on a phone
- *    and finds `{"blocks":[{"kind":"PARAGRAPH"…` where their street was — which does not read as a
- *    formatted value, it reads as a corrupted one, and the obvious repair is to delete it and retype
- *    the address, destroying the web's document to fix a display bug.
- * 2. **NOT CORRUPT IT ON SAVE.** [designerProfileUpdateJson] writes every column on every save so an
- *    emptied box can clear a value, so a flattened address would be written back over the document
- *    the moment the designer corrected an unrelated typo in their department. That is handled in
- *    [toBody], which sends the ORIGINAL stored string whenever this box still holds exactly what
- *    this function made of it. Only a designer who actually edited the address replaces it — and the
- *    box says so, in a line under it, while the stored value carries formatting.
- *
- * FOLDED TO ONE LINE, like everything else in this box. A two-paragraph address written on the web
- * flattens to "A\nB", and [ProfileText] folds a line break to a space on every keystroke — so
- * showing two lines here would be a box whose contents changed the instant it was touched. One line
- * in, one line out, and the stored value keeps both until somebody deliberately replaces it.
- *
- * IDENTITY ON PROSE, which is the case that matters because it is every live row: an address written
- * before this change is not JSON-shaped, [recordDocFromStored] reads it as prose, and `toPlain`
- * writes it straight back out.
+ * The box itself edits the document (DA-28). This is the flattening the server applies before it
+ * counts (`ADDRESS_LINE_PLAIN_MAX`) and before it copies the address onto stage 3, so the "Full"
+ * notice and the server's refusal are the same measurement. Identity on prose: an address that is
+ * not JSON-shaped is read as prose and written straight back out.
  */
 internal fun designerProfileAddressText(stored: String?): String =
     designerProfileOneLine(toPlain(recordDocFromStored(stored)))
-
-/**
- * Whether the stored address carries formatting this screen cannot edit.
- *
- * The same cheap shape test the record forms use, and conservative for the same reason: nothing that
- * does not start with `{` and carry a `"blocks"` key is ever offered to the parser, so an address
- * that merely begins with a brace is treated as what it is. Used only to decide whether to print the
- * one-line warning under the box — a false positive costs a sentence, a false negative costs a
- * designer's formatting with nothing said.
- */
-internal fun designerProfileAddressIsFormatted(stored: String?): Boolean =
-    stored != null && looksLikeRichDocument(stored)
 
 /**
  * ONE SINGLE-LINE BOX ON THIS PROFILE, with the record forms' microphone where the column takes one.

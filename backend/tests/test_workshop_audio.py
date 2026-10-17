@@ -420,6 +420,15 @@ async def test_the_capability_probe_answers_on_the_mounted_application(client):
     assert response.json()["dictatePath"] == "/design-workshops/{workshop_id}/dictate"
 
 
+async def test_the_identity_card_probe_answers_200_rather_than_405(client):
+    """``GET /design-workshops/ocr/identity`` is the browser's capability probe. Before its literal GET
+    existed the router answered it 405 — read correctly by the probe as "the route is there", and
+    printed by every browser as a red console error on the artisan form and the designer profile."""
+    response = client.get("/api/design-workshops/ocr/identity")
+    assert response.status_code == 200, response.text
+    assert response.json()["ocrIdentity"] is True
+
+
 # --------------------------------------------------------------------------------------
 # 6. THE CONSENT GATE ON STORED RECORDINGS
 #

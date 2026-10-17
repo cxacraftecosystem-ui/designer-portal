@@ -53,6 +53,13 @@ import com.designprototype.workshop.data.DW_ROW_KEY_SEPARATOR
 import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.DwQuestionnaireCache
 import com.designprototype.workshop.data.DwQuestionnaireStore
+import com.designprototype.workshop.data.DwTranscriptCache
+import com.designprototype.workshop.data.DwTranscriptStore
+import com.designprototype.workshop.data.dwTranscriptSelection
+import com.designprototype.workshop.data.dwTranscriptsPendingLine
+import com.designprototype.workshop.report.appendTranscriptAnnexure
+import com.designprototype.workshop.report.transcriptAnnexureWarnings
+import com.designprototype.workshop.report.transcriptRefusedWarning
 import com.designprototype.workshop.data.DwReadinessCheck
 import com.designprototype.workshop.data.DwReportFreeze
 import com.designprototype.workshop.data.DwSubmissionReadiness
@@ -297,9 +304,16 @@ fun ReportScreen(
      * decision the next sync silently applies to everything.
      */
     var accent by remember(workshopId) { mutableStateOf("") }
-    // Stage 20 asked for transcripts. The export below says what this file carries, in plain words,
-    // rather than leaving a designer to discover the annexure is absent (UX audit 2026-10-16, DA-29).
+    // Stage 20 asked for transcripts. The annexure is built here from [transcripts]; what this copy
+    // does not hold yet is counted above the export buttons rather than left out in silence (DA-29).
     var transcriptsAsked by remember(workshopId) { mutableStateOf(false) }
+    /**
+     * The transcripts of this workshop's recordings, as this device holds them — see
+     * [DwTranscriptStore]. Null is "this phone has never been sent them".
+     */
+    var transcripts by remember(workshopId) { mutableStateOf<DwTranscriptCache?>(null) }
+    /** "2 transcripts will be added when you're online.", or null when nothing is outstanding. */
+    var transcriptsPending by remember(workshopId) { mutableStateOf<String?>(null) }
     /**
      * The warning that this file cannot hold more than this device does — see [ReportSource].
      *
@@ -352,6 +366,13 @@ fun ReportScreen(
             // this device's unsynced work is in [reportSourceFor].
             val remoteId = local?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
             val remote = remoteId?.let { runCatching { repository.designWorkshopStages(it) }.getOrNull() }
+            // THE TRANSCRIPTS RIDE ON THE SAME READ — `GET /stages` carries them, text included — so
+            // keeping them costs no request. Kept under THIS screen's id, which for a workshop made
+            // offline is the local one; read back under either id, as the questionnaires are.
+            val heldTranscripts = remote?.let {
+                DwTranscriptStore.keep(appContext, workshopId, registry, it.stages, it.transcripts)
+            } ?: DwTranscriptStore.load(appContext, workshopId)
+                ?: remoteId?.let { DwTranscriptStore.load(appContext, it) }
             val source = reportSourceFor(
                 schema = registry,
                 workshopId = workshopId,
@@ -409,6 +430,7 @@ fun ReportScreen(
             // has never heard of still renders, because it is a colour and not a token.
             accent = resolveAccent(null, settings).orEmpty()
             transcriptsAsked = com.designprototype.workshop.report.wantsTranscripts(null, settings)
+            transcripts = heldTranscripts
             /*
               WHAT STAGE 20 DOES TO THE FILE, said BEFORE the buttons.
 
@@ -487,6 +509,21 @@ fun ReportScreen(
             }
             questionnaires = held
             warnings = warnings + dwQuestionnaireWarnings(held)
+
+            // ── the transcript annexure's recordings ─────────────────────────────────────────────
+            //
+            // The server's two sentences, word for word, for what it would say beside its own file —
+            // a recording it refused to hand over, and one with no transcript yet — and one of this
+            // device's own for a recording this copy has never been sent, which the next read while
+            // online brings. Only when stage 20 asked: the annexure prints nothing otherwise.
+            if (transcriptsAsked) {
+                val selection = dwTranscriptSelection(registry, stored, heldTranscripts)
+                transcriptsPending = dwTranscriptsPendingLine(selection.notOnPhone)
+                warnings = warnings + listOfNotNull(transcriptRefusedWarning(selection.refused)) +
+                    transcriptAnnexureWarnings(selection.items)
+            } else {
+                transcriptsPending = null
+            }
 
         }.onFailure { onError(it.userMessage("Unable to prepare the report.")) }
         loading = false
@@ -591,6 +628,7 @@ fun ReportScreen(
                         plan = plan,
                         questionnaires = questionnaires,
                         customSections = customSections,
+                        transcripts = transcripts,
                         // NO LONGER SWALLOWED — see the two numbered points in this function's KDoc
                         // for why the reason it was swallowed under ("the placeholder says the same
                         // thing") was false in both of its halves.
@@ -698,6 +736,7 @@ fun ReportScreen(
                         plan = plan,
                         questionnaires = questionnaires,
                         customSections = customSections,
+                        transcripts = transcripts,
                         onUnresolvedMedia = { ids -> unresolvedIds = ids },
                         onReportLosses = { notes -> losses = notes },
                     )
@@ -1106,12 +1145,9 @@ fun ReportScreen(
             }
         }
 
-        if (transcriptsAsked) {
-            Text(
-                "Transcripts are added when generated online. Local exports include photos and the completeness annexure.",
-                color = MaterialTheme.field.muted,
-                fontSize = 12.sp
-            )
+        // Only while something is outstanding: the annexure itself is built here now (DA-29).
+        transcriptsPending?.takeIf { transcriptsAsked }?.let { line ->
+            Text(line, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
         ActionRow {
             Button(onClick = { export("DOCX") }, enabled = !busy) {
@@ -1398,6 +1434,8 @@ internal fun buildWorkshopDocument(
     questionnaires: DwQuestionnaireCache? = null,
     /** See the internal overload below - null is "this device has never read a definition". */
     customSections: DwCustomCache? = null,
+    /** See the internal overload below — the transcripts this device holds for this workshop. */
+    transcripts: DwTranscriptCache? = null,
     /** See the internal overload below — the media tokens this device could not resolve to a file. */
     onUnresolvedMedia: (List<String>) -> Unit = {},
     /** See the internal overload below — what the template's own caps and the file format cost. */
@@ -1417,6 +1455,7 @@ internal fun buildWorkshopDocument(
         accent = accent,
         questionnaires = questionnaires,
         customSections = customSections,
+        transcripts = transcripts,
         imageFor = { mediaId ->
             val descriptor = mediaById[mediaId]
             val file = descriptor?.let { WorkshopDraftStore.mediaFile(context, workshopId, it) }
@@ -1500,6 +1539,12 @@ internal fun buildWorkshopDocument(
      * none", which also prints nothing - but for a reason the export screen is allowed to state.
      */
     customSections: DwCustomCache? = null,
+    /**
+     * The transcripts this device holds for this workshop — see [DwTranscriptStore]. Printed as the
+     * transcript annexure, `report_annexures.append_transcript_annexure`'s port, when stage 20 asked
+     * for it; null prints none, which is what every caller that does not consult the store means.
+     */
+    transcripts: DwTranscriptCache? = null,
     /**
      * Every media token [imageFor] answered null for, deduplicated, in first-use order — handed back
      * ONCE, after the whole template has been walked.
@@ -1614,7 +1659,7 @@ internal fun buildWorkshopDocument(
         if (special != null) {
             renderSpecialSection(
                 builder, special, section, resolved, schema, draft, resolveImage, refs, figures,
-                questionnaires, customSections,
+                questionnaires, customSections, transcripts,
             )
         } else {
             stages[section.stageKey]?.let { stage ->
@@ -2260,6 +2305,8 @@ private fun renderSpecialSection(
      * [SpecialSection.CUSTOM_SECTION] draws one block out of it.
      */
     customSections: DwCustomCache? = null,
+    /** The transcripts this device holds — see [DwTranscriptStore]. Null prints no annexure. */
+    transcripts: DwTranscriptCache? = null,
 ) {
     when (special) {
         SpecialSection.COVER -> renderCover(builder, section, plan, schema, draft, imageFor, refs)
@@ -2293,7 +2340,8 @@ private fun renderSpecialSection(
         // the ledger entry for `includeTranscripts`. Emitting half of one — a numbered heading over
         // nothing — would be worse than the honest gap, because a heading in the contents that leads
         // nowhere reads as a corrupt file.
-        SpecialSection.ANNEXURE_TRANSCRIPTS -> Unit
+        SpecialSection.ANNEXURE_TRANSCRIPTS ->
+            renderTranscriptAnnexure(builder, section, plan, schema, draft, transcripts)
 
         // DRAWN NOW, from the copy of the answers this device keeps — `DwQuestionnaireStore`. It used
         // to sit beside the transcripts as the second section this handset could not build, and the
@@ -4392,4 +4440,31 @@ private fun pyGeneral(value: Double): String {
     // Python's exponent is always signed and at least two digits: "1e+20", "1.5e-07".
     val sign = if (exponent < 0) "-" else "+"
     return mantissa.toString() + "e" + sign + abs(exponent).toString().padStart(2, '0')
+}
+
+/**
+ * The transcript annexure — `ReportBuilder.build`'s `ANNEXURE_TRANSCRIPTS` arm, which calls
+ * `append_transcript_annexure` and nothing else, and this calls its port and nothing else.
+ *
+ * The toggle is the server's `wants_transcripts(None, settings)`: the phone has no per-request
+ * override, so stage 20's saved answer decides. The items are the ones the merged draft references,
+ * read from [DwTranscriptStore]'s copy; a recording that copy does not hold is counted on the export
+ * screen (`dwTranscriptsPendingLine`) and never drawn as a heading over nothing.
+ */
+private fun renderTranscriptAnnexure(
+    builder: DocumentBuilder,
+    section: TemplateSection,
+    plan: ReportPlan,
+    schema: SchemaResponse,
+    draft: WorkshopDraft?,
+    transcripts: DwTranscriptCache?,
+) {
+    if (!com.designprototype.workshop.report.wantsTranscripts(null, plan.settings)) return
+    appendTranscriptAnnexure(
+        builder,
+        dwTranscriptSelection(schema, draft, transcripts).items,
+        heading = section.heading,
+        numbered = plan.template.numberHeadings,
+        pageBreakBefore = section.pageBreakBefore,
+    )
 }

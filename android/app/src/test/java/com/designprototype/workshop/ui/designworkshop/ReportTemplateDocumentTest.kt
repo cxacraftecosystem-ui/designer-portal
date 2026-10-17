@@ -701,6 +701,11 @@ class ReportTemplateDocumentTest {
                                     key = "coverPhoto", label = "Cover photograph", type = "IMAGE",
                                     tier = "BASIC", reportRole = "GALLERY",
                                 ),
+                                // ANNEXURE_TRANSCRIPTS' one recording (DA-29).
+                                FieldDto(
+                                    key = "briefingAudio", label = "Briefing", type = "AUDIO",
+                                    tier = "BASIC",
+                                ),
                             ),
                         )
                     ),
@@ -720,6 +725,7 @@ class ReportTemplateDocumentTest {
                         "designerName" to JsonPrimitive("A. Mohanty"),
                         "state" to JsonPrimitive("Odisha"),
                         "coverPhoto" to JsonPrimitive("media-1"),
+                        "briefingAudio" to JsonPrimitive("audio-1"),
                     ),
                     // CUSTOM_SECTION's one answer, by the same rule as every value above: the
                     // section omits itself when the designer answered nothing under it, so an empty
@@ -780,6 +786,18 @@ class ReportTemplateDocumentTest {
                 ),
             ),
         )
+        // ANNEXURE_TRANSCRIPTS' copy of the text, which the phone keeps from the server's reads; the
+        // plan below carries stage 20's "include transcripts", the toggle that section obeys.
+        val transcriptProbe = com.designprototype.workshop.data.DwTranscriptCache(
+            workshopId = "x",
+            items = listOf(
+                com.designprototype.workshop.data.DwTranscriptItem(
+                    mediaId = "audio-1", stageKey = "WORKSHOP_SETUP", stageNumber = 1,
+                    fieldLabel = "Briefing", status = "COMPLETED", text = "We begin at the loom.",
+                ),
+            ),
+            referencedIds = listOf("audio-1"),
+        )
         SpecialSection.entries.forEach { special ->
             val template = reportTemplate("DCH_STANDARD").copy(
                 sections = listOf(
@@ -794,7 +812,7 @@ class ReportTemplateDocumentTest {
                 template = template,
                 meta = reportMetaFor(ReportRecord(id = "x", title = "T"), "DCH_STANDARD", null, ""),
                 theme = ReportTheme(),
-                settings = emptyMap(),
+                settings = mapOf("includeTranscripts" to JsonPrimitive(true)),
                 warnings = emptyList(),
             )
             val document = buildWorkshopDocument(
@@ -803,6 +821,7 @@ class ReportTemplateDocumentTest {
                 imageFor = { id -> ImageRef(source = "/tmp/$id.jpg", widthPx = 1600, heightPx = 1200) },
                 plan = plan,
                 customSections = customProbe,
+                transcripts = transcriptProbe,
             )
             val drew = document.blocks.isNotEmpty()
             val declared = special in UNSUPPORTED_SECTIONS

@@ -79,9 +79,10 @@
  * which argues the point.
  *
  * So this control renders for the designer set ONLY, and `serverOffersRoute` cannot stand in for
- * that check: it probes with a GET, and a GET to this POST-only route answers 405 from the router
- * BEFORE any dependency runs (measured: `curl` against the running API returns 405 with no token at
- * all). The probe therefore says "the route exists" to every account alive.
+ * that check: it asks `GET /design-workshops/ocr/identity`, the server's capability probe, which
+ * answers 200 to every signed-in account (it once answered 405, the POST route refusing the method,
+ * which printed a red console error on every open of this form). Either way the probe says "the
+ * route exists" to every account alive, and who may actually post a card is the POST's decision.
  *
  * Hiding it is not cosmetic. Without this gate a professor sees "Photograph the card", photographs
  * somebody's Aadhaar card, and the image is uploaded to a third-party vision model before the 403
@@ -194,11 +195,10 @@ export function IdentityCardCapture({
    * make out — and the researcher would photograph it four more times before giving up. The route is
    * newer than several of the servers this client talks to, so "absent" is a normal answer.
    *
-   * NOT RUN for an account the route would refuse. The probe is a GET against a POST-only route, so
-   * it reports 405 — "the route is there" — for every signed-in account regardless of role, and
-   * spending a request to be told something that cannot gate anything is the least of it: the answer
-   * is cached per path for the tab, so a probe fired here would also be the one a designer's later
-   * screen reads.
+   * NOT RUN for an account the route would refuse. The probe (`GET /ocr/identity`, a quiet 200)
+   * answers "the route is there" for every signed-in account regardless of role, and spending a
+   * request to be told something that cannot gate anything is the least of it: the answer is cached
+   * per path for the tab, so a probe fired here would also be the one a designer's later screen reads.
    */
   useEffect(() => {
     if (!permitted) return;
