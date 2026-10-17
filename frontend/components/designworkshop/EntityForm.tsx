@@ -1497,8 +1497,8 @@ export function CollectionTable({
    * `stageRoom` AND NOT `STAGE_ROW_CAP - rows.length`: the budget being spent is the stage's, so a
    * roster with room in its own list has none at all when the stage's other lists have filled it.
    */
-  function addFromReferences(options: DwReferenceOption[]) {
-    if (!bulkField) return;
+  function addFromReferences(options: DwReferenceOption[]): number {
+    if (!bulkField) return 0;
     const taken = options.slice(0, stageRoom);
     const dropped = options.slice(stageRoom);
     const refused = dropped.length;
@@ -1534,6 +1534,7 @@ export function CollectionTable({
               .join(", ")}` +
             `${refused > DROPPED_NAMES_SHOWN ? ` and ${refused - DROPPED_NAMES_SHOWN} more` : ""}. Delete rows to make room.`
     );
+    return created.length;
   }
 
   /* ══════════════════════════════════════════════════════════════════════════════════════════════

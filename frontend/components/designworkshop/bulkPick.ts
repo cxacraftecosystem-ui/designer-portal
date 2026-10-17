@@ -33,5 +33,17 @@ export function remainingOptions<T extends { id: string }>(options: readonly T[]
   });
 }
 
+/**
+ * The line after an "All" press on a list the server cut short, or null.
+ *
+ * Null when the list was whole, and null when the stage cap refused some of the rows (`added` short
+ * of `asked`): the form's refusal sentence carries the count then, and two counts would disagree.
+ * Android's `dwBulkAddedSentence` says the same words.
+ */
+export function cutShortNote(truncated: boolean, asked: number, added: number, triggerLabel: string): string | null {
+  if (!truncated || added <= 0 || added < asked) return null;
+  return `Added the first ${added}. Use ${triggerLabel.toLowerCase()} for the rest.`;
+}
+
 /** Said when an "All" press finds nothing left to add. */
 export const BULK_ALL_NOTHING_LEFT = "Everything is already on this list.";

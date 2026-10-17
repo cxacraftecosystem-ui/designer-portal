@@ -94,7 +94,7 @@ import { workshopRecordTypeLabel, type WorkshopCodeRef, type WorkshopRecordType 
 // §3.5's cached-and-stale sentence, shared with the workshop pickers so one fact has one wording.
 import { cachedListLine } from "@/lib/workshopOptions";
 import { ActionGroup } from "@/components/ui/ActionGroup";
-import { BULK_ALL_NOTHING_LEFT, remainingOptions } from "@/components/designworkshop/bulkPick";
+import { BULK_ALL_NOTHING_LEFT, cutShortNote, remainingOptions } from "@/components/designworkshop/bulkPick";
 
 /*
   THE CODE SCANNER IS LOADED WHEN A DESIGNER OPENS IT. It brings the QR decoder and the image
@@ -2282,7 +2282,8 @@ export function StageReferenceMultiPicker({
   workshopId: string;
   field: DwField;
   alreadyChosen: string[];
-  onAdd: (options: DwReferenceOption[]) => void;
+  /** Returns how many rows it actually added (the stage cap may refuse some), or nothing. */
+  onAdd: (options: DwReferenceOption[]) => number | void;
   disabled?: boolean;
   triggerLabel: string;
   /**
@@ -2459,7 +2460,15 @@ export function StageReferenceMultiPicker({
       model,
       scope: field.refScope,
       isEmpty: (payload) => payload.options.length === 0,
-      fetch: () => listStageReferences(workshopId, { model, scope: field.refScope, filterBy: null, search: null }),
+      // The server's ceiling, so "All" means all for any workshop-sized list.
+      fetch: () =>
+        listStageReferences(workshopId, {
+          model,
+          scope: field.refScope,
+          filterBy: null,
+          search: null,
+          limit: REFERENCE_PAGE_MAX
+        }),
       onPayload: (payload) => {
         latest.payload = payload;
       }
@@ -2475,9 +2484,12 @@ export function StageReferenceMultiPicker({
       setAllNote(BULK_ALL_NOTHING_LEFT);
       return;
     }
-    onAdd(fresh);
-    // Rule 10: a list the server cut short is said to be cut short.
-    if (payload.truncated) setAllNote(`Added the first ${fresh.length}. Use ${triggerLabel.toLowerCase()} for the rest.`);
+    const added = onAdd(fresh);
+    // Rule 10: a list the server cut short is said to be cut short — but only when every row fitted.
+    // When the stage cap refused some, the form's own "Added 3 of 50" sentence is the count, and a
+    // second "Added the first 50" beside it would contradict it.
+    const note = cutShortNote(payload.truncated, fresh.length, typeof added === "number" ? added : fresh.length, triggerLabel);
+    if (note) setAllNote(note);
   }
 
   return (
