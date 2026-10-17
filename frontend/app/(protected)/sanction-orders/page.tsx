@@ -83,6 +83,7 @@ import { Pagination } from "@/components/Pagination";
 import { RecordDetailsDialog } from "@/components/records/RecordDetailsDialog";
 import { SearchInput } from "@/components/SearchInput";
 import { describeApiDetail } from "@/lib/api";
+import { fetchNotificationPreferences } from "@/lib/notifications";
 import { namedDesignerTeam } from "@/lib/designWorkshops";
 import { CalendarField } from "@/components/ui/CalendarField";
 import {
@@ -91,10 +92,13 @@ import {
   formatLinkExpiry,
   formatSanctionAmount,
   issueSanctionCredentialLink,
+  linkEmailWords,
   listSanctionDesigners,
   listSanctionOrders,
   readinessSentence,
   recordSanctionOrder,
+  remindSanctionDesigners,
+  reminderSentence,
   revokeSanctionCredentialLink,
   sanctionMessageFor,
   type SanctionImportPreview,
@@ -125,10 +129,25 @@ const PAGE_SIZE = 25;
  */
 type IssuedLink = {
   order: SanctionOrder;
-  link: SanctionOrderCredentialLink;
+  /** Only a link the officer was handed (COPY_LINK) gets a panel; an e-mailed one has no text. */
+  link: SanctionOrderCredentialLink & { link: string };
   designerName: string;
   signInEmail: string;
 };
+
+/** A link the officer can copy, or nothing for one that was e-mailed. */
+function copyable(link: SanctionOrderCredentialLink | null | undefined): (SanctionOrderCredentialLink & { link: string }) | null {
+  return link && typeof link.link === "string" && link.link ? (link as SanctionOrderCredentialLink & { link: string }) : null;
+}
+
+/** "10:32 am" or "17 Oct, 10:32 am" — when the last reminder went. */
+function reminderMoment(iso: string): string {
+  const moment = new Date(iso);
+  if (Number.isNaN(moment.getTime())) return "";
+  const time = moment.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+  const today = new Date().toDateString() === moment.toDateString();
+  return today ? time : `${moment.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}, ${time}`;
+}
 
 /**
  * The designers on an order whose first sign-in link can be re-issued from the register: those whose
@@ -192,7 +211,19 @@ export default function SanctionOrdersPage() {
    */
   const [viewing, setViewing] = useState<SanctionOrder | null>(null);
   const [linkNotice, setLinkNotice] = useState<string | null>(null);
+  /** Whether this deployment sends e-mail — the sign-in links and reminders go by e-mail when it does. */
+  const [mailOn, setMailOn] = useState(false);
   const formRef = useRef<HTMLFormElement | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void fetchNotificationPreferences().then((answer) => {
+      if (live) setMailOn(answer.available);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /**
    * THE PICKER'S STATE, and the free-text box beside it.
@@ -401,14 +432,13 @@ export default function SanctionOrdersPage() {
       // for every entry, and repeating a whole `SanctionOrder` per designer on a 201 that may carry
       // a hundred of them would be a payload that grows with the square of nothing useful. The panel
       // needs it because `sanctionMessageFor` names the order the link belongs to.
-      const issuedNow = links
-        .filter((entry) => entry.link !== null)
-        .map((entry) => ({
-          order: created.sanctionOrder,
-          link: entry.link!,
-          designerName: entry.designerName,
-          signInEmail: entry.signInEmail
-        }));
+      const issuedNow = links.flatMap((entry) => {
+        const link = copyable(entry.link);
+        return link
+          ? [{ order: created.sanctionOrder, link, designerName: entry.designerName, signInEmail: entry.signInEmail }]
+          : [];
+      });
+      const emailed = links.filter((entry) => entry.link?.deliveredBy === "EMAIL");
       if (issuedNow.length > 0) {
         setIssuedLinks(issuedNow);
         setCopied(null);
@@ -416,6 +446,8 @@ export default function SanctionOrdersPage() {
       const problems = links.map((entry) => entry.problem).filter(Boolean) as string[];
       if (problems.length > 0) {
         setLinkNotice(problems.join(" "));
+      } else if (emailed.length > 0) {
+        setLinkNotice(`Sign-in link e-mailed to ${emailed.map((entry) => entry.signInEmail).join(", ")}.`);
       } else if (issuedNow.length === 0) {
         const names = created.sanctionOrder.designers.map((designer) => designer.designerName);
         setLinkNotice(
@@ -656,15 +688,21 @@ export default function SanctionOrdersPage() {
                 button on the register.
               */
               const imported = report.created.flatMap((order) =>
-                (order.credentialLinks ?? [])
-                  .filter((entry) => entry.link !== null)
-                  .map((entry) => ({
-                    order: order.sanctionOrder,
-                    link: entry.link!,
-                    designerName: entry.designerName,
-                    signInEmail: entry.signInEmail
-                  }))
+                (order.credentialLinks ?? []).flatMap((entry) => {
+                  const link = copyable(entry.link);
+                  return link
+                    ? [{ order: order.sanctionOrder, link, designerName: entry.designerName, signInEmail: entry.signInEmail }]
+                    : [];
+                })
               );
+              const emailedCount = report.created.reduce(
+                (sum, order) =>
+                  sum + (order.credentialLinks ?? []).filter((entry) => entry.link?.deliveredBy === "EMAIL").length,
+                0
+              );
+              if (emailedCount > 0) {
+                setLinkNotice(`${emailedCount === 1 ? "1 sign-in link" : `${emailedCount} sign-in links`} e-mailed.`);
+              }
               setIssuedLinks(imported);
               setCopied(null);
               setPage(1);
@@ -883,9 +921,83 @@ export default function SanctionOrdersPage() {
                     person, and every refusal (an account senior to you, one that signs in with
                     Google) is asked of them and comes back as a sentence above the list.
                   */}
-                  {reissuable(order).map((designer) => (
+                  {reissuable(order).map((designer) => {
+                    const named = order.designers.length > 1 ? ` ${designer.designerName || designer.signInEmail}` : "";
+                    const status = order.designers.find((d) => d.designerUserId === designer.designerUserId)?.linkEmail;
+                    const words = linkEmailWords(status);
+                    async function issue(deliverBy: "COPY_LINK" | "EMAIL") {
+                      setLinkBusy(true);
+                      setError(null);
+                      setLinkNotice(null);
+                      try {
+                        const answer = await issueSanctionCredentialLink(order.id, designer.designerUserId, deliverBy);
+                        const link = copyable(answer);
+                        if (link) {
+                          setIssuedLinks([{ order, link, designerName: designer.designerName, signInEmail: designer.signInEmail }]);
+                          setCopied(null);
+                        } else {
+                          setLinkNotice(`New sign-in link e-mailed to ${designer.signInEmail}.`);
+                          await refresh();
+                        }
+                      } catch (err) {
+                        setError(problemOf(err, "Unable to issue a sign-in link"));
+                      } finally {
+                        setLinkBusy(false);
+                      }
+                    }
+                    if (!mailOn) {
+                      return (
+                        <button
+                          key={designer.designerUserId}
+                          type="button"
+                          className="field-button-secondary"
+                          disabled={linkBusy}
+                          onClick={() => void issue("COPY_LINK")}
+                        >
+                          {named ? `Re-issue${named}'s sign-in link` : "Re-issue sign-in link"}
+                        </button>
+                      );
+                    }
+                    return (
+                      <span key={designer.designerUserId} className="flex flex-wrap items-center gap-2">
+                        {words ? (
+                          <span
+                            className={
+                              status?.status === "FAILED"
+                                ? "rounded-full bg-error-100 px-2 py-0.5 text-xs font-medium text-error-600"
+                                : status?.status === "SENT"
+                                  ? "rounded-full bg-success-100 px-2 py-0.5 text-xs font-medium text-success-600"
+                                  : "rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                            }
+                            title={status?.error ?? undefined}
+                          >
+                            {named ? `${named.trim()}: ` : ""}
+                            {words}
+                          </span>
+                        ) : null}
+                        <ActionGroup inline>
+                          <button
+                            type="button"
+                            className="field-button-secondary"
+                            disabled={linkBusy}
+                            onClick={() => void issue("EMAIL")}
+                          >
+                            {named ? `Resend to${named}` : "Resend"}
+                          </button>
+                          <button
+                            type="button"
+                            className="field-button-secondary"
+                            disabled={linkBusy}
+                            onClick={() => void issue("COPY_LINK")}
+                          >
+                            Copy link instead
+                          </button>
+                        </ActionGroup>
+                      </span>
+                    );
+                  })}
+                  {mailOn && !order.readyForWork && order.missingMandatory.length ? (
                     <button
-                      key={designer.designerUserId}
                       type="button"
                       className="field-button-secondary"
                       disabled={linkBusy}
@@ -894,28 +1006,21 @@ export default function SanctionOrdersPage() {
                         setError(null);
                         setLinkNotice(null);
                         try {
-                          const link = await issueSanctionCredentialLink(order.id, designer.designerUserId);
-                          setIssuedLinks([
-                            {
-                              order,
-                              link,
-                              designerName: designer.designerName,
-                              signInEmail: designer.signInEmail
-                            }
-                          ]);
-                          setCopied(null);
+                          setLinkNotice(reminderSentence(await remindSanctionDesigners(order.id)));
+                          await refresh();
                         } catch (err) {
-                          setError(problemOf(err, "Unable to issue a sign-in link"));
+                          setError(problemOf(err, "The reminder could not be sent"));
                         } finally {
                           setLinkBusy(false);
                         }
                       }}
                     >
-                      {order.designers.length > 1
-                        ? `Re-issue ${designer.designerName || designer.signInEmail}'s sign-in link`
-                        : "Re-issue sign-in link"}
+                      Remind designers
                     </button>
-                  ))}
+                  ) : null}
+                  {order.lastRemindedAt ? (
+                    <span className="text-xs text-ink-500">Reminded {reminderMoment(order.lastRemindedAt)}</span>
+                  ) : null}
                 </div>
                 {order.reportCopyMatches === false ? (
                   /* REPORTED, NOT BLOCKED. A designer correcting a mistyped number on their own

@@ -134,7 +134,25 @@ export type SanctionOrder = {
   sourceFilename: string | null;
   /** The 1-based Excel gutter row, so an officer holding the sheet can find the line. */
   sheetRow: number | null;
+  /** When "Remind designers" last queued a reminder for this order, or absent/null for never. */
+  lastRemindedAt?: string | null;
 };
+
+/** One outbox message as the register shows it (2026-10-18). QUEUED covers retries in progress. */
+export type SanctionEmailStatus = {
+  id: string;
+  status: "QUEUED" | "SENT" | "FAILED";
+  at: string | null;
+  error: string | null;
+};
+
+/** The few words beside a designer's name: whether their sign-in e-mail went. */
+export function linkEmailWords(status: SanctionEmailStatus | null | undefined): string | null {
+  if (!status) return null;
+  if (status.status === "SENT") return "Sign-in e-mail sent";
+  if (status.status === "FAILED") return "Sign-in e-mail failed";
+  return "Sign-in e-mail sending";
+}
 
 /**
  * One designer named on one order, from the server's `SanctionOrderDesigner` join.
@@ -160,14 +178,17 @@ export type SanctionOrderDesigner = {
   /** Did this order mint THIS account? Per person: with several designers the answer differs. */
   accountCreated: boolean;
   position: number;
+  /** The newest sign-in-link e-mail about this order to them (2026-10-18); absent on older servers. */
+  linkEmail?: SanctionEmailStatus | null;
 };
 
 export type SanctionOrderCredentialLink = {
   id: string;
-  link: string;
+  /** `null` when the link was e-mailed: the officer is not handed a copy. */
+  link: string | null;
   expiresAt: string;
   purpose: "INVITE" | "RESET";
-  /** `"COPY_LINK"`, always: the register does not e-mail — see the module header. */
+  /** `"EMAIL"` (the default since 2026-10-18, when mail is on) or `"COPY_LINK"`. */
   deliveredBy: string;
 };
 
@@ -212,6 +233,8 @@ export type SanctionOrderCreated = {
    * in, with no screen in the product able to say so.
    */
   credentialLinks: SanctionOrderCredential[];
+  /** True when the links were e-mailed rather than handed to the officer (2026-10-18). */
+  linksEmailed?: boolean;
 };
 
 export type SanctionOrderPage = {
@@ -293,7 +316,7 @@ export function formatSanctionAmount(amount: string | null | undefined): string 
 /**
  * THE PREWRITTEN MESSAGE, worded once, here.
  *
- * The officer is the transport — the register does not e-mail — so the smallest honest thing this product can
+ * Used when the officer is the transport — mail off, or "Copy link instead" — so the smallest honest thing this product can
  * do is hand them a sentence to paste rather than asking them to compose one at nine in the
  * morning, fifteen times. It names four things on purpose:
  *
@@ -322,7 +345,7 @@ export function sanctionMessageFor(
     .replace("{sanctionOrderNo}", order.sanctionOrderNo)
     .replace("{date}", order.sanctionOrderDate ?? "")
     .replace("{expires}", formatLinkExpiry(link.expiresAt))
-    .replace("{link}", link.link)
+    .replace("{link}", link.link ?? "")
     .replace("{signInEmail}", signInEmail || order.designerEmail);
 }
 
@@ -416,13 +439,43 @@ export async function updateSanctionNotes(id: string, notes: string | null) {
  * did not create, one now senior to the officer, one on the master admin's mailbox or one who signs in
  * with Google; 404 for somebody the order does not name; 429 when the 4-per-hour budget is spent.
  */
-export async function issueSanctionCredentialLink(id: string, designerUserId?: string | null) {
+export async function issueSanctionCredentialLink(
+  id: string,
+  designerUserId?: string | null,
+  deliverBy: "COPY_LINK" | "EMAIL" = "COPY_LINK"
+) {
   return apiFetch<SanctionOrderCredentialLink>(
     `/sanction-orders/${encodeURIComponent(id)}/credential-link${buildQuery({
-      designerUserId: designerUserId || undefined
+      designerUserId: designerUserId || undefined,
+      deliverBy: deliverBy === "EMAIL" ? "EMAIL" : undefined
     })}`,
     { method: "POST" }
   );
+}
+
+export type SanctionReminderAnswer = {
+  queued: number;
+  recent: number;
+  optedOut: number;
+  noAddress: number;
+  lastRemindedAt: string | null;
+  missing: string[];
+};
+
+/** "Remind designers": e-mail every designer on the order what Workshop Setup still needs. */
+export async function remindSanctionDesigners(id: string) {
+  return apiFetch<SanctionReminderAnswer>(`/sanction-orders/${encodeURIComponent(id)}/remind`, {
+    method: "POST"
+  });
+}
+
+/** One line for the officer after "Remind designers". */
+export function reminderSentence(answer: SanctionReminderAnswer): string {
+  const parts: string[] = [];
+  if (answer.queued > 0) parts.push(`Reminder sent to ${answer.queued === 1 ? "1 designer" : `${answer.queued} designers`}.`);
+  if (answer.recent > 0) parts.push(`${answer.recent === 1 ? "1 was" : `${answer.recent} were`} reminded in the last hour.`);
+  if (answer.optedOut > 0) parts.push(`${answer.optedOut === 1 ? "1 has" : `${answer.optedOut} have`} turned these e-mails off.`);
+  return parts.join(" ") || "No reminder was sent.";
 }
 
 /** Withdraw an outstanding link. Idempotent — pressing it twice is not a mistake. */
