@@ -101,6 +101,16 @@ async def test_the_officers_list_reads_stage_one_once_per_page_and_matches_the_s
     )
     monkeypatch.setattr(sanction_orders, "db", SimpleNamespace(dwstageentry=entries))
 
+    # C1 (2026-10-17): the planned-workshop read is one query per PAGE too, through the annual
+    # plan's module. Counted here so the batched and the single path are held to it alike.
+    planned_reads: list[list[str]] = []
+
+    async def planned_rows(workshop_ids):
+        planned_reads.append(list(workshop_ids))
+        return {"w1": {"id": "plan_1", "workshopNo": "DPW/1", "planYear": 2026, "planYearLabel": "2026-27", "plannedTitle": None}}
+
+    monkeypatch.setattr(sanction_orders.annual_plan, "planned_rows_for_workshops", planned_rows)
+
     async def one_at_a_time(workshop_id):
         found = (await sanction_orders._stage_one_singletons([workshop_id])).get(workshop_id)
         spec = sanction_orders.stage(sanction_orders.STAGE_ONE_KEY)
@@ -127,6 +137,13 @@ async def test_the_officers_list_reads_stage_one_once_per_page_and_matches_the_s
     batched = await sanction_orders.sanction_payloads(rows)
     assert len(entries.calls) == 1, "one stage-1 read for the whole page"
     assert entries.calls[0]["where"]["designWorkshopId"]["in"] == ["w0", "w1", "w2"]
+    assert len(planned_reads) == 1, "one planned-workshop read for the whole page"
+    assert [item["plannedWorkshop"] and item["plannedWorkshop"]["id"] for item in batched] == [
+        None,
+        "plan_1",
+        None,
+        None,
+    ]
 
     monkeypatch.setattr(sanction_orders, "_stage_one_state", one_at_a_time)
     single = [await sanction_orders.sanction_payload(row) for row in rows]

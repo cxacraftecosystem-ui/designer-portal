@@ -93,6 +93,7 @@ that state the rule (this 403, the web route guard, the absent nav entry) cannot
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -813,7 +814,9 @@ def plan_stage_one_values(entry: Any) -> dict[str, Any]:
     """
     start = _as_date(entry.plannedStartDate)
     end = _as_date(entry.plannedEndDate)
-    return {
+    # NAMED `seeded`, not returned bare: `tests/test_annual_plan_promotion.py` reads this literal's
+    # keys by that name to hold every one of them to a real, promoted workshopSetup field.
+    seeded = {
         key: value
         for key, value in (
             ("workshopCode", entry.workshopNo),
@@ -830,6 +833,7 @@ def plan_stage_one_values(entry: Any) -> dict[str, Any]:
         )
         if value
     }
+    return seeded  # noqa: RET504 - the name is what the promotion test reads
 
 
 async def promote_entry(
@@ -1165,6 +1169,8 @@ async def sanctions_for_rows(rows: list[Any]) -> dict[str, dict[str, Any]]:
             "sanctionOrderDate": (
                 order_date.date().isoformat() if isinstance(order_date, datetime) else None
             ),
-            "sanctionAmount": str(order.sanctionAmount),
+            # Fixed to two places: the column is NUMERIC(14,2) and the driver may hand back
+            # `Decimal('450000')`, which would print as a different figure from the register's.
+            "sanctionAmount": f"{Decimal(str(order.sanctionAmount)):.2f}",
         }
     return out

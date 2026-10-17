@@ -159,7 +159,8 @@ def test_every_route_on_the_prefix_carries_the_sanction_gate_read_included() -> 
     # a hard-coded number here is that adding a door to this prefix has to be a DELIBERATE act,
     # because every door on it reads a register of named designers, their personal addresses and
     # the public money attached to them. Do not loosen this into an inequality.
-    assert len(routes) == 11, [getattr(r, "path", None) for r in routes]
+    # TWELVE SINCE C1 (2026-10-17): the exact-number planned-workshop lookup the form picks from.
+    assert len(routes) == 12, [getattr(r, "path", None) for r in routes]
     for route in routes:
         calls = _dependency_calls(route.dependant)
         assert sanction_routes.require_sanction_recorder in calls, route.path
@@ -355,7 +356,12 @@ def test_the_registry_never_grows_a_second_sanction_amount() -> None:
         for field in entity.fields
         if pattern.search(field.key)
     ]
-    assert offenders == [], offenders
+    # ONE, AND ONLY ONE, SINCE THE OWNER'S C1 DECISION (2026-10-17): "the sanctioned amount prints on
+    # the cover". It is the report's COPY, seeded once from the register exactly as the order number
+    # and date are, NOT promoted (so no column has two writers), and the register still holds the
+    # answer: `_report_copy_matches` now compares the amount too and reports drift. A SECOND such
+    # field anywhere is still the rumour this test exists to stop.
+    assert offenders == ["WORKSHOP_SETUP.workshopSetup.sanctionAmount"], offenders
 
 
 def test_the_sanction_facts_are_not_promoted_columns() -> None:

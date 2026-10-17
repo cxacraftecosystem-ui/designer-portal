@@ -34,7 +34,8 @@ def test_the_sanction_module_reaches_the_plan_only_through_its_own_service() -> 
     through ``services/annual_plan`` and never names the table itself."""
     for module in ("services/sanction_orders.py", "api/routes/sanction_orders.py"):
         text = (APP / module).read_text(encoding="utf-8")
-        assert "annualplanentry" not in text.lower(), module
+        # The census's own pattern: a word, so the body field `annualPlanEntryId` is not the table.
+        assert not re.search(r"\bannualplanentry\b", text.lower()), module
         assert re.search(r"annual_plan\.", text), module
 
 

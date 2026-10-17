@@ -143,6 +143,7 @@ import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -2011,7 +2012,16 @@ def _report_copy_matches(singleton: dict[str, Any] | None, row: Any) -> bool | N
     stored_date = getattr(row, "sanctionOrderDate", None)
     want = stored_date.date().isoformat() if isinstance(stored_date, datetime) else None
     same_date = str(singleton.get("sanctionOrderDate") or "")[:10] == (want or "")
-    return bool(same_no and same_date)
+    # THE AMOUNT TOO, SINCE C1 (2026-10-17) PRINTS IT ON THE COVER. Compared only where the cover
+    # holds one: a workshop opened before the field existed has no copy and is not "drifted".
+    copied_amount = singleton.get("sanctionAmount")
+    same_amount = True
+    if copied_amount not in (None, ""):
+        try:
+            same_amount = Decimal(str(copied_amount)) == Decimal(str(row.sanctionAmount))
+        except (InvalidOperation, AttributeError, TypeError):
+            same_amount = False
+    return bool(same_no and same_date and same_amount)
 
 
 def _named_designer_rows(row: Any, team: Sequence[Any] | None) -> list[dict[str, Any]]:
