@@ -185,7 +185,7 @@ from fastapi import HTTPException, status
 
 from app.core.db import db
 from app.core.deps import is_admin
-from app.services import design_workshop_posts as posts
+from app.services import design_workshop_posts as posts, email_outbox
 from app.services.design_workshop_viewers import (
     _assert_every_id_may_be_granted,
     has_viewer_grant,
@@ -540,6 +540,9 @@ async def file_request(
         skip_duplicates=True,
     )
     if created:
+        # The administrators hear of a NEW ask (2026-10-18); a repeat of a pending one is silent.
+        # After every silent branch above, so the anti-enumeration answer is unchanged. Never raises.
+        await email_outbox.notify_workshop_access_requested(workshop, user, clean_note)
         return
 
     # A ROW ALREADY EXISTS. Exactly one shape of repeat ask reopens it: a GRANT whose access has
@@ -571,6 +574,7 @@ async def file_request(
         },
     )
     if reopened:
+        await email_outbox.notify_workshop_access_requested(workshop, user, clean_note)
         logger.info(
             "design-workshop access request reopened: a previously granted viewer has asked again "
             "after their grant was removed (workshop=%s)",
@@ -1060,6 +1064,15 @@ async def decide(request_id: str, *, decision: str, note: str | None, admin: Any
     )
     if fresh is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    # The person who asked hears the decision (2026-10-18). Never raises; a no-op when mail is off.
+    await email_outbox.notify_access_decided(
+        row.requestedById,
+        scope="workshop",
+        decision=decision,
+        actor=admin,
+        workshop=workshop,
+        note=note,
+    )
     access = await _access_by_pair([fresh])
     provisional = await _provisional_by_pair([fresh])
     return request_payload(

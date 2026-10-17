@@ -178,6 +178,7 @@ from app.services import (
     design_workshop_posts,
     dictation_cap,
     dictation_consent,
+    email_outbox,
 )
 from app.services.ai import transcribe_audio_bytes
 from app.services.concurrency import gather_reads
@@ -2641,7 +2642,17 @@ async def update_design_workshop(
             )
             or design_workshop_approvals_schema.FROZEN_APPROVED,
         )
+    await _notify_if_handed_in(record, updated, current_user)
     return workshop_summary(updated)
+
+
+async def _notify_if_handed_in(before: Any, after: Any, actor: Any) -> None:
+    """E-mail the inspectors and the approving authority when this write spent a submission round
+    (a hand-in, or a resubmission after a send-back). Never raises; a no-op when mail is off."""
+    old_round = int(getattr(before, "submissionRound", 0) or 0)
+    new_round = int(getattr(after, "submissionRound", 0) or 0) if after is not None else old_round
+    if new_round > old_round:
+        await email_outbox.notify_handed_in(after, actor=actor, resubmission=old_round > 0)
 
 
 @router.delete("/{workshop_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -2886,7 +2897,7 @@ async def save_stage_data(
     of this app, not an error.
     """
     _require_designer(current_user)
-    await load_workshop_or_404(workshop_id, current_user, for_edit=True)
+    before = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
     spec = next((s for s in stages() if s.key == stage_key), None)
     if spec is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown stage")
@@ -2906,6 +2917,11 @@ async def save_stage_data(
     # row. Nothing else in the backend holds both, which is what the call-site census in
     # `tests/test_design_workshop_review_loop.py` pins. Do not pass this flag from a service.
     result = await save_stage(workshop_id, spec, payload, current_user, resubmits=True)
+    # Only a sent-back report can be resubmitted by a stage save, so only then is the round re-read.
+    if str(getattr(before, "status", "") or "").endswith("NEEDS_REVISION"):
+        await _notify_if_handed_in(
+            before, await db.designworkshop.find_unique(where={"id": workshop_id}), current_user
+        )
     if result["errors"] and payload.submit:
         # THE WHOLE RESULT TRAVELS UNDER THE 422, AND NOT ONLY THE ERRORS.
         #

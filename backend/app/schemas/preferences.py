@@ -20,4 +20,9 @@ class NotificationPreferencesUpdate(APIModel):
     sends whole on each save: a client that knows nothing about e-mail must not be able to switch a
     person's e-mails back on by saving a theme."""
 
-    emailReviewNotes: bool
+    emailReviewNotes: bool | None = None
+    #: 2026-10-18. Every field is optional so a client that knows only some of them (every Android
+    #: build, and web clients before this date sent ``emailReviewNotes`` alone) changes only those.
+    emailWorkshopUpdates: bool | None = None
+    emailAccessNotices: bool | None = None
+    emailHandInNotices: Literal["EACH", "DAILY", "OFF"] | None = None

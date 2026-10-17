@@ -56,9 +56,46 @@ SECOND_FACTOR_LOCKED = "SECOND_FACTOR_LOCKED"
 PASSWORD_ADDED = "PASSWORD_ADDED"
 PASSWORD_CHANGED = "PASSWORD_CHANGED"
 PASSWORD_NOTICES = frozenset({PASSWORD_ADDED, PASSWORD_CHANGED})
+
+#: Designers' notices (2026-10-18), governed by ``UserPreference.emailWorkshopUpdates``.
+REPORT_APPROVED = "REPORT_APPROVED"
+REPORT_HANDED_ON = "REPORT_HANDED_ON"
+WORKSHOP_ASSIGNED = "WORKSHOP_ASSIGNED"
+SETUP_REMINDER = "SETUP_REMINDER"
+WORKSHOP_UPDATES = frozenset({REPORT_APPROVED, REPORT_HANDED_ON, WORKSHOP_ASSIGNED, SETUP_REMINDER})
+
+#: Access and comment notices (2026-10-18), governed by ``UserPreference.emailAccessNotices``.
+ACCESS_REQUESTED = "ACCESS_REQUESTED"
+ACCESS_DECIDED = "ACCESS_DECIDED"
+RECORD_COMMENT = "RECORD_COMMENT"
+ACCESS_NOTICES = frozenset({ACCESS_REQUESTED, ACCESS_DECIDED, RECORD_COMMENT})
+
+#: Officials' notices (2026-10-18), governed by ``UserPreference.emailHandInNotices``: one message
+#: per hand-in, or the day's hand-ins gathered into one digest.
+REPORT_HANDED_IN = "REPORT_HANDED_IN"
+HAND_IN_DIGEST = "HAND_IN_DIGEST"
+
+#: An approved report e-mailed to the office under an expiring link (2026-10-18). Not a notification:
+#: it goes to the addresses an administrator set, and the link travels sealed like a password link.
+REPORT_DELIVERY = "REPORT_DELIVERY"
+
 KINDS = frozenset(
-    {PASSWORD_LINK, REVIEW_SUGGESTION, REVIEW_SENT_BACK, SECOND_FACTOR_LOCKED, *PASSWORD_NOTICES}
+    {
+        PASSWORD_LINK,
+        REVIEW_SUGGESTION,
+        REVIEW_SENT_BACK,
+        SECOND_FACTOR_LOCKED,
+        *PASSWORD_NOTICES,
+        *WORKSHOP_UPDATES,
+        *ACCESS_NOTICES,
+        REPORT_HANDED_IN,
+        HAND_IN_DIGEST,
+        REPORT_DELIVERY,
+    }
 )
+
+#: The kinds whose sealed secret is a link with an ``expiresAt``: not sent once it has expired.
+EXPIRING_LINK_KINDS = frozenset({PASSWORD_LINK, REPORT_DELIVERY})
 
 PRODUCT_NAME = "Design Prototype Workshop"
 
@@ -239,6 +276,8 @@ def subject_for(kind: str, params: dict[str, Any]) -> str:
     """The subject alone — stored on the outbox row so the send log reads without rendering."""
     title = str(params.get("workshopTitle") or "your design workshop").strip()
     if kind == PASSWORD_LINK:
+        if params.get("context") == "SANCTION":
+            return f"Your workshop is ready: “{title}”"
         if params.get("purpose") == "INVITE":
             return f"Your {PRODUCT_NAME} account is ready"
         return f"Set a new password for {PRODUCT_NAME}"
@@ -252,6 +291,36 @@ def subject_for(kind: str, params: dict[str, Any]) -> str:
         return f"A password was added to your {PRODUCT_NAME} account"
     if kind == PASSWORD_CHANGED:
         return f"Your {PRODUCT_NAME} password was changed"
+    if kind == REPORT_APPROVED:
+        return f"“{title}” has been approved"
+    if kind == REPORT_HANDED_ON:
+        return f"“{title}” has been handed on to the office"
+    if kind == WORKSHOP_ASSIGNED:
+        return f"You have been given a workshop: “{title}”"
+    if kind == SETUP_REMINDER:
+        return f"Reminder: finish setting up “{title}”"
+    if kind == ACCESS_REQUESTED:
+        who = str(params.get("requesterName") or "Someone").strip()
+        if params.get("scope") == "workshop":
+            return f"{who} asked to join “{title}”"
+        return f"{who} asked for access to your data"
+    if kind == ACCESS_DECIDED:
+        granted = params.get("decision") == "GRANTED"
+        if params.get("scope") == "workshop":
+            return f"You can now open “{title}”" if granted else f"Your request to join “{title}” was declined"
+        return "Your data access request was granted" if granted else "Your data access request was declined"
+    if kind == RECORD_COMMENT:
+        who = str(params.get("authorName") or "Someone").strip()
+        return f"{who} commented on {params.get('recordLabel') or 'your record'}"
+    if kind == REPORT_HANDED_IN:
+        if params.get("resubmission"):
+            return f"“{title}” was resubmitted (round {params.get('round') or '?'})"
+        return f"“{title}” was handed in for review"
+    if kind == HAND_IN_DIGEST:
+        count = len(params.get("items") or [])
+        return f"{count} report{'s' if count != 1 else ''} handed in for review"
+    if kind == REPORT_DELIVERY:
+        return f"Approved report: “{title}”"
     raise ValueError(f"Unknown e-mail kind {kind!r}")
 
 
@@ -268,7 +337,22 @@ def render(
         if not secret:
             raise ValueError("A password-link message needs its link")
         expires = format_moment(params.get("expiresAt"))
-        if params.get("purpose") == "INVITE":
+        if params.get("context") == "SANCTION":
+            # A sanction order named this person (2026-10-18): the officer's e-mail, sent for them.
+            order = str(params.get("sanctionOrderNo") or "").strip()
+            title = str(params.get("workshopTitle") or "your design workshop")
+            lead = (
+                f"Sanction order {order} names you as the designer of “{title}”."
+                if order
+                else f"You are the designer of “{title}”."
+            )
+            if params.get("purpose") == "INVITE":
+                lead += " Choose your password with the link below, then sign in with this e-mail address."
+                label = "Choose your password"
+            else:
+                lead += " Set your password with the link below. It signs you out everywhere else."
+                label = "Set your password"
+        elif params.get("purpose") == "INVITE":
             lead = (
                 f"An administrator has made you an account on {PRODUCT_NAME}. "
                 "Choose your password with the link below, then sign in with this e-mail address."
@@ -375,4 +459,164 @@ def render(
         )
         return Rendered(subject, "\n\n".join(text_parts) + "\n", body)
 
+    if kind == REPORT_DELIVERY:
+        if not secret:
+            raise ValueError("A report-delivery message needs its link")
+        title = str(params.get("workshopTitle") or "the design workshop")
+        office = str(params.get("officeName") or "the office").strip()
+        approver = str(params.get("approverName") or "The approving authority").strip()
+        order = str(params.get("sanctionOrderNo") or "").strip()
+        lead = f"{approver} has approved the report “{title}” and handed it on to {office}."
+        if order:
+            lead += f" Sanction order {order}."
+        rule = f"Download it with the link below. The link expires on {format_moment(params.get('expiresAt'))}."
+        unasked = "If this reached you by mistake, delete it; the link opens only this report."
+        text = "\n\n".join(["Hello,", lead, secret, rule, unasked, sign_off]) + "\n"
+        body = _html(
+            [_e("Hello,"), _e(lead), _e(rule), _e(unasked)],
+            button=("Download the report", _e(secret)),
+        )
+        return Rendered(subject, text, body)
+
+    notice = _notice_parts(kind, params)
+    if notice is not None:
+        lead, quote, items, (label, path), why = notice
+        link = app_url(path, settings)
+        text_parts = [greeting, lead]
+        if quote:
+            text_parts.append("\n".join(f"> {line}" for line in quote.splitlines()))
+        if items:
+            text_parts.append("\n".join(f"• {item}" for item in items))
+        text_parts += [f"{label}: {link}", why, sign_off]
+        paragraphs = [_e(greeting), _e(lead)]
+        if items:
+            paragraphs.append("<br>".join(f"• {_e(item)}" for item in items))
+        paragraphs.append(_e(why))
+        body = _html(paragraphs, button=(_e(label), _e(link)), quote=_e(quote) if quote else None)
+        return Rendered(subject, "\n\n".join(text_parts) + "\n", body)
+
     raise ValueError(f"Unknown e-mail kind {kind!r}")
+
+
+#: Why the reader got a notice, and how to stop it — one sentence per preference.
+_WHY_WORKSHOP = "You get these because you work on this workshop. You can turn them off in Settings."
+_WHY_ACCESS = "You can turn these e-mails off in Settings."
+_WHY_HAND_IN = (
+    "You get these because you review this report. In Settings you can switch to one daily digest "
+    "or turn them off."
+)
+
+_RECORD_PATHS = {
+    "artisan": "/artisans/{id}",
+    "craft": "/crafts/{id}",
+    "workshop": "/workshops/{id}",
+    "product": "/products/{id}",
+    "tool": "/tools/{id}",
+    "process": "/processes/{id}",
+    "questionnaire": "/questionnaire/interviews/{id}",
+    "questionnaireinterview": "/questionnaire/interviews/{id}",
+    "media": "/media/{id}",
+}
+
+
+def record_path(record_type: Any, record_id: Any) -> str:
+    """The read-only page of one record, for a comment notice's button."""
+    template = _RECORD_PATHS.get(str(record_type or "").lower(), "/sharing")
+    return template.replace("{id}", str(record_id or ""))
+
+
+def _notice_parts(
+    kind: str, params: dict[str, Any]
+) -> tuple[str, str | None, list[str], tuple[str, str], str] | None:
+    """``(lead, quote, items, (button label, path), why)`` for the plain notices, or ``None``."""
+    title = str(params.get("workshopTitle") or "your design workshop")
+    workshop_path = f"/design-workshops/{params.get('workshopId')}"
+    actor = str(params.get("actorName") or "").strip()
+    note = str(params.get("note") or "").strip() or None
+
+    if kind == REPORT_APPROVED:
+        who = actor or "The approving authority"
+        lead = f"{who} has approved “{title}”. It goes to the office next."
+        return lead, note, [], ("Open the workshop", workshop_path), _WHY_WORKSHOP
+    if kind == REPORT_HANDED_ON:
+        office = str(params.get("officeName") or "the office").strip()
+        lead = f"“{title}” has been approved and handed on to {office}."
+        if params.get("emailed"):
+            lead += " The report was e-mailed to the office."
+        return lead, note, [], ("Open the workshop", workshop_path), _WHY_WORKSHOP
+    if kind == WORKSHOP_ASSIGNED:
+        order = str(params.get("sanctionOrderNo") or "").strip()
+        if order:
+            lead = f"Sanction order {order} names you as a designer of “{title}”. Sign in as you usually do."
+        else:
+            who = actor or "An administrator"
+            lead = f"{who} has added you to “{title}”."
+        return lead, None, [], ("Open the workshop", workshop_path), _WHY_WORKSHOP
+    if kind == SETUP_REMINDER:
+        who = actor or "A ministry officer"
+        missing = [str(item) for item in (params.get("missing") or []) if str(item).strip()]
+        lead = f"{who} asks you to finish setting up “{title}”."
+        if missing:
+            lead += " Still needed on Workshop Setup:"
+        stage = str(params.get("stageKey") or "WORKSHOP_SETUP")
+        return lead, note, missing, ("Open Workshop Setup", f"{workshop_path}/stages/{stage}"), _WHY_WORKSHOP
+    if kind == ACCESS_REQUESTED:
+        who = str(params.get("requesterName") or "Someone").strip()
+        if params.get("scope") == "workshop":
+            lead = f"{who} asked to join “{title}”."
+            return lead, note, [], ("Review the request", "/workshop-access/manage"), _WHY_ACCESS
+        tier = str(params.get("tier") or "").strip().lower()
+        lead = f"{who} asked for {tier + ' ' if tier else ''}access to your data."
+        return lead, note, [], ("Review the request", "/sharing"), _WHY_ACCESS
+    if kind == ACCESS_DECIDED:
+        granted = params.get("decision") == "GRANTED"
+        decider = actor or ("An administrator" if params.get("scope") == "workshop" else "The owner")
+        if params.get("scope") == "workshop":
+            lead = (
+                f"{decider} let you into “{title}”." if granted else f"{decider} declined your request to join “{title}”."
+            )
+            target = (workshop_path, "Open the workshop") if granted else ("/workshop-access", "Open Workshop access")
+            return lead, note, [], (target[1], target[0]), _WHY_ACCESS
+        tier = str(params.get("tier") or "").strip().lower()
+        lead = (
+            f"{decider} granted you {tier + ' ' if tier else ''}access to their data."
+            if granted
+            else f"{decider} declined your request for access to their data."
+        )
+        return lead, note, [], ("Open Sharing", "/sharing"), _WHY_ACCESS
+    if kind == RECORD_COMMENT:
+        who = str(params.get("authorName") or "Someone").strip()
+        label = str(params.get("recordLabel") or "your record")
+        lead = f"{who} commented on {label}."
+        path = record_path(params.get("recordType"), params.get("recordId"))
+        return lead, str(params.get("body") or "").strip() or None, [], ("Open the record", path), _WHY_ACCESS
+    if kind == REPORT_HANDED_IN:
+        designer = str(params.get("designerName") or "Its designer").strip()
+        round_no = params.get("round")
+        if params.get("resubmission"):
+            lead = f"{designer} has resubmitted “{title}” with corrections (round {round_no})."
+        else:
+            lead = f"{designer} has handed in “{title}” for review."
+        path = _official_path(params)
+        return lead, None, [], ("Open the report", path), _WHY_HAND_IN
+    if kind == HAND_IN_DIGEST:
+        items = []
+        for item in params.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("workshopTitle") or "A design workshop")
+            what = f"resubmitted, round {item.get('round')}" if item.get("resubmission") else "handed in"
+            items.append(f"{name} — {what}")
+        lead = "Reports handed in for your review since the last digest:"
+        path = "/design-workshop-approvals" if params.get("approver") else "/design-workshop-inspections"
+        return lead, None, items, ("Open your queue", path), _WHY_HAND_IN
+    return None
+
+
+def _official_path(params: dict[str, Any]) -> str:
+    """Where an official opens a handed-in report: the approvals screen for the approving authority,
+    the inspection screen for an inspector."""
+    workshop_id = params.get("workshopId")
+    if params.get("approver"):
+        return f"/design-workshop-approvals/{workshop_id}"
+    return f"/design-workshop-inspections/{workshop_id}"

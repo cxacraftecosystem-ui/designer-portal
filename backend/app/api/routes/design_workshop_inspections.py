@@ -196,6 +196,22 @@ async def _workshop_or_404(workshop_id: str) -> Any:
 # --------------------------------------------------------------------------------------
 
 
+@router.get("/awaiting-count")
+async def awaiting_inspection_count(current_user: Any = Depends(require_inspector)) -> dict[str, int]:
+    """``{awaiting}``: how many of the workshops assigned to this inspector are handed in and waiting
+    for review (Pre-submission) — the badge on the nav entry, the desk row and the handset's queue
+    (2026-10-18). Scoped by the caller's own inspection rows, like the list."""
+    awaiting = await db.designworkshop.count(
+        where={
+            "deletedAt": None,
+            "submissionRound": {"gt": 0},
+            "status": "PRE_SUBMISSION",
+            "AND": [inspectable_by_clause(current_user.id)],
+        }
+    )
+    return {"awaiting": awaiting}
+
+
 @router.get("/eligible-inspectors")
 async def list_eligible_inspectors(
     search: str | None = Query(None, max_length=120),

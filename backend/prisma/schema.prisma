@@ -442,6 +442,7 @@ model User {
   accessRosterDecided  AccessRoster[] @relation("AccessRosterDecidedBy")
   dwStageEntriesCreated  DwStageEntry[]   @relation("DwStageEntryCreatedBy")
   dwReportExports        DwReportExport[] @relation("DwReportExportGeneratedBy")
+  dwReportDeliveriesSent DwReportDelivery[] @relation("DwReportDeliverySentBy")
   /// The four sides of an AI layer's life this account can be on. Three are SetNull (the row
   /// outlives the account with the pointer emptied) and the decision log is Restrict, because that
   /// one records a person taking responsibility for model output entering a report. See DwAiLayer.
@@ -778,6 +779,15 @@ model UserPreference {
   /// (`MAIL_FROM_ADDRESS`); a password link an administrator chose to e-mail is not a notification
   /// and is not governed by this.
   emailReviewNotes Boolean @default(true)
+  /// Opt-out (2026-10-18): e-mail me when a workshop I work on is approved or handed on, when I am
+  /// given a workshop, and when an officer reminds me what its setup still needs.
+  emailWorkshopUpdates Boolean @default(true)
+  /// Opt-out (2026-10-18): e-mail me about requests for access to my data or to a workshop, the
+  /// decision on a request I made, and comments on my records.
+  emailAccessNotices Boolean @default(true)
+  /// How an inspector or the approving authority hears that a report was handed in or resubmitted:
+  /// EACH (one e-mail per hand-in, the default), DAILY (one digest a day) or OFF.
+  emailHandInNotices String @default("EACH")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -2225,6 +2235,13 @@ model AppSetting {
   /// become the number on the settings screen.
   dwAiVerbDailyCap Int?
 
+  /// Where "Approve and hand on" e-mails the approved report (2026-10-18): the Development
+  /// Commissioner (Handicrafts) office's addresses, set by an administrator. Empty means not set, and
+  /// the approver hands the report on by hand as before. Never hard-coded.
+  dcOfficeEmails String[] @default([])
+  /// The office's name as the report's hand-on records it. NULL means the product's default office.
+  dcOfficeName   String?
+
   updatedAt          DateTime @updatedAt
   updatedById        String?
 }
@@ -2690,8 +2707,8 @@ model DesignWorkshop {
   /// `approvedRound` is the `submissionRound` the approval was given in. `handedOnTo` is the office
   /// the report went to, as recorded (stage 20's "Submitted to", else the Office of the Development
   /// Commissioner (Handicrafts)). `handedOnExportId` pins the exported file the office received, by
-  /// its `DwReportExport` row, when the authority chose one. Nothing is transmitted: there is no
-  /// mailer, and the hand-on records the forwarding rather than performing it.
+  /// its `DwReportExport` row, when the authority chose one. A plain hand-on records the forwarding;
+  /// "Approve and hand on" (2026-10-18) also e-mails the office a link (`DwReportDelivery`).
   ///
   /// `lastHandedInAt` is stamped on every entry into PRE_SUBMISSION and is what the approvals queue
   /// orders "waiting since" by — `reviewedAt` is cleared on that same entry and cannot.
@@ -2766,6 +2783,8 @@ model DesignWorkshop {
   workshop  Workshop?       @relation("DesignWorkshopWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
   entries   DwStageEntry[]
   exports   DwReportExport[]
+  /// The expiring download links an approved report was e-mailed to the office under.
+  reportDeliveries DwReportDelivery[] @relation("DwReportDeliveryWorkshop")
   /// What models produced from this workshop's material, never mixed into `entries`. A layer is
   /// annexure content and a suggestion; a stage entry is what the designer wrote. See DwAiLayer.
   aiLayers  DwAiLayer[]      @relation("DesignWorkshopAiLayers")
@@ -4217,6 +4236,7 @@ model DwReportExport {
   /// which exported document the office received, identified by its checksum. At most one in
   /// practice — a file belongs to one workshop — and a list only because the far side is the FK.
   handedOnWorkshops DesignWorkshop[] @relation("DesignWorkshopHandedOnExport")
+  deliveries        DwReportDelivery[] @relation("DwReportDeliveryExport")
 
   @@index([designWorkshopId, generatedAt])
   @@index([generatedById])
@@ -6834,12 +6854,47 @@ model EmailMessage {
   sentAt            DateTime?
   providerMessageId String?
   error             String?
+  /// What the message is about, for the screens that show whether it went (2026-10-18):
+  /// `sanction:<orderId>` for a sign-in link, `remind:<orderId>` for a setup reminder,
+  /// `delivery:<deliveryId>` for a report e-mailed to the office. NULL for everything else.
+  topic             String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
   /// The drain's read: queued rows that are due, oldest first.
   @@index([status, runAfter, createdAt])
   @@index([recipientId])
+  @@index([topic, createdAt])
+}
+
+/// ONE E-MAILED HAND-ON OF AN APPROVED REPORT (2026-10-18): the file, the addresses it went to and the
+/// expiring link that downloads it. Only the SHA-256 of the link's secret is kept. A re-issue revokes
+/// the previous row and writes a new one, so the latest unrevoked row is the live link.
+model DwReportDelivery {
+  id               String    @id @default(cuid())
+  designWorkshopId String
+  exportId         String?
+  /// The stored report file (S3 key) the link serves.
+  storageKey       String
+  fileName         String
+  tokenHash        String    @unique
+  toAddresses      String[]
+  officeName       String
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  firstOpenedAt    DateTime?
+  lastOpenedAt     DateTime?
+  openCount        Int       @default(0)
+  sentById         String?
+  createdAt        DateTime  @default(now())
+
+  designWorkshop DesignWorkshop  @relation("DwReportDeliveryWorkshop", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+  export         DwReportExport? @relation("DwReportDeliveryExport", fields: [exportId], references: [id], onDelete: SetNull)
+  sentBy         User?           @relation("DwReportDeliverySentBy", fields: [sentById], references: [id], onDelete: SetNull)
+
+  @@index([designWorkshopId, createdAt])
+  @@index([exportId])
+  @@index([sentById])
 }
 
 /// The answer to one create, kept for 30 days under the `Idempotency-Key` header its client sent.
