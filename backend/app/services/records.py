@@ -1225,7 +1225,15 @@ async def resolve_craft_id(
                 "professor or an admin to add it."
             ),
         )
-    created = await db.craft.create(data={"name": craft_name, "createdById": current_user.id})
+    from app.services import cross_portal_codes
+
+    created = await db.craft.create(
+        data={
+            "name": craft_name,
+            "createdById": current_user.id,
+            "craftCode": await cross_portal_codes.code_for_new_craft(db, craft_name),
+        }
+    )
     data["craftId"] = created.id
     return data
 

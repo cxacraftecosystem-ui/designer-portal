@@ -4,12 +4,15 @@ from app.api.routes import (
     aadhaar,
     access,
     ai_keys,
+    answer_drafts,
     analytics,
     annual_plan,
     app_release,
     artisans,
     asr_models,
     auth,
+    craft_codes,
+    cross_portal,
     crafts,
     dashboard,
     data_access,
@@ -78,6 +81,8 @@ api_router.include_router(access.router)
 api_router.include_router(annual_plan.router)
 api_router.include_router(artisans.router)
 api_router.include_router(crafts.router)
+api_router.include_router(craft_codes.router)
+api_router.include_router(cross_portal.router)
 api_router.include_router(workshops.router)
 # The "Type of workshop" vocabulary — /api/workshop-types. Mounted immediately under `workshops`
 # because the two are read together on every record form: this list fills the FIRST of the form's two
@@ -100,6 +105,8 @@ api_router.include_router(products.router)
 api_router.include_router(processes.router)
 api_router.include_router(tools.router)
 api_router.include_router(media.router)
+# Before ``questionnaire`` so its fixed paths are matched first (C28; nothing collides today).
+api_router.include_router(answer_drafts.router)
 api_router.include_router(questionnaire.router)
 # Custom questionnaires — /api/questionnaires (PLURAL), a form a designer authored themselves, as
 # distinct from the one global artisan questionnaire on the singular prefix above. Mounted after it

@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from app.core.db import connect_db, db, disconnect_db
+from app.services import cross_portal_codes
 
 QUESTIONNAIRE_PATH = Path(__file__).resolve().parents[1] / "app" / "data" / "questionnaire_questions.json"
 
@@ -57,7 +58,9 @@ async def main() -> None:
                         },
                     )
                 count += 1
-        print(f"Seeded questionnaire questions: {count}")
+        # The shared question codes (C26), derived from section and wording, for every row.
+        coded = await cross_portal_codes.reconcile_question_codes(db)
+        print(f"Seeded questionnaire questions: {count} (question codes changed: {coded})")
     finally:
         await disconnect_db()
 

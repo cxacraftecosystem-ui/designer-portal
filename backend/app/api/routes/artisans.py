@@ -317,6 +317,26 @@ def _mask_artisan_identity(payload: Any, user: Any, artisan: Any) -> Any:
     return payload
 
 
+PEHCHAN_PAIR_DETAIL = (
+    "Enter the Artisan Pehchan Card number, or set the card to 'No' if the artisan does not hold one."
+)
+
+
+def assert_pehchan_pair(artisan: Any, data: dict[str, Any], *, detail: str = PEHCHAN_PAIR_DETAIL) -> None:
+    """422 when an edit would leave "card available = Yes" with no number (see ``update_artisan``).
+
+    Shared with the Field Repository refresh (``routes/cross_portal.refresh_artisan``), which writes
+    the same two columns and must be held to the same pair.
+    """
+    answered_yes = data.get("pehchanCardAvailable") is True
+    clears_number = "pehchanCardNumber" in data and not data["pehchanCardNumber"]
+    still_yes = data.get("pehchanCardAvailable", artisan.pehchanCardAvailable) is True
+    if answered_yes or (clears_number and still_yes):
+        number = data.get("pehchanCardNumber", artisan.pehchanCardNumber)
+        if not number:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+
+
 async def _guard_identity_conflicts(
     data: dict[str, Any], exclude_id: str | None = None, aadhaar: str | None = None
 ) -> None:
@@ -641,19 +661,7 @@ async def update_artisan(
         # A PATCH touching neither key is deliberately left alone: rows that predate this feature
         # carry the column's DEFAULT of Yes with no number, and an unrelated edit to one must not be
         # refused.
-        answered_yes = data.get("pehchanCardAvailable") is True
-        clears_number = "pehchanCardNumber" in data and not data["pehchanCardNumber"]
-        still_yes = data.get("pehchanCardAvailable", artisan.pehchanCardAvailable) is True
-        if answered_yes or (clears_number and still_yes):
-            number = data.get("pehchanCardNumber", artisan.pehchanCardNumber)
-            if not number:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        "Enter the Artisan Pehchan Card number, or set the card to 'No' if the "
-                        "artisan does not hold one."
-                    ),
-                )
+        assert_pehchan_pair(artisan, data)
         await _guard_identity_conflicts(data, exclude_id=artisan_id, aadhaar=aadhaar)
         try:
             updated = await tx.artisan.update(where={"id": artisan_id}, data=data, include=INCLUDE)
