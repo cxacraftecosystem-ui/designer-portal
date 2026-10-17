@@ -350,3 +350,22 @@ hardware here; every claim in `DwQrDecodeTest` and `DwQrLiveFrameTest` is about 
 both files say so. **What a build CAN still check, and does:** the crop arithmetic, the row-stride
 handling, both reticle maps, the acceptance test, and a full round trip from this app's own encoder
 through the ZXing reference decoder. None of that covers ML Kit, and no test pretends it does.
+
+## Artisan QR cards, 2026-10-21
+
+An artisan's card no longer carries `DPW1:A:<id>`, which printed the record id in clear. It carries
+`CXA1:<issuer><keyVersion>:<code>:<tag>` — a random code and a tag only the issuing server can make —
+with the short code `D-XXXXX-XXXXX-XX` printed under it (`data/ArtisanCardCode.kt`, held to
+`shared/artisan-card-vectors.json` by `ArtisanCardCodeTest`). The scanner is unchanged: ML Kit live,
+ZXing for pictures, and the same 26 mm box, which a 35-character alphanumeric payload at level Q fills
+as a version 3 symbol (`DwQrLiveFrameTest` round-trips one through the reference decoder).
+
+Every reader tries a card first and DPW1 second, so old printed DPW1:A cards still open their artisan;
+nothing prints them now. A card is matched against the artisan register this phone cached (each
+artisan's own code, and the Field Repository code its link holds) before the server is asked, so it
+resolves with no signal. Offline and unmatched, a stage's artisan box keeps `card:<shortCode>` and the
+workshop sync resolves it before the stage is sent (`data/PendingCards.kt`); a card the server cannot
+match holds the stage with the server's sentence. The search header's QR button, the workshop form's
+linked-artisan picker and the stage's artisan reference all open `ui/ArtisanCardScanSheet.kt`. A
+roster row whose artisan has no card yet prints "Sync this artisan first." instead of a code.
+

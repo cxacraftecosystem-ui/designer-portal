@@ -340,6 +340,21 @@ interface WorkshopRepositoryApi {
     @GET("artisans/{id}")
     suspend fun artisan(@Path("id") id: String): ArtisanDetailDto
 
+    /** The artisan's QR card, issued on first read (`routes/artisan_cards.py`). 404 while cards are off. */
+    @GET("artisans/{id}/card")
+    suspend fun artisanCard(@Path("id") id: String, @Query("source") source: String = "ANDROID"): ArtisanCardDto
+
+    @POST("artisans/{id}/card/reissue")
+    suspend fun reissueArtisanCard(@Path("id") id: String, @Body body: ArtisanCardReissueRequest): ArtisanCardDto
+
+    /** Whether cards are on here (`{"enabled":true,"issuer":"D"}`); off hides every card control. */
+    @GET("artisan-cards/status")
+    suspend fun artisanCardStatus(): ArtisanCardStatusDto
+
+    /** A scanned QR payload or a typed short code → the artisan it names (FOUND, REPLACED or REMOTE). */
+    @POST("artisan-cards/resolve")
+    suspend fun resolveArtisanCard(@Body body: ResolveCardRequest): ResolveCardDto
+
     /**
      * A JSON BODY AND NOT [ArtisanCreateRequest], SO THAT A CLEARED BOX CAN BE SENT AS `null`.
      *

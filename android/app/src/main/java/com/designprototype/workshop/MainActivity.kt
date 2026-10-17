@@ -631,6 +631,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import com.designprototype.workshop.data.ArtisanDto
+import com.designprototype.workshop.data.artisanCardData
+import com.designprototype.workshop.data.withCardData
+import com.designprototype.workshop.ui.ArtisanCardScanButton
+import com.designprototype.workshop.ui.ArtisanCardScanSheet
 import com.designprototype.workshop.data.ArtisanAnswerDto
 import com.designprototype.workshop.data.ArtisanDetailDto
 import com.designprototype.workshop.data.ArtisanQuestionnaireDto
@@ -2962,11 +2966,17 @@ internal fun optionToCraft(o: DwReferenceOption): CraftDto? =
  * picker offers).
  */
 internal fun artisanToOption(a: ArtisanDto): DwReferenceOption =
-    DwReferenceOption(id = a.id, label = a.name, hint = a.place, filterValue = a.craftId.orEmpty())
+    // The QR card rides in `data` (`artisanCardData`), so a scanned card matches this cache offline.
+    DwReferenceOption(id = a.id, label = a.name, hint = a.place, filterValue = a.craftId.orEmpty(), data = artisanCardData(a))
 
 internal fun optionToArtisan(o: DwReferenceOption): ArtisanDto? =
     o.id.takeIf { it.isNotBlank() }
-        ?.let { ArtisanDto(id = it, name = o.label, place = o.hint, status = "", craftId = o.filterValue.ifBlank { null }) }
+        ?.let {
+            withCardData(
+                ArtisanDto(id = it, name = o.label, place = o.hint, status = "", craftId = o.filterValue.ifBlank { null }),
+                o.data,
+            )
+        }
 
 /**
  * A [ProductDetailDto] reduced the same way. `filterValue` carries `artisanId` — the parent
@@ -3300,6 +3310,12 @@ private fun HomeScreen(
     val reducedMotion = preferences.reducedMotion
     // The search panel the page header opens. See AppSearch.kt.
     var searchOpen by remember { mutableStateOf(false) }
+    // The artisan QR card scanner the header's QR button opens (ui/ArtisanCardScanSheet.kt). The
+    // button is drawn only while the server says cards are on (remembered for offline launches).
+    var cardScanOpen by remember { mutableStateOf(false) }
+    var artisanCardsOn by remember { mutableStateOf(false) }
+    val cardStatusContext = LocalContext.current
+    LaunchedEffect(Unit) { artisanCardsOn = repository.artisanCardsEnabled(cardStatusContext) }
     // Written as a string (success); errors go through showError. See ui/AppMessage.kt.
     val messageState = remember { AppMessageState() }
     var message by messageState
@@ -5237,7 +5253,22 @@ private fun HomeScreen(
                         appName = APP_SEARCH_NAME,
                         logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 10.dp) },
                         onOpenSearch = { searchOpen = true },
-                        elevated = elevated
+                        elevated = elevated,
+                        onScanCard = if (artisanCardsOn) ({ cardScanOpen = true }) else null
+                    )
+                }
+                if (cardScanOpen) {
+                    ArtisanCardScanSheet(
+                        repository = repository,
+                        onDismiss = { cardScanOpen = false },
+                        onResolved = { artisanId, _ ->
+                            cardScanOpen = false
+                            openSearchRecord(SearchRecordTypes.ARTISAN, artisanId)
+                        },
+                        onOpenReplaced = { artisanId ->
+                            cardScanOpen = false
+                            openSearchRecord(SearchRecordTypes.ARTISAN, artisanId)
+                        }
                     )
                 }
                 // Over the page, under nothing: the page keeps its scroll and any half-filled form.
@@ -9483,10 +9514,36 @@ private fun ArtisanMultiSelectField(
     label: String,
     artisans: List<ArtisanDto>,
     selectedIds: Set<String>,
+    /**
+     * Scan an artisan QR card to tick its artisan. Drawn only when given and when the register
+     * carries cards (it does only while cards are on). The register is matched first, offline.
+     */
+    repository: WorkshopRepository? = null,
     onToggle: (String) -> Unit
 ) {
+    var scanning by remember { mutableStateOf(false) }
+    var scanNote by remember { mutableStateOf<String?>(null) }
+    val cardsOn = repository != null && artisans.any { it.card != null }
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("$label (${selectedIds.size} selected)", color = Muted, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("$label (${selectedIds.size} selected)", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            if (cardsOn) ArtisanCardScanButton(onClick = { scanNote = null; scanning = true })
+        }
+        scanNote?.let { Text(it, color = Muted, fontSize = 12.sp) }
+        if (scanning && repository != null) {
+            ArtisanCardScanSheet(
+                repository = repository,
+                onDismiss = { scanning = false },
+                onResolved = { artisanId, name ->
+                    scanning = false
+                    scanNote = when {
+                        artisans.none { it.id == artisanId } -> "$name isn't in this list."
+                        artisanId in selectedIds -> "$name is already selected."
+                        else -> { onToggle(artisanId); "$name selected." }
+                    }
+                }
+            )
+        }
         if (artisans.isEmpty()) {
             Text("No artisans yet. Create one first.", color = Muted, fontSize = 12.sp)
         } else {
@@ -12296,7 +12353,8 @@ private fun WorkshopForm(
         ArtisanMultiSelectField(
             label = "Linked artisans",
             artisans = artisans,
-            selectedIds = selectedArtisans
+            selectedIds = selectedArtisans,
+            repository = repository
         ) { id ->
             selectedArtisans = if (selectedArtisans.contains(id)) selectedArtisans - id else selectedArtisans + id
         }

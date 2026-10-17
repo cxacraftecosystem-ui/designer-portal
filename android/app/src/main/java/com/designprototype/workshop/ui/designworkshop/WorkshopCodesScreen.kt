@@ -80,6 +80,8 @@ import com.designprototype.workshop.data.findWorkshopCodeInDraft
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.readWorkshopScan
 import com.designprototype.workshop.data.renderWorkshopCard
+import com.designprototype.workshop.data.ArtisanDto
+import com.designprototype.workshop.loadArtisanRegister
 import com.designprototype.workshop.data.unresolvedWorkshopCodeMessage
 import com.designprototype.workshop.data.workshopCardRows
 import com.designprototype.workshop.data.workshopCardSource
@@ -224,6 +226,14 @@ fun WorkshopCodesScreen(
     var kind by remember(workshopId) { mutableStateOf(DwWorkshopRecordType.PROTOTYPE) }
     var exporting by remember(workshopId) { mutableStateOf(false) }
     var exported by remember(workshopId) { mutableStateOf<SheetExport?>(null) }
+    // The artisan register with each artisan's QR card (cached first, then refreshed), which is
+    // where an artisan card's token and face come from.
+    var artisanRegister by remember { mutableStateOf<Map<String, ArtisanDto>>(emptyMap()) }
+    LaunchedEffect(Unit) {
+        runCatching {
+            loadArtisanRegister(appContext, repository) { list -> artisanRegister = list.associateBy { it.id } }
+        }
+    }
 
     LaunchedEffect(workshopId) {
         loading = true
@@ -262,10 +272,10 @@ fun WorkshopCodesScreen(
      * of each is tens of milliseconds on the cheapest handset in the room, and it would otherwise be
      * paid on every keystroke in the lookup box below.
      */
-    val cards: List<DwCardRender> = remember(source, draft, remoteStages, kind) {
+    val cards: List<DwCardRender> = remember(source, draft, remoteStages, kind, artisanRegister) {
         val current = source ?: return@remember emptyList()
         val rows = workshopCardRows(current, draft, remoteStages)
-        workshopCardSpecs(kind, current, rows).map { renderWorkshopCard(it) }
+        workshopCardSpecs(kind, current, rows, artisanRegister).map { renderWorkshopCard(it) }
     }
 
     /**

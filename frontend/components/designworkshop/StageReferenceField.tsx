@@ -67,6 +67,7 @@ import {
 } from "@/components/designworkshop/InlineRecordDialog";
 import { useLinkedWorkshopId } from "@/components/designworkshop/LinkedWorkshop";
 import type { ScanResolution } from "@/components/designworkshop/WorkshopCodeScanner";
+import { resolveCardForScan, type CardScanOutcome } from "@/lib/artisanCardScan";
 import type { InlineHostSeed } from "@/components/forms/inlineRecordHost";
 import {
   geoValue,
@@ -713,6 +714,11 @@ function article(noun: string): string {
  */
 export function pickerTakesScans(field: DwField): boolean {
   return Boolean(field.refModel && REF_MODEL_TYPE[field.refModel]);
+}
+
+/** An artisan card scanned into a box that holds something else. */
+async function refuseCardHere(): Promise<CardScanOutcome> {
+  return { ok: false, message: "That's an artisan card. Scan this record's own tag." };
 }
 
 /**
@@ -1769,6 +1775,35 @@ export function StageReferenceSelect({
     if (decision.notice) setNotice({ tone: decision.commit ? "done" : "warn", text: decision.notice });
   }, []);
 
+  /**
+   * AN ARTISAN QR CARD resolves to an artisan id on the server (`POST /artisan-cards/resolve`), then
+   * goes through `resolveScan` and `commitScan` exactly as a DPW1 artisan card does, so the cascade,
+   * the scope and the unsaved-work guard all still apply.
+   */
+  const cardScan = useRef<{ ref: WorkshopCodeRef; resolution: ScanResolution } | null>(null);
+  const resolveCardScan = useCallback(
+    async (raw: string): Promise<CardScanOutcome> => {
+      cardScan.current = null;
+      const card = await resolveCardForScan(raw);
+      if (!card.ok) return card;
+      const ref: WorkshopCodeRef = { recordType: "artisan", id: card.artisanId };
+      const resolution = await resolveScan(ref);
+      cardScan.current = { ref, resolution };
+      if (!resolution.ok) return { ok: false, message: resolution.message };
+      // No "Open" link here: the picker takes the artisan, and leaving the stage is not the next step.
+      return { ...card, label: resolution.label, detail: resolution.detail ?? card.detail, href: "", hrefLabel: "" };
+    },
+    [resolveScan]
+  );
+  const commitCardScan = useCallback(
+    (outcome: CardScanOutcome) => {
+      const held = cardScan.current;
+      cardScan.current = null;
+      if (held && outcome.ok) commitScan(held.ref, held.resolution);
+    },
+    [commitScan]
+  );
+
   const emptyLine = useMemo(() => {
     if (awaitingCascade) {
       return `Answer “${cascadeLabel}” first.`;
@@ -2039,6 +2074,9 @@ export function StageReferenceSelect({
           <WorkshopCodeScanner
             resolve={resolveScan}
             onResolved={commitScan}
+            {...(field.refModel === "Artisan"
+              ? { resolveCard: resolveCardScan, onCardResolved: commitCardScan }
+              : { resolveCard: refuseCardHere })}
             description={`Scan ${article(pickerNoun(field))} ${pickerNoun(field)}'s card or tag.`}
           />
         </div>

@@ -122,14 +122,24 @@ export function saveBlobToDisk(blob: Blob, fileName: string): void {
  *   route in this app does send one; the fallback is what stops a missing header producing a file
  *   called "download".
  */
-export async function fetchFile(path: string, fallbackName: string): Promise<FetchedFile> {
+export async function fetchFile(
+  path: string,
+  fallbackName: string,
+  /** A POST with a JSON body, for a file built from a request (the artisan card sheet). */
+  post?: { json: unknown }
+): Promise<FetchedFile> {
   assertApiConfigured();
 
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (post) headers.set("Content-Type", "application/json");
 
-  const response = await fetch(`${API_BASE}/api${path}`, { headers, cache: "no-store" });
+  const response = await fetch(`${API_BASE}/api${path}`, {
+    headers,
+    cache: "no-store",
+    ...(post ? { method: "POST", body: JSON.stringify(post.json) } : {})
+  });
   if (!response.ok) {
     const contentType = response.headers.get("content-type") ?? "";
     const payload = contentType.includes("application/json")

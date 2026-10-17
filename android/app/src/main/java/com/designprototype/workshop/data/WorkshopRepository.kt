@@ -5676,6 +5676,64 @@ class WorkshopRepository(
 
     suspend fun artisan(id: String): ArtisanDetailDto = api.artisan(id)
 
+    suspend fun artisanCard(id: String): ArtisanCardDto = api.artisanCard(id)
+
+    /**
+     * Whether artisan cards are on, asked once per launch and remembered for offline launches. A
+     * failure that is not "no signal" reads as off; no signal reads the last answer.
+     */
+    suspend fun artisanCardsEnabled(context: Context): Boolean {
+        val prefs = context.getSharedPreferences("artisan_cards", Context.MODE_PRIVATE)
+        return try {
+            val enabled = api.artisanCardStatus().enabled
+            prefs.edit().putBoolean("enabled", enabled).apply()
+            enabled
+        } catch (error: IOException) {
+            prefs.getBoolean("enabled", false)
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            if (error is HttpException && error.code() == 401) prefs.getBoolean("enabled", false) else false
+        }
+    }
+
+    suspend fun reissueArtisanCard(id: String, reason: String): ArtisanCardDto =
+        api.reissueArtisanCard(id, ArtisanCardReissueRequest(reason))
+
+    /**
+     * A scanned or typed artisan card, to the artisan it names.
+     *
+     * THE CACHED REGISTER ANSWERS FIRST AND ANSWERS OFFLINE ([register], the rows `loadArtisanRegister`
+     * cached with their card codes): a `D` card by the artisan's own code, an `F` card by the Field
+     * Repository code its link holds. Anything else goes to the server. With no answer from the
+     * server because there is no signal, the scan is [CardResolution.Pending]: a picker keeps
+     * `card:<shortCode>` and the sync resolves it before the entry is sent.
+     */
+    suspend fun resolveArtisanCard(input: String, register: List<ArtisanDto>): CardResolution {
+        val parsed = when (val result = ArtisanCardCode.parse(input)) {
+            is ArtisanCardCode.Result.Ok -> result.card
+            is ArtisanCardCode.Result.Refused -> return CardResolution.Refused(ArtisanCardCode.CHECK_MESSAGE)
+        }
+        matchCardInRegister(parsed, register)?.let { row ->
+            return CardResolution.Found(row.id, row.name, row.place.ifBlank { null })
+        }
+        return try {
+            val answer = api.resolveArtisanCard(ResolveCardRequest(input.trim()))
+            when (answer.status) {
+                "FOUND" -> answer.artisan?.let {
+                    CardResolution.Found(it.id, it.name, listOfNotNull(it.craft, it.cluster ?: it.place).joinToString(" · ").ifBlank { null })
+                } ?: CardResolution.Refused(CARD_NO_MATCH)
+                "REPLACED" -> CardResolution.Replaced(answer.artisanId.orEmpty())
+                "REMOTE" -> CardResolution.Remote
+                else -> CardResolution.Refused(CARD_NO_MATCH)
+            }
+        } catch (error: HttpException) {
+            if (isTransient(error) && error.code() != 429) CardResolution.Pending(parsed)
+            else CardResolution.Refused(error.serverDetail() ?: CARD_NO_MATCH)
+        } catch (error: IOException) {
+            CardResolution.Pending(parsed)
+        }
+    }
+
     /**
      * Is this Aadhaar number already on an artisan? The form's pre-flight duplicate check, run while
      * the researcher is still typing so a duplicate surfaces before the whole form is filled in rather

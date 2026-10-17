@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Boxes, ClipboardList, Hammer, Users } from "lucide-react";
 
+import { ArtisanCardPanel } from "@/components/artisans/ArtisanCardPanel";
 import { ArtisanQuestionnairePanel } from "@/components/ArtisanQuestionnairePanel";
 import { useAuth } from "@/components/AuthProvider";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
@@ -45,6 +46,8 @@ export default function ArtisanViewPage() {
       {(artisan) => (
         <>
           <RecordFieldList rows={artisanFields(artisan)} />
+          {/* The printable QR card. Draws nothing while cards are off here. */}
+          <ArtisanCardPanel artisanId={artisan.id} canReissue={creator} />
           <section className="grid gap-3 md:grid-cols-3" aria-label="Make an entry for this artisan">
             {[
               // Opening a tool or product record is `require_record_creator`; an interview is open to

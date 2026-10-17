@@ -911,12 +911,55 @@ model CrossPortalArtisanLink {
   consentRecordedAt    DateTime  @default(now())
   remoteAcknowledgedAt DateTime?
   lastRefreshedAt      DateTime?
+  /// The Field Repository's live card code for the linked artisan (``ArtisanCard.code`` there),
+  /// pulled at link and refresh, so a scanned F card resolves here without asking that portal.
+  remoteCardCode       String?   @unique
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
   artisan Artisan @relation(fields: [artisanId], references: [id], onDelete: Cascade)
 
   @@index([remoteArtisanId])
+}
+
+/// A printed artisan QR card (services/artisan_card.py). ``code`` is 10 random Crockford characters,
+/// never derived from the artisan; the QR carries it with an HMAC tag and the short code under the
+/// QR carries it with a check. At most ONE live card per artisan (``revokedAt`` null), held by the
+/// partial unique index ``ArtisanCard_one_live_per_artisan`` in the migration. A reissue revokes
+/// the live card (``revokedReason`` LOST | DAMAGED | OTHER) and issues a new one; the revoked row
+/// stays so the old card answers "replaced".
+model ArtisanCard {
+  id            String    @id @default(cuid())
+  artisanId     String
+  code          String    @unique
+  keyVersion    Int       @default(1)
+  issuedAt      DateTime  @default(now())
+  issuedById    String?
+  revokedAt     DateTime?
+  revokedById   String?
+  revokedReason String?
+
+  artisan Artisan @relation(fields: [artisanId], references: [id], onDelete: Cascade)
+
+  @@index([artisanId])
+}
+
+/// One row per card issue, reissue, print (``count`` cards in a bulk print) and lookup, hit or miss.
+/// Misses are also the per-account lookup limit's counter. Never a name or an identity number.
+model ArtisanCardEvent {
+  id        String   @id @default(cuid())
+  artisanId String?
+  cardCode  String?
+  /// ISSUE | REISSUE | PRINT | RESOLVE | RESOLVE_MISS | PEER_RESOLVE
+  action    String
+  /// WEB | ANDROID | PEER
+  source    String
+  userId    String?
+  count     Int      @default(1)
+  createdAt DateTime @default(now())
+
+  @@index([userId, action, createdAt])
+  @@index([artisanId, createdAt])
 }
 
 /// C27: one row per Field Repository lookup, link, refresh and unlink made from this portal — who
@@ -1279,6 +1322,9 @@ model Artisan {
   questionnaireInterviews QuestionnaireInterviewArtisan[]
   sectionStatuses QuestionnaireSectionStatus[]
   crossPortalLink CrossPortalArtisanLink?
+  /// Printed QR cards (``ArtisanCard``): one live at a time, revoked ones kept so an old card says
+  /// "replaced" instead of "unknown".
+  cards     ArtisanCard[]
 
   // `name` earns its index by being the sort key of the artisan pickers, not by the search box:
   // every text search in this app is a case-insensitive `contains`, which Postgres runs as ILIKE

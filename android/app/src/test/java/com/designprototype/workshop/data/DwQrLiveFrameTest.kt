@@ -566,6 +566,30 @@ class DwQrLiveFrameTest {
         assertEquals(artisanCode, decoder.decode(artisanFrame, width, height))
     }
 
+    /**
+     * AN ARTISAN QR CARD READS BACK THROUGH THE SAME CHAIN. The card's payload is `CXA1:…` (the
+     * server-signed token, no record id), drawn by this app's encoder on the printed sheet and read
+     * by the ZXing reference decoder exactly as a DPW1 code is; [ArtisanCardCode] then parses it.
+     */
+    @Test
+    fun `a CXA1 artisan card round-trips through the encoder and the reference decoder`() {
+        val decoder = DwQrLiveDecoder()
+        val width = 640
+        val height = 480
+        val rowStride = width + 12
+        val token = "CXA1:D1:7K3QM9XA2F:QQPZR8FHGZPJXHBM"
+        val symbol = DwQrEncode.encode(token, DwQrEccLevel.Q)
+        assertEquals("35 alphanumeric characters at Q are a version 3 symbol", 3, symbol.version)
+        val plane = planeWithSymbol(symbol, width, height, rowStride, scale = 6)
+        val out = ByteArray(width * height)
+        assertTrue(dwQrCompactLuminance(plane, rowStride, 1, DwQrCrop(0, 0, width, height), out))
+        val read = decoder.decode(out, width, height)
+        assertEquals(token, read)
+        val parsed = ArtisanCardCode.parse(read)
+        assertTrue(parsed is ArtisanCardCode.Result.Ok)
+        assertEquals("7K3QM9XA2F", (parsed as ArtisanCardCode.Result.Ok).card.code)
+    }
+
     /** A frame smaller than it claims to be is a null, not an exception. */
     @Test
     fun `the decoder refuses a frame smaller than its own dimensions`() {

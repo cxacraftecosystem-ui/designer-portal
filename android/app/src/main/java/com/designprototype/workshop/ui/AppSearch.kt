@@ -255,7 +255,12 @@ fun AppSearchHeader(
     onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier,
     /** True while it floats over content mid-page, where a shadow separates it from the page. */
-    elevated: Boolean = false
+    elevated: Boolean = false,
+    /**
+     * Scan an artisan QR card. Drawn as a 48dp QR button at the leading edge, in the slot the
+     * lock-up's padding already leaves there; null draws nothing (cards off, or no artisans here).
+     */
+    onScanCard: (() -> Unit)? = null
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -292,6 +297,9 @@ fun AppSearchHeader(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+            if (onScanCard != null) {
+                ArtisanCardScanButton(onClick = onScanCard, modifier = Modifier.align(Alignment.CenterStart))
             }
         }
     }

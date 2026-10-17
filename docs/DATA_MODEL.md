@@ -938,3 +938,25 @@ object has read back from the archive bucket (`AADHAAR_LOG_ARCHIVE_BUCKET`, the 
 default); `deleteAfter` is when the current object is removed (its versions follow about 90 days
 later, [AADHAAR.md](AADHAAR.md) §3).
 **`AadhaarLegalHold`** suspends both for one record. [AADHAAR.md](AADHAAR.md) §3.
+
+## Artisan QR cards — added 2026-10-21
+
+**`ArtisanCard`** is a printed card: `code` is 10 random Crockford characters (`@unique`, never derived
+from the artisan), `keyVersion` the version of `ARTISAN_CARD_KEY` that signed its QR, and
+`revokedAt` / `revokedById` / `revokedReason` (`LOST`, `DAMAGED`, `OTHER`) mark a reissued card. At
+most one live card per artisan: the partial unique index `ArtisanCard_one_live_per_artisan` (raw SQL
+in `20261021100000_artisan_cards`, which Prisma cannot express) holds it, and it is also what makes
+two first reads racing each other issue one card. A revoked row stays, so the old card answers
+"replaced" rather than "unknown". The QR carries `CXA1:<issuer><keyVersion>:<code>:<tag>` and the
+short code under it `D-XXXXX-XXXXX-XX`; neither holds a record id or anything personal. The token
+rules are `backend/app/services/artisan_card.py`, byte-identical in the Field Repository.
+
+**`ArtisanCardEvent`** is one row per issue, reissue, print (`count` cards in a bulk print) and lookup,
+hit or miss (`RESOLVE_MISS` is also the per-account miss limit's counter). It holds who, which artisan
+and which card code, never a name or an identity number.
+
+**`CrossPortalArtisanLink.remoteCardCode`** (nullable, `@unique`) is the Field Repository's live card
+code for the linked artisan, pulled at link and refresh, so a scanned `F` card resolves here with no
+network call. Cards are issued by `backend/scripts/backfill_artisan_cards.py` at deploy and lazily on
+first read. There is no cluster column: the card face derives it from the workshop's `clusterName`,
+then `Location.village`, `Location.district`, then `Artisan.place`.

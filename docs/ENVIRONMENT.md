@@ -488,6 +488,25 @@ box `.env`; none is created by this repository.
 | `AADHAAR_FINGERPRINT_KEY` | Yes (see above) | — | **Yes** | Also what the link compares Aadhaar by: the code is the stored fingerprint. Must be the same on both servers. It cannot be rotated: every stored fingerprint depends on it. |
 | `FIELD_REPOSITORY_API_URL` | With the flag on | — | No | The documentation portal's API base up to `/api`, e.g. `https://<docs-api-host>/api`. The designer portal calls it; it never calls back. |
 
+### Artisan QR cards
+
+A printable card per artisan (ID-1 or A6 PDF, or a sheet for a workshop) with a QR that holds a signed,
+opaque token and a short code a person can type. On by default, but **nothing is drawn or served
+until `ARTISAN_CARD_KEY` is set**: without it every card route answers 404 and
+`/api/artisan-cards/status` says `enabled:false`, which hides every card control on both clients.
+Resolving a Field Repository card also needs the cross-portal settings above. Secrets go to the GitHub
+Actions secrets, the box `.env` and an SSM SecureString backup. After the release is live, issue
+cards for existing artisans with `python -m scripts.backfill_artisan_cards --apply` from `backend/`.
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `ARTISAN_CARDS_ENABLED` | No | `true` | No | The switch. Off, or no key: every card route answers 404. |
+| `ARTISAN_CARD_KEY` | To turn cards on | — | **Yes** | 32 random bytes, base64 (32+ characters). Signs the QR's tag. **A different value on each portal**; the other portal never checks this portal's cards. Losing it stops QR tags verifying; typed codes still resolve. |
+| `ARTISAN_CARD_KEY_VERSION` | No | `1` | No | 1–9. Bump on rotation; new cards are signed under the new key. |
+| `ARTISAN_CARD_KEY_PREVIOUS` | No | — | **Yes** | The key before a rotation, so cards signed under `ARTISAN_CARD_KEY_VERSION - 1` still verify. |
+| `ARTISAN_CARD_RESOLVE_MISS_LIMIT` | No | `20` | No | Card lookups that matched nobody, per account per 10 minutes, before the next is a 429. |
+| `ARTISAN_CARD_ISSUER` | No | `D` | No | The letter this portal's cards carry (`F` on the Field Repository). Never change it. |
+
 ### AI-drafted interview answers (C28) — shipped OFF
 
 | Variable | Required | Default | Secret | Notes |

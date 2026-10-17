@@ -45,7 +45,12 @@ from app.core.deps import (
     may_edit_lower_ranked_record,
     require_record_creator,
 )
-from app.services import aadhaar_fingerprint, cross_portal
+from app.services import (
+    aadhaar_fingerprint,
+    artisan_card,
+    artisan_card_store as card_store,
+    cross_portal,
+)
 from app.services.access import effective_tier_for_record, guard_record_edit
 from app.services.artisan_identity import normalize_pehchan, validate_aadhaar
 from app.services.cross_portal_client import PeerUnavailable, peer_call
@@ -64,6 +69,8 @@ CONSENT_NEEDED = "Confirm the artisan agreed to share their details between the 
 CONSENT_WITHDRAWN = "The artisan no longer shares their details from the Field Repository."
 NO_LONGER_SHARED = "The Field Repository no longer shares this artisan."
 TOO_MANY = "Too many lookups in the last hour. Try again later, or fill the form yourself."
+CARD_BAD_CHECK = "Check the code. One character is wrong."
+CARD_OWN = "That card is from this portal. Scan the Field Repository card."
 REFRESH_PEHCHAN = (
     "The Field Repository says this artisan holds a Pehchan card but has no number for it. "
     "Ask them to add it there, then refresh."
@@ -132,6 +139,9 @@ class LinkIn(BaseModel):
     consent: bool = False
     #: What the lookup on the form returned. When given, the server's own lookup must agree.
     expectedRemoteArtisanId: str | None = Field(default=None, max_length=64)
+    #: A Field Repository card scanned or typed on the form (``services/artisan_card``). When given,
+    #: the link is made from the card instead of the stored numbers, and ``matchedBy`` is CARD.
+    cardInput: str | None = Field(default=None, max_length=64)
 
 
 def _peer_query(aadhaar_code: str | None, pehchan: str | None) -> dict[str, Any]:
@@ -249,25 +259,134 @@ def _link_payload(link: Any | None) -> dict[str, Any]:
         "consentRecordedAt": link.consentRecordedAt,
         "remoteAcknowledged": link.remoteAcknowledgedAt is not None,
         "lastRefreshedAt": link.lastRefreshedAt,
+        "remoteCardCode": getattr(link, "remoteCardCode", None),
         "identityFields": list(cross_portal.IDENTITY_FIELDS),
     }
 
 
+async def _own_card_code(artisan_id: str, user: Any) -> str | None:
+    """This artisan's live card code here, issued now if it has none; None while cards are off."""
+    if not artisan_card.active(get_settings()):
+        return None
+    try:
+        card = await card_store.ensure_card(
+            artisan_id, user_id=get_value(user, "id"), source=card_store.SOURCE_WEB
+        )
+    except Exception:  # noqa: BLE001 - a link never fails for want of a card
+        return None
+    return card.code
+
+
+def _card_code_of(payload: Any) -> str | None:
+    """The Field Repository's card code in a link or refresh answer: top level, or in ``match``."""
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("cardCode")
+    if not value and isinstance(payload.get("match"), dict):
+        value = payload["match"].get("cardCode")
+    return value if isinstance(value, str) and value else None
+
+
+async def store_remote_card_code(artisan_id: str, code: str | None) -> None:
+    """Remember the Field Repository's card code on this artisan's link.
+
+    The column is unique, and two artisans here may be linked to one artisan there, so any other
+    link holding the code gives it up first: the latest link answers for that card.
+    """
+    if not code:
+        return
+    await db.crossportalartisanlink.update_many(
+        where={"remoteCardCode": code, "NOT": [{"artisanId": artisan_id}]},
+        data={"remoteCardCode": None},
+    )
+    await db.crossportalartisanlink.update_many(
+        where={"artisanId": artisan_id}, data={"remoteCardCode": code}
+    )
+
+
 async def _tell_peer_about_link(
     settings: Any, artisan_id: str, remote_id: str, matched_by: str, user: Any
-) -> int | None:
-    """Ask the documentation portal to record the link. Its status, or None if it can't be reached."""
+) -> tuple[int | None, Any]:
+    """Ask the documentation portal to record the link: ``(status, answer)``, or ``(None, None)``
+    if it can't be reached. Carries this artisan's card code when cards are on here."""
+    body: dict[str, Any] = {"remoteArtisanId": artisan_id, "matchedBy": matched_by}
+    own = await _own_card_code(artisan_id, user)
+    if own:
+        body["remoteCardCode"] = own
     try:
-        code, _ = await peer_call(
+        code, payload = await peer_call(
             settings,
             "POST",
             f"/artisans/{remote_id}/links",
-            body={"remoteArtisanId": artisan_id, "matchedBy": matched_by},
+            body=body,
             requested_by=get_value(user, "id"),
         )
     except PeerUnavailable:
-        return None
-    return code
+        return None, None
+    return code, payload
+
+
+async def push_card_code(artisan_id: str, code: str, user: Any) -> bool:
+    """Tell the documentation portal this artisan's new card code (after a reissue, and on every
+    refresh). True when it recorded it. Never raises: a missed push is re-sent by the next refresh."""
+    settings = get_settings()
+    if not cross_portal.active(settings, needs_url=True):
+        return False
+    link = await db.crossportalartisanlink.find_unique(where={"artisanId": artisan_id})
+    if link is None:
+        return False
+    try:
+        status_code, _ = await peer_call(
+            settings,
+            "PUT",
+            f"/artisans/{link.remoteArtisanId}/links/{artisan_id}/card",
+            body={"remoteCardCode": code},
+            requested_by=get_value(user, "id"),
+        )
+    except PeerUnavailable:
+        return False
+    return status_code == 200
+
+
+async def peer_card_match(parsed: Any, user: Any) -> dict[str, Any] | None:
+    """Ask the documentation portal which shared artisan a card of theirs belongs to.
+
+    ``match`` (the lookup answer plus ``cardCode``) or None: the same None whatever the reason
+    (unknown, revoked, not shared). 503 with nothing written when it can't be reached.
+    """
+    settings = _settings_or_404()
+    try:
+        code, payload = await peer_call(
+            settings,
+            "POST",
+            "/cards/resolve",
+            body={"cardCode": parsed.code, "tag": parsed.tag, "keyVersion": parsed.keyVersion},
+            requested_by=get_value(user, "id"),
+        )
+    except PeerUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from None
+    if code != 200 or not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="The Field Repository did not answer."
+        )
+    match = payload.get("match")
+    return match if isinstance(match, dict) and match.get("artisanId") else None
+
+
+async def card_prefill(match: dict[str, Any], user: Any) -> dict[str, Any]:
+    """A card's match as the lookup prefill, counted and logged as a lookup (matched by CARD)."""
+    await _assert_under_lookup_limit(user)
+    await _log(
+        user,
+        ACTION_LOOKUP,
+        "MATCH",
+        remote_artisan_id=match["artisanId"],
+        matched_by=cross_portal.MATCHED_BY_CARD,
+    )
+    prefill = await _prefill(match)
+    prefill["matchedBy"] = cross_portal.MATCHED_BY_CARD
+    prefill["cardCode"] = match.get("cardCode")
+    return prefill
 
 
 @router.get("/status")
@@ -336,9 +455,22 @@ async def link_artisan(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CONSENT_NEEDED)
     artisan = await require_record(db.artisan, artisan_id)
     await _assert_may_edit(artisan, current_user)
-    match = await _lookup(
-        settings, _stored_code(artisan, settings), artisan.pehchanCardNumber, current_user
-    )
+    from_card = bool(payload.cardInput and payload.cardInput.strip())
+    if from_card:
+        # FROM A CARD: the card is asked about again here, never taken on the client's word.
+        try:
+            parsed = artisan_card.parse(payload.cardInput)
+        except artisan_card.CardParseError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CARD_BAD_CHECK
+            ) from None
+        if parsed.issuer == card_store.issuer(settings):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CARD_OWN)
+        match = await peer_card_match(parsed, current_user)
+    else:
+        match = await _lookup(
+            settings, _stored_code(artisan, settings), artisan.pehchanCardNumber, current_user
+        )
     if match is None:
         await _log(current_user, ACTION_LINK, "NO_MATCH", artisan_id=artisan_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NO_MATCH)
@@ -348,10 +480,15 @@ async def link_artisan(
             status_code=status.HTTP_409_CONFLICT,
             detail="The saved numbers match a different Field Repository record. Check them and try again.",
         )
-    matched_by = match.get("matchedBy") if match.get("matchedBy") in cross_portal.MATCHED_BY else cross_portal.MATCHED_BY_AADHAAR
+    if from_card:
+        matched_by = cross_portal.MATCHED_BY_CARD
+    else:
+        matched_by = match.get("matchedBy") if match.get("matchedBy") in cross_portal.MATCHED_BY else cross_portal.MATCHED_BY_AADHAAR
     # THE PEER FIRST. A 409 there means consent was withdrawn between the lookup and now, and a
     # link row written before asking would show "Linked" for an artisan who said no.
-    code = await _tell_peer_about_link(settings, artisan_id, remote_id, matched_by, current_user)
+    code, answer = await _tell_peer_about_link(
+        settings, artisan_id, remote_id, matched_by, current_user
+    )
     if code == 409:
         await db.crossportalartisanlink.delete_many(where={"artisanId": artisan_id})
         await _log(
@@ -371,6 +508,10 @@ async def link_artisan(
         where={"artisanId": artisan_id},
         data={"create": {"artisanId": artisan_id, **data}, "update": data},
     )
+    remote_card = _card_code_of(answer) or _card_code_of({"match": match})
+    if remote_card:
+        await store_remote_card_code(artisan_id, remote_card)
+        link = await db.crossportalartisanlink.find_unique(where={"artisanId": artisan_id})
     await _log(
         current_user,
         ACTION_LINK,
@@ -412,7 +553,7 @@ async def refresh_artisan(
     await _assert_may_edit(artisan, current_user)
     if link.remoteAcknowledgedAt is None:
         # A link the other side never recorded cannot be refreshed there; send it again first.
-        code = await _tell_peer_about_link(
+        code, answer = await _tell_peer_about_link(
             settings, artisan_id, link.remoteArtisanId, link.matchedBy, current_user
         )
         if code == 409:
@@ -425,6 +566,7 @@ async def refresh_artisan(
         link = await db.crossportalartisanlink.update(
             where={"artisanId": artisan_id}, data={"remoteAcknowledgedAt": datetime.now(UTC)}
         )
+        await store_remote_card_code(artisan_id, _card_code_of(answer))
     try:
         code, payload = await peer_call(
             settings,
@@ -474,9 +616,14 @@ async def refresh_artisan(
                 if field is None:
                     raise
                 raise await _identity_conflict(field, data[field], exclude_id=artisan_id) from exc
+    await store_remote_card_code(artisan_id, _card_code_of(payload))
     link = await db.crossportalartisanlink.update(
         where={"artisanId": artisan_id}, data={"lastRefreshedAt": datetime.now(UTC)}
     )
+    # Our card code again, on every refresh: a push after a reissue that didn't get through lands here.
+    own = await _own_card_code(artisan_id, current_user)
+    if own:
+        await push_card_code(artisan_id, own, current_user)
     await _log(
         current_user,
         ACTION_REFRESH,

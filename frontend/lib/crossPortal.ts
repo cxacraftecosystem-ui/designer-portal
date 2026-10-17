@@ -98,11 +98,43 @@ export function getCrossPortalLink(artisanId: string): Promise<CrossPortalLink> 
   return apiFetch(`/cross-portal/artisans/${encodeURIComponent(artisanId)}/link`);
 }
 
-export function linkToFieldRepository(artisanId: string, expectedRemoteArtisanId?: string | null): Promise<CrossPortalLink> {
+export function linkToFieldRepository(
+  artisanId: string,
+  expectedRemoteArtisanId?: string | null,
+  /** A Field Repository card the form was filled from: the server links from the card (matchedBy CARD). */
+  cardInput?: string | null
+): Promise<CrossPortalLink> {
   return apiFetch(`/cross-portal/artisans/${encodeURIComponent(artisanId)}/link`, {
     method: "POST",
-    body: JSON.stringify({ consent: true, expectedRemoteArtisanId: expectedRemoteArtisanId ?? null })
+    body: JSON.stringify({
+      consent: true,
+      expectedRemoteArtisanId: expectedRemoteArtisanId ?? null,
+      ...(cardInput ? { cardInput } : {})
+    })
   });
+}
+
+/**
+ * A Field Repository artisan card (scanned or typed), after the consent tick: the same prefill the
+ * number lookup returns, or null when that portal does not share the artisan. A card whose artisan is
+ * already here answers `existingArtisanId` instead, so the caller opens it rather than adding twice.
+ */
+export async function lookupByCard(
+  cardInput: string
+): Promise<{ match: CrossPortalMatch | null; existingArtisanId?: string }> {
+  const answer = await apiFetch<{
+    status: string;
+    needsConsent?: boolean;
+    match?: CrossPortalMatch;
+    artisan?: { id: string };
+    artisanId?: string;
+  }>("/artisan-cards/resolve", {
+    method: "POST",
+    body: JSON.stringify({ input: cardInput, source: "WEB", consent: true })
+  });
+  if (answer.status === "FOUND" && answer.artisan?.id) return { match: null, existingArtisanId: answer.artisan.id };
+  if (answer.status === "REPLACED" && answer.artisanId) return { match: null, existingArtisanId: answer.artisanId };
+  return { match: answer.status === "REMOTE" && answer.match ? answer.match : null };
 }
 
 export function refreshFromFieldRepository(

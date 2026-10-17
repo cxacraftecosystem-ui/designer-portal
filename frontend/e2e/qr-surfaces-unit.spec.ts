@@ -85,7 +85,13 @@ const PRINT_SHEET = "components/designworkshop/WorkshopCodeSheet.tsx";
  * reason. If a prototype ever gets a record screen, delete this and let the assertion below fail
  * until it has a card.
  */
-const NO_CARD: readonly string[] = ["prototype"];
+const NO_CARD: readonly string[] = ["prototype", "artisan"];
+/*
+ * AN ARTISAN HAS A CARD, JUST NOT A DPW1 ONE. Since the artisan QR card (`lib/artisanCard.ts`,
+ * `backend/app/services/artisan_card.py`) an artisan's code is a server-signed opaque token shown by
+ * `ArtisanCardPanel`; the old `DPW1:A:<id>` printed the record id in clear. Old DPW1:A cards still
+ * decode and resolve; nothing draws one. The test after the inventory pins where the panel is.
+ */
 
 /**
  * Every source file of the client, as repo-relative POSIX paths.
@@ -211,7 +217,11 @@ test("exactly one component turns a scanned or typed code into a record referenc
   // A second caller is a second idea of what a valid code is — and the one that matters is the check
   // digit, which is all that stands between one mistyped character and two days of work attached to
   // somebody else's prototype.
-  expect(filesCalling("decodeWorkshopCode")).toEqual([SHARED_CONTROL]);
+  //
+  // Since the artisan QR card the one caller is `lib/scanInput.ts`, which tries a card first and a
+  // DPW1 code second, and the shared control is the one caller of THAT.
+  expect(filesCalling("decodeWorkshopCode")).toEqual(["lib/scanInput.ts"]);
+  expect(filesCalling("classifyScanInput")).toEqual([SHARED_CONTROL]);
   // The grammar itself declares it; it is not a caller, and this pins that distinction so the
   // assertion above cannot be satisfied by the function quietly moving.
   expect(sourceOf.get(PAYLOAD_GRAMMAR)).toContain("export function decodeWorkshopCode");
@@ -359,7 +369,6 @@ test("every record type that has a screen shows its code there, and every mount 
   //     for both all along; this is where the web stopped disagreeing with it.
   expect(files.sort()).toEqual(
     [
-      "app/(protected)/artisans/[id]/edit/page.tsx",
       "app/(protected)/crafts/page.tsx",
       "app/(protected)/design-workshops/page.tsx",
       "app/(protected)/media/page.tsx",
@@ -367,8 +376,7 @@ test("every record type that has a screen shows its code there, and every mount 
       "app/(protected)/products/[id]/edit/page.tsx",
       "app/(protected)/questionnaire/page.tsx",
       "app/(protected)/tools/[id]/edit/page.tsx",
-      "app/(protected)/workshops/page.tsx",
-      "components/forms/ArtisanForm.tsx"
+      "app/(protected)/workshops/page.tsx"
     ].sort()
   );
 
@@ -385,6 +393,27 @@ test("every record type that has a screen shows its code there, and every mount 
 
   // And the card is declared in exactly one place, so there is one idea of what a shown code is.
   expect(sourceOf.get(RECORD_CARD)).toContain("export function RecordCodeCard");
+});
+
+test("an artisan's code is the QR card, on its page, its edit page and straight after a create", () => {
+  expect(filesUsing(/<ArtisanCardPanel\b/).sort()).toEqual(
+    [
+      "app/(protected)/artisans/[id]/edit/page.tsx",
+      "app/(protected)/artisans/[id]/page.tsx",
+      "components/forms/ArtisanForm.tsx"
+    ].sort()
+  );
+  // And no surface draws a DPW1 artisan code any more.
+  expect(filesUsing(/<RecordCodeCard\b[^>]*recordType="artisan"/)).toEqual([]);
+});
+
+test("a CXA1 card reaches the server's resolve route through the shared control", () => {
+  const control = sourceOf.get(SHARED_CONTROL) as string;
+  expect(control).toContain("classifyScanInput(raw)");
+  expect(control).toMatch(/scan\.kind === "card"[\s\S]*resolveCard\(scan\.raw\)/);
+  // The default resolver is the server's: POST /artisan-cards/resolve.
+  expect(control).toContain("resolveCard = resolveCardForScan");
+  expect(sourceOf.get("lib/artisanCardApi.ts")).toContain('"/artisan-cards/resolve"');
 });
 
 test("the screen and the paper draw one record as ONE symbol", () => {

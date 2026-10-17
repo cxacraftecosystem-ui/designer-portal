@@ -24,7 +24,11 @@
  * for prototypes made this morning. The one place a network is even attempted is an artisan code
  * that is not on this workshop's roster, and the page says what it did and did not manage to check.
  *
- * IT PRINTS FROM THE BROWSER AND NOTHING ELSE. No server render, no report block. A QR on a card is
+ * ARTISAN CARDS ARE THE ONE EXCEPTION: they come from the server as a PDF (`POST
+ * /artisan-cards/sheet.pdf` with this workshop's id), because their QR is a token only the server can
+ * sign. Prototype tags stay DPW1 and print as below.
+ *
+ * PROTOTYPE TAGS PRINT FROM THE BROWSER AND NOTHING ELSE. No server render, no report block. A QR on a card is
  * not a report feature and inventing a block kind for it would break the five-renderer rule — a
  * block only the browser understood would vanish from the .docx and the two PDFs. The sheet is
  * `window.print()` over `components/designworkshop/WorkshopCodeSheet.tsx`, which is the same
@@ -40,6 +44,7 @@ import { ResolvedRecordRow } from "@/components/RecordCodeScanPanel";
 import { JoinCardsPanel } from "@/components/designworkshop/JoinCardsPanel";
 import { WorkshopCodeScanner, type ScanResolution } from "@/components/designworkshop/WorkshopCodeScanner";
 import { WorkshopCodeSheet, type WorkshopCodeCard } from "@/components/designworkshop/WorkshopCodeSheet";
+import { ArtisanCardSheetActions, useArtisanCardsEnabled } from "@/components/artisans/ArtisanCardSheetActions";
 import {
   getDesignWorkshop,
   inputValue,
@@ -204,18 +209,10 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         lines: [inputValue(row.prototypeCode), listValue(row.materials).join(", ")].filter(Boolean)
       }));
     }
-    if (!rosterEntity) return [];
-    const refKey = artisanRefKey(rosterEntity.entity);
-    return rosterRows.map((row, index) => ({
-      key: row._entryId ?? row._clientKey ?? `row-${index}`,
-      recordType: "artisan" as const,
-      id: refKey ? inputValue(row[refKey]) : null,
-      title: rowTitle(rosterEntity.entity, row, index),
-      // Serial and village, and nothing else. Not the artisan card number, not the phone: a card
-      // is a public object once it leaves the room. See WorkshopCodeSheet's header.
-      lines: [inputValue(row.serialNo) ? `S. No. ${inputValue(row.serialNo)}` : "", inputValue(row.village)].filter(Boolean)
-    }));
-  }, [kind, prototypeEntity, prototypeRows, rosterEntity, rosterRows]);
+    // Artisan cards are no longer drawn here: they are the server's PDF (ArtisanCardSheetActions),
+    // whose QR is an opaque signed token. The old DPW1:A card printed the record id in clear.
+    return [];
+  }, [kind, prototypeEntity, prototypeRows]);
 
   /**
    * What a scanned code points at.
@@ -285,6 +282,9 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
   );
 
   const registryUnderstood = kind === "prototype" ? prototypeEntity !== null : rosterEntity !== null;
+  const cardsEnabled = useArtisanCardsEnabled();
+  /** The server's id for this workshop; a device-only draft has none and its roster prints once it syncs. */
+  const serverWorkshopId = isLocalWorkshopId(id) ? draft?.remoteId ?? null : id;
 
   return (
     <>
@@ -297,7 +297,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
             <Link href={`/design-workshops/${id}`} className="field-button-secondary">
               Stages
             </Link>
-            <button type="button" className="field-button" onClick={() => window.print()} disabled={!cards.length}>
+            <button type="button" className="field-button" onClick={() => window.print()} disabled={!cards.length || kind !== "prototype"}>
               <Printer className="h-4 w-4" aria-hidden />
               Print
             </button>
@@ -329,7 +329,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
       </div>
 
       <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="What to print">
-        {(["prototype", "artisan"] as WorkshopRecordType[]).map((option) => (
+        {((cardsEnabled ? ["prototype", "artisan"] : ["prototype"]) as WorkshopRecordType[]).map((option) => (
           <button
             key={option}
             type="button"
@@ -366,6 +366,22 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
           <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
             {kind === "prototype" ? "Prototype tags" : "Artisan cards"} can&rsquo;t be printed. Reload to update the app.
           </p>
+        ) : kind === "artisan" ? (
+          <div className="panel grid gap-3 p-4">
+            <p className="text-sm text-ink-700">
+              {rosterRows.length
+                ? `${rosterRows.length} on the roster.`
+                : "No artisans on the roster yet."}
+            </p>
+            {serverWorkshopId ? (
+              <ArtisanCardSheetActions
+                source={rosterRows.length ? { designWorkshopId: serverWorkshopId } : null}
+                primaryLabel="Download artisan cards (PDF)"
+              />
+            ) : (
+              <p className="text-sm text-ink-muted">Sync this workshop to print its artisan cards.</p>
+            )}
+          </div>
         ) : (
           <WorkshopCodeSheet
             recordType={kind}

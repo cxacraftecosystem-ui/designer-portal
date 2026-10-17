@@ -37,6 +37,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.ArtisanCardCode
+import com.designprototype.workshop.data.CARD_REPLACED
+import com.designprototype.workshop.data.CardResolution
 import com.designprototype.workshop.data.DwWorkshopCodeRef
 import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.data.DwWorkshopScan
@@ -365,6 +368,30 @@ fun RecordCodeLookupPanel(
         found = null
         joined = null
         scope.launch {
+            // AN ARTISAN QR CARD FIRST (`CXA1:` or a typed `D-XXXXX-XXXXX-XX`), then the DPW1 grammar
+            // below, so old printed DPW1:A cards keep opening. The card is matched against the
+            // register this phone cached before the server is asked.
+            if (ArtisanCardCode.looksLikeCard(input)) {
+                when (val answer = resolveScannedCard(context, repository, input)) {
+                    is CardResolution.Found -> found = RecordCodeOutcome.Found(
+                        DwWorkshopCodeRef(DwWorkshopRecordType.ARTISAN, answer.artisanId),
+                        RecordCodeHit(answer.name, answer.detail),
+                    )
+                    is CardResolution.Replaced ->
+                        if (answer.artisanId.isNotBlank()) {
+                            found = RecordCodeOutcome.Found(
+                                DwWorkshopCodeRef(DwWorkshopRecordType.ARTISAN, answer.artisanId),
+                                RecordCodeHit(CARD_REPLACED, null),
+                            )
+                        } else {
+                            refusal = CARD_REPLACED
+                        }
+                    is CardResolution.Pending -> refusal = "Offline. The card is valid; try again online."
+                    else -> refusal = cardResolutionMessage(answer)
+                }
+                busy = false
+                return@launch
+            }
             // ONE FRONT DOOR FOR BOTH GRAMMARS. `readWorkshopScan` decides by the LETTER whether this
             // is a code that names a record or a JOIN CARD, and a join card must not reach
             // `decodeWorkshopCode`: that parser gates on `SUPPORTED_VERSIONS`, so a genuine v2 card
