@@ -14,15 +14,20 @@ import org.junit.rules.TemporaryFolder
  * pinned here is everything around it — nothing in the file is the token, an older build's plain
  * token is sealed on first read and its plain copy deleted, a sealed value that no longer opens reads
  * as signed out, and a phone whose Keystore refuses keeps the token rather than losing it.
+ * A Keystore that cannot be asked at this moment is not a wiped key: the sealed value stays (2026-10-18).
  */
 class TokenStoreSealingTest {
     @get:Rule
     val folder = TemporaryFolder()
 
-    private class FakeSealer(var works: Boolean = true) : TokenSealer {
-        override fun seal(plain: String): String? = if (works) "v1:sealed:" + plain.reversed() else null
-        override fun open(sealed: String): String? =
-            if (works && sealed.startsWith("v1:sealed:")) sealed.removePrefix("v1:sealed:").reversed() else null
+    /** `works = false` is a Keystore that refuses outright; `unavailable` one that cannot be asked right now. */
+    private class FakeSealer(var works: Boolean = true, var unavailable: Boolean = false) : TokenSealer {
+        override fun seal(plain: String): String? = if (works && !unavailable) "v1:sealed:" + plain.reversed() else null
+        override fun open(sealed: String): OpenResult = when {
+            unavailable -> OpenResult.Unavailable
+            works && sealed.startsWith("v1:sealed:") -> OpenResult.Opened(sealed.removePrefix("v1:sealed:").reversed())
+            else -> OpenResult.Unreadable
+        }
     }
 
     private fun prefs(context: InMemoryContext) = context.getSharedPreferences("field_repository_auth", 0)
@@ -62,6 +67,19 @@ class TokenStoreSealingTest {
     }
 
     @Test
+    fun `a keystore that cannot be asked just now keeps the sealed token for the next read`() {
+        val context = InMemoryContext(folder.root)
+        val sealer = FakeSealer()
+        val sealed = "v1:sealed:" + "after-a-reboot".reversed()
+        prefs(context).edit().putString("jwt_sealed", sealed).commit()
+        sealer.unavailable = true
+        assertNull("signed out for this read", TokenStore(context, sealer).getToken())
+        assertEquals("but the sealed token is kept", sealed, prefs(context).getString("jwt_sealed", null))
+        sealer.unavailable = false
+        assertEquals("after-a-reboot", TokenStore(context, sealer).getToken())
+    }
+
+    @Test
     fun `a phone whose keystore refuses keeps the token as it always was`() {
         val context = InMemoryContext(folder.root)
         val store = TokenStore(context, FakeSealer(works = false))
@@ -75,7 +93,8 @@ class TokenStoreSealingTest {
         // A JVM has no AndroidKeyStore provider, which is exactly the broken-phone case.
         val sealer = KeystoreTokenSealer("test-alias")
         assertNull(sealer.seal("x"))
-        assertNull(sealer.open("v1:AAAA:BBBB"))
-        assertNull(sealer.open("not-sealed"))
+        assertEquals("no keystore to ask is not a reason to delete", OpenResult.Unavailable, sealer.open("v1:AAAA:BBBB"))
+        assertEquals(OpenResult.Unreadable, sealer.open("not-sealed"))
+        assertEquals(OpenResult.Unreadable, sealer.open("v1:not base64!:BBBB"))
     }
 }
