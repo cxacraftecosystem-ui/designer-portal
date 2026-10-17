@@ -347,9 +347,12 @@ class CredentialDelivery(Protocol):
         purpose: str,
         expires_at: datetime,
         requested_by: str = "administrator",
+        email_params: dict[str, Any] | None = None,
+        topic: str | None = None,
     ) -> str:
         """Return the ``deliveredBy`` value the clients render. ``requested_by`` is ``administrator``
-        or ``self`` ("Forgot your password?"), and only changes the words of an e-mail."""
+        or ``self`` ("Forgot your password?"), and only changes the words of an e-mail, as do
+        ``email_params`` (the sanction register's context). ``topic`` labels the outbox row."""
 
 
 class CopyLinkDelivery:
@@ -370,6 +373,8 @@ class CopyLinkDelivery:
         purpose: str,
         expires_at: datetime,
         requested_by: str = "administrator",
+        email_params: dict[str, Any] | None = None,
+        topic: str | None = None,
     ) -> str:
         # At INFO and WITHOUT THE LINK. The link is a credential; the fact that one was issued is
         # an operational event worth having in a log, and the credential itself is not. The account
@@ -401,6 +406,8 @@ class EmailDelivery:
         purpose: str,
         expires_at: datetime,
         requested_by: str = "administrator",
+        email_params: dict[str, Any] | None = None,
+        topic: str | None = None,
     ) -> str:
         from app.services import email_outbox, mailer
 
@@ -409,12 +416,14 @@ class EmailDelivery:
             to_address=getattr(user, "email", "") or "",
             recipient_id=getattr(user, "id", None),
             params={
+                **(email_params or {}),
                 "purpose": purpose,
                 "recipientName": getattr(user, "name", None),
                 "expiresAt": expires_at.isoformat(),
                 "requestedBy": requested_by,
             },
             secret=link,
+            topic=topic,
         )
         if row is None:
             raise DeliveryUnavailable()
@@ -469,6 +478,8 @@ async def issue_link(
     issued_by_id: str | None = None,
     deliver_by: str = COPY_LINK,
     requested_by: str = "administrator",
+    email_params: dict[str, Any] | None = None,
+    topic: str | None = None,
 ) -> DeliveredLink:
     """Mint, record, deliver.
 
@@ -528,6 +539,8 @@ async def issue_link(
             purpose=kind,
             expires_at=expires_at,
             requested_by=requested_by,
+            email_params=email_params,
+            topic=topic,
         )
     except Exception:
         # Nobody holds this link — it was never handed back and never queued — so the row is
