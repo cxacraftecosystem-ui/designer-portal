@@ -48,6 +48,14 @@ def test_india_time_decides_the_day_not_utc() -> None:
     assert packs.current_period(datetime(2026, 9, 30, 19, 0, tzinfo=UTC)) == "2026-10"
 
 
+def test_the_digest_window_is_the_first_week_from_the_run_hour() -> None:
+    assert not packs.digest_open(_ist(2026, 10, 1, 5, 59), 6)
+    assert packs.digest_open(_ist(2026, 10, 1, 6, 0), 6)
+    assert packs.digest_open(_ist(2026, 10, 8, 5, 59), 6)
+    assert not packs.digest_open(_ist(2026, 10, 8, 6, 0), 6)
+    assert not packs.digest_open(_ist(2026, 10, 20, 12, 0), 6)
+
+
 def test_storage_keys_carry_the_revision_and_stay_out_of_media_and_backups() -> None:
     key = packs.storage_key(settings_on(), "2026-09", "SKILL_UPGRADATION", 3, "xlsx")
     assert (

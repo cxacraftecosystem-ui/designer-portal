@@ -121,5 +121,6 @@ test("the page reads ?period=, polls, and draws no gap admission", () => {
   const page = read("frontend/app/(protected)/ministry-exports/page.tsx");
   expect(page).toContain('search.get("period")');
   expect(page).toContain("shouldPoll(packs)");
+  expect(page).toMatch(/const remove = async \(row: Recipient\) => \{\s+const ok = await confirm\(/);
   expect(page.toLowerCase()).not.toMatch(/coming soon|not built|not yet available/);
 });

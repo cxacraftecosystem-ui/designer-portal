@@ -424,6 +424,32 @@ class ObjectTooLarge(Exception):
         )
 
 
+def object_exists(object_key: str) -> bool | None:
+    """``True`` when the object is there, ``False`` when storage says it is not (404 / NoSuchKey),
+    ``None`` when storage could not answer (a permission error, a timeout, an endpoint without HEAD).
+
+    For callers that must tell a removed file from a storage hiccup; ``head_object`` folds both
+    into ``None`` on purpose and stays that way.
+    """
+    from botocore.exceptions import ClientError
+
+    settings = get_settings()
+    try:
+        _client().head_object(Bucket=settings.aws_s3_bucket, Key=object_key)
+    except ClientError as exc:
+        error = exc.response.get("Error") or {}
+        code = str(error.get("Code") or "")
+        status = (exc.response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+        if code in {"404", "NoSuchKey", "NotFound"} or status == 404:
+            return False
+        logger.warning("object_exists could not check %s: %s", object_key, code or status)
+        return None
+    except Exception:  # noqa: BLE001 - any other failure is "could not answer", never "missing"
+        logger.warning("object_exists could not reach storage for %s", object_key)
+        return None
+    return True
+
+
 def head_object(object_key: str) -> ObjectHead | None:
     """The object's REAL length without fetching a byte of it, or ``None`` when storage won't say.
 

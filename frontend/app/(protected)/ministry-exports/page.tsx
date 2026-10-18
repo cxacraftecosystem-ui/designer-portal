@@ -19,6 +19,7 @@ import { FileArchive, FileSpreadsheet, FileText, RefreshCw, Trash2, UserPlus } f
 
 import { useAuth } from "@/components/AuthProvider";
 import { PageHeader } from "@/components/PageHeader";
+import { useConfirm } from "@/components/dialogs";
 import { SearchInput } from "@/components/SearchInput";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { SearchableMultiSelect, SearchableSelect } from "@/components/ui/SearchableSelect";
@@ -455,6 +456,7 @@ function RecipientsSection({ schemes }: { schemes: Scheme[] }) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const searchRun = useRef(0);
+  const confirm = useConfirm();
 
   useEffect(() => {
     let cancelled = false;
@@ -507,7 +509,15 @@ function RecipientsSection({ schemes }: { schemes: Scheme[] }) {
     }
   };
 
-  const remove = async (userId: string) => {
+  const remove = async (row: Recipient) => {
+    const ok = await confirm({
+      title: `Remove ${row.name ?? "this recipient"}?`,
+      body: "They stop getting the monthly packs. You can add them again.",
+      tone: "danger",
+      confirmLabel: "Remove"
+    });
+    if (!ok) return;
+    const userId = row.userId;
     setSaving(userId);
     setError(null);
     try {
@@ -596,7 +606,7 @@ function RecipientsSection({ schemes }: { schemes: Scheme[] }) {
                     data-danger
                     className="field-danger inline-flex min-h-10 items-center gap-2 rounded-md px-3 py-2 text-sm"
                     disabled={saving !== null}
-                    onClick={() => void remove(row.userId)}
+                    onClick={() => void remove(row)}
                   >
                     <Trash2 className="h-4 w-4" aria-hidden />
                     Remove

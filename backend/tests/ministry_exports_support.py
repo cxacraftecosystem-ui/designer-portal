@@ -92,12 +92,13 @@ def bearer(user: Any) -> dict[str, str]:
 
 
 class FakeBucket:
-    """``s3.put_object_bytes`` / ``head_object`` / ``presign_get_url`` over a dict."""
+    """``s3.put_object_bytes`` / ``head_object`` / ``object_exists`` / ``presign_get_url`` over a dict."""
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.fail_puts = 0
         self.presigned: list[dict[str, Any]] = []
+        self.unreachable = False
 
     def put(self, key: str, data: bytes, *, mime_type: str) -> None:
         if self.fail_puts:
@@ -109,6 +110,11 @@ class FakeBucket:
         if key not in self.objects:
             return None
         return type("Head", (), {"size_bytes": len(self.objects[key])})()
+
+    def exists(self, key: str) -> bool | None:
+        if self.unreachable:
+            return None
+        return key in self.objects
 
     def presign(
         self,
@@ -127,5 +133,6 @@ class FakeBucket:
 
         monkeypatch.setattr(s3, "put_object_bytes", self.put)
         monkeypatch.setattr(s3, "head_object", self.head)
+        monkeypatch.setattr(s3, "object_exists", self.exists)
         monkeypatch.setattr(s3, "presign_get_url", self.presign)
         return self

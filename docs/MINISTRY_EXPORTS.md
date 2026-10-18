@@ -51,8 +51,10 @@ say when the snapshot was taken; regenerating an old month gives today's values 
 - **No contact details.** No phone or e-mail column; a sanction order's designer e-mail is left out.
 - **No full identity numbers.** `scrub_sheet` runs over every sheet: phone and e-mail columns are
   dropped, Aadhaar, Pehchan and artisan-card columns keep their last four digits (`XXXX XXXX 1234`),
-  any twelve-digit run in free text is masked the same way, and any value that is a URL is blanked.
-  The tests assert no twelve-digit run, no `http` and no `X-Amz` anywhere in a pack.
+  any twelve-digit run in free text is masked the same way, a mobile number or e-mail address typed
+  into free text (a venue, a title) becomes `[phone removed]` / `[e-mail removed]`, and any value that
+  is a URL is blanked. The tests assert no twelve-digit run, no mobile number, no `http` and no
+  `X-Amz` anywhere in a pack.
 
 ## 3. Schedule, queue and idempotency
 
@@ -66,7 +68,8 @@ The queue worker (`fieldrepo-queue`, the same unit that drains media and the e-m
 2. Every pass: claim **at most one** due pack (a compare-and-set on `status`) and build it — rows
    capped at `MINISTRY_EXPORTS_MAX_WORKSHOPS`, rendering off the event loop. The box is small and a
    build holds up the media queue, so one per pass is the rule.
-3. Once every pack of the owed month has finished, send the digest (§5).
+3. Once every pack of the owed month has finished, send the digest (§5) — only in the first seven
+   days of the month, so an account subscribed or reactivated later waits for next month's digest.
 
 **Idempotent per month.** `MinistryExportPack` is unique on `(period, scheme)`. The scheduler inserts
 what is missing and treats a unique violation as "already there"; regenerating bumps `revision` on the

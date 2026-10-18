@@ -177,6 +177,22 @@ def test_no_cell_in_a_pack_carries_a_link_a_signature_or_twelve_digits() -> None
     )
 
 
+def test_a_mobile_number_or_address_typed_into_free_text_is_removed() -> None:
+    rows = [
+        _workshop(1, venue="Hall, call 98765 43210", title="Ask +91-9876543210 or a.b@example.org"),
+        _workshop(2, venue="Call 09876543210", title="Block 12, batch 2026"),
+    ]
+    built, _, _ = sheets.build_sheets(_data(rows))
+    flat = [str(c) for c in sheets.all_cells(built) if c is not None]
+    assert not any(re.search(r"[6-9]\d{4}[ -]?\d{5}", c) for c in flat)
+    assert not any("@example.org" in c for c in flat)
+    assert "Hall, call [phone removed]" in flat
+    assert "Block 12, batch 2026" in flat
+    assert sheets.scrub_sheet({"columns": ["Note"], "rows": [["ring 0 98765 43210"]]})["rows"] == [
+        ["ring 0 [phone removed]"]
+    ]
+
+
 def test_no_phone_or_email_column_survives() -> None:
     built, _, _ = sheets.build_sheets(
         _data([_workshop(1, sanctionOrderNo="SO-1", sanctionAmount="10")])

@@ -24,8 +24,8 @@ questionnaire answers, transcripts, media, URLs or AI layers either.
 
 NO CONTACT DETAILS. A sanction order's designer e-mail is left out, and :func:`scrub_sheet` runs over
 every sheet anyway: phone and e-mail columns are dropped, identity numbers are cut to their last four
-digits, any twelve-digit run in free text is masked the same way, and any value that is a URL is
-blanked. The registers above should never carry those values; the scrub is what makes "should" a
+digits, any twelve-digit run in free text is masked the same way, a mobile number or e-mail address
+typed into free text is removed, and any value that is a URL is blanked. The registers above should never carry those values; the scrub is what makes "should" a
 guarantee for a file that leaves the product.
 """
 
@@ -180,10 +180,19 @@ _URL = re.compile(r"^\s*https?://", re.IGNORECASE)
 #: Twelve digits in a row, or in the 4-4-4 groups Aadhaar is printed in, standing alone: not inside a
 #: longer number and not inside a word (a checksum's hex keeps its digits).
 _TWELVE = re.compile(r"(?<![0-9A-Za-z])(\d{4})[ -]?(\d{4})[ -]?(\d{4})(?![0-9A-Za-z])")
+#: An Indian mobile number typed into free text (a venue, a title, a note): ten digits from 6-9, with
+#: an optional +91 / 91 / 0 in front and one space or dash in the middle, standing alone.
+_MOBILE = re.compile(
+    r"(?<![0-9A-Za-z+])(?:(?:\+|00)?91[ -]?|0)?[6-9]\d{4}[ -]?\d{5}(?![0-9A-Za-z])"
+)
+#: An e-mail address typed into free text.
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 
 def _mask_runs(text: str) -> str:
-    return _TWELVE.sub(lambda m: f"XXXX XXXX {m.group(3)}", text)
+    text = _TWELVE.sub(lambda m: f"XXXX XXXX {m.group(3)}", text)
+    text = _MOBILE.sub("[phone removed]", text)
+    return _EMAIL.sub("[e-mail removed]", text)
 
 
 def scrub_sheet(sheet: dict[str, Any]) -> dict[str, Any]:
@@ -191,7 +200,8 @@ def scrub_sheet(sheet: dict[str, Any]) -> dict[str, Any]:
 
     A column is matched on its KEY when the sheet carries ``keys`` (stage-shaped sheets do) and on its
     label otherwise: phone and e-mail columns are dropped, identity-number columns keep their last four
-    digits, and in every remaining cell a twelve-digit run is masked and a URL is blanked.
+    digits, and in every remaining cell a twelve-digit run is masked, a mobile number or e-mail address
+    is removed and a URL is blanked.
     """
     columns = list(sheet.get("columns") or [])
     keys = [str(k).lower() for k in (sheet.get("keys") or [])]

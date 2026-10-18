@@ -91,12 +91,17 @@ STALE_BUILDING_AFTER = timedelta(minutes=30)
 BACKOFF = (timedelta(minutes=5), timedelta(minutes=20), timedelta(minutes=60))
 #: The scheduler's own checks (queue the month, recover stale rows, send the digest) run this often.
 CHECK_EVERY = timedelta(minutes=10)
+#: The scheduled digest goes out only in the first week of the month that owes it. A worker that was
+#: down on the 1st still catches up, but someone subscribed or reactivated on the 20th is not sent
+#: last month's "packs are ready" e-mail; their first digest is next month's.
+DIGEST_WINDOW = timedelta(days=7)
 MAX_ERROR_LENGTH = 200
 
 #: The refusal, word for word on the web guard as well (``frontend/lib/permissions.ts``).
 REFUSAL = "For Ministry Admins, admins and the master admin."
 #: When a file's object is gone because the lifecycle rule removed it.
 FILES_REMOVED = "This pack's files have been removed after 13 months. Generate it again."
+STORAGE_UNREACHABLE = "Storage did not answer. Try again in a minute."
 
 _next_check: datetime | None = None
 
@@ -140,6 +145,14 @@ def period_for(now_ist: datetime, run_hour: int = 6) -> str | None:
     if local.day == 1 and local.hour < max(0, min(int(run_hour), 23)):
         return None
     return previous_period(local)
+
+
+def digest_open(now_ist: datetime, run_hour: int = 6) -> bool:
+    """Whether the scheduled digest for the month ``period_for`` owes may still be sent."""
+    local = now_ist.astimezone(IST)
+    hour = max(0, min(int(run_hour), 23))
+    opens = local.replace(day=1, hour=hour, minute=0, second=0, microsecond=0)
+    return opens <= local < opens + DIGEST_WINDOW
 
 
 def is_future(period: str, now: datetime | None = None) -> bool:
@@ -699,7 +712,7 @@ async def maybe_run(
 
     Every pass: build at most one due pack (so an on-demand request is picked up within a pass).
     Every ten minutes (or with ``force``): recover stale builds, queue the month the schedule owes,
-    and send its digest when it is complete.
+    and send its digest when it is complete, if still inside ``DIGEST_WINDOW``.
     """
     global _next_check
     settings = settings or get_settings()
@@ -718,7 +731,7 @@ async def maybe_run(
         candidate = period_for(moment, settings.ministry_exports_run_hour_ist)
         if candidate == built.period:
             owed = candidate
-    if owed is not None:
+    if owed is not None and digest_open(moment, settings.ministry_exports_run_hour_ist):
         await send_period_digest(owed, settings)
 
 

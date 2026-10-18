@@ -238,6 +238,19 @@ def test_a_link_to_a_removed_file_is_gone(world: dict[str, Any]) -> None:
     )
 
 
+def test_a_storage_hiccup_is_not_reported_as_removed(world: dict[str, Any]) -> None:
+    pack = _ready_pack()
+    world["bucket"].objects[pack.pdfKey] = b"pdf"
+    world["bucket"].unreachable = True
+    answer = world["client"].post(
+        f"/api/ministry-exports/packs/{pack.id}/links",
+        json={"file": "pdf"},
+        headers=bearer(world["people"]["ADMIN"]),
+    )
+    assert answer.status_code == 503
+    assert answer.json()["detail"] == "Storage did not answer. Try again in a minute."
+
+
 def test_a_link_is_short_lived_and_logged(
     world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:

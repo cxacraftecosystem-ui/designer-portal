@@ -48,7 +48,7 @@ async def require_ministry_export_manager(current_user: Any = Depends(get_curren
 
 
 def _unprocessable(detail: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
 
 
 def _check_schemes(schemes: list[str]) -> list[str]:
@@ -260,8 +260,13 @@ async def mint_link(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This pack is not ready yet."
         )
-    if await asyncio.to_thread(s3.head_object, key) is None:
+    present = await asyncio.to_thread(s3.object_exists, key)
+    if present is False:
         raise HTTPException(status_code=status.HTTP_410_GONE, detail=packs.FILES_REMOVED)
+    if present is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=packs.STORAGE_UNREACHABLE
+        )
     seconds = max(int(get_settings().ministry_exports_link_seconds or 60), 30)
     name = packs.file_name(row.period, row.scheme, payload.file)
     url = await asyncio.to_thread(
