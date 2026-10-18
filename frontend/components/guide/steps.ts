@@ -620,6 +620,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Shared and exported numbers are masked (“XXXX XXXX 9012”). Leave a masked box as it is.",
       "Answer “Artisan Pehchan Card available” first. Yes makes the card number required; No clears and locks the number box.",
       "“Date of birth” and “Craft start date” are required; age and experience follow from them.",
+      "The ring on each record shows what is still missing; tap a missing field to fill it in.",
       DESIGN_WORKSHOP_FIELD,
       DICTATION_ON_THIS_FORM
     ]

@@ -32,6 +32,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import com.designprototype.workshop.ui.FieldProgressDefaults
+import com.designprototype.workshop.ui.CompletenessRing
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -1475,46 +1476,6 @@ private fun WorkshopCard(
                 }
             }
         }
-    }
-}
-
-/**
- * The completeness ring.
- *
- * Drawn rather than approximated with a determinate [androidx.compose.material3.CircularProgressIndicator]
- * because that control leaves a gap at the top for its indeterminate animation, so a workshop at 100%
- * renders as a ring that is visibly not closed — which reads, on a list a designer is scanning to
- * decide what is finished, as "almost".
- */
-@Composable
-private fun CompletenessRing(percent: Int) {
-    val track = FieldProgressDefaults.trackColor
-    val fill = if (percent >= 100) FieldProgressDefaults.successColor else FieldProgressDefaults.indicatorColor
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(46.dp)) {
-        Canvas(modifier = Modifier.size(46.dp)) {
-            val stroke = 5.dp.toPx()
-            val inset = stroke / 2f
-            val box = Size(size.width - stroke, size.height - stroke)
-            drawArc(
-                color = track,
-                startAngle = -90f,
-                sweepAngle = 360f,
-                useCenter = false,
-                topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
-                size = box,
-                style = Stroke(width = stroke)
-            )
-            drawArc(
-                color = fill,
-                startAngle = -90f,
-                sweepAngle = 360f * (percent.coerceIn(0, 100) / 100f),
-                useCenter = false,
-                topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
-                size = box,
-                style = Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-            )
-        }
-        Text("$percent", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
     }
 }
 

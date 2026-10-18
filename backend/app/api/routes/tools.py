@@ -21,6 +21,8 @@ from app.schemas.records import (
     ToolUpdate,
 )
 from app.services.access import effective_tier_for_record, guard_record_edit, record_revision
+from app.services.completeness import attach as attach_completeness
+from app.services.completeness import filter_or_422 as completeness_filter
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (
@@ -756,6 +758,8 @@ async def list_tools(
     # My Activity page had to fetch page 1 of the WHOLE repository and sift it client-side, which
     # silently under-reported the moment the repository outgrew one page.
     createdBy: str | None = None,
+    # THE COMPLETENESS FILTER (2026-10-18): incomplete | required | complete. See ``list_artisans``.
+    completeness: str | None = None,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -810,6 +814,10 @@ async def list_tools(
         where["status"] = enum_filter_or_422(statusFilter, RECORD_STATUSES)
     if createdBy:
         where["createdById"] = createdBy
+    complete_clause = completeness_filter("tool", completeness)
+    if complete_clause:
+        # Into the AND list, never ``where[...]`` directly — see ``list_artisans``.
+        where.setdefault("AND", []).append(complete_clause)
     add_date_range(where, "createdAt", dateFrom, dateTo)
     # ONE grant lookup for the whole page — ``media_url_owners`` costs a single query, and only below
     # professor, which is exactly the rank whose colleagues' photographs would otherwise be listed and
@@ -839,7 +847,9 @@ async def list_tools(
         media_url_owners(current_user),
     )
     return page_payload(
-        _order_links(public_encode(items, current_user, media_urls=media_urls)),
+        await attach_completeness(
+            "tool", _order_links(public_encode(items, current_user, media_urls=media_urls))
+        ),
         total,
         page,
         page_size,
@@ -859,7 +869,7 @@ async def create_tool(
         db.tooldocumentation, payload.clientKey, user_id=current_user.id, include=INCLUDE
     )
     if replayed is not None:
-        return _order_links(public_encode(replayed, current_user))
+        return await attach_completeness("tool", _order_links(public_encode(replayed, current_user)))
     data = decimal_to_string(clean_data(payload.model_dump()))
     # THE TWO LINK LISTS COME OUT HERE, before ``attach_location`` and long before Prisma sees
     # ``data``: neither names a column, so either one left in the dict is an unknown-argument error
@@ -905,7 +915,7 @@ async def create_tool(
         )
         if raced is None:
             raise
-        return _order_links(public_encode(raced, current_user))
+        return await attach_completeness("tool", _order_links(public_encode(raced, current_user)))
     # THE LINK ROWS, AFTER THE ROW THEY POINT AT, because they need its id — the same shape and the
     # same ordering as ``create_process``, which writes its ``ProcessStep`` rows after the create for
     # the same reason. There is no transaction here (this route has never had one, and the replay
@@ -922,7 +932,7 @@ async def create_tool(
     # No grant lookup on the create: a MediaFile points at its tool by ``toolId``, and this tool did
     # not exist until the statement above, so ``media`` is empty by construction and there is no URL
     # for a resolved set to decide about. The viewer is still named, for the identity mask.
-    return _order_links(public_encode(created, current_user))
+    return await attach_completeness("tool", _order_links(public_encode(created, current_user)))
 
 
 @router.get("/{tool_id}")
@@ -932,8 +942,11 @@ async def get_tool(tool_id: str, current_user: Any = Depends(get_current_user)) 
     # The uploader half alone, and for this detail read as much as for the list: the ``media`` this
     # hydrates comes through ``MediaFile.toolId``, so it cannot be a design-workshop attachment. See
     # "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above; ``media_workshops`` is left empty on purpose.
-    return _order_links(
-        public_encode(tool, current_user, media_urls=await media_url_owners(current_user))
+    return await attach_completeness(
+        "tool",
+        _order_links(
+            public_encode(tool, current_user, media_urls=await media_url_owners(current_user))
+        ),
     )
 
 
@@ -1160,8 +1173,11 @@ async def update_tool(
     # ``INCLUDE`` is derived from ``RELATIONS``, so the rows it returns are the same ``toolId``-keyed
     # rows the list returns and the same reasoning settles the second half: the uploader set alone,
     # ``media_workshops`` empty by decision. See "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above.
-    return _order_links(
-        public_encode(updated, current_user, media_urls=await media_url_owners(current_user))
+    return await attach_completeness(
+        "tool",
+        _order_links(
+            public_encode(updated, current_user, media_urls=await media_url_owners(current_user))
+        ),
     )
 
 

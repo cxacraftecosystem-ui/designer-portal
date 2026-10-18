@@ -10,11 +10,13 @@ import { MediaCardGrid } from "@/components/media/MediaCardGrid";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { TranscriptBlock } from "@/components/media/TranscriptBlock";
 import { PageHeader } from "@/components/PageHeader";
+import { CompletenessMeter } from "@/components/records/CompletenessMeter";
 import { StatusBadge } from "@/components/StatusBadge";
 import type { RecordFieldRow } from "@/components/records/recordFields";
 import { ApiError, apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { downloadMediaUrl } from "@/lib/localMediaDownload";
+import { isCompletenessKind, type CompletenessBlock } from "@/lib/completenessCore";
 import { canUpdateRecord, recordUpdateHref, type ViewableRecord } from "@/lib/recordView";
 import type { MediaFile, RecordStatus } from "@/lib/types";
 
@@ -84,6 +86,10 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
 
   const updateHref = recordUpdateHref(kind, id);
   const mayUpdate = Boolean(updateHref) && canUpdateRecord(user, kind);
+  // The server's block (2026-10-18), on the five kinds that have rules. Its pills open the edit form
+  // at the missing field for a reader who may update; for anyone else they are plain words.
+  const completeness =
+    record && isCompletenessKind(kind) ? ((record as { completeness?: CompletenessBlock | null }).completeness ?? null) : null;
 
   return (
     <>
@@ -113,6 +119,7 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
       {record ? (
         <div className="grid gap-5">
+          {completeness ? <CompletenessMeter block={completeness} updateHref={mayUpdate ? updateHref : null} /> : null}
           {record.status ? (
             <div className="flex items-center gap-2 text-sm text-ink-700">
               <span className="field-label">Status</span>

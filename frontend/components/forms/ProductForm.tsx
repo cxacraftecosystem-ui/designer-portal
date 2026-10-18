@@ -34,14 +34,15 @@ import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch } from "@/lib/api";
-import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useUnsavedChanges } from "@/lib/forms";
+import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useFocusField, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
-import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
+import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, ProductDocumentation, RecordStatus } from "@/lib/types";
 import { marketDemandOptions, productTypes } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 
 /** Dropdown label for a linked artisan: always "Name · Place" (name alone if no place), never ids. */
 function artisanOptionLabel(artisan: Artisan) {
@@ -176,6 +177,7 @@ export function ProductForm({
   const canSetStatus = hasRank(user, "PROFESSOR");
   const formRef = useRef<HTMLFormElement>(null);
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
+  useFocusField(true);
   /**
    * `useId` rather than a literal: this form is also embedded inside a design-workshop
    * stage, so two mounted copies must not mint the same id.
@@ -853,6 +855,12 @@ export function ProductForm({
           </div>
         ) : null}
         <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
+        <LiveCompleteness
+          kind="product"
+          formRef={formRef}
+          stored={initial ?? null}
+          counts={{ photos: mediaFiles.filter((file) => inferMediaType(file) === "IMAGE").length }}
+        />
         {/*
           THE ONE PLACE THIS FORM EXPLAINS A MISSING MICROPHONE — see `DictationUnavailableNotice`.
           Every dictated box below passes `explainWhenUnavailable={false}`: on Firefox the same
@@ -955,7 +963,7 @@ export function ProductForm({
               markDirty();
             }}
           />
-          <Field label="Linked artisan (fills artisan + place)">
+          <Field label="Linked artisan (fills artisan + place)" fieldKey="artisan">
             <Select
               name="artisanId"
               searchable
@@ -1031,16 +1039,18 @@ export function ProductForm({
               is `String?` on both sides of the wire and neither is parsed. The inches, the cost and
               the price are native number boxes and a recogniser spells digits out in words, so a spoken
               answer would arrive as text a number input discards without saying so. */}
-          <DictatedTextInput
-            name="timeTakenToCompleteProduct"
-            label="Time taken to complete"
-            explainWhenUnavailable={false}
-            value={timeTaken}
-            onChange={(next) => {
-              setTimeTaken(next);
-              markDirty();
-            }}
-          />
+          <div data-field="timeTaken" className="grid min-w-0">
+            <DictatedTextInput
+              name="timeTakenToCompleteProduct"
+              label="Time taken to complete"
+              explainWhenUnavailable={false}
+              value={timeTaken}
+              onChange={(next) => {
+                setTimeTaken(next);
+                markDirty();
+              }}
+            />
+          </div>
           <DictatedTextInput
             name="size"
             label="Size"
@@ -1073,7 +1083,7 @@ export function ProductForm({
           {/* All three go through `typeInto`, which writes the box AND forgets whatever a machine
               proposed into it — see that helper for why a marker must not outlive the number it
               describes, and why these stay one line each. */}
-          <Field label="Length (inches)">
+          <Field label="Length (inches)" fieldKey="dimensions">
             <TextInput name="lengthInches" type="number" min={0} step="0.01" value={length} onChange={typeInto(setLength, "lengthInches")} />
           </Field>
           <Field label="Breadth (inches)">
@@ -1189,13 +1199,13 @@ export function ProductForm({
         </section>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {/* Money, and the same pairing rule as the dimensions above. */}
-          <Field label="Cost of making">
+          <Field label="Cost of making" fieldKey="costOfMaking">
             <TextInput name="costOfMaking" type="number" min={0} step="0.01" defaultValue={initial?.costOfMaking ?? ""} />
           </Field>
-          <Field label="Selling price">
+          <Field label="Selling price" fieldKey="sellingPrice">
             <TextInput name="sellingPrice" type="number" min={0} step="0.01" defaultValue={initial?.sellingPrice ?? ""} />
           </Field>
-          <Field label="Market demand">
+          <Field label="Market demand" fieldKey="marketDemand">
             <Select name="marketDemand" defaultValue={initial?.marketDemand ?? "UNKNOWN"} onChange={markDirty}>
               {marketDemandOptions.map((option) => (
                 <option key={option}>{option}</option>
@@ -1263,15 +1273,17 @@ export function ProductForm({
         {initial ? (
           <ExistingMedia linkedRecordType="product" linkedRecordId={initial.id} recordHold={filing.stored} />
         ) : null}
-        <MediaCaptureField
-          files={mediaFiles}
-          onFilesChange={(files) => {
-            setMediaFiles(files);
-            markDirty();
-          }}
-          title="Product media"
-          description="Photos, video, audio and documents."
-        />
+        <div data-field="photo" className="grid min-w-0">
+          <MediaCaptureField
+            files={mediaFiles}
+            onFilesChange={(files) => {
+              setMediaFiles(files);
+              markDirty();
+            }}
+            title="Product media"
+            description="Photos, video, audio and documents."
+          />
+        </div>
         <LocationFields initial={initialLocation} onDirty={markDirty} />
         {uploadProgress ? <UploadProgress progress={uploadProgress} files={mediaFiles} /> : null}
         {/*

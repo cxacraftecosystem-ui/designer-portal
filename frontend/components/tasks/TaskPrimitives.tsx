@@ -49,16 +49,19 @@ export function FieldBlock({
   label,
   required,
   hint,
-  children
+  children,
+  fieldKey
 }: {
   label: string;
   required?: boolean;
   hint?: React.ReactNode;
   children: React.ReactNode;
+  /** The completeness rule key this block answers — see `Field`'s prop of the same name. */
+  fieldKey?: string;
 }) {
   const id = useId();
   return (
-    <div className="grid gap-1">
+    <div className="grid gap-1" data-field={fieldKey}>
       <span id={id} className="field-label">
         {label}
         <RequiredMark when={required} />

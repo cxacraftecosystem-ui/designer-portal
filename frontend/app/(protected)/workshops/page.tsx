@@ -22,6 +22,8 @@ import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { UploadTray } from "@/components/media/UploadTray";
 import { PageHeader } from "@/components/PageHeader";
+import { CompletenessFilter } from "@/components/records/CompletenessFilter";
+import { RowCompletenessRing } from "@/components/records/CompletenessRing";
 import { RecordCodeCard } from "@/components/RecordCode";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
@@ -35,11 +37,12 @@ import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { apiFetch, listResource } from "@/lib/api";
+import { parseCompletenessFilter, type CompletenessFilter as CompletenessValue } from "@/lib/completenessCore";
 import { countNoun, formatDate, formatDateTime } from "@/lib/format";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
-import { locationFromForm, requiredText, textValue } from "@/lib/forms";
+import { locationFromForm, requiredText, textValue, useFocusField } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
-import { uploadMediaBatch, type BatchProgress } from "@/lib/media";
+import { inferMediaType, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { LIST_PAGE_CEILING } from "@/components/data/cappedList";
 import { RENDER_CAP } from "@/components/ui/selectFilter";
@@ -64,6 +67,7 @@ import type {
   WorkshopType
 } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 
 // The API includes the workshop's linked crafts (not yet in the Workshop TS type); used to pre-fill
 // the "Crafts covered" selection when editing.
@@ -189,6 +193,7 @@ function WorkshopsPageBody() {
   const [place, setPlace] = useState("");
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [collabId, setCollabId] = useState<string | null>(null);
+  const [completeness, setCompleteness] = useState<CompletenessValue>("");
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);
   // Unsaved-changes guard: dirty is set by any form input / media change; confirmAction holds the
@@ -263,7 +268,12 @@ function WorkshopsPageBody() {
 
   async function load() {
     try {
-      setData(await listResource<Workshop>("/workshops", { search: applied || undefined, page, pageSize: 20 }));
+      setData(await listResource<Workshop>("/workshops", {
+          search: applied || undefined,
+          completeness: completeness || undefined,
+          page,
+          pageSize: 20
+        }));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load workshops");
@@ -274,13 +284,13 @@ function WorkshopsPageBody() {
    * Search, page and scroll, so Back from a workshop's read-only page lands on the same rows. Recalled
    * once before the first fetch — `placeRestored` holds that fetch until it has been.
    */
-  const memory = useListMemory("workshops", { query, applied, page }, data !== null);
+  const memory = useListMemory("workshops", { query, applied, page, filters: { completeness } }, data !== null);
   const [placeRestored, setPlaceRestored] = useState(false);
   useEffect(() => {
     if (!placeRestored) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, applied, placeRestored]);
+  }, [page, applied, placeRestored, completeness]);
 
   // The linked-artisan / craft pickers only need loading once.
   useEffect(() => {
@@ -331,6 +341,7 @@ function WorkshopsPageBody() {
       setQuery(remembered.query ?? "");
       setApplied(remembered.applied ?? "");
       setPage(remembered.page ?? 1);
+      setCompleteness(parseCompletenessFilter(remembered.filters?.completeness));
     }
     setPlaceRestored(true);
     // Once, on arrival.
@@ -380,6 +391,8 @@ function WorkshopsPageBody() {
   // two link pickers: `artisanIds` and `craftIds` are React state rather than form controls, so a
   // deep link that only set `editing` would have shown the workshop's title and place with its
   // artisan and craft rosters silently empty — and saving would then have cleared them.
+  // `?edit=<id>&focus=<key>` from a meter pill: the field is focused once the workshop is in the form.
+  useFocusField(Boolean(editing));
   const { loading: deepLinkLoading } = useEditDeepLink<Workshop>({
     endpoint: "/workshops",
     basePath: "/workshops",
@@ -651,6 +664,16 @@ function WorkshopsPageBody() {
             </span>
           </div>
         ) : null}
+        <LiveCompleteness
+          kind="workshop"
+          formRef={formRef}
+          stored={editing}
+          counts={{
+            artisans: artisanIds.length,
+            crafts: craftIds.length,
+            photos: mediaFiles.filter((file) => inferMediaType(file) === "IMAGE").length
+          }}
+        />
         {/*
           WHICH KIND OF WORKSHOP, FIRST — above the title, because it changes what the record is
           FOR rather than describing it.
@@ -713,8 +736,10 @@ function WorkshopsPageBody() {
             }}
             explainWhenUnavailable={false}
           />
-          <div className="md:col-span-2">
-            <DateRangeField start={editing?.startDate ?? editing?.date} end={editing?.endDate ?? editing?.date} />
+          <div className="md:col-span-2" data-field="startDate">
+            <div data-field="endDate">
+              <DateRangeField start={editing?.startDate ?? editing?.date} end={editing?.endDate ?? editing?.date} />
+            </div>
           </div>
           <Field label="Status">
             {canSetStatus ? (
@@ -747,7 +772,7 @@ function WorkshopsPageBody() {
               give this one form a filter box on the artisan picker and none on the craft picker for
               most of this repository's life (16 against 9, either side of a threshold of 8), which
               is one form asking the same question two ways. */}
-          <Field label="Linked artisans">
+          <Field label="Linked artisans" fieldKey="artisans">
             <MultiSelectDropdown
               values={artisanIds}
               onChange={(next) => {
@@ -767,7 +792,7 @@ function WorkshopsPageBody() {
             />
           </Field>
           {artisanNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{artisanNotice}</p> : null}
-          <Field label="Crafts covered">
+          <Field label="Crafts covered" fieldKey="crafts">
             {/* The paragraph is THE ANSWER TO AN EMPTY REGISTER and is now gated on the read having
                 actually answered. Ungated it replaced the control while the request was still in
                 flight and again when it failed, telling a researcher to go and create a craft over
@@ -794,15 +819,17 @@ function WorkshopsPageBody() {
           </Field>
           {craftNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{craftNotice}</p> : null}
         </div>
-        <MediaCaptureField
-          files={mediaFiles}
-          onFilesChange={(files) => {
-            setMediaFiles(files);
-            setDirty(true);
-          }}
-          title="Workshop media"
-          description="Attach workshop images, videos, audio notes, attendance references, and documents."
-        />
+        <div data-field="photo" className="grid min-w-0">
+          <MediaCaptureField
+            files={mediaFiles}
+            onFilesChange={(files) => {
+              setMediaFiles(files);
+              setDirty(true);
+            }}
+            title="Workshop media"
+            description="Attach workshop images, videos, audio notes, attendance references, and documents."
+          />
+        </div>
         <UploadProgress progress={uploadProgress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} files={mediaFiles} />
         {/* Editing an existing workshop: everything already attached to it, with per-file delete.
             `recordHold={null}`: a crafts workshop is never filed under a design workshop, so only a
@@ -893,6 +920,15 @@ function WorkshopsPageBody() {
           placeholder="Search workshops by title, place or description"
         />
       </div>
+      <div className="mb-3">
+        <CompletenessFilter
+          value={completeness}
+          onChange={(next) => {
+            setCompleteness(next);
+            setPage(1);
+          }}
+        />
+      </div>
       <section className="panel overflow-hidden">
         {!data ? (
           <div className="p-4 text-sm text-ink-700">Loading...</div>
@@ -919,7 +955,10 @@ function WorkshopsPageBody() {
                   // The whole row opens the workshop read-only; Update loads it into the form above.
                   <OpenableRow key={workshop.id} href={RECORD_VIEW_HREF.workshop(workshop.id)}>
                     <td className="px-4 py-3">
-                      <OpenableRowLink href={RECORD_VIEW_HREF.workshop(workshop.id)}>{workshop.title?.trim() || "Untitled workshop"}</OpenableRowLink>
+                      <div className="flex items-center gap-2">
+                        <RowCompletenessRing block={workshop.completeness} />
+                        <OpenableRowLink href={RECORD_VIEW_HREF.workshop(workshop.id)}>{workshop.title?.trim() || "Untitled workshop"}</OpenableRowLink>
+                      </div>
                       <div className="text-xs text-ink-500">{workshop.description ?? "-"}</div>
                     </td>
                     <td className="px-4 py-3 text-ink-700">

@@ -181,6 +181,10 @@ own hard-won craft knowledge: the part of the archive that cannot be reconstruct
 - **An artisan recorded before 2026-10-17 may have neither date.** The record still opens and reads
   as before; saving an edit of it from the artisan form asks for both dates first. Both portals and
   both apps draw this same form (`shared/artisan-form-contract.json`).
+- **The ring shows what is still missing.** Every artisan, product, tool, interview and workshop
+  carries a small ring on its row and a line on its page ("2 fields left: date of birth, photo");
+  tap a missing field to open the form at it. *Incomplete* and *Missing required* above each list
+  narrow it to the records that need work.
 - Photo details are added to the notes automatically. Do not transcribe camera details by hand.
 - **Location asks two different things** — see the box below.
 

@@ -1105,6 +1105,9 @@ def create_app() -> FastAPI:
             # an unchanged report was served again rather than rebuilt — when it was made (A22).
             "X-Report-Export-Id",
             "X-Report-Reused-From",
+            # GET /records/completeness-rules (2026-10-18): the web keeps the rules in localStorage
+            # keyed by this tag and revalidates with If-None-Match, so it has to be able to read it.
+            "ETag",
         ],
     )
     # Added AFTER CORS so it wraps it (Starlette runs the most recently added middleware outermost),

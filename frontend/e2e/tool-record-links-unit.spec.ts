@@ -149,7 +149,7 @@ test("both link pickers are multi-selects, in FieldBlock, and both are searchabl
     same control. That is the standing rule in `SearchableSelectProps.searchable`.
   */
   expect(CODE).toContain('<FieldBlock label="Linked crafts (fills craft name)">');
-  expect(CODE).toContain('<FieldBlock label="Linked artisans (fills artisan + place)">');
+  expect(CODE).toContain('<FieldBlock label="Linked artisans (fills artisan + place)" fieldKey="artisan">');
   const pickers = CODE.match(/<MultiSelectDropdown[\s\S]*?\/>/g) ?? [];
   expect(pickers.length, "two link pickers, and only two").toBe(2);
   for (const picker of pickers) expect(picker, "a record-backed picker with no filter box").toContain("searchable");

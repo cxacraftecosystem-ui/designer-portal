@@ -45,6 +45,8 @@ import { MegaCard } from "@/components/dashboard/MegaCard";
 import { useMegaCards } from "@/components/dashboard/useMegaCards";
 import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { PageHeader } from "@/components/PageHeader";
+import { CompletenessFilter } from "@/components/records/CompletenessFilter";
+import { RowCompletenessRing } from "@/components/records/CompletenessRing";
 import { InstrumentPicker, SHARED_INSTRUMENT } from "@/components/questionnaire/InstrumentPicker";
 import { Pagination } from "@/components/Pagination";
 import { RecordCodeCard } from "@/components/RecordCode";
@@ -61,8 +63,9 @@ import { useWorkshopScope, WorkshopScopeSelect } from "@/components/WorkshopScop
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { ApiError, apiFetch, buildQuery, listResource } from "@/lib/api";
+import { parseCompletenessFilter, type CompletenessFilter as CompletenessValue } from "@/lib/completenessCore";
 import { countNoun, formatDate, formatDateTime } from "@/lib/format";
-import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, textValue } from "@/lib/forms";
+import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, textValue, useFocusField } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { INTERVIEW_LANGUAGE_PLACEHOLDER, interviewLanguageOptions } from "@/lib/interviewLanguages";
 import {
@@ -83,6 +86,7 @@ import type { Artisan, MediaFile, PageResult, QuestionnaireInterview, Questionna
 import { Toggle } from "@/components/ui/Toggle";
 import { AnswerDraftsPanel, isMachineSuggested, MachineSuggestedBadge } from "@/components/questionnaire/AnswerDraftsPanel";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 
 /** Section ids the two questionnaire upload paths publish under, for the page-level tray. */
 const INTERVIEW_SECTION = "interview-audio";
@@ -580,6 +584,7 @@ function QuestionnairePageBody() {
   const [questionProgress, setQuestionProgress] = useState<Record<string, BatchProgress | null>>({});
   const [page, setPage] = useState(1);
   const [funnel, setFunnel] = useState<FunnelValue>(EMPTY_FUNNEL);
+  const [completeness, setCompleteness] = useState<CompletenessValue>("");
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [saving, setSaving] = useState(false);
@@ -705,6 +710,8 @@ function QuestionnairePageBody() {
    * of the thing the reader asked to edit. The same reason `/workshops` passes its own ref.
    */
   const captureFormRef = useRef<HTMLFormElement | null>(null);
+  // `?edit=<id>&focus=<key>` from a meter pill: focus once the sitting is in the form.
+  useFocusField(Boolean(editingInterview));
 
   /**
    * ── THE FOUR MEGA CARDS ON THIS SCREEN ────────────────────────────────────────────────────
@@ -1251,7 +1258,8 @@ function QuestionnairePageBody() {
         pageSize: 20,
         artisanId: funnel.artisanId || undefined,
         workshopId: funnel.workshopId || undefined,
-        search: searchQuery || undefined
+        search: searchQuery || undefined,
+        completeness: completeness || undefined
       });
       // The answer to a question already moved on from must not land last and win — see the ref.
       if (generation !== currentInterviewLoad.current) return;
@@ -1291,7 +1299,7 @@ function QuestionnairePageBody() {
   useEffect(() => {
     loadInterviews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, funnel.artisanId, funnel.workshopId, searchQuery]);
+  }, [page, funnel.artisanId, funnel.workshopId, searchQuery, completeness]);
 
   // Leaving the page mid-recording must release the microphone and the clock, not leak either.
   useEffect(() => {
@@ -1369,7 +1377,7 @@ function QuestionnairePageBody() {
    */
   const listMemory = useListMemory(
     "questionnaire-interviews",
-    { query: searchInput, applied: searchQuery, page, funnel },
+    { query: searchInput, applied: searchQuery, page, funnel, filters: { completeness } },
     data !== null
   );
   const funnelHeard = useRef(false);
@@ -1381,6 +1389,7 @@ function QuestionnairePageBody() {
       setSearchQuery(remembered.applied ?? "");
       setFunnel(remembered.funnel ?? next);
       setPage(remembered.page ?? 1);
+      setCompleteness(parseCompletenessFilter(remembered.filters?.completeness));
       return;
     }
     setFunnel(next);
@@ -2420,6 +2429,19 @@ function QuestionnairePageBody() {
         onKeyDown={handleFormEnter}
         className="panel grid gap-4 border-0 bg-transparent p-0 shadow-none"
       >
+        {/* The interview date is the server's, derived from when the sitting was recorded, so the
+            live line counts it as given. */}
+        <LiveCompleteness
+          kind="interview"
+          formRef={captureFormRef}
+          stored={editingInterview}
+          values={{ interviewDate: editingInterview?.interviewDate ?? "on save" }}
+          counts={{
+            artisans: selectedArtisanIds.length,
+            answers: Object.values(answers).filter((value) => value.trim()).length,
+            recordings: mediaFiles.length
+          }}
+        />
         {/*
           EDIT MODE SAYS SO, AND SAYS WHAT IT WILL NOT TOUCH.
 
@@ -2504,14 +2526,16 @@ function QuestionnairePageBody() {
           {/* No date field: the server derives interviewDate from recordedAt, which is when the
               interview was actually captured. Asking a researcher to confirm today's date was a
               field to tab past that could only ever be wrong. */}
-          <DictatedTextInput
-            name="place"
-            label="Place"
-            titleCased
-            value={place}
-            onChange={setPlace}
-            explainWhenUnavailable={false}
-          />
+          <div data-field="place" className="grid min-w-0">
+            <DictatedTextInput
+              name="place"
+              label="Place"
+              titleCased
+              value={place}
+              onChange={setPlace}
+              explainWhenUnavailable={false}
+            />
+          </div>
           {/*
             ── LANGUAGE IS A DROPDOWN, NOT A TEXT BOX (req 14) ──────────────────────────────────
             Android has shipped the picker since this form was written and the web had a free
@@ -2547,7 +2571,7 @@ function QuestionnairePageBody() {
             `MultiSelectDropdown` above and below it all need the call, and so do the two
             `DictatedTextInput`s (a committed phrase is a state write, not an input event).
           */}
-          <FieldBlock label="Language">
+          <FieldBlock label="Language" fieldKey="language">
             <Select
               name="language"
               value={language}
@@ -2630,6 +2654,7 @@ function QuestionnairePageBody() {
             change what they do next, and the two a visual-only paragraph never reaches.
           */}
           <FieldBlock
+            fieldKey="artisans"
             label="Artisans interviewed"
             hint={
               <>
@@ -2781,17 +2806,19 @@ function QuestionnairePageBody() {
         <QuestionnaireCaptureControls prefs={capture} onChange={updateCapture} />
         {/* Always offered, as on Android: audio for the interview as a whole, distinct from the
             per-section and per-question takes and never hidden by the answer-box toggle. */}
-        <MediaCaptureField
-          files={mediaFiles}
-          onFilesChange={setMediaFiles}
-          title="Interview audio"
-          description="Record or upload audio. It is transcribed when possible."
-          allowDocuments={false}
-          allowedTypes={["AUDIO"]}
-        />
+        <div data-field="recording" className="grid min-w-0">
+          <MediaCaptureField
+            files={mediaFiles}
+            onFilesChange={setMediaFiles}
+            title="Interview audio"
+            description="Record or upload audio. It is transcribed when possible."
+            allowDocuments={false}
+            allowedTypes={["AUDIO"]}
+          />
+        </div>
         <UploadProgress progress={interviewProgress} sectionId={INTERVIEW_SECTION} label={INTERVIEW_SECTION_LABEL} files={mediaFiles} />
         <LocationFields />
-        <div className="grid gap-3">
+        <div className="grid gap-3" data-field="answers">
           {orderedGroups.map(([code, group], index) => {
             const sectionClips = savedClips.bySection.get(group.section.id) ?? [];
             const progress = sectionProgress(group.items, {
@@ -3160,6 +3187,15 @@ function QuestionnairePageBody() {
           onSubmit={applySearch}
           placeholder="Search interviews by title, place, or notes"
         />
+        <div>
+          <CompletenessFilter
+            value={completeness}
+            onChange={(next) => {
+              setCompleteness(next);
+              setPage(1);
+            }}
+          />
+        </div>
       </div>
 
       <section className="panel overflow-hidden">
@@ -3190,9 +3226,12 @@ function QuestionnairePageBody() {
                         answers disclosure keep their own clicks (`OpenableRow`). */}
                     <OpenableRow href={RECORD_VIEW_HREF.interview(interview.id)}>
                       <td className="px-4 py-3">
-                        <OpenableRowLink href={RECORD_VIEW_HREF.interview(interview.id)}>
-                          {interview.title?.trim() || "Untitled interview"}
-                        </OpenableRowLink>
+                        <div className="flex items-center gap-2">
+                          <RowCompletenessRing block={interview.completeness} />
+                          <OpenableRowLink href={RECORD_VIEW_HREF.interview(interview.id)}>
+                            {interview.title?.trim() || "Untitled interview"}
+                          </OpenableRowLink>
+                        </div>
                         <div className="text-xs text-ink-500">{interview.place ?? "-"}</div>
                       </td>
                       <td className="px-4 py-3 text-ink-700">

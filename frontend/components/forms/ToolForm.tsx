@@ -45,14 +45,15 @@ import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch } from "@/lib/api";
-import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useUnsavedChanges } from "@/lib/forms";
+import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useFocusField, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
-import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
+import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
 import { makerOptions, traditionOptions } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 
 /*
   ── THE LINKED-ARTISAN LABEL MOVED, IT WAS NOT DROPPED ──────────────────────────────────────────
@@ -275,6 +276,7 @@ export function ToolForm({
   const canSetStatus = hasRank(user, "PROFESSOR");
   const formRef = useRef<HTMLFormElement>(null);
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
+  useFocusField(true);
   /**
    * `useId` rather than a literal: this form is also embedded inside a design-workshop
    * stage, so two mounted copies must not mint the same id.
@@ -1596,6 +1598,13 @@ export function ToolForm({
           </div>
         ) : null}
         <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
+        <LiveCompleteness
+          kind="tool"
+          formRef={formRef}
+          stored={initial ?? null}
+          values={{ artisanId: artisanId || null }}
+          counts={{ photos: [...stageFiles, ...mediaFiles].filter((file) => inferMediaType(file) === "IMAGE").length }}
+        />
         {/*
           THE ONE PLACE THIS FORM EXPLAINS A MISSING MICROPHONE — see `DictationUnavailableNotice`.
           Every dictated box below passes `explainWhenUnavailable={false}`: on Firefox the same
@@ -1629,16 +1638,18 @@ export function ToolForm({
                for why the mirror is here rather than in an effect. */
             onChange={(next) => applyToolkitName(next, { user: true })}
           />
-          <DictatedTextInput
-            name="localName"
-            label="Local name"
-            explainWhenUnavailable={false}
-            value={localName}
-            onChange={(next) => {
-              setLocalName(next);
-              markDirty();
-            }}
-          />
+          <div data-field="localName" className="grid min-w-0">
+            <DictatedTextInput
+              name="localName"
+              label="Local name"
+              explainWhenUnavailable={false}
+              value={localName}
+              onChange={(next) => {
+                setLocalName(next);
+                markDirty();
+              }}
+            />
+          </div>
           {/* THE BOX THAT ENDS THE MIRROR. Any write a person makes here — a keystroke, a paste, a
               dictated phrase, or emptying it by hand — is the designer taking the field over, and
               from that moment the toolkit name never writes it again. CLEARING IS AN EDIT, which is
@@ -1720,7 +1731,7 @@ export function ToolForm({
             }}
           />
           {/* `FieldBlock` for the same reason as the craft picker above — see that note. */}
-          <FieldBlock label="Linked artisans (fills artisan + place)">
+          <FieldBlock label="Linked artisans (fills artisan + place)" fieldKey="artisan">
             {/* ── THE ROWS ARE GROUPED BY CRAFT, A→Z, AND THE ORDER IS NOT DECIDED HERE ─────────
                 `artisanPickerOptions` sorts by craft name and then by artisan name and hands each
                 row its craft as a `group`; `groupRows` buckets in first-appearance order, so an
@@ -1792,16 +1803,18 @@ export function ToolForm({
               markDirty();
             }}
           />
-          <DictatedTextInput
-            name="material"
-            label="Material"
-            explainWhenUnavailable={false}
-            value={material}
-            onChange={(next) => {
-              setMaterial(next);
-              markDirty();
-            }}
-          />
+          <div data-field="material" className="grid min-w-0">
+            <DictatedTextInput
+              name="material"
+              label="Material"
+              explainWhenUnavailable={false}
+              value={material}
+              onChange={(next) => {
+                setMaterial(next);
+                markDirty();
+              }}
+            />
+          </div>
           {/* ── `min={0}` ON EVERY NUMBER ON THIS FORM, AND THE SAME BOUND ON THE SCHEMA ──────
               `yearsInUse` has carried this pair since it was added — `min={0}` here and `ge=0` on
               both `ToolCreate` and `ToolUpdate` — and it was the ONLY number on this form that did.
@@ -1848,7 +1861,7 @@ export function ToolForm({
               partner where it has one. See that helper for why a marker must not outlive the number
               it describes, why the centimetre boxes are excluded from the marker, and why these stay
               one line each. `Length (inches)` passes no partner because it has none. */}
-          <Field label="Length (inches)">
+          <Field label="Length (inches)" fieldKey="dimensions">
             <TextInput name="lengthInches" type="number" min={0} step="0.01" value={length} onChange={typeInches(setLength, "lengthInches")} />
           </Field>
           <Field label="Breadth (inches)">
@@ -2075,14 +2088,14 @@ export function ToolForm({
           />
         </section>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <Field label="Maker">
+          <Field label="Maker" fieldKey="maker">
             <Select name="maker" defaultValue={initial?.maker ?? "UNKNOWN"} onChange={markDirty}>
               {makerOptions.map((option) => (
                 <option key={option}>{option}</option>
               ))}
             </Select>
           </Field>
-          <Field label="Tradition type">
+          <Field label="Tradition type" fieldKey="traditionType">
             <Select name="traditionType" defaultValue={initial?.traditionType ?? "UNKNOWN"} onChange={markDirty}>
               {traditionOptions.map((option) => (
                 <option key={option}>{option}</option>
@@ -2090,7 +2103,7 @@ export function ToolForm({
             </Select>
           </Field>
           {/* Money, and the same pairing rule as the measurements above. */}
-          <Field label="Replacement cost">
+          <Field label="Replacement cost" fieldKey="replacementCost">
             <TextInput name="replacementCost" type="number" min={0} step="0.01" defaultValue={initial?.replacementCost ?? ""} />
           </Field>
         </div>
@@ -2139,15 +2152,17 @@ export function ToolForm({
         />
         {/* The tool's files are its workshop's content too: held with the record — see `filing`. */}
         {initial ? <ExistingMedia linkedRecordType="tool" linkedRecordId={initial.id} recordHold={filing.stored} /> : null}
-        <MediaCaptureField
-          files={mediaFiles}
-          onFilesChange={(files) => {
-            setMediaFiles(files);
-            markDirty();
-          }}
-          title="Tool media"
-          description="Photos, video, audio and documents."
-        />
+        <div data-field="photo" className="grid min-w-0">
+          <MediaCaptureField
+            files={mediaFiles}
+            onFilesChange={(files) => {
+              setMediaFiles(files);
+              markDirty();
+            }}
+            title="Tool media"
+            description="Photos, video, audio and documents."
+          />
+        </div>
         <LocationFields initial={initialLocation} onDirty={markDirty} />
         {uploadProgress ? <UploadProgress progress={uploadProgress} files={[...stageFiles, ...mediaFiles]} /> : null}
         {/*

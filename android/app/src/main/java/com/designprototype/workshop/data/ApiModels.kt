@@ -247,7 +247,9 @@ data class ArtisanDto(
      */
     val location: LocationDto? = null,
     val createdById: String? = null,
-    val createdAt: String? = null
+    val createdAt: String? = null,
+    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
+    val completeness: CompletenessDto? = null
 )
 
 @Serializable
@@ -1784,6 +1786,8 @@ fun LocationDto.toLocationRequest(): LocationRequest = LocationRequest(
 @Serializable
 data class ArtisanDetailDto(
     val id: String,
+    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
+    val completeness: CompletenessDto? = null,
     val name: String,
     val localName: String? = null,
     val gender: String? = null,
@@ -1852,6 +1856,8 @@ data class AadhaarLookupDto(
 @Serializable
 data class ProductDetailDto(
     val id: String,
+    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
+    val completeness: CompletenessDto? = null,
     val productName: String = "",
     val localName: String? = null,
     val craftName: String = "",
@@ -1932,6 +1938,8 @@ data class ToolArtisanLinkDto(
 @Serializable
 data class ToolDetailDto(
     val id: String,
+    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
+    val completeness: CompletenessDto? = null,
     val toolkitName: String = "",
     val localName: String? = null,
     val englishName: String? = null,
@@ -2021,6 +2029,8 @@ data class WorkshopCraftLinkDto(
 @Serializable
 data class WorkshopDetailDto(
     val id: String,
+    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
+    val completeness: CompletenessDto? = null,
     val title: String = "",
     /** See [WorkshopCreateRequest.workshopType]. Defaulted so an older server's payload still decodes. */
     val workshopType: String = "OTHER",
@@ -2094,6 +2104,10 @@ data class InterviewResponseDto(
 @Serializable
 data class QuestionnaireInterviewDetailDto(
     val id: String,
+    /** The day of the sitting, derived by the server from the recordings; read by the completeness meter. */
+    val interviewDate: String? = null,
+    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
+    val completeness: CompletenessDto? = null,
     val title: String = "",
     val place: String? = null,
     val language: String? = null,

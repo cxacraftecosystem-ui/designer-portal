@@ -11,6 +11,7 @@ from app.api.routes import (
     artisans,
     asr_models,
     auth,
+    completeness,
     craft_codes,
     crafts,
     cross_portal,
@@ -109,6 +110,8 @@ api_router.include_router(workshop_types.router)
 api_router.include_router(products.router)
 api_router.include_router(processes.router)
 api_router.include_router(tools.router)
+# GET /records/completeness-rules — the table behind every record's completeness block.
+api_router.include_router(completeness.router)
 api_router.include_router(media.router)
 # Before ``questionnaire`` so its fixed paths are matched first (C28; nothing collides today).
 api_router.include_router(answer_drafts.router)
