@@ -211,7 +211,7 @@ def matches(row: dict[str, Any], where: dict[str, Any]) -> bool:
 def _value_pool(kind: str, path: str, item: dict[str, Any]) -> list[Any]:
     """Values a column of that type can hold: a blank string only where the column is a string."""
     if item["check"] == "notIn":
-        return list(item["empty"]) + ["HIGH", "ARTISAN", "TRADITIONAL"]
+        return [*list(item["empty"]), "HIGH", "ARTISAN", "TRADITIONAL"]
     if path in rc.STRING_COLUMNS[kind]:
         return [None, "", "x", "y"]
     return [None, 0, 12.5, "2026-01-01T00:00:00Z"]
@@ -244,7 +244,7 @@ def _rows(kind: str, n: int, seed: int) -> list[dict[str, Any]]:
     for relation in _RELATIONS[kind]:
         full[relation] = [{"mediaType": "IMAGE", "status": "APPROVED"}, {"mediaType": "AUDIO", "status": "APPROVED"}] if relation == "media" else ["p"]
         empty[relation] = []
-    return rows + [full, empty]
+    return [*rows, full, empty]
 
 
 def _expected(kind: str, mode: str, block: dict[str, Any]) -> bool:
@@ -328,11 +328,11 @@ _MODEL = {
 
 def _columns(model: str) -> dict[str, str]:
     schema = _text(ROOT / "backend" / "prisma" / "schema.prisma")
-    body = re.search(rf"^model {model} \{{(.*?)^\}}", schema, re.S | re.M)
+    body = re.search(rf"^model {model} \{{(.*?)^\}}", schema, re.DOTALL | re.MULTILINE)
     assert body, model
     out = {}
-    for line in body.group(1).splitlines():
-        line = line.split("//", 1)[0].strip()
+    for raw in body.group(1).splitlines():
+        line = raw.split("//", 1)[0].strip()
         parts = line.split()
         if len(parts) >= 2 and not parts[0].startswith("@"):
             out[parts[0]] = parts[1]

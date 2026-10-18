@@ -52,12 +52,12 @@ from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 from app.services.ministry_export import process_next_ministry_exports
-from app.services.weekly_digest import run_weekly_digests
 from app.services.search_indexer import (
     compact_queue as compact_search_queue,
     drain as drain_search_index,
     embed_pending as embed_search_documents,
 )
+from app.services.weekly_digest import run_weekly_digests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("app.worker")

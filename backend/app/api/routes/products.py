@@ -7,9 +7,11 @@ from app.core.db import db
 from app.core.deps import assert_can_delete, get_current_user, require_record_creator
 from app.schemas.records import ProductCreate, ProductUpdate
 from app.services.access import guard_record_edit
-from app.services.completeness import attach as attach_completeness
-from app.services.completeness import filter_or_422 as completeness_filter
 from app.services.artisan_merge import redirect_payload
+from app.services.completeness import (
+    attach as attach_completeness,
+    filter_or_422 as completeness_filter,
+)
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (

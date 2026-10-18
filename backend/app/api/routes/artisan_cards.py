@@ -30,7 +30,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.routes import cross_portal as cross_portal_routes
 from app.core.db import db
 from app.core.deps import can_create_records, get_current_user, get_value
-from app.services import artisan_card, artisan_card_pdf, artisan_card_store as store, cross_portal, naming
+from app.services import (
+    artisan_card,
+    artisan_card_pdf,
+    artisan_card_store as store,
+    cross_portal,
+    naming,
+)
 from app.services.records import media_url_owners, require_record
 
 router = APIRouter(tags=["artisan-cards"])

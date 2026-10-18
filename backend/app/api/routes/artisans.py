@@ -17,8 +17,10 @@ from app.services import aadhaar_fingerprint, artisan_card, artisan_duplicates, 
 from app.services.access import guard_record_edit
 from app.services.artisan_form_contract import assert_required_dates, take_form_contract
 from app.services.artisan_identity import aadhaar_error, mask_aadhaar, normalize_aadhaar
-from app.services.completeness import attach as attach_completeness
-from app.services.completeness import filter_or_422 as completeness_filter
+from app.services.completeness import (
+    attach as attach_completeness,
+    filter_or_422 as completeness_filter,
+)
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (

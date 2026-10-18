@@ -81,7 +81,7 @@ def world():
 
             await artisan_duplicates.rescore_artisan(gopal[1])
             crowd = []
-            for i in range(7):
+            for _ in range(7):
                 row = await db.artisan.create(data={
                     "name": f"Kishan Lal {tag}", "place": "Bagru", "phone": "9829022222",
                     "createdById": people["designer"].id, "locationId": loc.id,

@@ -3,8 +3,7 @@
 import re
 from types import SimpleNamespace
 
-from app.api.routes import artisan_cards as card_routes
-from app.api.routes import artisans as artisan_routes
+from app.api.routes import artisan_cards as card_routes, artisans as artisan_routes
 
 
 def _request(headers: dict[str, str]):

@@ -1973,6 +1973,82 @@ jobs:
             echo \"Aadhaar fingerprint key pinned: \$(grep -c -E \"^AADHAAR_FINGERPRINT_KEY=.\" \"\$ENVFILE\" || true) line\"
           '"
 
+      # The artisan card key (2026-10-19): signs the QR on this portal's artisan cards
+      # (backend/app/services/artisan_card.py). THIS portal's own value, never the Field Repository's.
+      # An Actions SECRET, on ssh's STDIN, shape-checked on the runner (32 bytes of base64). With no
+      # key every card route answers 404 and both clients keep the DPW1 code, so an empty secret on a
+      # box that never had one only warns; an empty secret where the live release HAS one fails, because
+      # shipping without it would stop every printed QR verifying. A key that differs from the live one
+      # is a rotation: set ARTISAN_CARD_KEY_VERSION and ARTISAN_CARD_KEY_PREVIOUS in BACKEND_ENV first
+      # (docs/ENVIRONMENT.md, "Artisan QR cards"). Backup: SSM /iit/designer-portal/artisan-card-key.
+      - name: Pin the artisan card key
+        env:
+          SHA: ${{ env.REL_ID }}
+          ARTISAN_CARD_KEY: ${{ secrets.ARTISAN_CARD_KEY }}
+        run: |
+          key="$(printf '%s' "$ARTISAN_CARD_KEY" | tr -d '[:space:]')"
+          # A digest of the live key, never the key: compared, not printed.
+          live=$(ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          v=$({ grep -E '^ARTISAN_CARD_KEY=' /home/ubuntu/app/current/backend/.env 2>/dev/null || true; } | tail -n1 | cut -d= -f2- | tr -d "[:space:]\"'")
+          printf '%s' "$v" | sha256sum | cut -c1-16
+          REMOTE
+          )
+          empty=$(printf '' | sha256sum | cut -c1-16)
+          if [ -z "$key" ]; then
+            if [ "$live" != "$empty" ]; then
+              echo "::error::The ARTISAN_CARD_KEY secret is empty or missing, but the live release has one. Restore the secret before deploying (SSM /iit/designer-portal/artisan-card-key)."
+              exit 1
+            fi
+            echo "::warning::ARTISAN_CARD_KEY is not set; artisan cards stay hidden"
+            exit 0
+          fi
+          KEY="$key" python3 - <<'PY' || exit 1
+          import base64, binascii, os
+          try:
+              raw = base64.b64decode(os.environ["KEY"], validate=True)
+          except (binascii.Error, ValueError):
+              raw = b""
+          if len(raw) != 32:
+              print("::error::ARTISAN_CARD_KEY is not 32 bytes of base64; nothing was deployed.")
+              raise SystemExit(1)
+          PY
+          mine=$(printf '%s' "$key" | sha256sum | cut -c1-16)
+          if [ "$live" != "$empty" ] && [ "$live" != "$mine" ]; then
+            echo "::warning::ARTISAN_CARD_KEY differs from the live release's: a rotation. Cards printed under the old key verify only if ARTISAN_CARD_KEY_PREVIOUS holds it."
+          fi
+          printf '%s\n' "ARTISAN_CARD_KEY=$key" | ssh ubuntu@${{ secrets.EC2_HOST }} "ENVFILE='/home/ubuntu/app/releases/$SHA/backend/.env' bash -c '
+            set -euo pipefail
+            frag=\$(cat)
+            [ -s \"\$ENVFILE\" ] && [ -n \"\$(tail -c1 \"\$ENVFILE\")\" ] && printf \"\n\" >> \"\$ENVFILE\"
+            sed -i \"/^ARTISAN_CARD_KEY=/d\" \"\$ENVFILE\"
+            printf \"%s\n\" \"\$frag\" >> \"\$ENVFILE\"
+            echo \"Artisan card key pinned: \$(grep -c -E \"^ARTISAN_CARD_KEY=.\" \"\$ENVFILE\" || true) line\"
+          '"
+
+      # The Monday summary's switch (2026-10-19; docs/ENVIRONMENT.md, WEEKLY_DIGEST_ENABLED). Not a
+      # secret: the Actions VARIABLE WEEKLY_DIGEST_ENABLED, `true` or `false`, written to this release's
+      # .env so the queue worker and the API read the same answer. Unset leaves the .env as
+      # BACKEND_ENV wrote it (the code's default is on); any other value stops the deploy here.
+      - name: Pin the Monday summary switch
+        env:
+          SHA: ${{ env.REL_ID }}
+          WEEKLY_DIGEST_ENABLED: ${{ vars.WEEKLY_DIGEST_ENABLED }}
+        run: |
+          flag="$(printf '%s' "$WEEKLY_DIGEST_ENABLED" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+          case "$flag" in
+            "") echo "WEEKLY_DIGEST_ENABLED is not set as an Actions variable; the release keeps BACKEND_ENV's value or the default"; exit 0 ;;
+            true|false) ;;
+            *) echo "::error::WEEKLY_DIGEST_ENABLED must be true or false; nothing was deployed."; exit 1 ;;
+          esac
+          printf '%s\n' "WEEKLY_DIGEST_ENABLED=$flag" | ssh ubuntu@${{ secrets.EC2_HOST }} "ENVFILE='/home/ubuntu/app/releases/$SHA/backend/.env' bash -c '
+            set -euo pipefail
+            frag=\$(cat)
+            [ -s \"\$ENVFILE\" ] && [ -n \"\$(tail -c1 \"\$ENVFILE\")\" ] && printf \"\n\" >> \"\$ENVFILE\"
+            sed -i \"/^WEEKLY_DIGEST_ENABLED=/d\" \"\$ENVFILE\"
+            printf \"%s\n\" \"\$frag\" >> \"\$ENVFILE\"
+            echo \"Monday summary switch pinned: \$(grep -E \"^WEEKLY_DIGEST_ENABLED=\" \"\$ENVFILE\")\"
+          '"
+
       # ─── THE VENV, AND WHY IT IS COPIED RATHER THAN REBUILT OR HARD-LINKED ──────────────────
       #
       # A venv per release is what makes the symlink flip a real rollback: roll back to a release

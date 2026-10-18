@@ -30,7 +30,6 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.REGISTER_ARTISAN
 import com.designprototype.workshop.data.ArtisanCardCode
 import com.designprototype.workshop.data.ArtisanDto
@@ -163,7 +162,7 @@ fun ArtisanCardScanSheet(
                     Text(
                         it,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     )
                 }

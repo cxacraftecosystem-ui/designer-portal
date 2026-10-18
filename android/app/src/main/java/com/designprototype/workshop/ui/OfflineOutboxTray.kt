@@ -527,7 +527,7 @@ private fun OutboxFailureCard(
             Text(
                 "MAY ALREADY BE RECORDED",
                 color = MaterialTheme.field.warning,
-                fontSize = 10.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -597,10 +597,10 @@ private fun OutboxFailureCard(
             // it would be held again for the identical reason. Throw away stays where it is.
             ActionRow {
                 OutlinedButton(onClick = { onSamePerson(heldFor.id) }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text("Same person", fontSize = 12.sp)
+                    Text("Same person", style = MaterialTheme.typography.labelMedium)
                 }
                 OutlinedButton(onClick = onDifferentPerson, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text("Different person", fontSize = 12.sp)
+                    Text("Different person", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }

@@ -65,9 +65,11 @@ from app.schemas.access import (
 )
 from app.schemas.records import WORKSHOP_TYPES, WorkshopCreate, WorkshopUpdate
 from app.services.access import guard_record_edit, record_revision
-from app.services.completeness import attach as attach_completeness
-from app.services.completeness import filter_or_422 as completeness_filter
 from app.services.artisan_merge import redirect_payload
+from app.services.completeness import (
+    attach as attach_completeness,
+    filter_or_422 as completeness_filter,
+)
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import (
     RECORD_STATUSES,

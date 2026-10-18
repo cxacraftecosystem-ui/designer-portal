@@ -21,9 +21,11 @@ from app.schemas.records import (
     ToolUpdate,
 )
 from app.services.access import effective_tier_for_record, guard_record_edit, record_revision
-from app.services.completeness import attach as attach_completeness
-from app.services.completeness import filter_or_422 as completeness_filter
 from app.services.artisan_merge import redirect_ids, redirect_payload
+from app.services.completeness import (
+    attach as attach_completeness,
+    filter_or_422 as completeness_filter,
+)
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (

@@ -380,7 +380,7 @@ Mail is **on exactly when `MAIL_FROM_ADDRESS` is set**. Unset, nothing is queued
 | `MAIL_SES_CONFIGURATION_SET` | No | unset | No | An SES configuration set, for bounce and complaint event publishing. |
 | `MAIL_MAX_ATTEMPTS` | No | `5` | No | Sends per message before it is marked `FAILED`. A throttle or SES fault is retried after 1, 2, 4, 8 … minutes (capped at an hour); a rejected message or an unverified sender fails at once. |
 | `MAIL_BATCH_SIZE` | No | `10` | No | Messages sent per queue sweep (`MEDIA_QUEUE_INTERVAL_SECONDS` apart). The SES sandbox allows 1 a second; production access usually 14. |
-| `WEEKLY_DIGEST_ENABLED` | No | `true` | No | The Monday 08:00 IST summary for reviewers and officials (`services/weekly_digest.py`), sent in-app and, when mail is on, by e-mail. `false` stops the queue worker sending new ones; the Settings switch and past summaries keep working. |
+| `WEEKLY_DIGEST_ENABLED` | No | `true` | No | The Monday 08:00 IST summary for reviewers and officials (`services/weekly_digest.py`), sent in-app and, when mail is on, by e-mail. `false` stops the queue worker sending new ones; the Settings switch and past summaries keep working. Deployed from the Actions **variable** of the same name (`true`/`false`; unset leaves the value `BACKEND_ENV` gives, or the default). |
 
 **The owner's steps to turn it on** (nothing in this repository creates AWS resources): verify the sending domain (its DKIM records) or the single sender address in SES **ap-south-1**; request SES production access for that region (until then SES delivers only to verified addresses); grant the backend IAM user `ses:SendEmail` on that identity; then add `MAIL_FROM_ADDRESS` (and optionally `MAIL_REPLY_TO`, `MAIL_FROM_NAME`, `MAIL_SES_CONFIGURATION_SET`) to the `BACKEND_ENV` secret and let the next deploy restart both units.
 
@@ -535,7 +535,7 @@ cards for existing artisans with `python -m scripts.backfill_artisan_cards --app
 | Variable | Required | Default | Secret | Notes |
 |---|---|---|---|---|
 | `ARTISAN_CARDS_ENABLED` | No | `true` | No | The switch. Off, or no key: every card route answers 404. |
-| `ARTISAN_CARD_KEY` | To turn cards on | — | **Yes** | 32 random bytes, base64 (32+ characters). Signs the QR's tag. **A different value on each portal**; the other portal never checks this portal's cards. Losing it stops QR tags verifying; typed codes still resolve. |
+| `ARTISAN_CARD_KEY` | To turn cards on | — | **Yes** | 32 random bytes, base64 (32+ characters). Signs the QR's tag. **A different value on each portal**; the other portal never checks this portal's cards. Losing it stops QR tags verifying; typed codes still resolve. Deployed from the Actions secret of the same name by the "Pin the artisan card key" step; backup SSM `/iit/designer-portal/artisan-card-key`. |
 | `ARTISAN_CARD_KEY_VERSION` | No | `1` | No | 1–9. Bump on rotation; new cards are signed under the new key. |
 | `ARTISAN_CARD_KEY_PREVIOUS` | No | — | **Yes** | The key before a rotation, so cards signed under `ARTISAN_CARD_KEY_VERSION - 1` still verify. |
 | `ARTISAN_CARD_RESOLVE_MISS_LIMIT` | No | `20` | No | Card lookups that matched nobody, per account per 10 minutes, before the next is a 429. |

@@ -130,8 +130,7 @@ def test_the_scan_skips_a_decided_artisan_and_a_restart_does_not_ask_again(monke
 
 def test_link_marks_the_pair_linked_through_the_link_service(monkeypatch):
     async def scenario():
-        from app.api.routes import artisan_duplicates as routes
-        from app.api.routes import cross_portal as cp
+        from app.api.routes import artisan_duplicates as routes, cross_portal as cp
         from app.schemas.duplicates import PairLinkIn
 
         t = ds.tag()

@@ -11,29 +11,29 @@ from app.services import naming
     ("kwargs", "expected"),
     [
         (
-            dict(
-                portal=naming.PORTAL_DESIGN_WORKSHOP, entity="Artisan", what="Artisan-Card", ext="pdf",
-                day="2026-10-18", place="Bagru, Jaipur", craft="hand block printing", subject="Giriraj Prasad Chhipa",
-            ),
+            {
+                "portal": naming.PORTAL_DESIGN_WORKSHOP, "entity": "Artisan", "what": "Artisan-Card", "ext": "pdf",
+                "day": "2026-10-18", "place": "Bagru, Jaipur", "craft": "hand block printing", "subject": "Giriraj Prasad Chhipa",
+            },
             "DesignWorkshop_Artisan_2026-10-18_Bagru-Jaipur_Hand-Block-Printing_Giriraj-Prasad-Chhipa_Artisan-Card.pdf",
         ),
         (
-            dict(portal=naming.PORTAL_FIELD_REPOSITORY, entity="Artisan", what="Artisan-Cards", ext="pdf", day="2026-10-18"),
+            {"portal": naming.PORTAL_FIELD_REPOSITORY, "entity": "Artisan", "what": "Artisan-Cards", "ext": "pdf", "day": "2026-10-18"},
             "FieldRepository_Artisan_2026-10-18_Artisan-Cards.pdf",
         ),
         (
             # Unknown fields are left out; a name in another script with no romanised form drops out.
-            dict(
-                portal=naming.PORTAL_DESIGN_WORKSHOP, entity="Artisan", what="Artisan-Card", ext="pdf",
-                day="2026-10-18", place=None, craft="", subject="सीता देवी",
-            ),
+            {
+                "portal": naming.PORTAL_DESIGN_WORKSHOP, "entity": "Artisan", "what": "Artisan-Card", "ext": "pdf",
+                "day": "2026-10-18", "place": None, "craft": "", "subject": "सीता देवी",
+            },
             "DesignWorkshop_Artisan_2026-10-18_Artisan-Card.pdf",
         ),
         (
-            dict(
-                portal=naming.PORTAL_DESIGN_WORKSHOP, entity="Workshop", what="Report", ext="pdf",
-                day="2026-10-18", place="Bagru-Jaipur", craft="Hand-Block-Printing", subject="DW-RJ-0012",
-            ),
+            {
+                "portal": naming.PORTAL_DESIGN_WORKSHOP, "entity": "Workshop", "what": "Report", "ext": "pdf",
+                "day": "2026-10-18", "place": "Bagru-Jaipur", "craft": "Hand-Block-Printing", "subject": "DW-RJ-0012",
+            },
             "DesignWorkshop_Workshop_2026-10-18_Bagru-Jaipur_Hand-Block-Printing_DW-RJ-0012_Report.pdf",
         ),
     ],

@@ -14,11 +14,10 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
-from prisma import Json
-
 from app.core.db import db
 from app.core.security import hash_password
 from app.services import aadhaar_fingerprint, artisan_merge
+from prisma import Json
 
 _URL = os.environ.get("DATABASE_URL", "")
 LOCAL = any(host in _URL for host in ("localhost", "127.0.0.1"))

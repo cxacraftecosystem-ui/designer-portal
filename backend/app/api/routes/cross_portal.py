@@ -435,6 +435,7 @@ async def link_artisan(
         consent=payload.consent,
         expected_remote_id=payload.expectedRemoteArtisanId,
         user=current_user,
+        card_input=payload.cardInput,
     )
 
 
@@ -445,20 +446,22 @@ async def link_artisan_record(
     consent: bool,
     expected_remote_id: str | None,
     user: Any,
+    card_input: str | None = None,
 ) -> dict[str, Any]:
     """The link itself, shared by the route above and the duplicate finder's Link action
     (``routes/artisan_duplicates.link_pair``). Looks the artisan up again from what it stores, asks
-    the documentation portal first, then writes the local row. Raises the route's errors."""
+    the documentation portal first, then writes the local row. ``card_input`` is a Field Repository
+    card scanned or typed on the form: the link is then made from the card. Raises the route's errors."""
     current_user = user
     if not consent:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CONSENT_NEEDED)
     artisan = await require_record(db.artisan, artisan_id)
     await _assert_may_edit(artisan, current_user)
-    from_card = bool(payload.cardInput and payload.cardInput.strip())
+    from_card = bool(card_input and card_input.strip())
     if from_card:
         # FROM A CARD: the card is asked about again here, never taken on the client's word.
         try:
-            parsed = artisan_card.parse(payload.cardInput)
+            parsed = artisan_card.parse(card_input)
         except artisan_card.CardParseError:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CARD_BAD_CHECK

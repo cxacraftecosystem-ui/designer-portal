@@ -27,7 +27,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.TranscriptInsightDto
 import com.designprototype.workshop.data.TranscriptInsightStates
 import com.designprototype.workshop.data.TranscriptInsightViewDto
@@ -72,7 +71,7 @@ fun TranscriptInsightsCard(
     ) {
         val insight = current.insight
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Summary", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("Summary", color = Muted, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
             if (insight != null) {
                 EditedOrMachine(insight, formatDate)
             }
@@ -83,12 +82,12 @@ fun TranscriptInsightsCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text("Summarising…", color = Muted, fontSize = 12.sp)
+                Text("Summarising…", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
-            current.state == TranscriptInsightStates.FAILED -> Text(current.error.orEmpty(), color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            current.state == TranscriptInsightStates.FAILED -> Text(current.error.orEmpty(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         if (current.stale && insight != null) {
-            Text("The transcript changed after this summary.", color = Muted, fontSize = 12.sp)
+            Text("The transcript changed after this summary.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         if (insight != null && !TranscriptInsightStates.isWorking(current)) {
             InsightBody(insight)
@@ -103,24 +102,24 @@ private fun EditedOrMachine(insight: TranscriptInsightDto, formatDate: (String?)
         Text(
             line,
             color = FieldPalette.Purple700,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Medium,
             modifier = Modifier
                 .background(FieldPalette.Purple50, RoundedCornerShape(50))
                 .padding(horizontal = 8.dp, vertical = 2.dp)
         )
     } else {
-        Text(line, color = Muted, fontSize = 11.sp)
+        Text(line, color = Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
 private fun InsightBody(insight: TranscriptInsightDto) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        insight.summaryLines.forEach { line -> Text("•  $line", color = Body, fontSize = 13.sp) }
+        insight.summaryLines.forEach { line -> Text("•  $line", color = Body, style = MaterialTheme.typography.bodyMedium) }
     }
     if (insight.quotes.isNotEmpty()) {
-        Text("Key quotes", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text("Key quotes", color = Muted, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
         insight.quotes.forEach { quote ->
             Column(
                 modifier = Modifier
@@ -130,16 +129,16 @@ private fun InsightBody(insight: TranscriptInsightDto) {
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 val speaker = quote.speaker?.let { "$it: " }.orEmpty()
-                Text("$speaker“${quote.original}”", color = Body, fontSize = 13.sp)
+                Text("$speaker“${quote.original}”", color = Body, style = MaterialTheme.typography.bodyMedium)
                 if (quote.english.isNotBlank() && quote.english != quote.original) {
-                    Text(quote.english, color = Muted, fontSize = 12.sp)
+                    Text(quote.english, color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
     }
     when {
         TranscriptInsightStates.hasTranslation(insight) -> TranslationDisclosure(insight)
-        insight.translation.status == "FAILED" -> Text(insight.translation.note ?: "Translation failed.", color = Muted, fontSize = 12.sp)
+        insight.translation.status == "FAILED" -> Text(insight.translation.note ?: "Translation failed.", color = Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -159,10 +158,10 @@ private fun TranslationDisclosure(insight: TranscriptInsightDto) {
             tint = FieldPalette.Purple700,
             modifier = Modifier.size(18.dp)
         )
-        Text("English translation", color = FieldPalette.Purple700, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text("English translation", color = FieldPalette.Purple700, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
     }
     if (open) {
-        Text(insight.translation.text.orEmpty(), color = Body, fontSize = 13.sp)
-        insight.translation.note?.let { Text(it, color = Muted, fontSize = 12.sp) }
+        Text(insight.translation.text.orEmpty(), color = Body, style = MaterialTheme.typography.bodyMedium)
+        insight.translation.note?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
     }
 }
