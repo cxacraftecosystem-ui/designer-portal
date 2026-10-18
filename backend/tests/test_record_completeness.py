@@ -626,8 +626,10 @@ def world():
             await media("IMAGE", "workshopId", workshops[1].id)
             await media("IMAGE", "workshopId", workshops[2].id)
 
+            # sortOrder is unique: a run killed before its teardown leaves its section behind.
+            top = await db.questionnairesection.find_first(order={"sortOrder": "desc"})
             section = await db.questionnairesection.create(
-                data={"code": f"RC_{tag}", "title": f"RC {tag}", "sortOrder": 9999}
+                data={"code": f"RC_{tag}", "title": f"RC {tag}", "sortOrder": (top.sortOrder if top else 0) + 1}
             )
             question = await db.questionnairequestion.create(
                 data={
@@ -743,7 +745,12 @@ def test_post_and_patch_answer_with_the_block(world):
     client, auth = world["client"], world["auth"]["admin"]
     created = client.post(
         "/api/workshops",
-        json={"title": f"Posted {world['tag']}", "place": "P", "location": LOCATION},
+        json={
+            "title": f"Posted {world['tag']}",
+            "place": "P",
+            "location": LOCATION,
+            "date": "2026-01-05T00:00:00Z",
+        },
         headers=auth,
     )
     assert created.status_code == 201, created.text

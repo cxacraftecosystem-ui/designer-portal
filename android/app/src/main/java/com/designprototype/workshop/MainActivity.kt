@@ -4397,6 +4397,8 @@ private fun HomeScreen(
         // Success notes from sections that only hold an onError (media capture, process steps) go here,
         // so "Audio recording added" is drawn as a success and not as a problem. ui/AppMessage.kt.
         CompositionLocalProvider(LocalAppNotice provides { showMessage(it) }) {
+        // One focus channel per screen: an Edit opened from a meter pill starts at that field.
+        ProvideCompletenessFocus((screen as? Screen.Edit)?.focus, key = screen) {
         when (val s = screen) {
             is Screen.Dashboard -> {
                 carryForward?.let { prefill ->
@@ -4497,7 +4499,7 @@ private fun HomeScreen(
                 onError = { showError(it) }
             )
 
-            is Screen.Create -> ProvideCompletenessFocus(null, key = s) { when (s.mode) {
+            is Screen.Create -> when (s.mode) {
                 EntryMode.CRAFT -> CraftForm(
                     repository = repository,
                     onDone = { message = "Craft saved"; refresh(); refreshLookups(); goDashboard() },
@@ -4736,9 +4738,9 @@ private fun HomeScreen(
                         onEnable = { requestAdminView(true) }
                     )
                 }
-            } }
+            }
 
-            is Screen.Edit -> ProvideCompletenessFocus(s.focus, key = s) { if (s.mode == EntryMode.QUESTIONNAIRE) {
+            is Screen.Edit -> if (s.mode == EntryMode.QUESTIONNAIRE) {
                 InterviewEditLoader(
                     repository = repository,
                     recordId = s.recordId,
@@ -4771,7 +4773,7 @@ private fun HomeScreen(
                 canDelete = isAdmin && adminChrome,
                 onDone = { message = "${s.mode.label} updated"; refresh(); refreshLookups(); goDashboard() },
                 onError = { showError(it) }
-            ) }
+            )
 
             is Screen.MyActivity -> MyActivityScreen(
                 repository = repository,
@@ -5229,7 +5231,7 @@ private fun HomeScreen(
             is Screen.UsageRecording, is Screen.TwoStepVerification, is Screen.AccountPassword,
             is Screen.Aadhaar, is Screen.DataBrowser -> Unit
         }
-        }
+        } }
 
                 }
                 // The app's one message (ui/AppMessage.kt), pinned to the bottom of the viewport just
