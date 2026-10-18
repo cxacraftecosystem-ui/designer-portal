@@ -211,6 +211,7 @@ async def test_everything_is_404_until_the_url_and_secrets_are_set(world, monkey
     assert await routes.cross_portal_status(OWNER) == {
         "enabled": False,
         "sharedFields": cross_portal.consent_fields_phrase(),
+        "coverageEnabled": False,
     }
 
 

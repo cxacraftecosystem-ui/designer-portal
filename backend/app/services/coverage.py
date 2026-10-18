@@ -140,8 +140,8 @@ def split_values(raw: Iterable[str] | None) -> list[str]:
     """Repeated and comma-joined spellings of one parameter, trimmed and de-duplicated in order."""
     out: list[str] = []
     for value in raw or ():
-        for part in str(value).split(","):
-            part = part.strip()
+        for chunk in str(value).split(","):
+            part = chunk.strip()
             if part and part not in out:
                 out.append(part)
     return out
@@ -362,7 +362,7 @@ def as_datetime(value: Any) -> datetime | None:
     if value is None or isinstance(value, datetime):
         return value
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return datetime.fromisoformat(str(value))
     except ValueError:
         return None
 
@@ -434,7 +434,7 @@ def fold_field_rows(
         unit.crafts.update(codes or {f"id:{cid}" for cid in craft_ids})
         row_id = str(_get(row, "id"))
         title = field_title(bucket, row)
-        first = sorted(codes)[0] if codes else None
+        first = min(codes) if codes else None
         href = HREF_FOR_BUCKET[bucket].format(id=row_id)
         fold.add_stub(bucket, key, {"id": row_id, "title": title, "href": href, "craftCode": first, "fy": fy})
         if not is_workshop:
@@ -606,7 +606,7 @@ def add_cluster_markers(fold: Fold) -> None:
                     "id": f"{key[1]}:{cluster_key}",
                     "title": name,
                     "clusterName": name,
-                    "craftCode": sorted(unit.craft_codes)[0] if unit.craft_codes else None,
+                    "craftCode": min(unit.craft_codes) if unit.craft_codes else None,
                     "stateLgd": key[0],
                     "districtLgd": key[1] or None,
                     "lon": position[0],
@@ -984,10 +984,6 @@ async def load_corpus(user: Any) -> Corpus:
     return corpus
 
 
-async def _empty() -> list[Any]:
-    return []
-
-
 async def read_corpus(client: Any, user: Any) -> Corpus:
     """The reads themselves. Every record ``where`` comes from ``build_record_wheres``."""
     from app.services import annual_plan, ministry_dashboard
@@ -997,10 +993,6 @@ async def read_corpus(client: Any, user: Any) -> Corpus:
     scope = ministry_dashboard.scope_clause(user)
     if scope is not None:
         dw_where["AND"].append(scope)
-    plan_states = await annual_plan.plan_scope(user)
-    plan_where: dict[str, Any] = {"withdrawnAt": None}
-    if plan_states is not None:
-        plan_where["state"] = {"in": plan_states}
 
     results = await gather_reads(
         *(
@@ -1013,9 +1005,7 @@ async def read_corpus(client: Any, user: Any) -> Corpus:
             for bucket in FIELD_BUCKETS
         ),
         client.designworkshop.find_many(where=dw_where, take=ROW_CAP + 1, order={"id": "asc"}),
-        client.annualplanentry.find_many(where=plan_where, take=ROW_CAP + 1, order={"id": "asc"})
-        if plan_states is None or plan_states
-        else _empty(),
+        annual_plan.coverage_rows(client, user, take=ROW_CAP + 1),
         client.craft.find_many(),
         client.craftspelling.find_many(),
         load_aliases(client),

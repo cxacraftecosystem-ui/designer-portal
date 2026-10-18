@@ -136,10 +136,17 @@ ALLOWED_CLIENT_MODULES = {
 #:     without noticing the two retirements differ.
 #:
 #: If the type registry ever stops being shared between the two features, this entry goes with it.
+#:
+#: ``services/coverage.py`` joined on 2026-10-18 for the coverage map. It NAMES the model and never
+#: reaches it: the read is ``annual_plan.coverage_rows``, in ``plan_scope``, withdrawn rows left out.
+#: The name is the label its unmatched-places sample prints, and planned rows land in their own
+#: "planned" count on a district, never in its workshop count. Counting a plan row as a workshop
+#: there is the edit this entry does not license.
 ALLOWED_MENTION_MODULES = ALLOWED_CLIENT_MODULES | {
     "services/annual_plan_xlsx.py",
     "schemas/annual_plan.py",
     "api/routes/workshop_types.py",
+    "services/coverage.py",
 }
 
 

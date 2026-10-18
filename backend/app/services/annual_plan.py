@@ -203,6 +203,22 @@ async def plan_scope(user: Any) -> list[str] | None:
     return sorted({str(row.state) for row in rows})
 
 
+async def coverage_rows(client: Any, user: Any, *, take: int) -> list[Any]:
+    """The live plan rows the coverage map counts, in this user's ``plan_scope``, oldest id first.
+
+    The coverage map keeps planned workshops in a bucket of their own and never counts them as
+    workshops; it reaches the table only through here so that this module still owns the read.
+    Withdrawn rows are left out: the map shows what is intended now, not what once was.
+    """
+    states = await plan_scope(user)
+    if states is not None and not states:
+        return []
+    where: dict[str, Any] = {"withdrawnAt": None}
+    if states is not None:
+        where["state"] = {"in": states}
+    return await client.annualplanentry.find_many(where=where, take=take, order={"id": "asc"})
+
+
 def in_scope(row: Any, scope: list[str] | None) -> bool:
     """Is this plan row inside the caller's scope? ``None`` is the whole directory."""
     if scope is None:

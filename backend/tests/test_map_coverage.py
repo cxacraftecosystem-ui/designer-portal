@@ -285,7 +285,9 @@ def test_unmatched_spellings_are_counted_and_sampled_for_admins_only():
     corpus = _barmer_corpus()
     corpus.design_workshops.append(_dw(9, "Rajasthan", "Kachchh"))
     payload = _payload(corpus)
-    assert payload["unmatched"]["count"] >= 2 and "sample" not in payload["unmatched"]
+    # Kachchh written under Rajasthan is unmatched; "Atlantis" with no state or district is unplaced.
+    assert payload["unmatched"]["count"] == 1 and payload["unmatched"]["unplaced"] == 1
+    assert "sample" not in payload["unmatched"]
     sample = _payload(corpus, admin=True)["unmatched"]["sample"]
     assert {"model": "DesignWorkshop", "rawState": "Rajasthan", "rawDistrict": "Kachchh", "rows": 1} in sample
     suggestion = coverage.suggestion_for("Rajasthan", "Kachchh")
@@ -297,7 +299,7 @@ def test_unmatched_spellings_are_counted_and_sampled_for_admins_only():
 # Names only
 # --------------------------------------------------------------------------------------------
 
-FORBIDDEN_KEY = re.compile(r'"(aadhaar\w*|pehchan\w*|phone\w*|address\w*|village|pincode|street)"', re.I)
+FORBIDDEN_KEY = re.compile(r'"(aadhaar\w*|pehchan\w*|phone\w*|address\w*|village|pincode|street)"', re.IGNORECASE)
 
 
 def test_no_payload_carries_identity_or_address_keys():
@@ -305,7 +307,8 @@ def test_no_payload_carries_identity_or_address_keys():
     corpus.field_rows["artisans"][0].update({"aadhaarNumber": "123412341234", "phone": "9999999999"})
     payload = _payload(corpus, admin=True)
     fold = coverage.fold_corpus(corpus, coverage.Filters())
-    for text in (json.dumps(payload, default=str), json.dumps(fold.stubs, default=str)):
+    stubs = {bucket: {str(key): rows for key, rows in units.items()} for bucket, units in fold.stubs.items()}
+    for text in (json.dumps(payload, default=str), json.dumps(stubs, default=str)):
         assert not FORBIDDEN_KEY.search(text)
         assert "123412341234" not in text and "9999999999" not in text
     for columns in coverage.FIELD_COLUMNS.values():
