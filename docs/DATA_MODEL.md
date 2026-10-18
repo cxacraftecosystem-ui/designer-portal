@@ -277,6 +277,7 @@ mechanisms** — which is the single most confusing thing in the schema if you m
 ```mermaid
 erDiagram
   MediaFile ||--o{ MediaProcessingJob : "queues"
+  MediaFile ||--o{ TranscriptInsight : "summarised as"
   User ||--o{ MediaFile : uploads
   User ||--o{ MediaProcessingJob : requests
 
@@ -297,12 +298,23 @@ erDiagram
     enum   status "review state"
   }
   MediaProcessingJob {
-    enum   jobType "TRANSCRIPTION | MEASUREMENT"
+    enum   jobType "TRANSCRIPTION | MEASUREMENT | TRANSCRIPT_INSIGHTS"
     enum   status "QUEUED PROCESSING COMPLETED FAILED CANCELLED"
     int    attempts
     int    maxAttempts
     datetime runAfter "backoff / cooldown"
     string lockedBy "single elected worker"
+  }
+  TranscriptInsight {
+    int      version "UNIQUE with mediaFileId; one row per run"
+    string   sourceHash "sha256 of the transcript it was made from"
+    string[] summaryLines "at most 5, English"
+    json     quotes "original + English + speaker"
+    string   translationStatus "NOT_NEEDED COMPLETED PARTIAL FAILED"
+    string   modelId "provenance, with provider, modelVersion, promptVersion"
+    json     generated "the machine's output, frozen"
+    datetime editedAt "server-stamped; NULL = never edited"
+    datetime supersededAt "NULL = the current version"
   }
 ```
 
@@ -322,6 +334,19 @@ the XLSX export both do, via their `_MEDIA_TAG_SLOTS` / `_OWNER_TAGS` lists.
 
 `linkedRecordType`/`linkedRecordId` is also how Miscellaneous Media attaches to anything at all, and
 how `EntryComment` and `RecordRevision` address a record without one FK per table.
+
+### `TranscriptInsight` — added 2026-10-18
+
+A summary, key quotes and an English translation of one file's transcript, written by the queue
+worker (`backend/app/services/transcript_insights.py`; [AI_FEATURES.md](AI_FEATURES.md) §11). **One
+row per generation run**: a regeneration stamps the previous row's `supersededAt` and adds
+`version` + 1, so the current insight is the row with `supersededAt` NULL. A researcher's edit
+changes only that row and stamps `editedAt` / `editedById` from the server; `generated` keeps the
+machine's own output. `requestedById` and `editedById` carry no foreign key, for the reason
+`transcriptEditedById` carries none. The cascade on `mediaFileId` is deliberate: a summary goes when
+its recording goes. **`MediaFile.transcriptSummary` is not a summary** — the queue stores the raw
+provider text there — and nothing here writes to it. Not `DwAiLayer`: that table needs a design
+workshop, and most recordings have none. The Field Repository has the identical table.
 
 ---
 
@@ -876,7 +901,7 @@ Every enum, and the thing to know about each. The list of names is generated int
 | `RecordStatus` | `DRAFT`, `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_REVISION` | `NEEDS_REVISION` is the "sent back with comments" state |
 | `ReviewRecordType` | artisan, workshop, product, tool, process, questionnaire, media | processes and interviews are reviewable because the late-submission gate can pin them `PENDING` |
 | `MediaType` | image, video, audio, pdf, document, other | |
-| `MediaProcessingJobType` | `TRANSCRIPTION`, `MEASUREMENT` | |
+| `MediaProcessingJobType` | `TRANSCRIPTION`, `MEASUREMENT`, `TRANSCRIPT_INSIGHTS` | the third is text only and is drained only while its AI switch is on |
 | `MediaProcessingJobStatus` | queued, processing, completed, failed, cancelled | a throttled job returns to `QUEUED` **without** spending an attempt |
 | `ProcessStepType` | `SEQUENTIAL`, `GROUP` | ordered stage versus things done together |
 | `DataAccessTier` | `DOWNLOAD` < `COMMENT` < `EDIT` | ordered; each includes the ones below |

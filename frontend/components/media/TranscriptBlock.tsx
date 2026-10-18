@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AudioLines, Loader2 } from "lucide-react";
 
+import { TranscriptInsights } from "@/components/media/TranscriptInsights";
 import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
 import { useAuth } from "@/components/AuthProvider";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
@@ -164,6 +165,7 @@ export function TranscriptBlock({
             <EditedFlag edited={current.transcriptEditedAt ? true : undefined} />
           </MarkdownDocument>
         </div>
+        {status === "COMPLETED" ? <TranscriptInsights mediaId={current.id} readOnly={readOnly} /> : null}
         {control}
         {failureNote}
       </>

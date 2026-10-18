@@ -170,6 +170,7 @@ enum ReviewRecordType {
 enum MediaProcessingJobType {
   TRANSCRIPTION
   MEASUREMENT
+  TRANSCRIPT_INSIGHTS
 }
 
 enum MediaProcessingJobStatus {
@@ -1597,6 +1598,9 @@ model MediaFile {
   /// exactly as it is and stays the queue's business: this is the copy that carries which model
   /// produced it, which that column has never had room to say. See DwAiLayer.
   aiLayers   DwAiLayer[]           @relation("MediaFileAiLayers")
+  /// Summary, key quotes and English translation of this file's transcript, one row per run.
+  /// Not DwAiLayer: that table needs a design workshop and most recordings have none.
+  insights   TranscriptInsight[]
 
   @@index([mediaType])
   @@index([uploadedById])
@@ -1617,6 +1621,48 @@ model MediaFile {
   // the data browser's `ORDER BY createdAt` over it is worth serving from the index too.
   @@index([workshopId, createdAt])
   @@index([designWorkshopId, createdAt])
+}
+
+/// A summary, key quotes and (for a non-English transcript) an English translation of one media
+/// file's transcript. ONE ROW PER GENERATION RUN: a regeneration stamps the previous current row's
+/// `supersededAt` and adds `version` + 1, so the current insight is the row with `supersededAt`
+/// NULL. A researcher's edit changes only that row and stamps `editedAt`/`editedById` from the
+/// server; `generated` keeps the machine's own output frozen. Neither stamp carries a relation, for
+/// the reason `transcriptEditedById` carries none. The cascade is deliberate: a summary goes when
+/// its recording goes. Identical in the Field Repository. See services/transcript_insights.py.
+model TranscriptInsight {
+  id                String    @id @default(cuid())
+  mediaFileId       String
+  version           Int
+  /// sha256 of the primary transcript + NUL + the raw original (or ''). Differs from the media's
+  /// current hash when the transcript changed after this summary was written.
+  sourceHash        String
+  /// BCP-47 tag, 'multi', or NULL when the model did not say.
+  sourceLanguage    String?
+  summaryLines      String[]  @default([])
+  /// [{original, english, speaker|null}]
+  quotes            Json      @default("[]")
+  /// NOT_NEEDED | COMPLETED | PARTIAL | FAILED
+  translationStatus String
+  translationText   String?
+  translationNote   String?
+  provider          String
+  modelId           String
+  modelVersion      String?
+  promptVersion     String
+  generated         Json
+  generatedAt       DateTime
+  requestedById     String?
+  editedAt          DateTime?
+  editedById        String?
+  supersededAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  mediaFile MediaFile @relation(fields: [mediaFileId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([mediaFileId, version])
+  @@index([mediaFileId, supersededAt])
 }
 
 model MediaProcessingJob {

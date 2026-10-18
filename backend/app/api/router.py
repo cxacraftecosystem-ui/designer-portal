@@ -43,6 +43,7 @@ from app.api.routes import (
     settings,
     tasks,
     tools,
+    transcript_insights,
     two_factor,
     usage,
     users,
@@ -99,6 +100,10 @@ api_router.include_router(workshop_types.router)
 api_router.include_router(products.router)
 api_router.include_router(processes.router)
 api_router.include_router(tools.router)
+# Interview summaries, key quotes and translations — /api/media/insights and
+# /api/media/{id}/insights. BEFORE media, and the order is load-bearing: media declares
+# GET /{media_id}, which would answer GET /media/insights as a media id.
+api_router.include_router(transcript_insights.router)
 api_router.include_router(media.router)
 api_router.include_router(questionnaire.router)
 # Custom questionnaires — /api/questionnaires (PLURAL), a form a designer authored themselves, as

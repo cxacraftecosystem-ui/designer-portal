@@ -410,6 +410,18 @@ REFINEMENT = Send(
     alternative="Nothing was sent, and the transcript is exactly as it was. ",
 )
 
+#: The transcript of a recording, on its way to a summary, key quotes and an English translation
+#: (``services/transcript_insights``, a queue job). The same material and the same rule as
+#: :data:`REFINEMENT`; the destination is whichever language model the resolved AI key names, so it
+#: is not narrowed to one company. The queue re-reads this at send time, so a withdrawal stops a
+#: job that was queued under the grant.
+INSIGHTS = Send(
+    material="transcripts",
+    destination="the AI language model",
+    consequence="this transcript cannot be summarised there",
+    alternative="Nothing was sent, and the transcript is unchanged. ",
+)
+
 #: What an unrecognised verb is described as. Vague on purpose and false about nothing.
 #:
 #: A sixth verb added without copy is caught by a test that walks ``ai_verbs.Verb`` against

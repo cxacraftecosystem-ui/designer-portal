@@ -6,6 +6,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 
 import { useMediaUrl } from "@/components/hooks/useMediaUrl";
 import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
+import { TranscriptInsights } from "@/components/media/TranscriptInsights";
 import { RetryMediaButton } from "@/components/media/MediaActionButton";
 import { Markdown } from "@/components/Markdown";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
@@ -56,6 +57,7 @@ function LightboxTranscript({ item }: { item: PreviewMedia }) {
       <div className="rounded-md border border-line-200 bg-field-50 p-3">
         <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">Transcript</div>
         <Markdown text={text} />
+        {item.id && status === "COMPLETED" ? <TranscriptInsights mediaId={item.id} readOnly /> : null}
       </div>
     );
   }
