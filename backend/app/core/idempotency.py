@@ -78,6 +78,8 @@ CREATE_ROUTES = tuple(
         # A copy of a questionnaire as a template: a create of a NEW questionnaire (2026-10-17).
         r"^/api/questionnaires/[^/]+/reuse/?$",
         r"^/api/feedback/reports/?$",
+        # On-demand Ministry export packs (2026-10-18): a replay must not bump a revision twice.
+        r"^/api/ministry-exports/packs/?$",
     )
 )
 

@@ -533,6 +533,13 @@ const RECORD_CREATOR_GUARD = {
 export const APPROVAL_AUTHORITY_REFUSAL =
   "Only the Ministry Admin and the master admin approve reports.";
 
+/**
+ * What everybody outside {@link MINISTRY_EXPORT_ROLES} is told at `/ministry-exports` — BYTE-IDENTICAL
+ * to `REFUSAL` in `backend/app/services/ministry_exports.py`, the 403 every `/api/ministry-exports`
+ * route answers. Declared above `ROUTE_GUARDS` for the temporal-dead-zone reason given above.
+ */
+export const MINISTRY_EXPORT_REFUSAL = "For Ministry Admins, admins and the master admin.";
+
 export const ROUTE_GUARDS: RouteGuard[] = [
   {
     path: "/users",
@@ -640,6 +647,26 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     title: "Ministry access required",
     message:
       "For Assistant Directors, Regional Directors, Ministry Admins and the master admin. Admins: use Cross-workshop analytics. Designers: use Design workshops."
+  },
+  {
+    /*
+      THE MINISTRY'S MONTHLY EXPORT PACKS (2026-10-18): the packs, generating one on demand, and who
+      is e-mailed when a month's are ready.
+
+      A TOP-LEVEL ROUTE AND NOT `/admin/…`, for the `/annual-plan` reason below: `/admin` is
+      `isAdmin`, and the Ministry Admin is the tier this page is for.
+
+      A SET, {@link MINISTRY_EXPORT_ROLES} = the oversight assigners, because a pack is built at
+      WHOLE-ESTATE scope: the two director tiers read only the workshops they oversee, so a pack of
+      every workshop is not theirs to open. While `MINISTRY_EXPORTS_ENABLED` is off the API answers
+      404 and the page renders the not-found screen; no entry point is drawn.
+    */
+    path: "/ministry-exports",
+    can: canManageMinistryExports,
+    gate: "require_ministry_export_manager (OVERSIGHT_ASSIGNER_ROLES, app/api/routes/ministry_exports.py)",
+    ministry: true,
+    title: "Ministry Admin access required",
+    message: MINISTRY_EXPORT_REFUSAL
   },
   {
     /*
@@ -1455,6 +1482,24 @@ export const OVERSIGHT_ASSIGNER_ROLES: readonly UserRole[] = [
 
 export function canAssignWorkshopOversight(user: User | null | undefined) {
   return !!user && OVERSIGHT_ASSIGNER_ROLES.includes(user.role);
+}
+
+/**
+ * Who manages the Ministry's monthly export packs on `/ministry-exports` — generates them, opens
+ * them and chooses who is e-mailed. Mirrors `require_ministry_export_manager`, which reads
+ * `OVERSIGHT_ASSIGNER_ROLES`: a pack is built at whole-estate scope, so only the whole-estate tiers
+ * may receive one. Registered separately from {@link OVERSIGHT_ASSIGNER_ROLES} in
+ * `backend/tests/test_role_ladder_parity.py` although the members are the same today: naming
+ * supervisors and taking the whole estate out of the product are two decisions.
+ */
+export const MINISTRY_EXPORT_ROLES: readonly UserRole[] = [
+  "MINISTRY_ADMIN",
+  "ADMIN",
+  "MASTER_ADMIN"
+];
+
+export function canManageMinistryExports(user: User | null | undefined) {
+  return !!user && MINISTRY_EXPORT_ROLES.includes(user.role);
 }
 
 /**

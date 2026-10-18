@@ -132,3 +132,12 @@ variable "cost_report_emails" {
   # rather than inlined so adding a recipient is a one-line change with a plan behind it.
   default = ["ankits1802@gmail.com"]
 }
+
+variable "ministry_export_days" {
+  description = "Days the bucket keeps a Ministry export pack's files under exports/ before the lifecycle rule removes them. The pack's row stays."
+  type        = number
+
+  # Thirteen months and a little: last year's same month is still downloadable when this year's
+  # pack arrives. A cost question, not a code change — the page reads the date from the API.
+  default = 400
+}

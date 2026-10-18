@@ -137,6 +137,8 @@ def _aadhaar_routes_switched_on(monkeypatch):
 
     monkeypatch.setattr(get_settings(), "aadhaar_offline_verification_enabled", True)
     monkeypatch.setattr(get_settings(), "aadhaar_online_auth_enabled", True)
+    # The Ministry export routes are flagged the same way (404 while off), so the same reasoning holds.
+    monkeypatch.setattr(get_settings(), "ministry_exports_enabled", True)
 
 
 @pytest.fixture(autouse=True)

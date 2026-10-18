@@ -97,6 +97,12 @@ def test_office_addresses_are_cleaned_and_refused_by_entry() -> None:
     assert kept == ["a@example.org", "b@example.org"] and refused == ["nope"]
 
 
+def test_an_address_longer_than_smtp_allows_is_refused_without_a_slow_match() -> None:
+    long_address = "a@" + "b." * 2000 + "!"
+    kept, refused = report_delivery.clean_addresses([long_address, "x@" + "y" * 250 + ".org"])
+    assert kept == [] and refused == [long_address, "x@" + "y" * 250 + ".org"]
+
+
 def test_each_preference_governs_its_own_kinds() -> None:
     assert email_outbox.PREFERENCE_FOR_KIND[mailer.REPORT_APPROVED] == "emailWorkshopUpdates"
     assert email_outbox.PREFERENCE_FOR_KIND[mailer.RECORD_COMMENT] == "emailAccessNotices"

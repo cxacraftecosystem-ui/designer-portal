@@ -408,6 +408,11 @@ MEDIA_QUEUE_WORKER_ENABLED=false
 # MAIL_SES_REGION=ap-south-1
 # MAIL_SES_CONFIGURATION_SET=
 
+# Ministry export packs (optional, OFF by default). Apply infra/terraform FIRST — it adds the
+# AppMinistryExports statement (Put/Get on exports/*) and the expire-ministry-exports lifecycle rule —
+# and only then set the flag. With the flag on and no apply, every pack build fails at the upload.
+# MINISTRY_EXPORTS_ENABLED=true
+
 BACKEND_CORS_ORIGINS=https://your-frontend-domain
 # Required in production: the origin every set-password and invite link is built on. The default,
 # http://localhost:3000, only suits a laptop. Use the same origin as the first CORS entry above.

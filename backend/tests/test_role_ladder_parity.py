@@ -330,6 +330,35 @@ MIRRORS: tuple[Mirror, ...] = (
             "this card was written to end."
         ),
     ),
+    # THE MINISTRY'S MONTHLY EXPORT PACKS, 2026-10-18. Same members as `OVERSIGHT_ASSIGNER_ROLES`
+    # today, and registered separately for the reason the dashboard rows below give: naming
+    # supervisors and taking the whole estate out of the product are two decisions, and a new tier
+    # must be decided onto each side of each.
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="MINISTRY_EXPORT_ROLES",
+        kind="partial",
+        pattern=r"export const MINISTRY_EXPORT_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\n\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ASSISTANT_DIRECTOR",
+                "REGIONAL_DIRECTOR",
+            }
+        ),
+        why=(
+            "Who may open, generate and choose the recipients of the Ministry's monthly export packs "
+            "on `/ministry-exports`. Mirrors `require_ministry_export_manager`, which reads "
+            "`OVERSIGHT_ASSIGNER_ROLES`: a pack is built at whole-estate scope, so the two director "
+            "tiers, who read only the workshops they oversee, are absent. A new tier defaulting IN "
+            "takes every workshop in the country out of the product as a spreadsheet."
+        ),
+    ),
     # THE GATE THAT SITS BESIDE THE CARD ABOVE, AND THE DUPLICATION IS THE POINT.
     #
     # `MINISTRY_DASHBOARD_ROLES` has the same four members as `MINISTRY_DESK_ROLES` and is a
@@ -1403,6 +1432,13 @@ LADDER_SHAPED = 5
 #: reason has to be "this does not purport to enumerate the ladder" — never "this failure was
 #: inconvenient". Anything that DOES enumerate belongs in ``MIRRORS``, not here.
 KNOWN_NON_MIRRORS: dict[str, str] = {
+    "frontend/e2e/ministry-exports-unit.spec.ts": (
+        "A SAMPLE of each side of the `/ministry-exports` gate, and NOT an enumeration: three tiers "
+        "it must admit and four it must refuse, asked of `ROUTE_GUARDS`, plus ADMIN alone for the "
+        "feature switch. The gate's whole membership is held by the `partial` mirror of "
+        "`MINISTRY_EXPORT_ROLES` above, and the spec asserts that list equals "
+        "`OVERSIGHT_ASSIGNER_ROLES` rather than restating it."
+    ),
     "android/app/src/test/java/com/designprototype/workshop/ui/RecordOpenTest.kt": (
         "Tiers named in individual assertions, and NOT an enumeration -- no tuple, map or loop over "
         "roles. It pins `RecordOpen.mayUpdate` (who is offered 'Update' on a read-only record) at its "

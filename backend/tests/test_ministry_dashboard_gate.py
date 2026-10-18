@@ -209,7 +209,9 @@ def test_every_route_on_the_prefix_carries_the_gate() -> None:
     for api_route in route.router.routes:
         names = {
             dependency.call.__name__
-            for dependency in getattr(api_route, "dependant", SimpleNamespace(dependencies=[])).dependencies
+            for dependency in getattr(
+                api_route, "dependant", SimpleNamespace(dependencies=[])
+            ).dependencies
             if getattr(dependency, "call", None) is not None
         }
         # The gate may be the route's own dependency or reached through it; both appear in the
@@ -359,7 +361,12 @@ def test_the_roll_up_is_the_clients_arithmetic_to_the_rounding() -> None:
     assert rolled["stagesComplete"] == 1
     assert rolled["stagesTotal"] == 2
 
-    assert register._roll_up({"z": {"requiredTotal": 0, "requiredFilled": 0, "isComplete": True}})["percent"] == 100
+    assert (
+        register._roll_up({"z": {"requiredTotal": 0, "requiredFilled": 0, "isComplete": True}})[
+            "percent"
+        ]
+        == 100
+    )
     assert register._roll_up({})["percent"] is None
 
 
@@ -460,7 +467,9 @@ def test_the_beneficiary_export_is_the_shared_one_and_masks_by_construction() ->
         assert can_download_dataset(_user(role)) is True, role
 
     identity_labels = {
-        field.label for field in ARTISAN.fields if "aadhaar" in field.label.lower() or "pehchan" in field.label.lower()
+        field.label
+        for field in ARTISAN.fields
+        if "aadhaar" in field.label.lower() or "pehchan" in field.label.lower()
     }
     assert identity_labels, "the artisan registry no longer declares the regulated identity columns"
     source = (REPO / "backend/app/services/record_fields.py").read_text(encoding="utf-8")
@@ -724,9 +733,7 @@ def test_the_scope_sentence_changes_when_an_account_directory_is_folded_in() -> 
     """
     for noun in ("designer", "officer", "inspector"):
         for role in ("MINISTRY_ADMIN", "ASSISTANT_DIRECTOR"):
-            folded = register.people_scope_label(
-                _user(role), noun=noun, includes_unposted=True
-            )
+            folded = register.people_scope_label(_user(role), noun=noun, includes_unposted=True)
             relation_only = register.people_scope_label(
                 _user(role), noun=noun, includes_unposted=False
             )
@@ -772,7 +779,9 @@ def test_a_people_row_is_four_identity_keys_and_measurements_and_nothing_about_t
     assert row["email"] == "rekha@example.org"
     assert row["role"] == "DESIGNER"
     for forbidden in _ROSTER_JUDGEMENTS:
-        assert forbidden not in row, f"a people row carries {forbidden}, which is a roster judgement"
+        assert forbidden not in row, (
+            f"a people row carries {forbidden}, which is a roster judgement"
+        )
 
     # The identity half is BORROWED and not retyped, so the four keys cannot drift from the picker.
     assert "assignable_designers_payload" in _code_of(register.new_person_row)
@@ -966,7 +975,12 @@ def test_the_roster_gap_discloses_counts_and_never_an_address() -> None:
     )
     # The report is a returned dict literal rather than a mutated one, so it is read as source:
     # every value it carries is a count or a flag, and there is nowhere for a name to travel.
-    for name in ("rosterAdmitted", "rosterWithoutAccount", "rosterOtherRole", "rosterReadTruncated"):
+    for name in (
+        "rosterAdmitted",
+        "rosterWithoutAccount",
+        "rosterOtherRole",
+        "rosterReadTruncated",
+    ):
         assert name in code, f"{name} is gone from the representation report"
     for leak in ("email", "name", "fullName"):
         assert f'"{leak}"' not in code, f"{leak!r} is being put on the wire by the gap report"
@@ -988,13 +1002,26 @@ def test_the_gap_sentence_is_absent_when_nothing_is_missing() -> None:
     """A caveat that is always on screen is a caveat nobody reads, so the note is ``None`` when the
     register accounts for the whole roster — and the client renders nothing rather than an empty
     box."""
-    assert register.roster_representation_note(
-        {"rosterAdmitted": 9, "rosterWithoutAccount": 0, "rosterOtherRole": 0, "rosterReadTruncated": False},
-        9,
-    ) is None
+    assert (
+        register.roster_representation_note(
+            {
+                "rosterAdmitted": 9,
+                "rosterWithoutAccount": 0,
+                "rosterOtherRole": 0,
+                "rosterReadTruncated": False,
+            },
+            9,
+        )
+        is None
+    )
 
     note = register.roster_representation_note(
-        {"rosterAdmitted": 35, "rosterWithoutAccount": 24, "rosterOtherRole": 2, "rosterReadTruncated": False},
+        {
+            "rosterAdmitted": 35,
+            "rosterWithoutAccount": 24,
+            "rosterOtherRole": 2,
+            "rosterReadTruncated": False,
+        },
         9,
     )
     assert note is not None
@@ -1008,7 +1035,12 @@ def test_a_cut_roster_read_says_the_gap_is_a_floor() -> None:
     """A gap computed from a roster that was cut at its own ceiling UNDERSTATES itself, which is the
     one failure mode that would make this number worse than no number at all."""
     note = register.roster_representation_note(
-        {"rosterAdmitted": 500, "rosterWithoutAccount": 400, "rosterOtherRole": 0, "rosterReadTruncated": True},
+        {
+            "rosterAdmitted": 500,
+            "rosterWithoutAccount": 400,
+            "rosterOtherRole": 0,
+            "rosterReadTruncated": True,
+        },
         100,
     )
     assert note is not None and "floor" in note
@@ -1159,8 +1191,12 @@ def test_the_person_roll_up_is_the_registers_arithmetic_to_the_rounding() -> Non
     """
     row = register.new_person_row(_account("d1", "Rekha", "r@x.y", "DESIGNER"))
     row["workshops"] = 3
-    register.add_score(row, {"requiredTotal": 10, "requiredFilled": 5, "stagesComplete": 1, "stagesTotal": 6})
-    register.add_score(row, {"requiredTotal": 30, "requiredFilled": 30, "stagesComplete": 6, "stagesTotal": 6})
+    register.add_score(
+        row, {"requiredTotal": 10, "requiredFilled": 5, "stagesComplete": 1, "stagesTotal": 6}
+    )
+    register.add_score(
+        row, {"requiredTotal": 30, "requiredFilled": 30, "stagesComplete": 6, "stagesTotal": 6}
+    )
     # A workshop the request did not score contributes NOTHING and is not counted as scored, which is
     # what keeps `workshopsScored` an honest denominator beside the percentage.
     register.add_score(row, None)
@@ -1229,6 +1265,7 @@ def test_the_people_order_is_total_so_a_paged_register_serves_nobody_twice() -> 
     insertion order over a relation read; a row that changes side of the page cut between two
     requests is handed over twice or never, and either way the response looks perfectly healthy.
     """
+
     def _row(user_id: str, name: str, workshops: int) -> dict:
         row = register.new_person_row(_account(user_id, name, f"{user_id}@x.y", "DESIGNER"))
         row["workshops"] = workshops
@@ -1422,4 +1459,6 @@ def test_the_people_reads_use_the_relations_and_not_the_promoted_string() -> Non
         # READ AND ONLY EVER READ. A viewer row confers STAGE WRITES — `load_workshop_or_404(
         # for_edit=True)` reads the same relation — and nothing on this prefix writes.
         for write in (".create(", ".create_many(", ".delete(", ".delete_many(", ".update("):
-            assert write not in code, f"{reader.__name__} writes to a relation this prefix only reads"
+            assert write not in code, (
+                f"{reader.__name__} writes to a relation this prefix only reads"
+            )

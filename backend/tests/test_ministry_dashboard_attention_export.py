@@ -125,7 +125,7 @@ def test_the_job_list_never_reads_the_stored_file_and_the_build_is_off_the_loop(
     assert "asyncio.to_thread(" in body
     assert "EXPORT_READ_BATCH" in body
     assert "ministrydataexport.update(" not in body.split("ministrydataexport.update_many(")[-1]
-    route = (ROUTES / "ministry_exports.py").read_text(encoding="utf-8")
+    route = (ROUTES / "ministry_stage_data_exports.py").read_text(encoding="utf-8")
     listing = route[route.index("async def list_stage_data_exports(") :]
     listing = listing[: listing.index("@router.get", 1)]
     assert "find_many" not in listing and "exports.list_jobs(" in listing
@@ -155,7 +155,7 @@ def test_a_raw_job_row_reads_like_a_model_row() -> None:
 def test_the_export_routes_are_their_own_module_and_the_register_stays_read_only() -> None:
     register_source = (ROUTES / "ministry_dashboard.py").read_text(encoding="utf-8")
     assert "@router.post" not in register_source
-    export_source = (ROUTES / "ministry_exports.py").read_text(encoding="utf-8")
+    export_source = (ROUTES / "ministry_stage_data_exports.py").read_text(encoding="utf-8")
     assert export_source.count("Depends(require_ministry_dashboard_reader)") == 3
 
 

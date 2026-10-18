@@ -55,7 +55,8 @@ def clean_addresses(values: list[str]) -> tuple[list[str], list[str]]:
             address = part.strip().lower()
             if not address:
                 continue
-            if not _ADDRESS.match(address):
+            # 254 is the longest address SMTP allows; the cap also bounds the regex's backtracking.
+            if len(address) > 254 or not _ADDRESS.match(address):
                 refused.append(part.strip())
             elif address not in kept:
                 kept.append(address)

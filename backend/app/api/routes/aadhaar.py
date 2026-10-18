@@ -38,6 +38,7 @@ from app.schemas.aadhaar import (
     OnlineVerifyBody,
     SecureQrBody,
 )
+from app.services import features as feature_flags
 from app.services.aadhaar import flags, records
 from app.services.aadhaar.identity import (
     METHOD_OFFLINE_XML,
@@ -60,7 +61,7 @@ CONSENT_REQUIRED = (
 @features_router.get("/features")
 async def get_features(_: Any = Depends(get_current_user)) -> dict[str, Any]:
     """Which optional features this deployment has switched on. Both clients hide what is off."""
-    return flags.features()
+    return feature_flags.features()
 
 
 def _refusal(error: AadhaarError) -> HTTPException:

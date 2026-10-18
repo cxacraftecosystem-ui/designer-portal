@@ -40,6 +40,7 @@ from app.api.routes import (
     media,
     ministry_dashboard,
     ministry_exports,
+    ministry_stage_data_exports,
     notifications,
     preferences,
     processes,
@@ -239,6 +240,9 @@ api_router.include_router(sanction_orders.router)
 api_router.include_router(ministry_dashboard.router)
 # The background stage-data export (C15). Its own module: the register above is read-only by
 # construction and its tests sweep for that.
+api_router.include_router(ministry_stage_data_exports.router)
+# THE MINISTRY'S MONTHLY EXPORT PACKS, /api/ministry-exports (2026-10-18). Every route answers 404
+# while MINISTRY_EXPORTS_ENABLED is off. See app/services/ministry_exports.py.
 api_router.include_router(ministry_exports.router)
 api_router.include_router(dashboard.router)
 # The cross-workshop comparison, /api/analytics/design-workshops. On its own prefix rather than

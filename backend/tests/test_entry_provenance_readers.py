@@ -1188,6 +1188,7 @@ def sign_off(supervision, monkeypatch):
     monkeypatch.setattr(approval_routes.approvals, "decision_history", _empty)
     monkeypatch.setattr(approval_routes.approvals, "approval_names", _names)
     monkeypatch.setattr(approval_routes.approvals, "latest_export", _none)
+    monkeypatch.setattr(approval_routes.report_delivery, "delivery_view", _none)
     monkeypatch.setattr(approval_routes.posts, "decision_refusal", _none)
     monkeypatch.setattr(approval_routes.oversight, "oversight_rows", _empty)
     monkeypatch.setattr(approval_routes, "inspector_rows", _empty)

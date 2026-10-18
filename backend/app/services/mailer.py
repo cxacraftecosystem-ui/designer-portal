@@ -82,6 +82,12 @@ REPORT_DELIVERY = "REPORT_DELIVERY"
 #: The Monday summary for reviewers and officials (services/weekly_digest.py). Opt-out through
 #: ``UserPreference.weeklyDigest``; carries counts, workshop titles and app paths, nothing personal.
 WEEKLY_DIGEST = "WEEKLY_DIGEST"
+#: A month's Ministry export packs are ready (2026-10-18). One digest per subscribed recipient per
+#: period. Not a notification under a preference: subscribing on /ministry-exports is the opt-in and
+#: that page is where one unsubscribes. Carries no presigned link and no attachment — the button opens
+#: the signed-in page, which mints a five-minute link on click.
+MINISTRY_PACKS_READY = "MINISTRY_PACKS_READY"
+
 KINDS = frozenset(
     {
         PASSWORD_LINK,
@@ -95,6 +101,7 @@ KINDS = frozenset(
         HAND_IN_DIGEST,
         REPORT_DELIVERY,
         WEEKLY_DIGEST,
+        MINISTRY_PACKS_READY,
     }
 )
 
@@ -460,6 +467,8 @@ def subject_for(kind: str, params: dict[str, Any]) -> str:
         return f"Approved report: “{title}”"
     if kind == WEEKLY_DIGEST:
         return digest_title(params.get("waiting"), params.get("overdue"))
+    if kind == MINISTRY_PACKS_READY:
+        return f"Ministry packs for {params.get('periodLabel') or 'last month'} are ready"
     raise ValueError(f"Unknown e-mail kind {kind!r}")
 
 
@@ -616,6 +625,28 @@ def render(
             button=("Download the report", _e(secret)),
         )
         return Rendered(subject, text, body)
+
+    if kind == MINISTRY_PACKS_READY:
+        period = str(params.get("periodLabel") or "last month")
+        lead = f"The Ministry packs for {period} are ready:"
+        items = []
+        for scheme in params.get("schemes") or []:
+            if not isinstance(scheme, dict):
+                continue
+            count = int(scheme.get("workshops") or 0)
+            items.append(f"{scheme.get('label') or 'A scheme'} — {count} workshop{'s' if count != 1 else ''}")
+        link = str(params.get("url") or app_url("/ministry-exports", settings))
+        why = "You get this because you subscribed on Ministry exports, where you can also unsubscribe."
+        text_parts = [greeting, lead]
+        if items:
+            text_parts.append("\n".join(f"• {item}" for item in items))
+        text_parts += [f"Open the packs: {link}", why, sign_off]
+        paragraphs = [_e(greeting), _e(lead)]
+        if items:
+            paragraphs.append("<br>".join(f"• {_e(item)}" for item in items))
+        paragraphs.append(_e(why))
+        body = _html(paragraphs, button=("Open the packs", _e(link)))
+        return Rendered(subject, "\n\n".join(text_parts) + "\n", body)
 
     notice = _notice_parts(kind, params)
     if notice is not None:

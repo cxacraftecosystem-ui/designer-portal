@@ -185,7 +185,11 @@ def test_with_both_flags_off_every_route_is_a_404_even_unauthenticated(world):
 def test_with_both_flags_off_no_payload_carries_a_verification_column(world):
     client = world["client"]
     me = client.get("/api/me", headers=_h(world["researcher"])).json()
-    assert me["features"] == {"aadhaarOfflineVerification": False, "aadhaarOnlineAuth": False}
+    assert me["features"] == {
+        "aadhaarOfflineVerification": False,
+        "aadhaarOnlineAuth": False,
+        "ministryExports": False,
+    }
     assert not [key for key in me if key.startswith(flags.COLUMN_PREFIX)]
     assert client.get("/api/features", headers=_h(world["researcher"])).json() == me["features"]
     artisan = client.get(f"/api/artisans/{world['art_match']}", headers=_h(world["admin"])).json()
@@ -200,7 +204,7 @@ def test_online_routes_stay_hidden_while_only_offline_is_on(world, offline_on):
     )
     assert response.status_code == 404
     features = world["client"].get("/api/features", headers=_h(world["researcher"])).json()
-    assert features == {"aadhaarOfflineVerification": True, "aadhaarOnlineAuth": False}
+    assert features == {"aadhaarOfflineVerification": True, "aadhaarOnlineAuth": False, "ministryExports": False}
 
 
 # ── consent, verification, storage ───────────────────────────────────────────────────────────

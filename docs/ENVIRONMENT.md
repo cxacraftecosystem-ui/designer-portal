@@ -384,6 +384,18 @@ Mail is **on exactly when `MAIL_FROM_ADDRESS` is set**. Unset, nothing is queued
 
 **The owner's steps to turn it on** (nothing in this repository creates AWS resources): verify the sending domain (its DKIM records) or the single sender address in SES **ap-south-1**; request SES production access for that region (until then SES delivers only to verified addresses); grant the backend IAM user `ses:SendEmail` on that identity; then add `MAIL_FROM_ADDRESS` (and optionally `MAIL_REPLY_TO`, `MAIL_FROM_NAME`, `MAIL_SES_CONFIGURATION_SET`) to the `BACKEND_ENV` secret and let the next deploy restart both units.
 
+### Ministry export packs
+
+A monthly pack per scheme — an Excel workbook (Summary first, then one sheet per register) and a one- or two-page PDF — built by the `fieldrepo-queue` worker on the 1st, India time, for the month before; stored under `MINISTRY_EXPORTS_PREFIX` in the media bucket and announced by one e-mail per subscribed recipient. Managed on `/ministry-exports` (web only). **Off by default and invisible while off**: every `/api/ministry-exports` route answers 404, the scheduler does nothing and no entry point is drawn. Turn it on only **after** the Terraform apply that adds the `AppMinistryExports` statement and the `expire-ministry-exports` lifecycle rule (`backend/DEPLOY_AWS.md`); before it every build fails at the upload. Like every setting, it goes in the `BACKEND_ENV` secret and the box `.env`. The whole feature is described in [MINISTRY_EXPORTS.md](MINISTRY_EXPORTS.md).
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `MINISTRY_EXPORTS_ENABLED` | No | **`false`** | No | The master switch for the scheduler, the routes and the three entry points. |
+| `MINISTRY_EXPORTS_RUN_HOUR_IST` | No | `6` | No | The scheduler queues last month's packs at or after this hour on the 1st, India time, and catches up later in the month if the worker was down. |
+| `MINISTRY_EXPORTS_PREFIX` | No | `exports/ministry/` | No | Storage prefix. Must stay under `exports/`: `media/` is public-read and `backups/` is put-only for the API key. |
+| `MINISTRY_EXPORTS_LINK_SECONDS` | No | `300` | No | Lifetime of one download link, minted per click and logged. |
+| `MINISTRY_EXPORTS_MAX_WORKSHOPS` | No | `2000` | No | Workshops per pack. A scheme with more is capped and both files say so. |
+
 ### Media upload ceiling
 
 | Variable | Required | Default | Secret | Notes |

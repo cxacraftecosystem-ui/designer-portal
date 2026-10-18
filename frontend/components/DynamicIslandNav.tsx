@@ -20,6 +20,7 @@ import {
   Compass,
   DraftingCompass,
   Eye,
+  FileArchive,
   FileSearch,
   FileSignature,
   FileSpreadsheet,
@@ -71,10 +72,12 @@ import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount"
 import { OPEN_TASK_BADGE_HREF, openTaskBadgeSentence } from "@/components/tasks/openTaskCount";
 import { HoveredLink, MenuItem } from "@/components/ui/navbar-menu";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
+import { ministryExportsEnabled } from "@/lib/ministryExports";
 import { canRecordSanctionOrders } from "@/lib/sanctionOrders";
 import {
   canApproveDesignWorkshops,
   canAssignWorkshopOversight,
+  canManageMinistryExports,
   canCreateRecords,
   canDownloadDataset,
   canInspectDesignWorkshops,
@@ -611,6 +614,17 @@ export const NAV_ITEMS: NavItem[] = [
     group: "Browse",
     can: canAssignWorkshopOversight,
     gate: "assert_may_assign_oversight (OVERSIGHT_ASSIGNER_ROLES, services/design_workshop_oversight.py)"
+  },
+  // THE MINISTRY'S MONTHLY EXPORT PACKS (2026-10-18). Drawn only while the deployment has them on
+  // (`features.ministryExports` on the session payload) AND for the whole-estate tiers the server's
+  // `require_ministry_export_manager` admits. The `ROUTE_GUARDS` row was written in the same change.
+  {
+    href: "/ministry-exports",
+    label: "Ministry exports",
+    icon: FileArchive,
+    group: "Browse",
+    can: (user) => canManageMinistryExports(user) && ministryExportsEnabled(user),
+    gate: "require_ministry_export_manager (OVERSIGHT_ASSIGNER_ROLES, app/api/routes/ministry_exports.py)"
   },
   {
     href: "/officers/monitored",

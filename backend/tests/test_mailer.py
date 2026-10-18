@@ -160,3 +160,26 @@ def test_moments_are_written_in_india_standard_time() -> None:
     assert mailer.format_moment(datetime(2026, 10, 10, 18, 45, tzinfo=UTC)) == (
         "11 October 2026, 12:15 am IST"
     )
+
+
+def test_the_ministry_pack_digest_names_each_scheme_and_links_the_page() -> None:
+    params = {
+        "recipientName": "Asha",
+        "periodLabel": "September 2026",
+        "schemes": [{"label": "Skill Upgradation", "workshops": 41}, {"label": "Other", "workshops": 1}],
+        "url": "https://dpw.example.org/ministry-exports?period=2026-09",
+    }
+    assert mailer.MINISTRY_PACKS_READY in mailer.KINDS
+    rendered = mailer.render(mailer.MINISTRY_PACKS_READY, params, settings=_settings())
+    assert rendered.subject == "Ministry packs for September 2026 are ready"
+    assert mailer.subject_for(mailer.MINISTRY_PACKS_READY, params) == rendered.subject
+    for body in (rendered.text, rendered.html):
+        assert "Skill Upgradation — 41 workshops" in body
+        assert "Other — 1 workshop" in body and "— 1 workshops" not in body
+        assert "/ministry-exports?period=2026-09" in body
+        assert "X-Amz" not in body
+    assert rendered.text.startswith("Dear Asha,")
+    assert "Open the packs" in rendered.html
+    from app.services.email_outbox import PREFERENCE_FOR_KIND
+
+    assert mailer.MINISTRY_PACKS_READY not in PREFERENCE_FOR_KIND, "subscribing is the opt-in"
