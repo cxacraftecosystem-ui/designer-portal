@@ -350,7 +350,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/activity", label: "My Activity", icon: Activity, group: "Browse", can: everyone, gate: "get_current_user" },
   // Everyone can be a task assignee; the "assign" half of the page is gated inside it.
   { href: "/tasks", label: "Tasks", icon: ClipboardCheck, group: "Browse", can: everyone, gate: "get_current_user" },
-  { href: "/search", label: "Browse records", icon: Search, group: "Browse", can: everyone, gate: "get_current_user" },
+  { href: "/search", label: "Search", icon: Search, group: "Browse", can: everyone, gate: "get_current_user" },
   // ── SCAN A CODE ───────────────────────────────────────────────────────────────────────────────
   // Directly under "Browse records", which is the row that used to be the only way to reach the
   // scanner: `RecordCodeScanPanel` sits above that page's search box and nowhere else, so reading a

@@ -865,7 +865,7 @@ function DashboardView() {
         <p className="mt-4 rounded-md border border-line-200 bg-surface-50 px-4 py-3 text-sm leading-6 text-ink-500">
           You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>. You can answer interviews, upload media and comment — find entries in{" "}
           <Link href="/search" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
-            Browse records
+            Search
           </Link>
           . Creating records needs Researcher access.{" "}
           <Link href="/guide" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">

@@ -83,7 +83,7 @@ export default function ScanCodePage() {
             takes a scan to LINK a record to what you are filling in, rather than to open it.
           </li>
           <li>
-            <strong className="font-semibold text-ink-900">Browse records</strong> carries this same
+            <strong className="font-semibold text-ink-900">Search</strong> carries this same
             panel above its search box, for when you are already there.
           </li>
         </ul>

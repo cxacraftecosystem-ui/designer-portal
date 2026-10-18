@@ -144,6 +144,7 @@ import com.designprototype.workshop.ui.appMenuHidesPage
 import com.designprototype.workshop.ui.appMenuShowing
 import com.designprototype.workshop.ui.appSearchCachedItems
 import com.designprototype.workshop.ui.appSearchRemoteItems
+import com.designprototype.workshop.ui.RemoteRecordScreen
 import com.designprototype.workshop.ui.appSearchScreenItems
 import com.designprototype.workshop.ui.appSearchSettingItems
 import com.designprototype.workshop.ui.closeAppMenu
@@ -1443,6 +1444,11 @@ private sealed interface Screen {
     data object Questionnaires : Screen
     data class QuestionnaireDetail(val questionnaireId: String) : Screen
     data class QuestionnaireAnswers(val questionnaireId: String, val entryId: String) : Screen
+    /**
+     * One record from the other portal, read-only (docs/SEARCH.md), opened from a search result with
+     * a portal chip. [from] is where Back returns.
+     */
+    data class RemoteRecord(val type: String, val id: String, val from: Screen? = null) : Screen
 }
 
 /**
@@ -3861,6 +3867,7 @@ private fun HomeScreen(
             is Screen.Questionnaires -> Screen.Dashboard
             is Screen.QuestionnaireDetail -> Screen.Questionnaires
             is Screen.QuestionnaireAnswers -> Screen.QuestionnaireDetail(s.questionnaireId)
+            is Screen.RemoteRecord -> s.from ?: Screen.Dashboard
             is Screen.Dashboard -> Screen.Dashboard
         }
     }
@@ -3943,6 +3950,7 @@ private fun HomeScreen(
         is Screen.Questionnaires -> null
         is Screen.QuestionnaireDetail -> null
         is Screen.QuestionnaireAnswers -> null
+        is Screen.RemoteRecord -> null
         // A reviewer who is not an admin lands on the review tool alone (see the AdminHub branch
         // below), so the header must not announce a hub of admin tools they were never given.
         is Screen.AdminHub -> if (s.section == AdminHubEntry.REVIEWS && !(isAdmin && adminChrome)) {
@@ -4029,6 +4037,8 @@ private fun HomeScreen(
         is Screen.Questionnaires,
         is Screen.QuestionnaireDetail,
         is Screen.QuestionnaireAnswers -> NavDestination.CUSTOM_QUESTIONNAIRES
+        // Opened from the search header, which is not a menu row.
+        is Screen.RemoteRecord -> null
         is Screen.DesignerRoster -> NavDestination.DESIGNER_ROSTER
         is Screen.AccessRoster -> NavDestination.ACCESS_ROSTER
         // Only the OWN profile lights the menu row, because that is the only profile the row opens.
@@ -4085,7 +4095,13 @@ private fun HomeScreen(
             query = query,
             includeCustomQuestionnaires = FieldPermissions.canRunDesignWorkshops(user),
             openRecord = { type, id -> attemptExit { openSearchRecord(type, id) } },
-            openCustomQuestionnaire = { id -> attemptExit { message = null; screen = Screen.QuestionnaireDetail(id) } }
+            openCustomQuestionnaire = { id -> attemptExit { message = null; screen = Screen.QuestionnaireDetail(id) } },
+            // A cluster has no screen of its own on the phone: the design workshops list is where
+            // its workshops are.
+            openCluster = { attemptExit { message = null; screen = Screen.DesignWorkshops() } },
+            openRemote = { type, id ->
+                attemptExit { message = null; screen = Screen.RemoteRecord(type, id, from = screen) }
+            }
         )
 
     // `appMenuShowing` and not `isOpen`, which stays false for the whole opening slide: Back pressed
@@ -5207,6 +5223,8 @@ private fun HomeScreen(
                 onMessage = { showMessage(it) },
                 onError = { showError(it) }
             )
+
+            is Screen.RemoteRecord -> RemoteRecordScreen(repository = repository, type = s.type, id = s.id)
 
             // Hosted above, outside this scrolling Column, because they own their whole viewport.
             // Rendered by the FIRST dispatcher above, which owns the destinations that draw

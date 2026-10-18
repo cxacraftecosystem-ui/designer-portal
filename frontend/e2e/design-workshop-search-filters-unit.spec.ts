@@ -22,6 +22,7 @@ import {
   canViewDesignWorkshopData
 } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
+import { UNIFIED_TYPES } from "@/lib/unifiedSearch";
 
 /**
  * The search vocabulary and the two design-workshop data predicates, as pure functions.
@@ -214,4 +215,11 @@ test("the view capability still does not carry a write", () => {
   expect(canViewDesignWorkshopData(asUser("DESIGNER"))).toBe(false);
   // An inspector holds a grant on ONE workshop; this predicate opens every workshop there is.
   expect(canViewDesignWorkshopData(asUser("INSPECTOR"))).toBe(false);
+});
+
+test("every filter bucket is a unified search type, so the type filter reaches /search/unified unchanged", () => {
+  for (const type of SEARCH_RECORD_TYPES) expect(UNIFIED_TYPES).toContain(type);
+  expect(searchFilterParams({ ...EMPTY_SEARCH_FILTERS, types: [DESIGN_WORKSHOP_TYPE, "artisans"] }).types).toBe(
+    "artisans,designWorkshops"
+  );
 });

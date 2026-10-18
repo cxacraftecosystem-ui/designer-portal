@@ -718,7 +718,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     gate: "require_dataset_downloader",
     title: "Dataset access required",
     message:
-      "Needs Professor access or dataset access. Use Browse records instead."
+      "Needs Professor access or dataset access. Use Search instead."
   },
   {
     // Hiding the nav entry was never enough: the link disappeared and the URL stayed open, so

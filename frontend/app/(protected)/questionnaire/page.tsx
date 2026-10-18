@@ -78,6 +78,7 @@ import { saveOrQueue } from "@/lib/offline";
 import { cappedListNotice } from "@/components/data/cappedList";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { canManageQuestionnaire, canRunDesignWorkshops, hasRank, isAdmin } from "@/lib/permissions";
+import { interviewFromSearchParams } from "@/lib/unifiedSearch";
 import { UploadsProvider, useEagerStaging, useUploads } from "@/lib/uploads";
 import type { Artisan, MediaFile, PageResult, QuestionnaireInterview, QuestionnaireQuestion, QuestionnaireSection } from "@/lib/types";
 import { Toggle } from "@/components/ui/Toggle";
@@ -516,6 +517,11 @@ function QuestionnairePageBody() {
   const { addCompleted } = useUploads();
   const searchParams = useSearchParams();
   const router = useRouter();
+  // `?interview=<id>` (a search result, docs/SEARCH.md) opens that interview read-only.
+  const interviewLink = interviewFromSearchParams(searchParams);
+  useEffect(() => {
+    if (interviewLink) router.replace(`/questionnaire/interviews/${encodeURIComponent(interviewLink)}`);
+  }, [interviewLink, router]);
   const [sections, setSections] = useState<QuestionnaireSection[]>([]);
   const [data, setData] = useState<PageResult<QuestionnaireInterview> | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});

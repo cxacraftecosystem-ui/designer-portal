@@ -106,6 +106,7 @@ import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
+import { clusterFromSearchParams } from "@/lib/unifiedSearch";
 import { StatusBadge } from "@/components/StatusBadge";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
@@ -841,6 +842,19 @@ function DesignWorkshopsPageBody() {
       setKindFilter(remembered.filters?.kind ?? "");
     }
     setPlaceRestored(true);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A cluster opened from search (`?cluster=<name>`, docs/SEARCH.md) is a search for that cluster:
+  // it wins over the remembered list, because the reader asked for it just now.
+  useEffect(() => {
+    const cluster = clusterFromSearchParams(searchParams);
+    if (!cluster) return;
+    skipFirstDebounce.current = true;
+    setQuery(cluster);
+    setApplied(cluster);
+    setPage(1);
     // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
