@@ -96,13 +96,13 @@ internal fun DwRosterImportCard(
             ) { Text("Import artisans from a spreadsheet") }
             if (!open) return@Column
             if (serverId == null || !online) {
-                Text("Connect to import an artisan list.", fontSize = 13.sp)
+                Text("Connect to import an artisan list.", style = MaterialTheme.typography.bodyMedium)
                 return@Column
             }
             Text(
                 "Contains Aadhaar numbers. Don't email or share the filled file; delete it after uploading. " +
                     "The file isn't stored.",
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
             ActionRow {
                 OutlinedButton(
@@ -127,23 +127,23 @@ internal fun DwRosterImportCard(
                     modifier = Modifier.heightIn(min = 48.dp),
                 ) { Text(if (busy == "upload") "Reading the list…" else "Upload the filled-in list") }
             }
-            note?.let { Text(it, fontSize = 13.sp) }
+            note?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
             report?.let { done ->
                 Text(
                     dwRosterTallies(done).joinToString(" · ") { (label, value) -> "$value $label" },
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
                 val errors = done.problems.filter { it.severity == "error" }
                 val warnings = done.problems.filter { it.severity != "error" }
                 if (errors.isEmpty() && warnings.isEmpty()) {
-                    Text("Every row was read.", fontSize = 13.sp)
+                    Text("Every row was read.", style = MaterialTheme.typography.bodyMedium)
                 }
                 if (errors.isNotEmpty()) {
                     Text("Not imported — fix and upload again", fontWeight = FontWeight.Bold)
                     errors.forEach { problem ->
                         Text(
                             "${dwRosterProblemWhere(problem)}: ${problem.reason}",
-                            fontSize = 13.sp,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
@@ -151,7 +151,7 @@ internal fun DwRosterImportCard(
                 if (warnings.isNotEmpty()) {
                     Text("Imported — check these", fontWeight = FontWeight.Bold)
                     warnings.forEach { problem ->
-                        Text("${dwRosterProblemWhere(problem)}: ${problem.reason}", fontSize = 13.sp)
+                        Text("${dwRosterProblemWhere(problem)}: ${problem.reason}", style = MaterialTheme.typography.labelLarge)
                     }
                 }
                 if (done.participantsCreated > 0) {
@@ -164,11 +164,11 @@ internal fun DwRosterImportCard(
             }
             Text("Earlier uploads", fontWeight = FontWeight.Bold)
             when {
-                history == null -> Text("Loading…", fontSize = 13.sp)
-                history!!.isEmpty() -> Text("No uploads yet.", fontSize = 13.sp)
+                history == null -> Text("Loading…", style = MaterialTheme.typography.labelLarge)
+                history!!.isEmpty() -> Text("No uploads yet.", style = MaterialTheme.typography.bodyMedium)
                 else -> history!!.forEach { entry ->
-                    Text(entry.sourceFilename ?: "An artisan list", fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                    Text(dwRosterHistoryLine(entry), fontSize = 12.sp)
+                    Text(entry.sourceFilename ?: "An artisan list", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+                    Text(dwRosterHistoryLine(entry), style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

@@ -1147,7 +1147,7 @@ fun ReportScreen(
 
         // Only while something is outstanding: the annexure itself is built here now (DA-29).
         transcriptsPending?.takeIf { transcriptsAsked }?.let { line ->
-            Text(line, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(line, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         ActionRow {
             Button(onClick = { export("DOCX") }, enabled = !busy) {

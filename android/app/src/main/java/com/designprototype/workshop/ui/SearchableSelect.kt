@@ -1320,7 +1320,7 @@ private fun SearchablePickerSheet(
                     }
                 }
                 if (!note.isNullOrBlank()) {
-                    Text(note, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+                    Text(note, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                 }
             }
             HorizontalDivider(color = MaterialTheme.field.hairline)

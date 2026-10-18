@@ -67,7 +67,7 @@ internal fun DwCopyFromEarlierCard(
                 Text(
                     "Copied, not counted until edited or kept: " +
                         pending.mapNotNull { labels[it] }.joinToString(", ") + ".",
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
                 ActionRow {
                     OutlinedButton(
@@ -108,15 +108,15 @@ internal fun DwCopyFromEarlierCard(
             ) { Text("Start from an earlier workshop") }
             if (open) {
                 when {
-                    serverId == null || !online -> Text("Connect to see your earlier workshops.", fontSize = 13.sp)
-                    sources == null && note == null -> Text("Loading…", fontSize = 13.sp)
+                    serverId == null || !online -> Text("Connect to see your earlier workshops.", style = MaterialTheme.typography.bodyMedium)
+                    sources == null && note == null -> Text("Loading…", style = MaterialTheme.typography.bodyMedium)
                 }
-                note?.let { Text(it, fontSize = 13.sp) }
+                note?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                 sources?.let { found ->
                     val fieldLabels = found.fields.associate { it.key to it.label }
                     Text("Your earlier workshops", fontWeight = FontWeight.Bold)
                     if (found.own.isEmpty()) {
-                        Text("Nothing of yours to copy for this stage yet.", fontSize = 13.sp)
+                        Text("Nothing of yours to copy for this stage yet.", style = MaterialTheme.typography.labelLarge)
                     }
                     found.own.forEach { source ->
                         DwCopySourceBlock(source, fieldLabels)
@@ -137,7 +137,7 @@ internal fun DwCopyFromEarlierCard(
                     }
                     if (found.reference.isNotEmpty()) {
                         Text("Other designers, same cluster or craft", fontWeight = FontWeight.Bold)
-                        Text("Read only. Write your own in the boxes below.", fontSize = 12.sp)
+                        Text("Read only. Write your own in the boxes below.", style = MaterialTheme.typography.labelMedium)
                         found.reference.forEach { source -> DwCopySourceBlock(source, fieldLabels) }
                     }
                 }
@@ -151,11 +151,11 @@ private fun DwCopySourceBlock(source: DwCopySourceDto, labels: Map<String, Strin
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(source.title, fontWeight = FontWeight.SemiBold)
         listOfNotNull(source.date, source.designerName).takeIf { it.isNotEmpty() }?.let {
-            Text(it.joinToString(" · "), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(it.joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         source.values.forEach { (key, value) ->
-            Text(labels[key] ?: key, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(dwCopyPreview(value), fontSize = 13.sp)
+            Text(labels[key] ?: key, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(dwCopyPreview(value), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

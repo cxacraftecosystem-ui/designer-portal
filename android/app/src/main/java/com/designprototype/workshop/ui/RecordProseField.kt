@@ -1058,7 +1058,7 @@ fun RecordProseField(
                 onError = { message -> dictationError = message },
             )
             if (!keepFormatting) {
-                Text(RECORD_RICH_TEXT_NOTE, color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text(RECORD_RICH_TEXT_NOTE, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
         } else {
             val focusManager = LocalFocusManager.current

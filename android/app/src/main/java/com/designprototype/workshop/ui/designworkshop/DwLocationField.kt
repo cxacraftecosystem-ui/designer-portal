@@ -136,11 +136,11 @@ internal fun DwGeoField(
     val current = remember(value) { dwLocationFromValue(value) }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(requiredMarked(label), color = MaterialTheme.field.muted, fontSize = 12.sp)
+        Text(requiredMarked(label), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         if (helpRow != null) {
             helpRow()
         } else if (help.isNotBlank()) {
-            Text(help, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(help, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         if (repository == null) {
             // The state and district dropdowns are served, so the card cannot exist without something

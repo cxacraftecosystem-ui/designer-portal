@@ -74,7 +74,7 @@ private fun ConsentRow(checked: Boolean, words: String, onChange: (Boolean) -> U
             .toggleable(value = checked, role = Role.Checkbox, onValueChange = onChange),
     ) {
         Checkbox(checked = checked, onCheckedChange = null)
-        Text(words, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp))
+        Text(words, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 8.dp))
     }
 }
 
@@ -92,7 +92,7 @@ private fun CardFrame(content: @Composable () -> Unit) {
 @Composable
 private fun Note(text: String?) {
     text?.let {
-        Text(it, fontSize = 12.sp, color = Muted, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        Text(it, style = MaterialTheme.typography.bodySmall, color = Muted, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
     }
 }
 
@@ -112,7 +112,7 @@ fun CrossPortalFindCard(
     var note by remember { mutableStateOf<String?>(null) }
     if (!status.enabled) return
     if (filled != null) {
-        Text(CrossPortalCopy.filled(CrossPortalPrefill.summary(filled)), fontSize = 14.sp)
+        Text(CrossPortalCopy.filled(CrossPortalPrefill.summary(filled)), style = MaterialTheme.typography.bodyMedium)
         return
     }
     CardFrame {
@@ -120,7 +120,7 @@ fun CrossPortalFindCard(
         ConsentRow(consent, CrossPortalCopy.consent(status.sharedFields)) { consent = it }
         val found = match
         if (found != null) {
-            Text(CrossPortalCopy.found(CrossPortalPrefill.summary(found)), fontSize = 14.sp)
+            Text(CrossPortalCopy.found(CrossPortalPrefill.summary(found)), style = MaterialTheme.typography.bodyMedium)
             ActionRow {
                 Button(onClick = { onFill(found) }, modifier = Modifier.heightIn(min = 48.dp)) { Text(CrossPortalCopy.FILL) }
                 OutlinedButton(onClick = { match = null }, modifier = Modifier.heightIn(min = 48.dp)) {
@@ -219,7 +219,7 @@ fun CrossPortalLinkCard(artisanId: String, onRefreshed: (CrossPortalFieldsDto, L
                 ) { Text(CrossPortalCopy.LINK) }
             }
         } else {
-            Text(CrossPortalCopy.LINKED, fontSize = 14.sp)
+            Text(CrossPortalCopy.LINKED, style = MaterialTheme.typography.bodyMedium)
             ActionRow {
                 OutlinedButton(
                     enabled = !busy,

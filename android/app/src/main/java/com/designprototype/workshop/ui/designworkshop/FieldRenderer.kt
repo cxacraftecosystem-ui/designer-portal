@@ -956,7 +956,7 @@ internal fun FieldCaption(field: FieldDto, override: String? = null) {
     val details = field.details.trim()
     if (help.isBlank() && details.isEmpty()) return
     if (details.isEmpty()) {
-        Text(help, color = MaterialTheme.field.muted, fontSize = 12.sp)
+        Text(help, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         return
     }
     var open by rememberSaveable(field.key) { mutableStateOf(false) }
@@ -964,7 +964,7 @@ internal fun FieldCaption(field: FieldDto, override: String? = null) {
         Text(
             help,
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.weight(1f),
         )
         IconButton(
@@ -987,7 +987,7 @@ internal fun FieldCaption(field: FieldDto, override: String? = null) {
         Text(
             details,
             color = MaterialTheme.field.body,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp,
             modifier = Modifier
                 .fillMaxWidth()
@@ -1587,7 +1587,7 @@ private fun DwWorkshopNameField(
                 Text(
                     appendSpoken(current, spoken),
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }

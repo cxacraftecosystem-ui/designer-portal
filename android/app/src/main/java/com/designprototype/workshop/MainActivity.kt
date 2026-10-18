@@ -6756,7 +6756,7 @@ private fun CardButtonLabel(icon: ImageVector, text: String) {
     // TWO LINES, never an ellipsis, as documentation-portal draws it: the tiles are two to a row on a
     // phone and "New interview" is wider than a 144dp button. The row's IntrinsicSize.Min keeps the
     // neighbouring tile's buttons level with a wrapped one.
-    Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, textAlign = TextAlign.Center)
+    Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
 }
 
 /*
@@ -9842,7 +9842,7 @@ private fun AudioClipRecorder(
                 paused = phase == RecPhase.PAUSED
             )
         }
-        Text(plural(clips.size, "clip"), color = Muted, fontSize = 11.sp)
+        Text(plural(clips.size, "clip"), color = Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -13763,7 +13763,7 @@ private fun ToolStagesSection(
             RecordingIndicator(getAmplitude = { runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0) })
         }
         if (stages.uris.isNotEmpty()) {
-            Text("${plural(stages.uris.size, "stage step")} captured", color = Muted, fontSize = 12.sp)
+            Text("${plural(stages.uris.size, "stage step")} captured", color = Muted, style = MaterialTheme.typography.bodySmall)
             stages.uris.forEachIndexed { index, uri ->
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("Step ${index + 1}", color = Body, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
@@ -14351,7 +14351,7 @@ private fun ProcessForm(
             artisanId.isNotBlank() && artisanProducts.isEmpty() ->
                 Text("No products for this artisan yet. Create one first.", color = Muted, style = MaterialTheme.typography.bodySmall)
             artisanId.isNotBlank() && artisanProducts.isNotEmpty() ->
-                Text("${plural(artisanProducts.size, "product")} for this artisan.", color = Muted, fontSize = 11.sp)
+                Text("${plural(artisanProducts.size, "product")} for this artisan.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         if (productError != null) Text(productError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 
@@ -14813,7 +14813,7 @@ private fun MyActivityScreen(
                             .padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Text(item.title, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text(item.title, display = true, color = Body, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                         Text(
                             item.subtitle + (formatIsoDate(item.createdAt)?.let { " · $it" } ?: ""),
                             color = Muted,
@@ -16218,7 +16218,7 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
             loading -> Text("Loading…", color = Muted, style = MaterialTheme.typography.bodySmall)
             orphans.isEmpty() -> Text("None — every recording is attached.", color = Muted, style = MaterialTheme.typography.bodySmall)
             else -> {
-                Text(plural(orphans.size, "recovered file"), color = Body, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text(plural(orphans.size, "recovered file"), color = Body, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 orphans.forEach { m ->
                     Column(
                         modifier = Modifier
@@ -21097,7 +21097,7 @@ private fun QuestionnaireBuilder(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("${section.sortOrder}. ${section.code} - ${section.title}", display = true, fontWeight = FontWeight.SemiBold)
-                            Text(plural(section.questions.size, "question"), color = Muted, fontSize = 11.sp)
+                            Text(plural(section.questions.size, "question"), color = Muted, style = MaterialTheme.typography.labelSmall)
                         }
                         Text(if (expanded) "Hide ▲" else "Show ▼", color = Body, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                     }

@@ -86,7 +86,7 @@ private fun CaptureCard(title: String, content: @Composable () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(14.dp),
         ) {
-            Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
             content()
         }
     }
@@ -101,8 +101,8 @@ private fun CaptureLine(title: String, detail: String, actions: @Composable () -
             .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
-        Text(title, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-        if (detail.isNotBlank()) Text(detail, fontSize = 12.sp, color = MaterialTheme.field.muted)
+        Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+        if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.muted)
         ActionRow { actions() }
     }
 }
@@ -153,7 +153,7 @@ internal fun DwAttendanceCard(
     CaptureCard("Attendance") {
         Text(
             if (present == people.size) "All present" else "$present of ${people.size} present",
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.field.muted,
         )
         // A choice between named days, not an action row.
@@ -167,7 +167,7 @@ internal fun DwAttendanceCard(
                 FilterChip(
                     selected = n == day,
                     onClick = { picked = n },
-                    label = { Text(if (date != null) "Day $n · ${shortDay(date)}" else "Day $n", fontSize = 12.sp) },
+                    label = { Text(if (date != null) "Day $n · ${shortDay(date)}" else "Day $n", style = MaterialTheme.typography.bodySmall) },
                 )
             }
         }
@@ -190,7 +190,7 @@ internal fun DwAttendanceCard(
                     ),
             ) {
                 Checkbox(checked = isPresent, onCheckedChange = null, enabled = enabled)
-                Text(dwDisplayText(values["name"]).ifBlank { "Unnamed" }, fontSize = 14.sp)
+                Text(dwDisplayText(values["name"]).ifBlank { "Unnamed" }, style = MaterialTheme.typography.bodyMedium)
             }
         }
         if (present < people.size) {
@@ -263,10 +263,10 @@ internal fun DwSittingsCard(sittings: List<DwAssistSittingDto>) {
         sittings.forEach { s ->
             Text(
                 "${s.title} — ${s.count} ${if (s.count == 1) "sitting" else "sittings"}${s.latest?.let { " · latest $it" }.orEmpty()}",
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
             )
         }
-        Text("Counted in “Responses collected”.", fontSize = 12.sp, color = MaterialTheme.field.muted)
+        Text("Counted in “Responses collected”.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.muted)
     }
 }
 
@@ -289,7 +289,7 @@ internal fun DwRowsFromPhotosCard(
                 modifier = Modifier.heightIn(min = 48.dp),
             ) { Text("Add from photos") }
         }
-        Text("Each $noun gets its own numbered row. Name each one.", fontSize = 12.sp, color = MaterialTheme.field.muted)
+        Text("Each $noun gets its own numbered row. Name each one.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.muted)
     }
 }
 
@@ -305,17 +305,17 @@ internal fun DwComputedCount(field: FieldDto, value: JsonElement?) {
         else -> "Worked out from the stage."
     }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(field.label, color = MaterialTheme.field.muted, fontSize = 12.sp)
+        Text(field.label, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         Text(
             if (shown != "—" && field.unit.isNotBlank()) "$shown ${field.unit}" else shown,
-            fontSize = 16.sp,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Medium,
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         )
-        Text(source, color = MaterialTheme.field.muted, fontSize = 11.sp)
+        Text(source, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -365,9 +365,9 @@ internal fun DwRefSuggestion(
             .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
-        if (parts.isNotEmpty()) Text("From the $noun: ${parts.joinToString("; ")}.", fontSize = 12.sp)
+        if (parts.isNotEmpty()) Text("From the $noun: ${parts.joinToString("; ")}.", style = MaterialTheme.typography.bodySmall)
         if (hints.isNotEmpty()) {
-            Text("Intended size ${hints.joinToString(" × ")} cm.", fontSize = 12.sp, color = MaterialTheme.field.muted)
+            Text("Intended size ${hints.joinToString(" × ")} cm.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.muted)
         }
         if (offered.isNotEmpty()) {
             ActionRow {
@@ -388,7 +388,7 @@ internal fun DwRefSuggestion(
 @Composable
 internal fun DwVenuePrompt(onUse: (LocationRequest) -> Unit) {
     CaptureCard("Add the venue location") {
-        Text("The artisan list can't be imported without it.", fontSize = 13.sp)
+        Text("The artisan list can't be imported without it.", style = MaterialTheme.typography.bodyMedium)
         DwLocationFromPhoto(enabled = true, onUse = onUse)
     }
 }
@@ -439,7 +439,7 @@ internal fun DwLocationFromPhoto(enabled: Boolean, onUse: (LocationRequest) -> U
                 modifier = Modifier.heightIn(min = 48.dp),
             ) { Text("From a photo") }
         }
-        if (none) Text("That photo has no location.", fontSize = 12.sp, color = MaterialTheme.field.muted)
+        if (none) Text("That photo has no location.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.muted)
         found?.let { position ->
             CaptureLine(
                 title = String.format(Locale.ROOT, "%.5f, %.5f", position.latitude, position.longitude),

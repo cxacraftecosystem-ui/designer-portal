@@ -105,7 +105,7 @@ fun InspectionAwaitingSection(
                 Text(
                     DW_INSPECTION_QUEUE_TITLE,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 15.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f, fill = false)
                 )
@@ -116,7 +116,7 @@ fun InspectionAwaitingSection(
                     Text(
                         label,
                         color = MaterialTheme.colorScheme.onPrimary,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier
                             .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50))
