@@ -1192,6 +1192,9 @@ def sign_off(supervision, monkeypatch):
     monkeypatch.setattr(approval_routes.oversight, "oversight_rows", _empty)
     monkeypatch.setattr(approval_routes, "inspector_rows", _empty)
     monkeypatch.setattr(approval_routes, "_inspection_feedback_payload", _no_feedback)
+    # "Approve and hand on" (2026-10-18) reads the office settings and the newest delivery; neither
+    # is a stage read, and this fixture has no database.
+    monkeypatch.setattr(approval_routes.report_delivery, "delivery_view", _none)
     _quiet_review_aids(monkeypatch)
     monkeypatch.setattr(approval_routes, "entry_rows", _rows)
     monkeypatch.setattr(approval_routes, "load_definition_or_empty", _definition)
@@ -1754,6 +1757,12 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         # copy the stage payload into a round's snapshot WITHOUT its provenance. No field value is
         # attributed to anybody; the readers that show the data resolve it, tested above.
         "app/services/design_workshop_review_aids.py",
+        # Classified 2026-10-18 (C6-C10, A14, A16, B10). EXEMPT: stage_assist offers one-tap
+        # suggestions built from the workshop's own VALUES (applied by the designer into blank
+        # boxes, so the designer's save stamps them), and stage_computed stores counts worked out
+        # from rows. Neither reads a stamp nor attributes a value to anybody.
+        "app/services/stage_assist.py",
+        "app/services/stage_computed.py",
         # Classified 2026-10-17 (C9). EXEMPT: "start from an earlier workshop" serves the CALLER'S
         # OWN text back to them and other designers' text as a read-only block named by the source
         # workshop's header, and reads a stamp only to ask "did this caller write it" — no stamp and

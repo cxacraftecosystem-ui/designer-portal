@@ -278,6 +278,9 @@ def _drive_craft(monkeypatch, fields: dict[str, Any], stored: _Row) -> tuple[Any
     monkeypatch.setattr(crafts, "guard_record_edit", _privileged)
     monkeypatch.setattr(crafts, "apply_status_policy_update", _no_status_policy)
     monkeypatch.setattr(crafts, "sync_workshop_craft", _sync)
+    # A rename also looks up the shared craft code (C26), which this module is not about: the
+    # fake client has no CraftCode table, and a resolved code would be one more key in `data`.
+    monkeypatch.setattr(crafts.cross_portal_codes, "code_for_new_craft", _no_code)
     monkeypatch.setattr(crafts, "public_encode", lambda row, _viewer=None, **_kw: row)
 
     payload = _Payload(fields)
@@ -783,6 +786,14 @@ def test_every_nullable_column_a_client_can_send_is_either_clearable_or_exempt()
 # --------------------------------------------------------------------------------------
 
 
+async def _no_code(*_args, **_kwargs):
+    return None
+
+
+async def _no_reconcile(*_args, **_kwargs):
+    return 0
+
+
 def _questionnaire_forms_stubs(monkeypatch, module, *, owner="usr_7"):
     """The collaborators every questionnaire-form PATCH reaches before the clean."""
     questionnaire = _Row(id="qn_1", ownerId=owner, title="Bagru dyers")
@@ -797,6 +808,9 @@ def _questionnaire_forms_stubs(monkeypatch, module, *, owner="usr_7"):
     monkeypatch.setattr(module, "_require_owner", lambda _record, _user: None)
     monkeypatch.setattr(module, "load_form", _load_form)
     monkeypatch.setattr(module, "public_encode", lambda row, *_a, **_kw: row)
+    # The shared question codes (C26) are re-derived after every form edit, from sections this
+    # fake client does not hold; they are tested in test_cross_portal_codes.
+    monkeypatch.setattr(module.cross_portal_codes, "reconcile_form_question_codes", _no_reconcile)
     return questionnaire
 
 

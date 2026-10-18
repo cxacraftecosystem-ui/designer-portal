@@ -723,6 +723,13 @@ def test_the_questionnaire_form_patch_refuses_a_holder_everything_and_writes_not
     monkeypatch.setattr(forms, "_require_attachable_workshop", _attachable)
     monkeypatch.setattr(forms, "load_form", _form)
     monkeypatch.setattr(forms, "db", SimpleNamespace(questionnaire=table))
+
+    async def _no_reconcile(*_args, **_kwargs):
+        return 0
+
+    # The shared question codes (C26) are re-derived after an edit that went through; this
+    # fake client holds no sections, and test_cross_portal_codes covers that pass.
+    monkeypatch.setattr(forms.cross_portal_codes, "reconcile_form_question_codes", _no_reconcile)
     _serving(monkeypatch, {"w1": {"u-ADMIN": {"REGIONAL_DIRECTOR"}}})
 
     for body in (
