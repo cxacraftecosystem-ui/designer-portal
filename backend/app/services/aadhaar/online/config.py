@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -38,7 +39,8 @@ class OnlineConfig:
     otp_url: str
     auth_url: str
     kyc_url: str | None
-    signing_key: rsa.RSAPrivateKey
+    #: An ``rsa.RSAPrivateKey`` from the PFX, or a ``KmsRsaSigner`` whose key lives in AWS KMS.
+    signing_key: Any
     signing_certificate: x509.Certificate
     encryption_certificate: x509.Certificate
     response_certificates: tuple[x509.Certificate, ...]
@@ -82,11 +84,26 @@ def _response_certificates(env: str, override: str | None) -> tuple[x509.Certifi
     return tuple(found)
 
 
-def build_online_config() -> OnlineConfig:
-    settings = get_settings()
-    if not settings.aadhaar_online_auth_enabled:
-        raise OnlineConfigError("AADHAAR_ONLINE_AUTH_ENABLED is off")
-    env = settings.aadhaar_env
+def _signing_key(settings: Any, kms: Any = None) -> tuple[Any, x509.Certificate]:
+    """The AUA signing key and its certificate: from AWS KMS when AADHAAR_SIGNING_KMS_KEY_ID is set
+    (the HSM option, Blocker B4), otherwise from the password-protected PFX."""
+    key_id = (getattr(settings, "aadhaar_signing_kms_key_id", None) or "").strip()
+    if key_id:
+        from app.services.aadhaar.online import kms_signer
+
+        certificate = certs.load_certificate(
+            _read(settings.aadhaar_aua_signing_cert_path or "", "AADHAAR_AUA_SIGNING_CERT_PATH")
+        )
+        signer = kms_signer.KmsRsaSigner(key_id, kms or kms_signer.kms_client(settings))
+        try:
+            kms_signer.check(signer, certificate)
+        except kms_signer.KmsSigningError as exc:
+            raise OnlineConfigError(str(exc)) from exc
+        except Exception as exc:  # KMS unreachable, access denied, unknown key
+            raise OnlineConfigError(
+                f"AADHAAR_SIGNING_KMS_KEY_ID could not be used: {type(exc).__name__}"
+            ) from exc
+        return signer, certificate
     pfx = _read(settings.aadhaar_aua_signing_pfx_path or "", "AADHAAR_AUA_SIGNING_PFX_PATH")
     try:
         key, certificate, _chain = pkcs12.load_key_and_certificates(
@@ -98,6 +115,15 @@ def build_online_config() -> OnlineConfig:
         ) from exc
     if not isinstance(key, rsa.RSAPrivateKey) or certificate is None:
         raise OnlineConfigError("the AUA signing PFX must hold an RSA private key and its certificate")
+    return key, certificate
+
+
+def build_online_config() -> OnlineConfig:
+    settings = get_settings()
+    if not settings.aadhaar_online_auth_enabled:
+        raise OnlineConfigError("AADHAAR_ONLINE_AUTH_ENABLED is off")
+    env = settings.aadhaar_env
+    key, certificate = _signing_key(settings)
     encryption = _encryption_certificate(env, settings.aadhaar_uidai_encryption_cert_path)
     if encryption.not_valid_after_utc < datetime.now(UTC):
         raise OnlineConfigError(

@@ -46,6 +46,7 @@ from contextlib import suppress
 from app.core.config import get_settings
 from app.core.db import connect_db, disconnect_db, ensure_db_connected
 from app.services.design_workshop_review_aids import purge_expired_snapshots
+from app.services.aadhaar import log_retention as aadhaar_log_retention
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 from app.services.ministry_export import process_next_ministry_exports
@@ -99,6 +100,11 @@ async def _run() -> None:
                 await process_next_ministry_exports(worker_id="queue-service")
             except Exception:
                 logger.exception("Ministry export iteration failed; backing off")
+            try:
+                # Regulation 18(3): at most once a day, and cheap when nothing is due.
+                await aadhaar_log_retention.maybe_run(settings)
+            except Exception:
+                logger.exception("Aadhaar log retention pass failed; it runs again tomorrow")
             # Sleep for the interval but wake immediately on shutdown.
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval)

@@ -31,7 +31,7 @@ from app.core.deps import PASSWORD_CHANGE_REQUIRED_HEADER
 from app.core.idempotency import IdempotencyMiddleware
 from app.core.security import verify_jwt_configuration
 from app.scale import install_rate_limit
-from app.services import two_factor, usage
+from app.services import aadhaar_fingerprint, two_factor, usage
 from app.services.account_provisioning import EXISTING_ACCOUNT_HEADER
 from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
@@ -1202,4 +1202,6 @@ def create_app() -> FastAPI:
 # AT IMPORT, which is before uvicorn writes its first access line: it configures logging, then imports
 # this module to find `app`, and only then serves.
 install_access_log_redaction()
+# An Aadhaar-shaped query value (old app builds' GET duplicate lookup) never reaches the access log.
+aadhaar_fingerprint.install_access_log_redaction()
 app = create_app()

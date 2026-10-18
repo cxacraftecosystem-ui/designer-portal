@@ -1045,14 +1045,27 @@ def test_identity_numbers_are_masked_by_default(api) -> None:
 
 
 def test_a_master_admin_can_ask_for_unmasked_numbers(api) -> None:
+    """The Pehchan card number comes out raw on request. The Aadhaar CANNOT: the register keeps only
+    its fingerprint and last four (services/aadhaar_fingerprint.py), so even this export carries the
+    mask, and never the fingerprint."""
     api.user("root", "MASTER_ADMIN")
-    api.table("artisan", [_artisan_row()])
+    row = _artisan_row()
+    row.aadhaarNumber = None
+    row.aadhaarFingerprint = "ab" * 32
+    row.aadhaarLast4 = "9012"
+    legacy = _artisan_row()
+    legacy.id = "a2"
+    legacy.aadhaarLast4 = None
+    api.table("artisan", [row, legacy])
 
     payload = api.get(
         "/api/datasets/artisans?includeIdentityNumbers=true", token=api.token("root")
     ).json()
 
-    assert payload["items"][0]["aadhaarNumber"] == "123456789012"
+    assert [item["aadhaarNumber"] for item in payload["items"]] == ["XXXX XXXX 9012"] * 2
+    assert payload["items"][0]["pehchanCardNumber"] == "PC12345678"
+    assert "aadhaarFingerprint" not in str(payload) and "ab" * 32 not in str(payload)
+    assert "123456789012" not in str(payload)
 
 
 def test_an_ordinary_admin_cannot_ask_for_unmasked_numbers(api) -> None:

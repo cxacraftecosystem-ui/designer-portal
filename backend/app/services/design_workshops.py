@@ -56,6 +56,7 @@ from app.core.deps import can_run_design_workshops, has_rank, is_admin
 # inside the one function that needs it) and what lets its rules be asserted with no Postgres.
 from app.schemas import design_workshop_approvals, design_workshop_review_loop
 from app.services import (
+    aadhaar_fingerprint,
     custom_sections,
     design_workshop_data,
     design_workshop_posts,
@@ -2057,7 +2058,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # rather than destructive — `records._IDENTITY_KEYS` walks nested dicts by key name, so
             # a stage entry that ever reached `public_encode` would be masked a second time and the
             # second pass is a no-op.
-            "aadhaarNumber": mask_identity_number(r.aadhaarNumber),
+            "aadhaarNumber": mask_identity_number(aadhaar_fingerprint.stored_mask(r)),
             # The STATED village, never the provenance placeName: see the long note above the
             # Location model for why the two are not the same answer. `place` is the free-text
             # fallback the researchers were using before the stated-address columns existed.

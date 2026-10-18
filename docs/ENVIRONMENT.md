@@ -453,6 +453,14 @@ single element. The method, the compliance choices and the operator runbook are 
 | `AADHAAR_OTP_WINDOW_MINUTES` | No | `60` | No | |
 | `AADHAAR_EKYC_ENABLED` | No | `false` | No | Use e-KYC (UIDAI returns the name, year of birth and gender) instead of a yes/no authentication. Needs a KUA licence and the ASA to decrypt the response. |
 | `AADHAAR_KUA_LICENSE_KEY` | With e-KYC on | — | **Yes** | |
+| `AADHAAR_FINGERPRINT_KEY` | **Yes, to store or match an Aadhaar** | — | **Yes** | HMAC key the artisan register fingerprints Aadhaar numbers under (`app/services/aadhaar_fingerprint.py`): 32 random bytes, base64 (`python -c "import base64,secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())"`). **The same value as the Field Repository's**, so the two registers match. Unset or under 32 characters: any write or lookup carrying an Aadhaar answers 503. Never rotate it without re-entering every number; losing it makes every stored fingerprint unmatchable. Actions secret `AADHAAR_FINGERPRINT_KEY` (pinned onto the box by `deploy-backend.yml`), SSM backup `/iit/shared/aadhaar-fingerprint-key`. |
+| `AADHAAR_SIGNING_KMS_KEY_ID` | No | — | No | The HSM option for the AUA signature (Blocker B4): an AWS KMS key, `RSA_2048` / `SIGN_VERIFY`, used instead of the PFX. Needs `AADHAAR_AUA_SIGNING_CERT_PATH`, and `kms:Sign`, `kms:GetPublicKey`, `kms:DescribeKey` for the API's IAM user. Checked at boot. |
+| `AADHAAR_AUA_SIGNING_CERT_PATH` | With the KMS key | — | No | The CA-issued certificate for the KMS key's public half (PEM or DER). |
+| `AADHAAR_LOG_RETENTION_ENABLED` | No | `true` | No | Regulation 18(3): the queue worker archives Aadhaar log entries older than two years and deletes archives after the archive period, once a day. |
+| `AADHAAR_LOG_ARCHIVE_BUCKET` | No | `AWS_S3_BUCKET` | No | Where archives go. The API key needs `s3:PutObject`, `s3:GetObject` and `s3:DeleteObject` on the prefix. |
+| `AADHAAR_LOG_ARCHIVE_PREFIX` | No | `aadhaar-log-archive/` | No | Never a prefix the bucket serves publicly (`media/` is public-read). |
+| `AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` | No | — | No | SSE-KMS key for archive objects; unset uses SSE-S3 (AES-256). |
+| `AADHAAR_LOG_ARCHIVE_YEARS` | No | `5` | No | Years an archive is kept after its newest entry; at least 5 (Regulation 18(3)(b)). |
 
 ### Cross-portal artisan identity (C27) — shipped OFF
 

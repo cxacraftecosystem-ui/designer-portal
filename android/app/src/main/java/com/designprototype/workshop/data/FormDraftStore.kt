@@ -100,7 +100,8 @@ object FormDraftStore {
         if (draft.ownerUserId != null && ownerUserId != null && draft.ownerUserId != ownerUserId) {
             return@synchronized null
         }
-        draft
+        // A typed Aadhaar is kept sealed under the Keystore (AadhaarAtRest) and opened here.
+        draft.copy(fields = AadhaarAtRest.openDraft(draft.fields))
     }
 
     fun save(context: Context, ownerUserId: String?, formKey: String, fields: Map<String, String>) =
@@ -116,7 +117,7 @@ object FormDraftStore {
                     formKey = formKey,
                     ownerUserId = ownerUserId,
                     savedAt = Instant.now().toString(),
-                    fields = fields,
+                    fields = AadhaarAtRest.sealDraft(fields),
                 )
             ).toByteArray()
             try {

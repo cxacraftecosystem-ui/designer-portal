@@ -399,6 +399,7 @@ def _source_rows() -> dict[str, _SourceRow]:
             place="Barpali",
             address="House 44, Weavers' Lane, Barpali",
             aadhaarNumber="234567890123",
+            aadhaarLast4="0123",
             pehchanCardAvailable=True,
             pehchanCardNumber="APC7781234509",
             notes="Works to commission through the cooperative; prefers morning sittings.",

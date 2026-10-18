@@ -108,10 +108,15 @@ memory and discarded when the request returns. The OTP throttle (`AadhaarOtpThro
 of the number under a server secret, the caller's id and a time — not the number. What the artisan
 register keeps of a typed number is the next paragraph, not this one.
 
-**`Artisan.aadhaarNumber` is untouched.** It is the deduplication key a researcher types, stored and
-masked (`XXXX XXXX 9012`) exactly as before (`drop_masked_identity_numbers`,
-`_may_read_full_aadhaar`). A verification whose last four digits disagree with it is **refused**
-(`last4_mismatch`), because the card is somebody else's.
+**The artisan register keeps no Aadhaar number (since 2026-10-17).** The number a researcher types
+is the deduplication key, and it is stored only as `Artisan.aadhaarFingerprint` —
+HMAC-SHA256 under `AADHAAR_FINGERPRINT_KEY`, unique — and `Artisan.aadhaarLast4`
+(`services/aadhaar_fingerprint.py`; the same key and formula on the Field Repository). Every
+response, export and screen shows `XXXX XXXX 9012` built from the last four, to every viewer; the
+fingerprint is never served. Rows written before that date still hold the number in the legacy
+`aadhaarNumber` column until the backfill and the drop migration run (`backend/DEPLOY_AWS.md`,
+"Aadhaar fingerprint"). A verification whose last four digits disagree with the register's is
+**refused** (`last4_mismatch`), because the card is somebody else's.
 
 **Consent** is shown in full before any scan, upload or number entry — what is read, what is kept,
 what is never kept, how to undo it — and must be ticked; the server refuses a request whose
@@ -139,8 +144,32 @@ time; every column is cleared and the removal is audited.
 rejected, withdrawn — is a `RecordRevision` row (`recordType` `user` or `artisan`) under the key
 `aadhaarVerification`, in the `{old, new}` shape both clients' history panels render, carrying the
 method, outcome, refusal code and last four digits and nothing else; plus one `app.aadhaar` log line.
-UIDAI asks an AUA to keep authentication logs online for two years and archived for five more; this
-table is append-only and is not pruned.
+**Retention (Regulation 18(3)).** Entries older than two years are archived, a month at a time, to
+`AADHAAR_LOG_ARCHIVE_BUCKET` under `aadhaar-log-archive/` (SSE-KMS when
+`AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` is set, SSE-S3 otherwise) and removed from the live table once the
+object reads back; an archive is deleted `AADHAAR_LOG_ARCHIVE_YEARS` (at least 5) after its newest
+entry. A record under an open `AadhaarLegalHold` (`scripts/aadhaar_legal_hold.py`) keeps its entries
+live and its archives undeleted. The queue worker runs this once a day
+(`services/aadhaar/log_retention.py`); the ledger is `AadhaarLogArchive`.
+
+*Where the archive lives.* The bucket defaults to the **media bucket** (`AWS_S3_BUCKET`,
+`designrepo-media-626159998512`), not a separate backup bucket. That bucket is versioned and
+replicates every object to `designrepo-offsite-626159998512` (ap-south-2, Object Lock GOVERNANCE 35
+days), and both keep noncurrent versions for 90 days. So "deleted after the archive period" means the
+current object goes on the due date and its versions follow about 90 days later in both regions (up
+to 125 if the object was rewritten in its last 35 days). With `AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` set
+the objects are SSE-KMS, and the replication rule does not copy SSE-KMS objects, so they then have
+no off-site copy at all.
+
+*The grant* (applied 2026-10-18): the API's IAM user (`designrepo-media`) holds `s3:PutObject`,
+`s3:GetObject` (the read-back is a `head_object`) and `s3:DeleteObject` on `aadhaar-log-archive/*`
+and nothing else there: no `s3:ListBucket`, nothing on `backups/` or `tfstate/` (the bucket policy
+denies those to this user outright). It is statement `AadhaarLogArchive` of
+`aws_iam_user_policy.media` in `infra/terraform/main.tf`, which arrives with the backup-hardening
+change. If the grant is ever missing, each daily run is refused at the upload, deletes nothing and
+logs the failure. With `AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` set, the same user also needs
+`kms:GenerateDataKey` and `kms:Decrypt` on that key. Optionally add a lifecycle rule on that prefix
+that expires noncurrent versions sooner, to shorten the tail above.
 
 ---
 
@@ -287,12 +316,26 @@ Tested here against a fake ASA with test keys; not yet against UIDAI:
    — the application, agreements and fees are UIDAI's process (uidai.gov.in, "Authentication
    ecosystem"). UIDAI issues the **AUA code** and **licence key**; the ASA issues its **licence key**
    and its endpoint URLs. Note UIDAI's AUA obligations — consent, VID, no storage of the number or PID
-   (an Aadhaar Data Vault and an HSM are required only to store the number, which this deployment
-   never does), log retention — in the compliance checklist for requesting entities.
-2. **Signing certificate.** Obtain a Class II/III signing certificate from an Indian CA whose `O=`
-   matches the AUA. Package key + certificate as a PKCS#12 (`.pfx`) with a strong password. UIDAI
-   requires the key in an HSM for production; whatever holds it must produce this PFX-equivalent for
-   the process (or extend `online/config.py` to sign through the HSM's PKCS#11 interface).
+   (an Aadhaar Data Vault is required only to store the number), an HSM for the signing key, log
+   retention — in the compliance checklist for requesting entities. The verification feature never
+   stores the number. The artisan register DID, in full, until 2026-10-17; it now keeps only a keyed
+   fingerprint and the last four digits (§3), and the number leaves the database entirely once the
+   backfill and the drop migration have run on the box (`backend/DEPLOY_AWS.md`). Until then the
+   legacy column still holds the numbers recorded before that date.
+2. **Signing key and certificate.** UIDAI requires the key in an HSM for production. Two ways:
+   * **AWS KMS (the HSM option).** Create an asymmetric key, key spec `RSA_2048`, key usage
+     `SIGN_VERIFY` (`aws kms create-key --key-spec RSA_2048 --key-usage SIGN_VERIFY`); its private
+     half is generated and used only inside KMS's FIPS 140 validated HSMs. Export the public key
+     (`aws kms get-public-key`), have an Indian CA issue a Class II/III certificate for it with `O=`
+     matching the AUA (the CSR is signed through KMS), and set `AADHAAR_SIGNING_KMS_KEY_ID` and
+     `AADHAAR_AUA_SIGNING_CERT_PATH`. Grant the API's IAM user `kms:Sign`, `kms:GetPublicKey` and
+     `kms:DescribeKey` on that key only. At boot the server refuses to start unless the key is
+     enabled, RSA_2048/SIGN_VERIFY, matches the certificate and signs (`online/kms_signer.py`).
+     Whether UIDAI accepts a cloud HSM is Question 7; if not, AWS CloudHSM fits behind the same
+     signer.
+   * **A PFX file.** Package key + certificate as a PKCS#12 (`.pfx`) with a strong password and set
+     `AADHAAR_AUA_SIGNING_PFX_PATH` / `AADHAAR_AUA_SIGNING_PFX_PASSWORD`. Not an HSM; pre-production
+     only.
 3. **Fill in the box's `.env`** (and the GitHub Actions secret that renders it — every secret goes to
    both): `AADHAAR_ENV=preprod`, `AADHAAR_AUA_CODE`, `AADHAAR_SUB_AUA_CODE`,
    `AADHAAR_AUA_LICENSE_KEY`, `AADHAAR_ASA_LICENSE_KEY`, `AADHAAR_ASA_OTP_URL`,
@@ -329,6 +372,9 @@ Switching on the **offline** methods is step 6 in reverse for `AADHAAR_OFFLINE_V
 | The pinned fingerprints | `test_aadhaar_offline.py::test_every_pinned_certificate_matches_its_manifest_fingerprint_and_names_its_source` |
 | The consent words are one text | `AadhaarVerificationTest` (Android reads the web file) |
 | The variables are documented | [ENVIRONMENT.md](ENVIRONMENT.md)'s set-difference command |
+| The register keeps no number; no response, export, history entry or log carries it | `test_aadhaar_fingerprint.py` |
+| Logs archived after 2 years, deleted after the archive period, legal holds respected | `test_aadhaar_log_retention.py` |
+| The KMS signature verifies; the boot check refuses a wrong key | `test_aadhaar_kms_signing.py` |
 
 **Review triggers:** `backend/app/services/aadhaar/`, `backend/app/data/uidai/`, a UIDAI circular
 changing an API or a certificate, and the owner's answer on Regulation 13A.

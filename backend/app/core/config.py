@@ -665,6 +665,28 @@ class Settings(BaseSettings):
     # unmatchable; changing it needs the numbers again. Backed up in SSM at
     # /iit/shared/aadhaar-fingerprint-key. Unset: any write or lookup carrying an Aadhaar is refused.
     aadhaar_fingerprint_key: str | None = Field(default=None, alias="AADHAAR_FINGERPRINT_KEY")
+    # Regulation 18(3) (services/aadhaar/log_retention.py): Aadhaar log entries older than two years
+    # are archived to AADHAAR_LOG_ARCHIVE_BUCKET by the queue worker, once a day, and deleted
+    # AADHAAR_LOG_ARCHIVE_YEARS (at least 5) later, unless the record is under a legal hold.
+    aadhaar_log_retention_enabled: bool = Field(default=True, alias="AADHAAR_LOG_RETENTION_ENABLED")
+    # Default: the media bucket (AWS_S3_BUCKET). The prefix must not be one the bucket serves publicly.
+    aadhaar_log_archive_bucket: str | None = Field(default=None, alias="AADHAAR_LOG_ARCHIVE_BUCKET")
+    aadhaar_log_archive_prefix: str = Field(
+        default="aadhaar-log-archive/", alias="AADHAAR_LOG_ARCHIVE_PREFIX"
+    )
+    # SSE-KMS key for the archive objects; unset means SSE-S3 (AES-256, S3-managed key).
+    aadhaar_log_archive_kms_key_id: str | None = Field(
+        default=None, alias="AADHAAR_LOG_ARCHIVE_KMS_KEY_ID"
+    )
+    aadhaar_log_archive_years: int = Field(default=5, ge=5, alias="AADHAAR_LOG_ARCHIVE_YEARS")
+    # THE HSM OPTION FOR THE AUA SIGNATURE (Blocker B4). An AWS KMS asymmetric key (RSA_2048,
+    # SIGN_VERIFY) — keys generated and held in KMS's FIPS 140 validated HSMs, never exportable —
+    # used in place of AADHAAR_AUA_SIGNING_PFX_PATH/PASSWORD. The certificate UIDAI's ASA expects
+    # (issued by a CA for this key's public half) is AADHAAR_AUA_SIGNING_CERT_PATH. Online auth only.
+    aadhaar_signing_kms_key_id: str | None = Field(default=None, alias="AADHAAR_SIGNING_KMS_KEY_ID")
+    aadhaar_aua_signing_cert_path: str | None = Field(
+        default=None, alias="AADHAAR_AUA_SIGNING_CERT_PATH"
+    )
 
     # ── AI-DRAFTED ANSWERS FROM A TRANSCRIPT (C28; docs/ENVIRONMENT.md) ───────────────────────────
     # OFF BY DEFAULT. On, a researcher may ask a model to draft a section's unanswered questions from
@@ -757,10 +779,14 @@ class Settings(BaseSettings):
             "AADHAAR_ASA_LICENSE_KEY": self.aadhaar_asa_license_key,
             "AADHAAR_ASA_OTP_URL": self.aadhaar_asa_otp_url,
             "AADHAAR_ASA_AUTH_URL": self.aadhaar_asa_auth_url,
-            "AADHAAR_AUA_SIGNING_PFX_PATH": self.aadhaar_aua_signing_pfx_path,
-            "AADHAAR_AUA_SIGNING_PFX_PASSWORD": self.aadhaar_aua_signing_pfx_password,
             "AADHAAR_THROTTLE_SALT": self.aadhaar_throttle_salt,
         }
+        # The signing key: in AWS KMS (an HSM, Blocker B4) with its certificate, or the PFX file.
+        if (self.aadhaar_signing_kms_key_id or "").strip():
+            required["AADHAAR_AUA_SIGNING_CERT_PATH"] = self.aadhaar_aua_signing_cert_path
+        else:
+            required["AADHAAR_AUA_SIGNING_PFX_PATH"] = self.aadhaar_aua_signing_pfx_path
+            required["AADHAAR_AUA_SIGNING_PFX_PASSWORD"] = self.aadhaar_aua_signing_pfx_password
         if self.aadhaar_ekyc_enabled:
             required["AADHAAR_KUA_LICENSE_KEY"] = self.aadhaar_kua_license_key
             required["AADHAAR_ASA_KYC_URL"] = self.aadhaar_asa_kyc_url

@@ -19,7 +19,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,8 +35,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.ArtisanIdentity
 import com.designprototype.workshop.data.DW_DRAFT_OTHER_ACCOUNT_ROW
 import com.designprototype.workshop.data.REFERENCE_FIELD_NOUNS
 import com.designprototype.workshop.data.OutboxFailureRow
@@ -133,6 +137,8 @@ fun OfflineOutboxTray(
     var reload by remember { mutableIntStateOf(0) }
     // The stale correction being reviewed, or null. See [StaleCorrectionDialog].
     var reviewing by remember { mutableStateOf<OutboxFailureRow?>(null) }
+    // The entry whose Aadhaar number is being typed again, or null. See [RetypeAadhaarDialog].
+    var retyping by remember { mutableStateOf<OutboxFailureRow?>(null) }
 
     LaunchedEffect(reload) {
         loading = true
@@ -269,6 +275,23 @@ fun OfflineOutboxTray(
         // everything and making them find it again.
     }
 
+    retyping?.let { row ->
+        RetypeAadhaarDialog(
+            row = row,
+            onDismiss = { retyping = null },
+            onTyped = { number ->
+                val target = row
+                retyping = null
+                act {
+                    outboxRetryMessage(
+                        label = target.label,
+                        result = repository.retypeOutboxAadhaar(appContext, target.entryId, number),
+                    )
+                }
+            },
+        )
+    }
+
     repicking?.let { row ->
         RepickDialog(
             repository = repository,
@@ -334,6 +357,7 @@ fun OfflineOutboxTray(
                             row = row,
                             busy = busy,
                             onRepick = { repicking = row },
+                            onRetype = { retyping = row },
                             onRetry = {
                                 act {
                                     // The SENTENCE is `outboxRetryMessage`'s and not this
@@ -420,6 +444,7 @@ private fun OutboxFailureCard(
     onRetry: () -> Unit,
     onDiscard: () -> Unit,
     onReview: () -> Unit = {},
+    onRetype: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -466,6 +491,16 @@ private fun OutboxFailureCard(
                 "CHANGED ON THE SERVER SINCE YOU EDITED IT",
                 color = MaterialTheme.field.warning,
                 style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        if (row.needsAadhaar) {
+            // HELD BY THIS PHONE, NOT REFUSED BY THE SERVER (2026-10-18). Nothing was sent: sending
+            // the rest would have saved a correction without its new number and called it done.
+            Text(
+                "NEEDS THE AADHAAR NUMBER AGAIN",
+                color = MaterialTheme.field.warning,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -532,6 +567,13 @@ private fun OutboxFailureCard(
         // was lost. The remedy is on the line above and it is the only one there is.
         if (!row.otherAccount) {
             ActionRow {
+                if (row.needsAadhaar) {
+                    // THE ONLY BUTTON THAT CAN MOVE THIS ROW, so it is first and Try again is not drawn:
+                    // a retry would hold the entry again for the identical reason.
+                    OutlinedButton(onClick = onRetype, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("Type it again", fontSize = 12.sp)
+                    }
+                }
                 if (row.stale) {
                     // FIRST, for the reason Re-pick is first below: it is the one that can resolve
                     // this row. A bare Try again would fetch the identical refusal.
@@ -550,7 +592,9 @@ private fun OutboxFailureCard(
                 }
                 // The shared tonal media button — icon and word, 48dp — so Try again reads the same on
                 // every queued row as Retry and Download do on every media card.
-                MediaActionButton(label = "Try again", icon = Icons.Filled.Refresh, onClick = onRetry, enabled = !busy)
+                if (!row.needsAadhaar) {
+                    MediaActionButton(label = "Try again", icon = Icons.Filled.Refresh, onClick = onRetry, enabled = !busy)
+                }
                 OutlinedButton(onClick = onDiscard, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).destructiveAction()) {
                     // "this copy" on a clash, for the reason the confirmation dialog gives at length:
                     // the row a designer is reading names a record on the SERVER, and an unqualified
@@ -564,6 +608,62 @@ private fun OutboxFailureCard(
             }
         }
     }
+}
+
+/**
+ * TYPE THE AADHAAR NUMBER AGAIN for a queued artisan whose typed number this phone could not keep
+ * (`AadhaarAtRest.numberWithheld`), then send it. Checked here as the form checks it, so a mistyped
+ * digit is said in the box rather than after a send. The number goes only into the queue, sealed.
+ */
+@Composable
+private fun RetypeAadhaarDialog(
+    row: OutboxFailureRow,
+    onDismiss: () -> Unit,
+    onTyped: (String) -> Unit,
+) {
+    var typed by remember(row.entryId) { mutableStateOf("") }
+    var error by remember(row.entryId) { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Type the Aadhaar number again", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    row.aadhaarLast4?.let { "“${row.label}” is safe. Type the number ending $it to send it." }
+                        ?: "“${row.label}” is safe. Type the artisan's Aadhaar number to send it.",
+                    color = MaterialTheme.field.body,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                )
+                OutlinedTextField(
+                    value = typed,
+                    onValueChange = { input ->
+                        typed = input.filter { it in '0'..'9' }.take(ArtisanIdentity.AADHAAR_LENGTH)
+                        error = null
+                    },
+                    label = { Text("Aadhaar number") },
+                    isError = error != null,
+                    supportingText = { error?.let { Text(it) } },
+                    singleLine = true,
+                    // NumberPassword: the digit pad, and no keyboard learning a regulated identifier.
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = typed.length == ArtisanIdentity.AADHAAR_LENGTH,
+                onClick = {
+                    val problem = ArtisanIdentity.aadhaarError(typed)
+                        ?: row.aadhaarLast4?.takeIf { !typed.endsWith(it) }
+                            ?.let { "That number doesn't end in $it. Check the card." }
+                    if (problem != null) error = problem else onTyped(typed)
+                },
+            ) { Text("Send it", fontSize = 13.sp) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now", fontSize = 13.sp) } },
+    )
 }
 
 /**
