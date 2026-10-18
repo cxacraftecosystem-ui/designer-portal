@@ -244,12 +244,13 @@ fun transcriptAnnexureWarnings(items: List<DwTranscriptItem>): List<String> {
     }
     val detail = if (clauses.isNotEmpty()) " (${clauses.joinToString("; ")})" else ""
     return listOf(
-        "${missing.size} recording(s) have no transcript and were left out of the " +
+        "${missing.size} ${if (missing.size == 1) "recording has" else "recordings have"} no transcript and " +
+            "${if (missing.size == 1) "was" else "were"} left out of the " +
             "transcript annexure$detail."
     )
 }
 
 /** `attach_report_transcripts`' refusal sentence, for recordings the server would not hand over. */
 fun transcriptRefusedWarning(refused: Int): String? = if (refused <= 0) null else
-    "$refused recording(s) attached to this workshop could not be included in the " +
+    "$refused ${if (refused == 1) "recording" else "recordings"} attached to this workshop could not be included in the " +
         "transcript annexure: they were uploaded by another account, or the file is gone."
