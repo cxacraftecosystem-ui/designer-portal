@@ -460,7 +460,7 @@ resource "aws_iam_user" "media" {
 # old write-only grant still let it OVERWRITE a dump. The backup job now runs as
 # `aws_iam_user.backup_writer` (backups.tf), the bucket policy denies this user `backups/*` and
 # `tfstate/*` outright, and statements 2 and 3 described below were removed. Statement 1 is the
-# whole policy.
+# app's media surface; statement 4 (2026-10-18) is the Aadhaar log archive, described below.
 #
 # STATEMENT 1 IS THE APP'S ACTUAL SURFACE, MEASURED RATHER THAN ASSUMED.
 # `backend/app/services/s3.py:make_object_key` is the ONLY thing in the product that mints an object
@@ -474,7 +474,7 @@ resource "aws_iam_user" "media" {
 # THE ONE PRE-APPLY CHECK WORTH A MINUTE, because the code above describes the code and not the
 # bucket: an object put there BY HAND, before the convention or by somebody debugging, would stop
 # being readable the moment this lands. With operator credentials —
-#   aws s3 ls s3://designrepo-media-626159998512/ --recursive | grep -Ev '^\S+ +\S+ +[0-9]+ (media|backups|tfstate)/'
+#   aws s3 ls s3://designrepo-media-626159998512/ --recursive | grep -Ev '^\S+ +\S+ +[0-9]+ (media|backups|tfstate|aadhaar-log-archive)/'
 # — anything that prints is a key no policy statement below covers. Expect no output.
 #
 # `s3:AbortMultipartUpload` IS NEW HERE AND CLOSES AN EXISTING BUG rather than widening anything.
@@ -490,6 +490,19 @@ resource "aws_iam_user" "media" {
 # `backups/designer-portal/*`, to `aws_iam_user_policy.backup_writer` in backups.tf. The workflow's
 # proof step still verifies with `list-objects-v2`, so neither identity needs `s3:GetObject` on a
 # dump.
+#
+# STATEMENT 4 IS THE REGULATION 18(3) ARCHIVE (2026-10-18), AND IT IS PREFIX-SCOPED ON PURPOSE.
+# `backend/app/services/aadhaar/log_retention.py` moves Aadhaar verification log entries older
+# than two years into `aadhaar-log-archive/YYYY/MM/...jsonl.gz`: `PutObject` to write a month,
+# `GetObject` because the read-back is a `head_object` (which S3 authorises as GetObject), and
+# `DeleteObject` to remove an archive once its retention years have passed. Nothing else: no
+# `ListBucket` (the job addresses keys from its own `AadhaarLogArchive` ledger) and no multipart
+# (one month is one small `put_object`). It names neither `backups/` nor `tfstate/`, and the
+# bucket policy's `ApiKeyNeverTouchesBackupsOrState` deny would override it if it ever did.
+# Archives are versioned and replicated like every other object here, so a deleted archive
+# leaves a noncurrent version for 90 days (35 days locked off-site); docs/AADHAAR.md says so.
+# With `AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` set, this user also needs kms:GenerateDataKey and
+# kms:Decrypt on that key; that is not granted here because the archive runs SSE-S3.
 #
 # NOTHING HERE NAMES `tfstate/`, AND NOTHING MAY. Terraform runs under a human operator's own
 # credentials, never under this user. The state holds `aws_iam_access_key.media`'s secret in
@@ -514,6 +527,16 @@ resource "aws_iam_user_policy" "media" {
           "s3:AbortMultipartUpload"
         ]
         Resource = "${aws_s3_bucket.media.arn}/media/*"
+      },
+      {
+        Sid    = "AadhaarLogArchive"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "${aws_s3_bucket.media.arn}/aadhaar-log-archive/*"
       }
     ]
   })
