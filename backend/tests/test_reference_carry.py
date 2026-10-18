@@ -592,6 +592,9 @@ CRAFT_CARRIED = {
 }
 CRAFT_NOT_CARRIED = {
     "extraMetadata": "bookkeeping",
+    # The shared cross-portal code (C26). An identifier for matching the two portals' records,
+    # not a fact about the craft a report prints; the craft's name already crosses.
+    "craftCode": "cross-portal identifier (C26) — matching key, nothing a stage prints",
     "recordedTimezone": "the date is carried as a bare DATE, so the zone has nothing to qualify",
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
@@ -688,6 +691,10 @@ QUESTIONNAIRE_RESPONSE_CARRIED = {
     "updatedAt": "artisanBaseline.interviewLastAnsweredOn (the max across the sitting)",
 }
 QUESTIONNAIRE_RESPONSE_NOT_CARRIED = {
+    "answerOrigin": (
+        "whether the answer was typed or accepted from a transcript draft — bookkeeping about the "
+        "answer, which itself does not cross"
+    ),
     "interviewId": "join key — the rows are reached through the interview's own responses relation",
     "questionId": "join key",
     "notes": (
@@ -719,6 +726,7 @@ QUESTIONNAIRE_QUESTION_CARRIED = {
     "sectionCode": "artisanBaseline.interviewSectionsCovered (distinct codes, counted)",
 }
 QUESTIONNAIRE_QUESTION_NOT_CARRIED = {
+    "questionCode": "cross-portal identifier (C26) — matching key; only counts of questions cross",
     # NOT A DISCLOSURE ON ITS OWN, and refused all the same: prompts WITHOUT answers answer nothing,
     # and prompts WITH answers are the thing forbidden above. Only the counts cross. `supersededById`
     # is the column that exists because a prompt is reworded under answers already given — "How many
@@ -773,6 +781,10 @@ RELATION_LEDGER = {
             "never cross: see _media_note."
         ),
         "questionnaireInterviews": "a different feature; the report reaches questionnaires directly",
+        "crossPortalLink": (
+            "NOT INCLUDED — the Field Repository link (C27) is how a record was filled, and is read "
+            "only by services/cross_portal; nothing from the other portal reaches a stage through it"
+        ),
         "sectionStatuses": "bookkeeping — questionnaire progress",
         "designWorkshop": (
             "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
@@ -924,6 +936,7 @@ RELATION_LEDGER = {
             "workshopSetup.craftMediaNote via include={'media': True}. MediaFile.craftId is indexed."
         ),
         "workshops": "join key — the WorkshopCraft reading of workshop scope",
+        "code": "NOT INCLUDED — the shared code row (C26); see craftCode",
     },
     "QuestionnaireInterview": {
         "createdBy": "bookkeeping — who SAVED the record, which is not a claim about who sat in",
@@ -967,6 +980,7 @@ RELATION_LEDGER = {
         "designWorkshop": (
             "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
         ),
+        "answerDrafts": "NOT INCLUDED — transcript drafts awaiting a researcher; the answers do not cross",
     },
     "QuestionnaireResponse": {
         "interview": "join key — the rows are reached through the interview's responses relation",
@@ -979,6 +993,7 @@ RELATION_LEDGER = {
     "QuestionnaireQuestion": {
         "section": "NOT INCLUDED — the denormalised sectionCode answers the only question asked",
         "responses": "join key — reached from the other side, through the interview",
+        "answerDrafts": "NOT INCLUDED — transcript drafts awaiting a researcher; never a stage value",
     },
     "QuestionnaireInterviewArtisan": {
         "interview": "join key",
