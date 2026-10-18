@@ -1518,35 +1518,81 @@ private fun DwWorkshopNameField(
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         FieldCaption(field)
-        SearchableSelectField(
-            label = fieldLabel(field),
-            options = options,
-            selectedValue = current,
-            // No blank row: the title is what every list, search result and report cover shows this
-            // workshop by, and a "None" row on it would offer to leave a document unnamed.
-            includeNone = false,
-            // FORCED ON, ahead of the count. The box is where a new name is typed and the create row
-            // reads it back; without it this control could only ever offer what already exists, which
-            // is the closed picker the standing objection refuses. See the header for the page size
-            // that makes a local filter honest here.
-            searchable = true,
-            enabled = enabled,
-            // Never a claim the state does not support — `workshopListNotice` is the app's one
-            // decider and it says nothing at all while there are rows to draw.
-            emptyMessage = notice,
-            createAction = SelectCreateAction(
-                label = ::dwWorkshopNameCreateLabel,
-                onClick = ::commit,
-            ),
-            // THE BOX ASKS THE SERVER. This is what closes the divergence the header used to end on
-            // — "the honest end state is the browser's: the box wired to `GET
-            // /design-workshops?search=`, which needs a server-query seam this handset's picker has
-            // not got". The seam is [SearchableSelectField.onSearch]; passing it also stops the
-            // sheet filtering these rows a second time, which matters because the server matches the
-            // code, the craft and the cluster and this list only prints the title.
-            onSearch = { typed -> nameQuery = typed },
-            onSelect = { picked -> if (picked.isNotBlank()) commit(picked) },
-        )
+        // The microphone sits BESIDE the trigger, on its line, as it sits in a text box's trailing
+        // icon: the trigger already ends in its own chevron, so it cannot go inside. Bottom-aligned,
+        // because the select draws its label above its box and the mic belongs level with the box.
+        Row(verticalAlignment = Alignment.Bottom) {
+            SearchableSelectField(
+                modifier = Modifier.weight(1f),
+                label = fieldLabel(field),
+                options = options,
+                selectedValue = current,
+                // No blank row: the title is what every list, search result and report cover shows this
+                // workshop by, and a "None" row on it would offer to leave a document unnamed.
+                includeNone = false,
+                // FORCED ON, ahead of the count. The box is where a new name is typed and the create row
+                // reads it back; without it this control could only ever offer what already exists, which
+                // is the closed picker the standing objection refuses. See the header for the page size
+                // that makes a local filter honest here.
+                searchable = true,
+                enabled = enabled,
+                // Never a claim the state does not support — `workshopListNotice` is the app's one
+                // decider and it says nothing at all while there are rows to draw.
+                emptyMessage = notice,
+                createAction = SelectCreateAction(
+                    label = ::dwWorkshopNameCreateLabel,
+                    onClick = ::commit,
+                ),
+                // THE BOX ASKS THE SERVER. This is what closes the divergence the header used to end on
+                // — "the honest end state is the browser's: the box wired to `GET
+                // /design-workshops?search=`, which needs a server-query seam this handset's picker has
+                // not got". The seam is [SearchableSelectField.onSearch]; passing it also stops the
+                // sheet filtering these rows a second time, which matters because the server matches the
+                // code, the craft and the cluster and this list only prints the title.
+                onSearch = { typed -> nameQuery = typed },
+                onSelect = { picked -> if (picked.isNotBlank()) commit(picked) },
+            )
+            if (canDictate) {
+                DwDictationButton(
+                    enabled = enabled,
+                    onPartial = { partial -> spoken = partial },
+                    onCommit = { finalText ->
+                        val merged = appendSpoken(current, finalText)
+                        spoken = ""
+                        commit(merged)
+                    },
+                    onError = { message ->
+                        spoken = ""
+                        services.onError(message)
+                    },
+                )
+            }
+        }
+        if (canDictate) {
+            /*
+              THE MICROPHONE STAYS, BESIDE THE TRIGGER (above), NOT UNDER THE BOX.
+
+              This field was an ordinary [ScalarInput] until this control landed, so it had a mic in
+              the box's trailing icon, and taking a capability away from the client used in the
+              courtyard would be a worse trade than any amount of tidiness. What cannot follow it
+              here is the PARTIAL: a dropdown trigger has no box to stream into, so the running
+              guess is drawn on its own line directly beneath the trigger, and the trigger reads
+              the committed name the moment it lands.
+
+              APPENDED, not replaced, exactly as the browser's `appendDictated` appends. `commit`
+              runs the same coercion the picked and typed paths run, so an over-length result is
+              refused with the same sentence rather than a third one.
+            */
+            if (spoken.isNotBlank()) {
+                Text(
+                    appendSpoken(current, spoken),
+                    color = MaterialTheme.field.muted,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+            DwDictationHint(listening = spoken.isNotBlank())
+        }
         Text(
             dwWorkshopNameOfferLine(
                 workshopKind = workshopKind,
@@ -1563,49 +1609,6 @@ private fun DwWorkshopNameField(
         }
         dwWorkshopNamesWithheldLine(offer.withheld, field.maxLength)?.let {
             Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
-        }
-        if (canDictate) {
-            /*
-              THE MICROPHONE STAYS, AND IT IS UNDER THE CONTROL RATHER THAN INSIDE IT.
-
-              This field was an ordinary [ScalarInput] until this control landed, so it had a mic in
-              the box's trailing icon, and taking a capability away from the client used in the
-              courtyard would be a worse trade than any amount of tidiness. What cannot follow it
-              here is the PARTIAL: [ScalarInput] renders the recogniser's running guess inside the
-              box the designer is watching, "because a transcript that appears somewhere other than
-              where it will be saved is a transcript nobody trusts", and a dropdown trigger has no
-              box to stream into. So the guess is drawn in its own line directly beneath, which is
-              the nearest honest place, and the trigger reads the committed name the moment it lands.
-
-              APPENDED, not replaced, exactly as the browser's `appendDictated` appends: a designer
-              adding "two thousand twenty six" to a name already in the box is finishing an answer,
-              not starting one. `commit` runs the same coercion the picked and typed paths run, so an
-              over-length result is refused with the same sentence rather than a third one.
-            */
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                DwDictationButton(
-                    enabled = enabled,
-                    onPartial = { partial -> spoken = partial },
-                    onCommit = { finalText ->
-                        val merged = appendSpoken(current, finalText)
-                        spoken = ""
-                        commit(merged)
-                    },
-                    onError = { message ->
-                        spoken = ""
-                        services.onError(message)
-                    },
-                )
-                if (spoken.isNotBlank()) {
-                    Text(
-                        appendSpoken(current, spoken),
-                        color = MaterialTheme.field.muted,
-                        style = MaterialTheme.typography.bodySmall,
-                        lineHeight = 16.sp,
-                    )
-                }
-            }
-            DwDictationHint(listening = spoken.isNotBlank())
         }
         // `localError` first: it is about the commit that was just refused, so it is the newest fact
         // and the one the designer is acting on. `error` is the repository's answer about the value

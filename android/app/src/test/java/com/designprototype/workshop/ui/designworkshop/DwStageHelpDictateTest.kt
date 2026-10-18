@@ -143,6 +143,22 @@ class DwStageHelpDictateTest {
         assertTrue(renderer.contains("trailingIcon = if (!canDictate) null else {"))
     }
 
+    @Test
+    fun `the workshop-name dropdown carries the microphone beside its trigger, not under the box`() {
+        val renderer = source("ui/designworkshop/FieldRenderer.kt")
+        val at = renderer.indexOf("private fun DwWorkshopNameField(")
+        assertTrue("DwWorkshopNameField moved", at > 0)
+        val body = renderer.substring(at, Regex("\\n(?:private |internal )?fun ").find(renderer, at + 1)!!.range.first)
+        val row = body.indexOf("Row(verticalAlignment = Alignment.Bottom) {")
+        val select = body.indexOf("SearchableSelectField(", row)
+        val mic = body.indexOf("DwDictationButton(", select)
+        val offerLine = body.indexOf("dwWorkshopNameOfferLine(")
+        assertTrue("the select and the mic share one row", row in 0 until select)
+        assertTrue(body.substring(select, select + 120).contains("modifier = Modifier.weight(1f)"))
+        assertTrue("the mic is drawn before the lines under the box", mic in (select + 1) until offerLine)
+        assertEquals(1, Regex("DwDictationButton\\(").findAll(body).count())
+    }
+
     private fun repoFile(vararg relative: String): File {
         var dir: File? = File(".").absoluteFile
         while (dir != null) {

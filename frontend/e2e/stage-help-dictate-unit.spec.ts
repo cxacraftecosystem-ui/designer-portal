@@ -9,6 +9,7 @@ import {
   DICTATE_BUTTON_RECORDING,
   dictateButtonDescription,
   dictateButtonLabel,
+  DICTATION_BESIDE_ROW,
   DICTATION_FIELD_PADDED,
   DICTATION_LANGUAGE_BUTTON,
   dictationLanguageButtonLabel
@@ -124,4 +125,18 @@ test("the adornment sits inside the box: centred on one line, top-right on a tex
   expect(field).toMatch(/<DictationButton [^>]*multiline > <textarea/);
   // No stray stand-alone microphone under a text box any more.
   expect(field).not.toContain('{field.type === "TEXT" ? ( <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} workshopId={workshopId} /> ) : null}');
+});
+
+test("the workshop-name dropdown carries the microphone on the trigger's line, not under the box", () => {
+  expect(DICTATION_BESIDE_ROW).toContain("flex");
+  expect(DICTATION_BESIDE_ROW).toContain("items-center");
+  const dictation = read("components/designworkshop/Dictation.tsx").replace(/\s+/g, " ");
+  expect(dictation).toContain('<div className={DICTATION_BESIDE_ROW}> <div className="min-w-0 flex-1">{children}</div> {adornment} </div>');
+
+  const field = read("components/designworkshop/FieldInput.tsx").replace(/\s+/g, " ");
+  expect(field).toMatch(/<StageWorkshopNameField [^]*?<DictationButton [^>]*beside > \{control\} <\/DictationButton>/);
+
+  const name = read("components/designworkshop/StageWorkshopNameField.tsx");
+  expect(name).toContain("(dictation ?? ((control: React.ReactNode) => control))(");
+  expect(name).not.toMatch(/^\s*\{dictation\}\s*$/m);
 });

@@ -65,6 +65,7 @@ import {
   DICTATE_BUTTON_RECORDING,
   dictateButtonDescription,
   dictateButtonLabel,
+  DICTATION_BESIDE_ROW,
   DICTATION_FIELD_PADDED,
   DICTATION_FIELD_WRAPPER,
   DICTATION_LANGUAGE_BUTTON,
@@ -119,15 +120,20 @@ export function DictationButton({
   workshopId,
   /**
    * The box being dictated into. When given, the microphone is drawn INSIDE it, in the end
-   * adornment (owner ruling, 2026-10-17); without it (a list of rows, a dropdown, the rich-text
-   * editor's footer) the same two buttons are drawn on their own, end-aligned.
+   * adornment (owner ruling, 2026-10-17); with `beside`, on the same line as it; without it (a list
+   * of rows, the rich-text editor's footer) the same two buttons are drawn on their own, end-aligned.
    *
    * The wrapper is the same element whatever the mode, so the box is never remounted (and never
    * loses the caret) when this control learns, a frame after mount, that it can dictate.
    */
   children,
   /** A textarea: the adornment sits top-right instead of centred. */
-  multiline = false
+  multiline = false,
+  /**
+   * A dropdown trigger: the microphone sits BESIDE it, centred on the same line, because the trigger
+   * already carries its chevron (and a clear button) at the end and an overlay would cover them.
+   */
+  beside = false
 }: {
   onCommit: (text: string) => void;
   disabled?: boolean;
@@ -135,6 +141,7 @@ export function DictationButton({
   workshopId: string;
   children?: ReactNode;
   multiline?: boolean;
+  beside?: boolean;
 }) {
   const describedById = useId();
   const menuAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -573,6 +580,18 @@ export function DictationButton({
     return (
       <div className="grid gap-1.5">
         <div className="flex justify-end">{adornment}</div>
+        {status}
+      </div>
+    );
+  }
+
+  if (beside) {
+    return (
+      <div className="grid min-w-0 gap-1.5">
+        <div className={DICTATION_BESIDE_ROW}>
+          <div className="min-w-0 flex-1">{children}</div>
+          {adornment}
+        </div>
         {status}
       </div>
     );

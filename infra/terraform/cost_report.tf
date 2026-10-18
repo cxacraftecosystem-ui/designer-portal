@@ -136,7 +136,7 @@ resource "aws_lambda_function" "cost_report" {
   # pin does (deploy-backend.yml's job env says what holds that back). Needed
   # provider 6.x: 5.x rejected anything past python3.13. index.py uses datetime,
   # os, collections and boto3 only, so nothing in it changed.
-  runtime       = "python3.14"
+  runtime = "python3.14"
 
   filename = data.archive_file.cost_report.output_path
   # WITHOUT THIS THE CODE NEVER UPDATES. Terraform compares the zip's hash, not its contents; omit

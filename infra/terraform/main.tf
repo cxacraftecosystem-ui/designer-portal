@@ -552,7 +552,7 @@ data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical
   filter {
-    name   = "name"
+    name = "name"
     # UBUNTU 26.04 (resolute) SINCE 2026-10-09; it was 24.04 (noble). `ami` is in
     # `ignore_changes` on the instance, so this decides only what a REBUILD or a
     # second box is created from — the running box keeps its noble image. The

@@ -1442,9 +1442,10 @@ input, and no single-box code input — on any surface of either app, web or And
    - Sign-in asks for a code ONLY when two-step is enabled; a pending secret changes nothing.
    - On → switch off → a current code (six boxes) or a recovery code, then off.
 6. **Media card actions (Retry, Download).** A real button with an icon AND a word, from the purple
-   ramp: a pale ground (purple-50; dark purple-950), a purple edge at 3:1 or better against the card
-   and surface-50, deep-purple ink at 4.5:1 or better, ≥48dp / 44px on touch, in one action row that
-   never overlaps another control, the same on every card, tile, upload row and outbox row.
+   ramp: a pale ground (purple-50 or purple-100; dark purple-900 or purple-950 — each repo's exact
+   pair is in its notes below), a purple edge at 3:1 or better against the card and surface-50,
+   deep-purple ink at 4.5:1 or better, ≥48dp / 44px on touch, in one action row that never overlaps
+   another control, the same on every card, tile, upload row and outbox row.
 <!-- shared:form-primitives:end -->
 
 **`e2e/form-primitives-rule-unit.spec.ts` fails the build** on a line that starts with `<select`, a
