@@ -141,6 +141,10 @@ private const val ACCESS_PAGE_SIZE = 15
  */
 private const val NEW_ACCOUNTS_ONLY = "New accounts only. To change an existing account, use Manage users."
 
+/** The server's `accountPromotionHeld` sentence on a decision's answer, or null. */
+internal fun heldSentence(answer: Any?): String? =
+    (answer as? AccessRosterDto)?.accountPromotionHeld?.trim()?.ifBlank { null }
+
 /**
  * The queue's page size, deliberately smaller again.
  *
@@ -339,7 +343,7 @@ fun AccessRosterScreen(
      * can undo it; this is the rule. It reads the CACHED account rather than the captured [viewer],
      * so an account demoted since the screen opened is refused here too.
      */
-    fun mutate(what: String, block: suspend () -> Unit) {
+    fun mutate(what: String, block: suspend () -> Any?) {
         if (!mayManageAccessRoster(repository.cachedUser())) {
             onError("Only an admin can manage sign-in access.")
             return
@@ -347,8 +351,10 @@ fun AccessRosterScreen(
         busy = true
         scope.launch {
             runCatching { block() }
-                .onSuccess {
-                    onMessage(what)
+                .onSuccess { answer ->
+                    // The sign-in list rule: an approval that left an existing account's role alone
+                    // answers the server's sentence, which replaces this screen's own receipt.
+                    onMessage(heldSentence(answer) ?: what)
                     reload++
                 }
                 .onFailure { error -> onError(error.apiErrorMessage("That change did not go through.")) }

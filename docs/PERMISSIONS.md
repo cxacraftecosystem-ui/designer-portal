@@ -379,10 +379,10 @@ it needs. **The access screen's approve and re-admit change no account at all** 
 is created with at its first sign-in; it never raises or lowers an existing account, at sign-in or on
 approval. When an account already exists at another role, the decision's answer carries
 `accountPromotionHeld` — "{email} already has an account, as {current}. Its role stays; change it on
-Manage users." — which `/admin/access` shows word for word in place of its receipt, on Approve and on
-Restore alike, and `null` otherwise. A Google sign-in on an empanelled designer-roster address creates
+Manage users." — which `/admin/access` shows word for word in place of its receipt, on Approve, on
+Restore and on adding an address by hand alike, and `null` otherwise. A Google sign-in on an empanelled designer-roster address creates
 a NEW account at `DESIGNER` and lifts no existing one. A change of role is an explicit act: on Manage
-users (`PATCH /api/users/{id}`) or, to `DESIGNER` only, the sanction register; both write the audit
+users (`PATCH /api/users/{id}`) or, to `DESIGNER` only, the sanction register (after its transaction commits); both write the audit
 line `AUDIT account role changed: user=… by=… from=… to=… via=…`. The admin screens say "New
 accounts only. To change an existing account, use Manage users." beside every role picker on the
 list, on the web and on Android; documentation-portal behaves identically

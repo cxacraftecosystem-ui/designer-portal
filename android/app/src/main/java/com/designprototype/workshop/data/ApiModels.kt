@@ -3748,7 +3748,9 @@ data class AccessRosterDto(
     val addedById: String? = null,
     /** Who added the address and who decided it, in words — joined on the roster list (2026-10-17). */
     val addedByName: String? = null,
-    val decidedByName: String? = null
+    val decidedByName: String? = null,
+    /** On a decision's answer only: the sentence when an existing account kept its role (the sign-in list rule). */
+    val accountPromotionHeld: String? = null
 )
 
 /**

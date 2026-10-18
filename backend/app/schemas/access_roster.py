@@ -29,7 +29,7 @@ class AccessRosterCreate(APIModel):
     that produced a pending entry the same admin then had to approve would be a form that does
     nothing. Use the decision endpoint to work the queue and this one to add somebody outright.
 
-    ``role`` is the tier the account is created at (or lifted to) when the person first signs in.
+    ``role`` is the tier a NEW account is created at when the person first signs in; an existing one keeps its role.
     Absent means the platform default, which is the lowest rung.
 
     ``password`` (2026-10-17) chooses the OTHER way in. Absent, nothing but the address is admitted

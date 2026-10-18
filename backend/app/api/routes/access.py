@@ -467,8 +467,11 @@ async def add_to_access_roster(
         full_name=_clean(payload.fullName),
         note=_clean(payload.notes),
     )
+    # Adding admits the ADDRESS, like an approval, so an account already there at another role keeps
+    # it and the answer says so (the sign-in list rule; the same key and sentence as a decision).
+    held = await _role_kept(row.email, access_roster.role_of(row))
     await _empanel_an_admitted_designer(row, current_user.id)
-    return access_payload(await with_roster_people(row))
+    return _decision_payload(await with_roster_people(row), promotion_held=held)
 
 
 async def _admit_with_a_password(payload: AccessRosterCreate, email: str, actor: Any) -> dict[str, Any]:

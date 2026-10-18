@@ -142,6 +142,7 @@ async def test_an_approval_never_writes_an_account_and_says_when_it_keeps_its_ro
 def test_the_users_patch_is_the_door_that_audits_a_change_of_role():
     source = inspect.getsource(users_routes.update_user)
     assert "signin_role.audit_role_change(" in source
+    assert "before=role_before" in source
     assert 'via="users"' in source
 
 
@@ -153,3 +154,50 @@ def test_no_sign_in_door_writes_a_role_from_the_list():
     assert writes == ['data["role"] = "MASTER_ADMIN"'], writes
     assert "signin_role.role_for_new_account(" in source
     assert signin_role.NEW_ACCOUNTS_ONLY
+
+
+@pytest.mark.parametrize("vector", CONTRACT["roleKeptSentence"], ids=lambda v: f"{v['current']}+{v['listed']}")
+async def test_adding_an_address_never_writes_an_account_and_says_when_it_keeps_its_role(monkeypatch, vector):
+    """Adding an address by hand admits it like an approval, so it answers the same sentence."""
+    from app.schemas.access_roster import AccessRosterCreate
+
+    users = _Users(_account(vector["current"], email=vector["email"]) if vector["current"] else None)
+
+    class _Roster:
+        async def find_first(self, where):
+            return None
+
+    async def _admit(email, *, admit_role, actor_id, full_name, note):
+        return SimpleNamespace(email=email, admitRole=admit_role)
+
+    async def _nothing(*_args, **_kwargs):
+        return None
+
+    async def _same(row):
+        return row
+
+    monkeypatch.setattr(access_routes, "db", SimpleNamespace(user=users, accessroster=_Roster()))
+    monkeypatch.setattr(access_routes.access_roster, "admit", _admit)
+    monkeypatch.setattr(access_routes.access_roster, "role_of", lambda row: row.admitRole)
+    monkeypatch.setattr(access_routes, "_empanel_an_admitted_designer", _nothing)
+    monkeypatch.setattr(access_routes, "with_roster_people", _same)
+    monkeypatch.setattr(access_routes, "access_payload", lambda row: {"email": row.email})
+    monkeypatch.setattr(access_routes, "assert_role", lambda *_args: None)
+    actor = SimpleNamespace(id="admin-1", role="MASTER_ADMIN")
+
+    answer = await access_routes.add_to_access_roster(
+        AccessRosterCreate(email=vector["email"], role=vector["listed"]), current_user=actor
+    )
+    assert answer["accountPromotionHeld"] == vector["expect"]
+    assert (users.updates, users.creates) == ([], [])
+
+
+def test_the_sanction_register_audits_its_raise_only_after_the_commit():
+    """Inside the transaction a rollback would leave a log line describing a change that never happened."""
+    from app.services import sanction_orders
+
+    source = inspect.getsource(sanction_orders.create_from_sanction)
+    after_commit = source.index("PHASE 2: AFTER THE COMMIT")
+    assert source.count("signin_role.audit_role_change(") == 1
+    assert source.index("signin_role.audit_role_change(") > after_commit
+    assert 'via="sanction-order"' in source[after_commit:]

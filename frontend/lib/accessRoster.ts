@@ -151,7 +151,7 @@ export async function fetchPendingAccessCount(): Promise<PendingAccessCount> {
  * the address is admitted and the account is made the first time they sign in with Google, Microsoft
  * or Yahoo. Either way the same address can later sign in both ways.
  */
-export type AccessRosterAddAnswer = AccessRosterEntry & { accountCreated?: boolean };
+export type AccessRosterAddAnswer = AccessRosterEntry & { accountCreated?: boolean; accountPromotionHeld?: string | null };
 
 export async function addToAccessRoster(body: {
   email: string;

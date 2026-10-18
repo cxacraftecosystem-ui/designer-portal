@@ -146,13 +146,13 @@ import {
 } from "./rosterQuery";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/** The whole list. Twenty is the designer roster's page size and this table is no denser. */
 /**
  * The sign-in list rule's copy (2026-10-18), byte for byte `services/signin_role.NEW_ACCOUNTS_ONLY`
  * and `shared/signin-role-contract.json`; `tests/test_signin_role_contract.py` reads it from here.
  */
 const NEW_ACCOUNTS_ONLY = "New accounts only. To change an existing account, use Manage users.";
 
+/** The whole list. Twenty is the designer roster's page size and this table is no denser. */
 const PAGE_SIZE = 20;
 
 /**
@@ -466,6 +466,18 @@ function PlatformAccessScreen() {
         refusal neither screen explained. The sentence now names the credential, and the link under
         it carries the address and the tier to the form that makes a password account.
       */
+      // Adding admits the address like an approval, so an account already there at another role
+      // keeps it and the server's sentence says so; amber, and no password-account link, since the
+      // account exists.
+      const held = promotionHeldSentence(created);
+      if (held) {
+        setHeldPromotion(held);
+        setNotice(held);
+        setPasswordAccount(null);
+        formElement.reset();
+        await reloadAll();
+        return;
+      }
       const message = `${created.email} may sign in with Google, as ${roleLabel(created.admitRole) || "the default role"}. The account is created the first time they sign in with Google.`;
       setNotice(message);
       setPasswordAccount({

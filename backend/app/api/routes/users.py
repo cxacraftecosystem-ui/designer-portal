@@ -417,6 +417,7 @@ async def update_user(
         data["passwordSetAt"] = now
     if ends_sessions:
         data["sessionsValidFrom"] = now
+    role_before = role_value(user)  # read before the write: the audit line's "from"
     try:
         updated = await db.user.update(where={"id": user_id}, data=data)
     except UniqueViolationError as exc:
@@ -431,7 +432,7 @@ async def update_user(
     # the one door that changes an existing account's role, so it is the one that records it.
     if "role" in data:
         signin_role.audit_role_change(
-            user_id=user_id, actor_id=current_user.id, before=role_value(user), after=updated.role, via="users"
+            user_id=user_id, actor_id=current_user.id, before=role_before, after=updated.role, via="users"
         )
     # After the write, so a refused write withdraws nothing. The redemption asks the issuer's reach
     # again anyway (``auth._link_verdict``), which also covers a promotion made by any other door.

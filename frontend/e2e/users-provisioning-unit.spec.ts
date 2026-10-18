@@ -536,7 +536,9 @@ test("an approval that left an existing account's role alone says so in the serv
   expect((ACCESS_PAGE.match(/const held = promotionHeldSentence\(updated\);/g) ?? []).length, "approve and restore").toBe(2);
   expect(ACCESS_PAGE).toContain("setNotice(held ?? `${updated.email} may sign in from their next attempt.`);");
   expect(ACCESS_PAGE).toContain("setNotice(held ?? `${updated.email} can sign in again.`);");
-  expect((ACCESS_PAGE.match(/setHeldPromotion\(held\);/g) ?? []).length).toBe(2);
+  // Approve, restore, and adding an address by hand (which admits it like an approval).
+  expect((ACCESS_PAGE.match(/setHeldPromotion\(held\);/g) ?? []).length).toBe(3);
+  expect(ACCESS_PAGE).toContain("const held = promotionHeldSentence(created);");
   // Amber only while the notice is still that very sentence — a later notice replaces it, nothing to clear.
   expect(ACCESS_PAGE).toContain("heldPromotion !== null && heldPromotion === notice");
   // And the confirmation says the list sets new accounts only, and no longer promises a lift.
