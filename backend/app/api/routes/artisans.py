@@ -10,7 +10,7 @@ from app.core.deps import (
 )
 from app.schemas.records import ArtisanCreate, ArtisanUpdate, drop_masked_identity_numbers
 from app.services.access import guard_record_edit
-from app.services.artisan_form_contract import assert_required_dates, take_form_contract
+from app.services.artisan_form_contract import assert_form_contract, take_form_contract
 from app.services.artisan_identity import mask_aadhaar, normalize_aadhaar
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
@@ -465,7 +465,7 @@ async def create_artisan(
     data = clean_data(payload.model_dump())
     _standardise(apply_artisan_values, data)
     # The artisan form contract: both dates required on a save made under it, the old shape accepted.
-    assert_required_dates(take_form_contract(data), data)
+    assert_form_contract(take_form_contract(data), data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
@@ -545,7 +545,7 @@ async def update_artisan(
     expected_updated_at = take_expected_updated_at(data)
     # Checked against the row as it will be after this write: a date the body leaves out keeps the
     # stored value, so a record saved before the contract must gain both. Old shape: unchanged.
-    assert_required_dates(take_form_contract(data), data, stored=artisan)
+    assert_form_contract(take_form_contract(data), data, stored=artisan)
     # A caller shown a masked number who saves without touching it means "leave it alone" — for the
     # Pehchan card as much as for the Aadhaar, since both are masked on the way out to them.
     data = drop_masked_identity_numbers(data)

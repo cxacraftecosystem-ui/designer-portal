@@ -22,7 +22,7 @@
 import type { ProcessRecord } from "@/components/forms/ProcessForm";
 import { bytes, formatDate } from "@/lib/format";
 import type { Artisan, Craft, MediaFile, ProductDocumentation, QuestionnaireInterview, ToolDocumentation, Workshop } from "@/lib/types";
-import { languageName, phoneOf } from "@/lib/standardValues";
+import { languageName, phoneOf, traditionLabel } from "@/lib/standardValues";
 
 /** One printed line: a label and its value, already in words. */
 export type RecordFieldRow = { label: string; value: string };
@@ -136,7 +136,7 @@ export function toolFields(tool: ToolDocumentation): RecordFieldRow[] {
     ["Weight", measure(tool.weight)],
     ["Radius", measure(tool.radius)],
     ["Maker", plainWords(tool.maker)],
-    ["Tradition type", plainWords(tool.traditionType)],
+    ["Tradition type", traditionLabel(tool.traditionType)],
     ["Replacement cost", measure(tool.replacementCost)],
     ["Suggestions for improvement", tool.suggestionsForToolImprovement],
     ["Remarks", tool.remarks],

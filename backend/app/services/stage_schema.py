@@ -774,7 +774,9 @@ ENUMS: dict[str, dict[str, str]] = {
     "TRADITION_TYPE": {
         "TRADITIONAL": "Traditional",
         "CONTEMPORARY": "Contemporary",
-        "TRANSITIONAL": "Traditional form, contemporary use",
+        # The owner's wording (2026-10-19), the same three labels as the tool form's shared list
+        # in app/data/standard_values.json.
+        "TRANSITIONAL": "Transitional (Hybrid)",
     },
     # Whether a step is one step in the sequence or a BRACKET around several of them, mirroring
     # Prisma's `ProcessStepType` member for member — the same arrangement as `PRODUCT_TYPE` and

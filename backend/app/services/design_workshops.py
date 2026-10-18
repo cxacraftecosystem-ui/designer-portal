@@ -1650,22 +1650,23 @@ _MARKET_DEMAND_TO_DEMAND_LEVEL: dict[str, str | None] = {
     "UNKNOWN": None,
 }
 
-#: TraditionType -> TRADITION_TYPE. The names collide and the tokens do not: the source says
-#: TRADITIONAL / MODERN / HYBRID / UNKNOWN, the registry says TRADITIONAL / CONTEMPORARY /
-#: TRANSITIONAL. Without this table `coerce_value` would refuse three of the four source answers
-#: and drop them — silently, because a rejected hydration is indistinguishable from a source
-#: column nobody filled in.
-#:
-#: MODERN -> CONTEMPORARY and HYBRID -> TRANSITIONAL are translations, not guesses: they are the
-#: same answer to the same question in two vocabularies, and TRANSITIONAL's own label in the
-#: registry reads "Traditional form, contemporary use", which is what a hybrid tool IS. UNKNOWN
-#: has no counterpart because the registry deliberately offers none — an unanswered ENUM is
-#: expressed by leaving the box empty, not by a token that means "empty".
+#: TraditionType -> TRADITION_TYPE. Since the owner's wording of 2026-10-19 the tool record stores
+#: the registry's own tokens, TRADITIONAL / CONTEMPORARY / TRANSITIONAL ("Traditional",
+#: "Contemporary", "Transitional (Hybrid)"), so those three carry as they are. A tool saved before
+#: then may still hold MODERN or HYBRID until scripts/standardise_values.py rewrites it; those are
+#: the same answers under their retired codes (``retiredTraditionCodes`` in
+#: app/data/standard_values.json) and translate to their successors. Without this table
+#: `coerce_value` would refuse them and drop them — silently, because a rejected hydration is
+#: indistinguishable from a source column nobody filled in. UNKNOWN has no counterpart because the
+#: registry deliberately offers none — an unanswered ENUM is expressed by leaving the box empty, not
+#: by a token that means "empty".
 _TRADITION_TYPE_TO_TRADITION: dict[str, str | None] = {
     "TRADITIONAL": "TRADITIONAL",
+    "CONTEMPORARY": "CONTEMPORARY",
+    "TRANSITIONAL": "TRANSITIONAL",
+    "UNKNOWN": None,
     "MODERN": "CONTEMPORARY",
     "HYBRID": "TRANSITIONAL",
-    "UNKNOWN": None,
 }
 
 #: MakerType -> MAKER_TYPE. An identity map over a registry list that was ADDED to mirror this

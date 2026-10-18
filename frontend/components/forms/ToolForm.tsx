@@ -51,7 +51,7 @@ import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, uploadMedi
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
-import { MATERIAL_FAMILY_OPTIONS, TRADITION_OPTIONS } from "@/lib/standardValues";
+import { MATERIAL_FAMILY_OPTIONS, TRADITION_OPTIONS, traditionChoice } from "@/lib/standardValues";
 import { makerOptions } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
@@ -2097,7 +2097,8 @@ export function ToolForm({
             </Select>
           </Field>
           <Field label="Tradition type">
-            <Select name="traditionType" defaultValue={initial?.traditionType ?? "UNKNOWN"} onChange={markDirty}>
+            <Select name="traditionType" defaultValue={traditionChoice(initial?.traditionType)} onChange={markDirty}>
+              <option value="">Select tradition type</option>
               {TRADITION_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}

@@ -11336,10 +11336,12 @@ private fun ArtisanForm(
     var address by remember(editing) { mutableStateOf(editing?.address ?: "") }
     var notes by remember(editing) { mutableStateOf(editing?.notes ?: "") }
     // Identity. `aadhaar` holds BARE digits — the 4-4-4 grouping is a visual transformation on the
-    // field, never part of the value. The Pehchan card defaults to "available", matching the API's
-    // default and the common case, which is why its number is effectively required on create.
+    // field, never part of the value.
     var aadhaar by remember(editing) { mutableStateOf(editing?.aadhaarNumber.orEmpty()) }
-    var pehchanAvailable by remember(editing) { mutableStateOf(editing?.pehchanCardAvailable ?: true) }
+    // The shared artisan form contract (the documentation portal's rule): a NEW artisan's Pehchan card
+    // starts UNANSWERED and has to be answered. "Yes" used to be pre-answered, which made the card
+    // number silently required for somebody nobody had asked. An edit opens on the stored answer.
+    var pehchanAvailable by remember(editing) { mutableStateOf<Boolean?>(editing?.pehchanCardAvailable) }
     var pehchanNumber by remember(editing) { mutableStateOf(editing?.pehchanCardNumber.orEmpty()) }
     // C27: the Field Repository record this new artisan was filled from, linked after the save.
     var crossMatch by remember(editing) { mutableStateOf<CrossPortalMatchDto?>(null) }
@@ -11475,7 +11477,7 @@ private fun ArtisanForm(
             address = v["address"] ?: address
             notes = v["notes"] ?: notes
             aadhaar = v["aadhaar"] ?: aadhaar
-            pehchanAvailable = v["pehchanAvailable"]?.toBooleanStrictOrNull() ?: pehchanAvailable
+            v["pehchanAvailable"]?.let { pehchanAvailable = it.toBooleanStrictOrNull() }
             pehchanNumber = v["pehchanNumber"] ?: pehchanNumber
             v["dateOfBirth"]?.let { dateOfBirth = draftDate(it) }
             v["craftStartDate"]?.let { craftStartDate = draftDate(it) }
@@ -11592,8 +11594,14 @@ private fun ArtisanForm(
             onError("Fix the Aadhaar number highlighted above."); return
         }
         aadhaarError = null
+        // The card question has to be answered, one way or the other.
+        if (pehchanAvailable == null) {
+            pehchanError = "Answer whether the artisan has a Pehchan card."
+            runCatching { pehchanFocus.requestFocus() }
+            onError("Answer the Pehchan card question."); return
+        }
         // "Card available = Yes" without a number is the one combination the API refuses outright.
-        if (pehchanAvailable && pehchanNumber.isBlank()) {
+        if (pehchanAvailable == true && pehchanNumber.isBlank()) {
             pehchanError = "Enter the Pehchan Card number, or set the card to 'No'."
             runCatching { pehchanFocus.requestFocus() }
             onError("Fix the highlighted Pehchan Card details."); return
@@ -11626,7 +11634,7 @@ private fun ArtisanForm(
                 // Always sent explicitly, both ways: the API clears a stale card number when this is
                 // false, and only an explicit true can move a record back off "No".
                 pehchanCardAvailable = pehchanAvailable,
-                pehchanCardNumber = if (pehchanAvailable) pehchanNumber.blankToNull() else null,
+                pehchanCardNumber = if (pehchanAvailable == true) pehchanNumber.blankToNull() else null,
                 // EMPTYING ONE OF THESE REALLY DOES CLEAR THE COLUMN, and it does not happen here.
                 // A null in this object would be dropped by the encoder (`explicitNulls = false`)
                 // and an absent key means "leave it alone" to the PATCH, so the clear buttons on
@@ -11922,15 +11930,17 @@ private fun ArtisanForm(
             )
         }
         DropdownField(
-            label = "Artisan Pehchan Card available",
+            label = "Artisan Pehchan Card available *",
             options = listOf("yes" to "Yes", "no" to "No"),
-            selectedValue = if (pehchanAvailable) "yes" else "no",
+            selectedValue = when (pehchanAvailable) { true -> "yes"; false -> "no"; null -> "" },
+            placeholder = "Has the artisan a Pehchan card?",
             includeNone = false
         ) { choice ->
             pehchanAvailable = choice == "yes"
+            pehchanError = null
             // Answering No retires the number with the answer, so a disabled box can never leave a
             // card number stranded on a record that says the artisan holds no card.
-            if (!pehchanAvailable) { pehchanNumber = ""; pehchanError = null }
+            if (pehchanAvailable == false) pehchanNumber = ""
         }
         OutlinedTextField(
             value = pehchanNumber,
@@ -11940,16 +11950,16 @@ private fun ArtisanForm(
             label = {
                 Text(
                     requiredMarked(
-                        if (pehchanAvailable) "Artisan Pehchan Card number *" else "Artisan Pehchan Card number"
+                        if (pehchanAvailable == true) "Artisan Pehchan Card number *" else "Artisan Pehchan Card number"
                     )
                 )
             },
-            placeholder = { Text(if (pehchanAvailable) "As printed on the card" else "No card on record") },
-            enabled = pehchanAvailable,
+            placeholder = { Text(if (pehchanAvailable == true) "As printed on the card" else "No card on record") },
+            enabled = pehchanAvailable == true,
             isError = pehchanError != null,
             supportingText = {
                 val hint = pehchanError
-                    ?: if (pehchanAvailable) {
+                    ?: if (pehchanAvailable == true) {
                         "The PM Vishwakarma artisan ID printed on the card."
                     } else {
                         "Set \"available\" to Yes to enter a number."
@@ -11965,7 +11975,7 @@ private fun ArtisanForm(
         // a document the record has just said does not exist is an invitation to photograph
         // SOMETHING — and for this class of data the wrong photograph being taken at all is the
         // incident, not the wrong value being stored.
-        if (canReadIdentityCards && pehchanAvailable) {
+        if (canReadIdentityCards && pehchanAvailable == true) {
             DwIdentityCardControl(
                 targetLabel = "the Pehchan card number",
                 kind = DwIdentityKind.PEHCHAN,
@@ -12937,7 +12947,9 @@ private fun ToolForm(
     var weight by remember(editing) { mutableStateOf(numToText(editing?.weight)) }
     var radius by remember(editing) { mutableStateOf(numToText(editing?.radius)) }
     var maker by remember(editing) { mutableStateOf(editing?.maker ?: "UNKNOWN") }
-    var traditionType by remember(editing) { mutableStateOf(editing?.traditionType ?: "UNKNOWN") }
+    // "" until answered: the dropdown offers the three shared answers, and a retired code an older
+    // row holds (MODERN, HYBRID) opens as its successor. Saved as UNKNOWN when left unanswered.
+    var traditionType by remember(editing) { mutableStateOf(StandardValues.traditionChoice(editing?.traditionType)) }
     var replacementCost by remember(editing) { mutableStateOf(numToText(editing?.replacementCost)) }
     var suggestions by remember(editing) { mutableStateOf(editing?.suggestionsForToolImprovement ?: "") }
     var remarks by remember(editing) { mutableStateOf(editing?.remarks ?: "") }
@@ -13297,7 +13309,7 @@ private fun ToolForm(
                 weight = weight.toDoubleOrNull(),
                 radius = radius.toDoubleOrNull(),
                 maker = maker,
-                traditionType = traditionType,
+                traditionType = traditionType.ifBlank { StandardValues.TRADITION_UNANSWERED },
                 replacementCost = replacementCost.toDoubleOrNull(),
                 suggestionsForToolImprovement = suggestions.blankToNull(),
                 remarks = remarks.blankToNull(),
@@ -13664,7 +13676,7 @@ private fun ToolForm(
             }
         )
         DropdownField("Maker", makerOptions.map { it to it }, maker, includeNone = false) { maker = it }
-        DropdownField("Tradition type", StandardValues.TRADITION_OPTIONS, traditionType, includeNone = false) { traditionType = it }
+        DropdownField("Tradition type", StandardValues.TRADITION_OPTIONS, traditionType, placeholder = "Select tradition type") { traditionType = it }
         TextInput("Replacement cost", replacementCost, keyboardType = KeyboardType.Decimal, dictate = false) { replacementCost = it }
         // The tool form's two narrative columns. `processUsedIn` above stays single-line and plain —
         // it is single-line on the web form too, and widening it here would put the two platforms out
@@ -17816,7 +17828,7 @@ private fun ViewDataDetail(
                 DetailRow("Material", v.material)
                 DetailRow("Material type", StandardValues.materialFamilyLabel(v.materialFamily))
                 DetailRow("Maker", v.maker)
-                DetailRow("Tradition", v.traditionType)
+                DetailRow("Tradition", StandardValues.traditionLabel(v.traditionType))
                 DetailRow("Used in", v.processUsedIn)
                 DetailRow("Remarks", v.remarks)
                 DetailRow("Status", v.status)
