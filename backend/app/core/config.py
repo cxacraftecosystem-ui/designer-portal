@@ -659,6 +659,35 @@ class Settings(BaseSettings):
     aadhaar_otp_limit_per_user: int = Field(default=5, alias="AADHAAR_OTP_LIMIT_PER_USER")
     aadhaar_otp_limit_per_uid: int = Field(default=3, alias="AADHAAR_OTP_LIMIT_PER_UID")
     aadhaar_otp_window_minutes: int = Field(default=60, alias="AADHAAR_OTP_WINDOW_MINUTES")
+    # The HMAC key the artisan register fingerprints Aadhaar numbers under
+    # (services/aadhaar_fingerprint.py). 32 random bytes, base64. THE SAME VALUE ON BOTH PORTALS, so
+    # the cross-portal link can compare fingerprints. Losing it makes every stored fingerprint
+    # unmatchable; changing it needs the numbers again. Backed up in SSM at
+    # /iit/shared/aadhaar-fingerprint-key. Unset: any write or lookup carrying an Aadhaar is refused.
+    aadhaar_fingerprint_key: str | None = Field(default=None, alias="AADHAAR_FINGERPRINT_KEY")
+
+    # ── AI-DRAFTED ANSWERS FROM A TRANSCRIPT (C28; docs/ENVIRONMENT.md) ───────────────────────────
+    # OFF BY DEFAULT. On, a researcher may ask a model to draft a section's unanswered questions from
+    # the interview's transcript; drafts are accepted or edited by a person and every accepted answer
+    # is labelled machine-suggested. Runs on the researcher's own AI key or the deployment's.
+    ai_answer_drafts_enabled: bool = Field(default=False, alias="AI_ANSWER_DRAFTS_ENABLED")
+
+    # ── CROSS-PORTAL ARTISAN IDENTITY (C27; docs/ENVIRONMENT.md) ────────────────────────────────
+    #
+    # OFF BY DEFAULT, AND OFF UNTIL BOTH PORTALS HAVE IT. The lookup works only when the flag is on
+    # AND both secrets are set (32 characters or more) on BOTH servers, and, here, FIELD_REPOSITORY_API_URL names the documentation portal's API. Anything missing and
+    # the routes answer 404 and neither client draws a single element. The token authenticates each
+    # server to the other (a bearer on the request, an HMAC of the body on the answer). Aadhaar codes
+    # are made under AADHAAR_FINGERPRINT_KEY (above), the register's own fingerprint key, so the
+    # number itself never leaves either system and a stored fingerprint IS the code. Both values are
+    # the SAME on the two servers. Never commit either.
+    cross_portal_identity_enabled: bool = Field(
+        default=False, alias="CROSS_PORTAL_IDENTITY_ENABLED"
+    )
+    cross_portal_token: str | None = Field(default=None, alias="CROSS_PORTAL_TOKEN")
+    # The documentation portal's API base, up to and including ``/api`` — e.g.
+    # https://api.<docs-domain>/api . The designer portal calls it; it never calls back.
+    field_repository_api_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_API_URL")
 
     # ABSOLUTE, NOT ".env". See rule 2 in this module's header: a relative env_file is resolved
     # against the working directory, so `python -m uvicorn app.main:app` from backend/ and the same

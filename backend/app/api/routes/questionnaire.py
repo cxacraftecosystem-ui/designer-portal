@@ -36,6 +36,7 @@ from app.schemas.questionnaire import (
     QuestionnaireSectionReorder,
     QuestionnaireSectionUpdate,
 )
+from app.services import answer_drafts, cross_portal_codes
 from app.services.access import guard_record_edit, owner_download_scope
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
@@ -604,6 +605,12 @@ async def upsert_responses(
                     "answerText": response.answerText,
                     "notes": response.notes,
                     "answeredById": current_user.id,
+                    # C28: a person's edit of a machine-suggested answer keeps that provenance.
+                    "answerOrigin": answer_drafts.origin_after_edit(
+                        getattr(existing, "answerOrigin", None),
+                        existing.answerText,
+                        response.answerText,
+                    ),
                 },
             )
         )
@@ -688,6 +695,7 @@ async def update_section(
             where={"sectionId": section_id},
             data={"sectionCode": updated.code, "sectionTitle": updated.title},
         )
+        await cross_portal_codes.reconcile_question_codes(db)
     return public_encode(updated)
 
 
@@ -765,6 +773,8 @@ async def create_question(
         data={
             **section_question_data(section),
             "prompt": payload.prompt.strip(),
+            # The shared question code (C26), from the section and the wording; None off the file.
+            "questionCode": cross_portal_codes.question_code(section.code, payload.prompt.strip()),
             "sortOrder": sort_order,
             "isActive": payload.isActive,
         }
@@ -862,6 +872,10 @@ async def update_question(
                 "sectionCode": data.get("sectionCode", question.sectionCode),
                 "sectionTitle": data.get("sectionTitle", question.sectionTitle),
                 "prompt": new_prompt,
+                # The replacement's code follows ITS wording, never the original's (C26).
+                "questionCode": cross_portal_codes.question_code(
+                    data.get("sectionCode", question.sectionCode), new_prompt
+                ),
                 # The replacement stands exactly where the original stood. `QuestionnaireQuestion`
                 # carries no uniqueness on sortOrder (only `QuestionnaireSection` does), so the
                 # retired row and its replacement sharing a position is legal — and the retired row
@@ -885,6 +899,10 @@ async def update_question(
             "detail": SUPERSEDED_DETAIL,
         }
 
+    # The shared question code follows the section and wording this row will have AFTER the write.
+    data["questionCode"] = cross_portal_codes.question_code(
+        data.get("sectionCode", question.sectionCode), data.get("prompt", question.prompt)
+    )
     updated = await db.questionnairequestion.update(where={"id": question_id}, data=data)
     return {**public_encode(updated), "action": "updated"}
 
@@ -2076,6 +2094,8 @@ async def merge_interview_into(
             # the ANSWER moves: filling a bare ``notes`` must not take authorship of an answer this
             # person never wrote, which is the rule ``upsert_responses`` enforces on its own path.
             fill["answeredById"] = row.answeredById
+            # C28: and the words keep their origin, or a drafted answer would land unlabelled.
+            fill["answerOrigin"] = get_value(row, "answerOrigin")
         if fill:
             fills.append((other.id, fill))
 

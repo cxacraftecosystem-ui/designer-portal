@@ -97,7 +97,7 @@ from app.core.deps import (
     can_view_design_workshop_data,
     require_dataset_downloader,
 )
-from app.services import design_workshop_data as dw, memory_budget
+from app.services import answer_drafts, design_workshop_data as dw, memory_budget
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
 from app.services.dictation_consent import MEDIA_TAG as DESIGN_WORKSHOP_MEDIA_TAG
@@ -898,7 +898,8 @@ def _interview_answers(interview: Any, info: dict[str, Any]) -> str:
         # dataset archive and already spells it this way; the two must not come to disagree about
         # what an answer is. A plain string comes back unchanged by identity, so the existing corpus
         # renders byte-for-byte as it did.
-        answers.append(f"[{code}] {prompt}\n  -> {_cell(r.answerText)}\n")
+        text = answer_drafts.marked_answer(_cell(r.answerText), getattr(r, "answerOrigin", None))
+        answers.append(f"[{code}] {prompt}\n  -> {text}\n")
     return header + "\n\n" + "".join(answers)
 
 
@@ -3506,7 +3507,8 @@ def _process_step_sheet(processes: list[Any], media_index: dict[str, list[Any]])
 
 def _questionnaire_answer_sheet(interviews: list[Any]) -> dict[str, Any]:
     """The per-question answers, one row each, beside the interview-level sheet."""
-    columns = ["Interview", "Artisans", "Section", "Question", "Answer", "Notes"]
+    # "Origin" says which answers a model drafted from the transcript (C28); blank = typed.
+    columns = ["Interview", "Artisans", "Section", "Question", "Answer", "Notes", "Origin"]
     rows: list[list[Any]] = []
     for interview in interviews:
         label = _cell(_interview_label(interview))
@@ -3528,6 +3530,7 @@ def _questionnaire_answer_sheet(interviews: list[Any]) -> dict[str, Any]:
                     _cell((getattr(q, "prompt", None) if q else None) or r.questionId),
                     _cell(r.answerText),
                     _cell(r.notes),
+                    _cell(answer_drafts.origin_label(getattr(r, "answerOrigin", None)) or None),
                 ]
             )
     return _sheet("Questionnaire answers", SPECS["interview"].color, columns, rows)

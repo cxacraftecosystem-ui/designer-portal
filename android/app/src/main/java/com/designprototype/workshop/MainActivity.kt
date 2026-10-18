@@ -640,6 +640,14 @@ import com.designprototype.workshop.data.ArtisanAnswerDto
 import com.designprototype.workshop.data.ArtisanDetailDto
 import com.designprototype.workshop.data.ArtisanQuestionnaireDto
 import com.designprototype.workshop.data.CraftDto
+import com.designprototype.workshop.data.AnswerDrafts
+import com.designprototype.workshop.ui.AnswerDraftsCard
+import com.designprototype.workshop.data.CrossPortalClient
+import com.designprototype.workshop.data.CrossPortalCopy
+import com.designprototype.workshop.data.CrossPortalMatchDto
+import com.designprototype.workshop.data.CrossPortalPrefill
+import com.designprototype.workshop.ui.CrossPortalFindCard
+import com.designprototype.workshop.ui.CrossPortalLinkCard
 import com.designprototype.workshop.data.CreatedRecordDto
 import com.designprototype.workshop.data.AppScope
 import com.designprototype.workshop.data.AddressReferenceDto
@@ -11332,6 +11340,8 @@ private fun ArtisanForm(
     var aadhaar by remember(editing) { mutableStateOf(editing?.aadhaarNumber.orEmpty()) }
     var pehchanAvailable by remember(editing) { mutableStateOf(editing?.pehchanCardAvailable ?: true) }
     var pehchanNumber by remember(editing) { mutableStateOf(editing?.pehchanCardNumber.orEmpty()) }
+    // C27: the Field Repository record this new artisan was filled from, linked after the save.
+    var crossMatch by remember(editing) { mutableStateOf<CrossPortalMatchDto?>(null) }
     /*
      * ── THE TWO FACTS THE DESIGN WORKSHOP ASKS OF EVERY ARTISAN ─────────────────────────────
      *
@@ -11651,7 +11661,10 @@ private fun ArtisanForm(
             }.getOrNull()
             if (queuedOffline != null) {
                 draft.discard(); media.reset()
-                onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
+                // C27: a filled-from-the-Field-Repository artisan banked offline has no id to link
+                // yet. Say where the link is made rather than dropping the match without a word.
+                val linkNote = if (!isEdit && crossMatch != null) " ${CrossPortalCopy.LINK_AFTER_SYNC}" else ""
+                onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit) + linkNote)
                 onDone()
                 saving = false
                 return@launch
@@ -11669,6 +11682,13 @@ private fun ArtisanForm(
                     repository.createArtisan(body, createKey).id
                 }
                 landed = true
+                // C27: link to the Field Repository record the form was filled from. The server
+                // re-checks the match from the numbers it just stored; a failure leaves it unlinked.
+                if (!isEdit) {
+                    crossMatch?.let { match ->
+                        runCatching { CrossPortalClient.create(context).createLink(artisanId, match.remoteArtisanId) }
+                    }
+                }
                 uploadAttachments(repository, context, media, "artisan", artisanId, name, "Field media for ${name.trim()}")
                 artisanId
             }.onSuccess { artisanId ->
@@ -11954,6 +11974,44 @@ private fun ArtisanForm(
                 onError = onError,
                 onKeepPhotograph = keepIdentityPhotograph,
             )
+        }
+        if (isEdit) {
+            // A refresh changed the artisan on the server: the boxes take the new values, or the next
+            // Save writes the old name, gender, date of birth and Pehchan back over them.
+            CrossPortalLinkCard(artisanId = editing!!.id) { artisan, changed ->
+                val values = CrossPortalPrefill.fromRefreshed(artisan, changed)
+                values.name?.let { name = it }
+                values.localName?.let { localName = it }
+                values.gender?.let { gender = it }
+                values.pehchanCardAvailable?.let { pehchanAvailable = it }
+                values.pehchanCardNumber?.let { pehchanNumber = it }
+                values.dateOfBirth?.let { parseFieldDate(it) }?.let { dateOfBirth = it }
+            }
+        } else {
+            CrossPortalFindCard(aadhaar = aadhaar, pehchanNumber = pehchanNumber, filled = crossMatch) { match ->
+                // A Pehchan number already typed survives a match that has none.
+                val values = CrossPortalPrefill.keepTypedPehchan(CrossPortalPrefill.from(match), pehchanNumber)
+                values.name?.let { name = it }
+                values.localName?.let { localName = it }
+                values.gender?.let { gender = it }
+                values.phone?.let { phone = it }
+                values.place?.let { place = it }
+                values.pehchanCardAvailable?.let { pehchanAvailable = it }
+                values.pehchanCardNumber?.let { pehchanNumber = it }
+                values.dateOfBirth?.let { parseFieldDate(it) }?.let { dateOfBirth = it }
+                values.craftStartDate?.let { parseFieldDate(it) }?.let { craftStartDate = it }
+                values.experienceYears?.let { experienceYears = it.toString() }
+                values.experienceMonths?.let { experienceMonths = it.toString() }
+                values.craftId?.let { craftId = it }
+                // The stated address, onto a location that already has its fix (the card derives
+                // its boxes from that value); with no fix yet there is nothing to write it onto.
+                match.statedAddress?.let { stated ->
+                    media.location?.let { here ->
+                        media.location = CrossPortalPrefill.withStatedAddress(here, stated)
+                    }
+                }
+                crossMatch = match
+            }
         }
         NumberedListInput(
             label = "Do's",
@@ -19277,6 +19335,8 @@ private fun QuestionnaireForm(
             q.id to mutableStateOf(editing?.responses?.firstOrNull { it.questionId == q.id }?.answerText ?: "")
         }
     }
+    // C28: answers accepted from a transcript draft on this screen, by question id.
+    val acceptedMachine = remember(editing) { mutableStateListOf<String>() }
     // Attach-media batch (photos/videos/audio/files) with eager upload + progress, exactly like the
     // other record forms — so questionnaire interviews can carry general media, with the array,
     // progress bar and previews visible while filling the form.
@@ -20111,8 +20171,24 @@ private fun QuestionnaireForm(
                                 )
                                 HorizontalDivider()
                             }
+                            // C28: draft this section's open questions from a transcript (behind its flag).
+                            editing?.let { interview ->
+                                AnswerDraftsCard(
+                                    interviewId = interview.id,
+                                    sectionId = section.id,
+                                    questions = activeQuestions.map { it.id to "${it.sortOrder}. ${it.prompt}" },
+                                ) { kept ->
+                                    kept.forEach { (id, text) -> answers[id]?.let { state -> state.value = text } }
+                                    acceptedMachine.addAll(kept.keys)
+                                }
+                            }
                             activeQuestions.forEach { question ->
                                 Text("${question.sortOrder}. ${question.prompt}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                                val origin = editing?.responses?.firstOrNull { it.questionId == question.id }?.answerOrigin
+                                    ?: if (question.id in acceptedMachine) AnswerDrafts.ORIGIN_MACHINE else null
+                                AnswerDrafts.badge(origin)?.let { badge ->
+                                    Text(badge, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                }
                                 if (recordMode == "INDIVIDUAL") {
                                     AudioClipRecorder(
                                         clips = questionAudio[question.id] ?: emptyList(),

@@ -850,8 +850,16 @@ model Craft {
   /// WorkshopCraft join (which every existing query reads through and which is kept in lock-step);
   /// nullable, so every row recorded before this column keeps behaving exactly as before.
   workshopId    String?
+  /// THE SHARED CRAFT CODE (C26, 2026-10-17). One code per craft TRADITION, the same in the
+  /// designer portal, the documentation portal and (where it has the craft) the cxa-cms public
+  /// site, whose slug it is. Seeded from ``app/data/cross_portal_codes.json``, a file that is
+  /// byte-identical in both repositories, and matched through ``CraftSpelling`` — so "Bandhej",
+  /// "Bandhani" and "Bandhani tie-resist dyeing" are three rows here and one code. Nullable: a
+  /// craft nobody has mapped yet keeps working exactly as before, and an admin maps it.
+  craftCode     String?
 
   createdBy User?                  @relation("CraftCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  code      CraftCode?             @relation(fields: [craftCode], references: [code], onDelete: SetNull)
   workshop  Workshop?              @relation("CraftWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
   artisans  Artisan[]
   products  ProductDocumentation[]
@@ -868,9 +876,81 @@ model Craft {
   // `name` needs no index of its own: @unique already builds one, and that is what the alphabetical
   // craft picker orders by.
   @@index([workshopId])
+  @@index([craftCode])
   /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
   /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
   @@index([createdById])
+}
+
+/// A shared craft code (C26). The canonical list is ``app/data/cross_portal_codes.json``, the
+/// same bytes in both portals; a code is never reused or renumbered once published there. Rows
+/// are written by the backfill migration and, for a code the file gains later, on first use.
+model CraftCode {
+  code      String   @id
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  crafts    Craft[]
+  spellings CraftSpelling[]
+}
+
+/// The spelling mapping table (C26): every way a craft's name has been written, normalised
+/// (lower case, accents and punctuation folded to single spaces), and the code it means.
+/// ``source`` is SHARED for a spelling from the shared file and ADMIN for one an administrator
+/// mapped on this portal; only SHARED spellings travel to the other portal (by editing the file).
+model CraftSpelling {
+  spelling    String   @id
+  label       String
+  craftCode   String
+  source      String   @default("SHARED")
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  code CraftCode @relation(fields: [craftCode], references: [code], onDelete: Cascade)
+
+  @@index([craftCode])
+}
+
+/// C27: this artisan linked to one in the documentation portal, which is the source of truth for
+/// the identity fields (``services/cross_portal.IDENTITY_FIELDS``). ``consentRecordedById`` is the
+/// designer who recorded, on the day, that the artisan agreed to their details being shared between
+/// the portals. The documentation portal holds the artisan's own consent and refuses a lookup or a
+/// refresh without it. One link per artisan here.
+model CrossPortalArtisanLink {
+  id                   String    @id @default(cuid())
+  artisanId            String    @unique
+  remoteArtisanId      String
+  matchedBy            String
+  consentRecordedById  String?
+  consentRecordedAt    DateTime  @default(now())
+  remoteAcknowledgedAt DateTime?
+  lastRefreshedAt      DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  artisan Artisan @relation(fields: [artisanId], references: [id], onDelete: Cascade)
+
+  @@index([remoteArtisanId])
+}
+
+/// C27: one row per Field Repository lookup, link, refresh and unlink made from this portal — who
+/// (``userId``), what (``action``), and which record it reached (``artisanId`` here,
+/// ``remoteArtisanId`` there) or that it reached none (``outcome``). NEVER the Aadhaar number, its
+/// code, or the Pehchan number. Also the per-account lookup limit's counter.
+model CrossPortalAccessLog {
+  id              String   @id @default(cuid())
+  userId          String?
+  action          String
+  outcome         String
+  artisanId       String?
+  remoteArtisanId String?
+  matchedBy       String?
+  createdAt       DateTime @default(now())
+
+  @@index([userId, action, createdAt])
+  @@index([artisanId, createdAt])
+  @@index([createdAt])
 }
 
 /// TWO ANSWERS TO TWO DIFFERENT QUESTIONS, and reading one as the other is what this model was
@@ -1207,6 +1287,7 @@ model Artisan {
   media     MediaFile[]
   questionnaireInterviews QuestionnaireInterviewArtisan[]
   sectionStatuses QuestionnaireSectionStatus[]
+  crossPortalLink CrossPortalArtisanLink?
 
   // `name` earns its index by being the sort key of the artisan pickers, not by the search box:
   // every text search in this app is a case-insensitive `contains`, which Postgres runs as ILIKE
@@ -1742,14 +1823,23 @@ model QuestionnaireQuestion {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   sectionId   String?
+  /// THE SHARED QUESTION CODE (C26): ``CTW2.A.01`` and so on, from
+  /// ``app/data/cross_portal_codes.json``. The same question in either portal carries the same code,
+  /// so answers can be read side by side without matching on order or wording. A wording edit that
+  /// supersedes a question does NOT carry the code to the new row ("How many looms?" reworded to "How
+  /// many weavers?" is a different question); the new row has a code only if its wording is in the
+  /// shared file. A question written in the builder that is not in the file has none.
+  questionCode String?
 
   section   QuestionnaireSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   responses QuestionnaireResponse[]
+  answerDrafts QuestionnaireAnswerDraft[]
 
   @@index([sectionCode])
   @@index([sectionId])
   @@index([isActive])
   @@index([supersededById])
+  @@index([questionCode])
 }
 
 model QuestionnaireInterview {
@@ -1822,6 +1912,7 @@ model QuestionnaireInterview {
   artisans  QuestionnaireInterviewArtisan[]
   responses QuestionnaireResponse[]
   media     MediaFile[]                      @relation("QuestionnaireMedia")
+  answerDrafts QuestionnaireAnswerDraft[]
 
   @@index([createdById])
   @@index([status])
@@ -1852,6 +1943,11 @@ model QuestionnaireResponse {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   answeredById String
+  /// C28. NULL: a person typed it. MACHINE_SUGGESTED: a model drafted it from the transcript and a
+  /// person accepted it unchanged. MACHINE_SUGGESTED_EDITED: drafted, then changed by a person.
+  /// A later edit of a MACHINE_SUGGESTED answer moves it to MACHINE_SUGGESTED_EDITED; it never
+  /// becomes NULL while it has text, because the words started as a machine's.
+  answerOrigin String?
 
   interview  QuestionnaireInterview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
   question   QuestionnaireQuestion  @relation(fields: [questionId], references: [id], onDelete: Restrict)
@@ -1860,6 +1956,37 @@ model QuestionnaireResponse {
   @@unique([interviewId, questionId])
   @@index([questionId])
   @@index([answeredById])
+}
+
+/// C28: an answer a model drafted from an interview's transcript, waiting for a person. INERT: a
+/// draft is never an answer and nothing reads it as one. The researcher accepts or edits a SECTION's
+/// drafts at a time; an accepted draft becomes a ``QuestionnaireResponse`` whose ``answerOrigin`` says
+/// it was machine-suggested, and this row keeps the words the model wrote, the provider and the model,
+/// so what the machine said and what the person kept can always be told apart. Only questions that had
+/// no answer are drafted; a draft never replaces a person's words. Off unless AI_ANSWER_DRAFTS_ENABLED.
+/// The documentation portal carries the same table.
+model QuestionnaireAnswerDraft {
+  id            String    @id @default(cuid())
+  interviewId   String
+  questionId    String
+  sectionId     String?
+  draftText     String
+  /// PENDING | ACCEPTED | EDITED | DISMISSED
+  status        String    @default("PENDING")
+  provider      String
+  model         String
+  sourceMediaId String?
+  createdById   String
+  createdAt     DateTime  @default(now())
+  decidedById   String?
+  decidedAt     DateTime?
+
+  interview QuestionnaireInterview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  question  QuestionnaireQuestion  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([interviewId, questionId])
+  @@index([interviewId, status])
+  @@index([questionId])
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -2049,6 +2176,9 @@ model QuestionnaireFormQuestion {
   supersededById String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  /// The shared question code (C26) when this question is a copy of one in the shared file,
+  /// matched on section code and wording. See ``QuestionnaireQuestion.questionCode``.
+  questionCode String?
 
   section QuestionnaireFormSection  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   answers QuestionnaireFormAnswer[]
@@ -2056,6 +2186,7 @@ model QuestionnaireFormQuestion {
   @@index([sectionId, sortOrder])
   @@index([isActive])
   @@index([supersededById])
+  @@index([questionCode])
 }
 
 /// ONE FILLED-IN COPY of a questionnaire — a sitting, a respondent, a session. A questionnaire can

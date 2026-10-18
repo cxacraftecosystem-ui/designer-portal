@@ -81,6 +81,7 @@ import { canManageQuestionnaire, canRunDesignWorkshops, hasRank, isAdmin } from 
 import { UploadsProvider, useEagerStaging, useUploads } from "@/lib/uploads";
 import type { Artisan, MediaFile, PageResult, QuestionnaireInterview, QuestionnaireQuestion, QuestionnaireSection } from "@/lib/types";
 import { Toggle } from "@/components/ui/Toggle";
+import { AnswerDraftsPanel, isMachineSuggested, MachineSuggestedBadge } from "@/components/questionnaire/AnswerDraftsPanel";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** Section ids the two questionnaire upload paths publish under, for the page-level tray. */
@@ -682,6 +683,19 @@ function QuestionnairePageBody() {
    * in one 3200-line file is how the wrong one gets read.
    */
   const [editingInterview, setEditingInterview] = useState<QuestionnaireInterview | null>(null);
+  // C28: which answers on the interview being edited began as a machine's draft, by question —
+  // stored ones, plus those accepted on this screen since the interview was opened.
+  const [acceptedNow, setAcceptedNow] = useState<{ interviewId: string | null; ids: string[] }>({ interviewId: null, ids: [] });
+  const machineOrigin = useMemo(() => {
+    const next: Record<string, string> = {};
+    for (const response of editingInterview?.responses ?? []) {
+      if (isMachineSuggested(response.answerOrigin)) next[response.questionId] = String(response.answerOrigin);
+    }
+    if (editingInterview && acceptedNow.interviewId === editingInterview.id) {
+      for (const id of acceptedNow.ids) next[id] = next[id] ?? "MACHINE_SUGGESTED";
+    }
+    return next;
+  }, [editingInterview, acceptedNow]);
 
   /**
    * The capture form's element, for the deep link to scroll to.
@@ -2880,6 +2894,20 @@ function QuestionnairePageBody() {
                     ) : null}
                   </div>
                 ) : null}
+                {editingInterview ? (
+                  <AnswerDraftsPanel
+                    interviewId={editingInterview.id}
+                    section={group.section}
+                    questions={group.items}
+                    onAccepted={(kept) => {
+                      setAnswers((current) => ({ ...current, ...kept }));
+                      setAcceptedNow((current) => ({
+                        interviewId: editingInterview.id,
+                        ids: [...(current.interviewId === editingInterview.id ? current.ids : []), ...Object.keys(kept)]
+                      }));
+                    }}
+                  />
+                ) : null}
                 {group.items.map((question) => (
                   // Not <Field>: that wraps its children in a <label>, and a <label> names its first
                   // labelable descendant — which here is the record button, not the answer box. The
@@ -2888,6 +2916,9 @@ function QuestionnairePageBody() {
                   <div key={question.id} className="grid gap-1">
                     <span className="field-label" id={`question-label-${question.id}`}>
                       {question.sortOrder}. {question.prompt}
+                      {machineOrigin[question.id] ? (
+                        <MachineSuggestedBadge edited={machineOrigin[question.id] === "MACHINE_SUGGESTED_EDITED"} />
+                      ) : null}
                     </span>
                     {/* Same rule as the section recorder above: the button belongs to individual
                         mode, but clips already recorded stay visible and stay saved in either. */}

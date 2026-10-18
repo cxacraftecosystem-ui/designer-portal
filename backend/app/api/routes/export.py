@@ -36,7 +36,7 @@ from app.core.deps import (
     can_view_design_workshop_data,
     get_current_user,
 )
-from app.services import design_workshop_data as dw
+from app.services import answer_drafts, design_workshop_data as dw
 from app.services.access import owner_download_scope
 from app.services.concurrency import gather_reads
 from app.services.csv_export import records_to_csv
@@ -722,7 +722,8 @@ async def dataset_manifest(
             # guard belongs at the chokepoint rather than at four call sites where the fifth
             # would be added without it. This WAS that fifth. A plain string comes back
             # unchanged by identity, so the existing corpus renders byte-for-byte as it did.
-            answers.append(f"[{code}] {prompt}\n  -> {cell(r.answerText)}\n")
+            text = answer_drafts.marked_answer(cell(r.answerText), getattr(r, "answerOrigin", None))
+            answers.append(f"[{code}] {prompt}\n  -> {text}\n")
         add_text(base, "answers.txt", _details("interview", interview) + "\n\n" + "".join(answers))
         add_media(base, "questionnaire", interview.id)
 

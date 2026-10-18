@@ -175,6 +175,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.db import connect_db, db, disconnect_db
+from app.services import cross_portal_codes
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "app" / "data"
 
@@ -559,6 +560,9 @@ async def _seed_one(instrument: Instrument, sections: list[dict[str, Any]], owne
                 f"sortOrder {row.sortOrder}. NOT deactivated and NOT moved."
             )
 
+    # The shared question codes (C26), derived from section and wording. Not counted: a code is
+    # not a write the corpus asked for, and the second-run-changes-nothing totals stay exact.
+    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=record.id)
     return record.id, counts
 
 

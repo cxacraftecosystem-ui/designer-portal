@@ -33,6 +33,7 @@ import { RequiredMark } from "@/components/ui/RequiredMark";
 // from this device. The district list is the one on this card that can.
 import { cachedListLine } from "@/lib/workshopOptions";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { statedPrefillValues, type StatedPrefill } from "@/components/forms/statedPrefill";
 
 const maptilerKey = process.env.NEXT_PUBLIC_MAPTILER_API_KEY;
 
@@ -719,7 +720,8 @@ export function LocationFields({
   onDirty,
   required,
   subjectLabel = "this record",
-  statedPlace
+  statedPlace,
+  statedPrefill
 }: {
   initial?: LocationInitialValues | null;
   /** Raise the surrounding form's unsaved-changes flag; see the state dropdown below for why. */
@@ -740,6 +742,12 @@ export function LocationFields({
    * coordinate in West Bengal has nothing to disagree with.
    */
   statedPlace?: string | null;
+  /**
+   * A stated address another source supplied (C27: the Field Repository's), written into the state,
+   * district and village boxes once per `key` and marked "check it" until the reader changes one.
+   * Never the coordinates, and never on its own: the caller bumps `key` when a person pressed Fill.
+   */
+  statedPrefill?: StatedPrefill | null;
 }) {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<maplibregl.Map | null>(null);
@@ -766,6 +774,23 @@ export function LocationFields({
   const [village, setVillage] = useState(initial?.village ?? "");
   const [pincode, setPincode] = useState(initialPincode);
   const [subjectLatitude, setSubjectLatitude] = useState(asText(initial?.subjectLatitude));
+  /*
+   * C27's prefill, applied while rendering when its key changes (React's "adjust state when a prop
+   * changes" pattern, so no effect and no extra paint). `prefillNote` stays until the reader edits
+   * one of the three boxes, which is when it stops being the other source's answer.
+   */
+  const [appliedPrefillKey, setAppliedPrefillKey] = useState(0);
+  const [prefillNote, setPrefillNote] = useState<string | null>(null);
+  if (statedPrefill && statedPrefill.key !== appliedPrefillKey) {
+    setAppliedPrefillKey(statedPrefill.key);
+    const values = statedPrefillValues(statedPrefill);
+    if (values.state) {
+      setStateName(values.state);
+      setDistrict(values.district ?? "");
+    }
+    if (values.village) setVillage(values.village);
+    setPrefillNote(values.state || values.village ? `From the ${statedPrefill.source}. Check it.` : null);
+  }
   const [subjectLongitude, setSubjectLongitude] = useState(asText(initial?.subjectLongitude));
 
   const [reference, setReference] = useState<AddressReference | null>(null);
@@ -1792,6 +1817,9 @@ export function LocationFields({
           <p className="mt-1 text-sm text-ink-500">
             Where {subjectLabel} is. A map pin fills in the address; GPS only suggests it.
           </p>
+          {prefillNote ? (
+            <p className="mt-1 text-sm font-medium text-purple-800 dark:text-purple-200">{prefillNote}</p>
+          ) : null}
         </div>
 
         {/*
@@ -1908,6 +1936,7 @@ export function LocationFields({
               onInvalid={() => setAddressProblemShown(true)}
               onChange={(event) => {
                 setStateName(event.target.value);
+                setPrefillNote(null);
                 // A district only means anything inside its own state, so changing the state
                 // invalidates the answer below it. Cleared rather than kept: a Rajasthan district
                 // left standing under Uttarakhand is the staleness bug wearing a different hat, and
@@ -1953,6 +1982,7 @@ export function LocationFields({
               onInvalid={() => setAddressProblemShown(true)}
               onChange={(event) => {
                 setDistrict(event.target.value);
+                setPrefillNote(null);
                 setAddressProblemShown(false);
                 claimField("district", event.target.value);
                 onDirty?.();
@@ -2057,7 +2087,10 @@ export function LocationFields({
             value={village}
             placeholder="Bagru"
             explainWhenUnavailable={false}
-            onChange={(next) => setVillage(next)}
+            onChange={(next) => {
+              setVillage(next);
+              setPrefillNote(null);
+            }}
           />
           <Field label="Pincode">
             <input
