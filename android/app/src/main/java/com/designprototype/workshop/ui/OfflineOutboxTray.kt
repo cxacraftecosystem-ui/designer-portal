@@ -500,7 +500,7 @@ private fun OutboxFailureCard(
             Text(
                 "NEEDS THE AADHAAR NUMBER AGAIN",
                 color = MaterialTheme.field.warning,
-                fontSize = 10.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -571,7 +571,7 @@ private fun OutboxFailureCard(
                     // THE ONLY BUTTON THAT CAN MOVE THIS ROW, so it is first and Try again is not drawn:
                     // a retry would hold the entry again for the identical reason.
                     OutlinedButton(onClick = onRetype, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text("Type it again", fontSize = 12.sp)
+                        Text("Type it again", style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 if (row.stale) {
@@ -625,15 +625,14 @@ private fun RetypeAadhaarDialog(
     var error by remember(row.entryId) { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Type the Aadhaar number again", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) },
+        title = { Text("Type the Aadhaar number again", style = MaterialTheme.typography.titleMedium) },
         text = {
             Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     row.aadhaarLast4?.let { "“${row.label}” is safe. Type the number ending $it to send it." }
                         ?: "“${row.label}” is safe. Type the artisan's Aadhaar number to send it.",
                     color = MaterialTheme.field.body,
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
                 OutlinedTextField(
                     value = typed,
@@ -660,9 +659,9 @@ private fun RetypeAadhaarDialog(
                             ?.let { "That number doesn't end in $it. Check the card." }
                     if (problem != null) error = problem else onTyped(typed)
                 },
-            ) { Text("Send it", fontSize = 13.sp) }
+            ) { Text("Send it", style = MaterialTheme.typography.labelLarge) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now", fontSize = 13.sp) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now", style = MaterialTheme.typography.labelLarge) } },
     )
 }
 

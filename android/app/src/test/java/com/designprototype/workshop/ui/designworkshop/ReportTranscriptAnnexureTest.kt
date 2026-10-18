@@ -154,7 +154,7 @@ class ReportTranscriptAnnexureTest {
         assertEquals("1 transcript will be added when you're online.", dwTranscriptsPendingLine(1))
         assertNull(dwTranscriptsPendingLine(0))
         assertEquals(
-            "1 recording(s) attached to this workshop could not be included in the transcript annexure: " +
+            "1 recording attached to this workshop could not be included in the transcript annexure: " +
                 "they were uploaded by another account, or the file is gone.",
             transcriptRefusedWarning(selection.refused),
         )
