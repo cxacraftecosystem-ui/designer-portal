@@ -3464,7 +3464,7 @@ def build_report(
         where = ", ".join(f"stage {spec.number}" for spec, _count in attachments[:4])
         warnings.append(
             (
-                f"1 attached file is named in this report but the file itself is not "
+                "1 attached file is named in this report but the file itself is not "
                 if total == 1
                 else f"{total} attached files are named in this report but the files themselves are not "
             )

@@ -10,6 +10,7 @@ import {
   ChartNoAxesCombined,
   ClipboardCheck,
   ClipboardList,
+  FileArchive,
   KeyRound,
   Lock,
   MessageSquare,
@@ -43,10 +44,12 @@ import { useAuth } from "@/components/AuthProvider";
 import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
 import { apiFetch } from "@/lib/api";
 import { bytes, formatDateTime } from "@/lib/format";
+import { ministryExportsEnabled } from "@/lib/ministryExports";
 import {
   canManageAccessRoster,
   canManageAnnualPlan,
   canManageDesignerRoster,
+  canManageMinistryExports,
   isAdmin,
   isMasterAdmin
 } from "@/lib/permissions";
@@ -294,6 +297,15 @@ export default function AdminHubPage() {
       // route's own: the day the floor moves, the tile and the guard move together instead of the
       // tile outliving the rule it was written under.
       visible: canManageAnnualPlan(user)
+    },
+    {
+      label: "Ministry exports",
+      description: "Monthly Excel and PDF packs per scheme, and who receives them.",
+      href: "/ministry-exports",
+      icon: FileArchive,
+      // Hidden while MINISTRY_EXPORTS_ENABLED is off, as the nav entry and the ministry dashboard's
+      // header link are; the predicate is the route's own.
+      visible: canManageMinistryExports(user) && ministryExportsEnabled(user)
     },
     {
       label: "API keys",

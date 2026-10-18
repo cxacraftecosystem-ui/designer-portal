@@ -862,6 +862,20 @@ are off. **`AadhaarOtpThrottle`** holds one row per OTP request — the caller, 
 under a server secret, and a time — and nothing else. Every attempt is audited as a `RecordRevision`.
 The whole argument is [AADHAAR.md](AADHAAR.md) §3.
 
+### Ministry export packs — added 2026-10-18
+
+Three tables, one migration (`20261018120000_ministry_export_packs`), additive and empty until
+`MINISTRY_EXPORTS_ENABLED` is on. **`MinistryExportRecipient`** is one row per account that is
+e-mailed when a month's packs are ready: `schemes` empty means every scheme, `active` pauses it, and
+eligibility is re-checked at send time, so a row whose account no longer qualifies stays on screen and
+is sent nothing (Cascade on the account; SetNull on who created or last changed it).
+**`MinistryExportPack`** is one row per `(period, scheme)` — that unique key IS the per-month
+idempotency guarantee — carrying `revision` (bumped on every regeneration, and part of every storage
+key), `status` (QUEUED, BUILDING, READY, EMPTY, FAILED), the claim columns the queue worker
+compare-and-sets, both files' keys, sizes and SHA-256s, the `counts` the page shows, the stage
+registry digest at build time and a short `error` that never holds row data. **`MinistryExportDownload`**
+logs every link minted: pack, account, file and revision. See [MINISTRY_EXPORTS.md](MINISTRY_EXPORTS.md).
+
 ---
 
 ## 7. Enums

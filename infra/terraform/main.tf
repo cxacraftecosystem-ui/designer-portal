@@ -371,6 +371,26 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
       days_after_initiation = 7
     }
   }
+
+  # THE MINISTRY'S MONTHLY EXPORT PACKS (2026-10-18, backend/app/services/ministry_exports.py).
+  # The same filter warning holds: `prefix = "exports/"` is what keeps this rule off `media/`. A pack's
+  # row outlives its files; the page then says the files were removed and offers a regeneration.
+  rule {
+    id     = "expire-ministry-exports"
+    status = "Enabled"
+
+    filter {
+      prefix = "exports/"
+    }
+
+    expiration {
+      days = var.ministry_export_days
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }
 
 ####################### IAM user for the API (S3 access) ######################
@@ -489,6 +509,19 @@ resource "aws_iam_user_policy" "media" {
           "s3:AbortMultipartUpload"
         ]
         Resource = "${aws_s3_bucket.media.arn}/media/*"
+      },
+      # The Ministry's monthly export packs: the queue worker writes them, and the API HEADs and
+      # presigns them for a five-minute download. Put and Get only — expiry is the lifecycle rule
+      # `expire-ministry-exports`, so the key needs no delete. NOT under media/ (public-read below)
+      # and NOT under backups/ (put-only), which is why the prefix is its own.
+      {
+        Sid    = "AppMinistryExports"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject"
+        ]
+        Resource = "${aws_s3_bucket.media.arn}/exports/*"
       },
       {
         Sid      = "BackupWriteOnlyDropBox"

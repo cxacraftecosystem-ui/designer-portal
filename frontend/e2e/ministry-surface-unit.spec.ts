@@ -80,6 +80,7 @@ const MINISTRY_PATHS = [
   "/annual-plan",
   "/design-workshop-approvals",
   "/ministry-dashboard",
+  "/ministry-exports",
   "/officers",
   "/officers/monitored",
   "/sanction-orders"
@@ -183,7 +184,7 @@ test("the guard table still has twenty-six rows", () => {
     The length of the array is the only honest count, which is why this asserts the array and never
     a grep. Do not "correct" it back down.
   */
-  expect(ROUTE_GUARDS.length).toBe(26);
+  expect(ROUTE_GUARDS.length).toBe(27);
 });
 
 test("the scoped block never reaches a utility class", () => {

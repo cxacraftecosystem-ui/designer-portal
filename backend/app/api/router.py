@@ -29,6 +29,7 @@ from app.api.routes import (
     map_points,
     media,
     ministry_dashboard,
+    ministry_exports,
     preferences,
     processes,
     products,
@@ -201,6 +202,9 @@ api_router.include_router(sanction_orders.router)
 # /design-workshop-oversight, and a second door onto one workshop would be a second place to keep
 # the read-only promise.
 api_router.include_router(ministry_dashboard.router)
+# THE MINISTRY'S MONTHLY EXPORT PACKS, /api/ministry-exports (2026-10-18). Every route answers 404
+# while MINISTRY_EXPORTS_ENABLED is off. See app/services/ministry_exports.py.
+api_router.include_router(ministry_exports.router)
 api_router.include_router(dashboard.router)
 # The cross-workshop comparison, /api/analytics/design-workshops. On its own prefix rather than
 # under /design-workshops, which is already shared by two routers and carries a GET /{workshop_id}

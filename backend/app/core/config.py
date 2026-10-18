@@ -353,6 +353,26 @@ class Settings(BaseSettings):
     # Messages sent per drain pass of the queue worker. SES's sandbox rate is 1/s; production 14/s.
     mail_batch_size: int = Field(default=10, alias="MAIL_BATCH_SIZE")
 
+    # --- Ministry export packs (app/services/ministry_exports.py, docs/MINISTRY_EXPORTS.md) --------
+    # A monthly Excel + PDF pack per scheme, built by the queue worker on the 1st (India time) for the
+    # month before, stored under MINISTRY_EXPORTS_PREFIX in the media bucket and announced by e-mail.
+    #
+    # OFF BY DEFAULT AND INVISIBLE WHILE OFF: every /api/ministry-exports route answers 404, the
+    # scheduler does nothing, and neither entry point is drawn. Switch it on only AFTER the Terraform
+    # apply that gives the API key Put/Get on `exports/*` (backend/DEPLOY_AWS.md); before it, every
+    # build fails at the upload.
+    ministry_exports_enabled: bool = Field(default=False, alias="MINISTRY_EXPORTS_ENABLED")
+    # The scheduler fires at or after this India-time hour on the 1st, and catches up later in the
+    # month if the worker was down.
+    ministry_exports_run_hour_ist: int = Field(default=6, alias="MINISTRY_EXPORTS_RUN_HOUR_IST")
+    # Where the files go. NOT under media/ (public-read) and NOT under backups/ (put-only for the API
+    # key, so it could never presign a download).
+    ministry_exports_prefix: str = Field(default="exports/ministry/", alias="MINISTRY_EXPORTS_PREFIX")
+    # Lifetime of one presigned download link, minted per click and logged.
+    ministry_exports_link_seconds: int = Field(default=300, alias="MINISTRY_EXPORTS_LINK_SECONDS")
+    # Per-pack workshop cap. Hitting it writes a truncation note into both files.
+    ministry_exports_max_workshops: int = Field(default=2000, alias="MINISTRY_EXPORTS_MAX_WORKSHOPS")
+
     next_public_app_url: AnyHttpUrl | str = Field(
         default="http://localhost:3000", alias="NEXT_PUBLIC_APP_URL"
     )

@@ -588,6 +588,15 @@ model User {
   /// authorship) and SetNull on the second. See RegionalDirectorState.
   regionalDirectorStates        RegionalDirectorState[] @relation("RegionalDirectorStateUser")
   regionalDirectorStatesAssigned RegionalDirectorState[] @relation("RegionalDirectorStateAssignedBy")
+  /// The Ministry's monthly export packs (2026-10-18): this account's subscription, the
+  /// subscriptions it created or last changed, the packs it asked for, and the files it opened.
+  /// Cascade on the subscription (it belongs to the person) and SetNull on the rest (authorship and
+  /// the download log outlive the account). None of them makes an account undeletable.
+  ministryExportRecipient         MinistryExportRecipient?  @relation("MinistryExportRecipient")
+  ministryExportRecipientsCreated MinistryExportRecipient[] @relation("MinistryExportRecipientCreatedBy")
+  ministryExportRecipientsUpdated MinistryExportRecipient[] @relation("MinistryExportRecipientUpdatedBy")
+  ministryExportPacksRequested    MinistryExportPack[]      @relation("MinistryExportPackRequestedBy")
+  ministryExportDownloads         MinistryExportDownload[]  @relation("MinistryExportDownloadUser")
 
   @@index([role])
 }
@@ -6961,4 +6970,93 @@ model AadhaarOtpThrottle {
   @@index([userId, createdAt])
   @@index([uidHash, createdAt])
   @@index([createdAt])
+}
+
+// ── MINISTRY EXPORT PACKS (2026-10-18) ─────────────────────────────────────────────────────────
+// A monthly pack per scheme: an Excel workbook and a short PDF, built by the queue worker on the
+// 1st (India time) for the month before, stored under `exports/ministry/` in the media bucket
+// (private; presigned links only) and announced to subscribed recipients. See
+// backend/app/services/ministry_exports.py and docs/MINISTRY_EXPORTS.md.
+
+/// Who is e-mailed when a month's packs are ready. One row per account; `schemes` empty means every
+/// scheme. Eligibility (role, address, platform access) is re-checked when mail is sent, so a row
+/// whose account no longer qualifies is kept on screen and sent nothing.
+model MinistryExportRecipient {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  schemes     String[] @default([])
+  active      Boolean  @default(true)
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User  @relation("MinistryExportRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("MinistryExportRecipientCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("MinistryExportRecipientUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([active])
+  @@index([createdById])
+  @@index([updatedById])
+}
+
+/// One pack: a period ("YYYY-MM", India time) and a scheme (a WORKSHOP_KIND token, or UNSTATED).
+/// `@@unique([period, scheme])` IS the per-month idempotency guarantee: the scheduler inserts and
+/// treats a unique violation as "already there"; regenerating bumps `revision` on the same row, and
+/// storage keys carry the revision so an earlier file is never overwritten.
+model MinistryExportPack {
+  id            String    @id @default(cuid())
+  period        String
+  scheme        String
+  revision      Int       @default(1)
+  /// SCHEDULED | ON_DEMAND — what asked for the latest revision.
+  trigger       String
+  /// QUEUED | BUILDING | READY | EMPTY | FAILED
+  status        String    @default("QUEUED")
+  monthToDate   Boolean   @default(false)
+  requestedById String?
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(3)
+  runAfter      DateTime  @default(now())
+  lockedAt      DateTime?
+  lockedBy      String?
+  snapshotAt    DateTime?
+  xlsxKey       String?
+  xlsxBytes     Int?
+  xlsxSha256    String?
+  pdfKey        String?
+  pdfBytes      Int?
+  pdfSha256     String?
+  counts        Json?
+  /// The stage registry digest at build time.
+  schemaVersion String?
+  /// A short reason, never row data.
+  error         String?
+  finishedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  requestedBy User?                    @relation("MinistryExportPackRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  downloads   MinistryExportDownload[]
+
+  @@unique([period, scheme])
+  @@index([status, runAfter])
+  @@index([requestedById])
+}
+
+/// Every presigned link minted for a pack file: who, which file, which revision, when.
+model MinistryExportDownload {
+  id        String   @id @default(cuid())
+  packId    String
+  userId    String?
+  /// "xlsx" | "pdf"
+  file      String
+  revision  Int
+  createdAt DateTime @default(now())
+
+  pack MinistryExportPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  user User?              @relation("MinistryExportDownloadUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([packId, createdAt])
+  @@index([userId])
 }

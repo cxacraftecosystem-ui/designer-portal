@@ -59,7 +59,7 @@
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Download, LayoutDashboard, Lock, RefreshCw, ShieldCheck, UserCog, Users } from "lucide-react";
+import { Check, Download, FileArchive, LayoutDashboard, Lock, RefreshCw, ShieldCheck, UserCog, Users } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { MegaCard } from "@/components/dashboard/MegaCard";
@@ -72,6 +72,7 @@ import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ApiError } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/format";
+import { ministryExportsEnabled } from "@/lib/ministryExports";
 import {
   DEFAULT_REGISTER_KIND,
   PEOPLE_KINDS,
@@ -100,7 +101,7 @@ import {
   type RegisterSummary
 } from "@/lib/ministryDashboard";
 import { isUnreachable } from "@/lib/offline";
-import { canSeeMinistryDashboard, roleLabel } from "@/lib/permissions";
+import { canManageMinistryExports, canSeeMinistryDashboard, roleLabel } from "@/lib/permissions";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 20;
@@ -555,6 +556,17 @@ export default function MinistryDashboardPage() {
         title="Ministry dashboard"
         description="Every workshop and each designer's progress."
         icon={<LayoutDashboard className="h-5 w-5" aria-hidden />}
+        actions={
+          /* The monthly packs, for the readers of this page who may also open them: the Ministry
+             Admin and the master admin (the directors read a narrower scope than a pack carries).
+             Hidden while the deployment has the packs switched off. */
+          canManageMinistryExports(user) && ministryExportsEnabled(user) ? (
+            <Link href="/ministry-exports" className="field-button-secondary">
+              <FileArchive className="h-4 w-4" aria-hidden />
+              Monthly packs
+            </Link>
+          ) : null
+        }
       />
 
       {/* THE SCOPE, IN THE SERVER'S OWN WORDS. See the header: this is the sentence that stops an

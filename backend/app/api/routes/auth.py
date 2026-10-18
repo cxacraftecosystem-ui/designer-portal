@@ -53,6 +53,7 @@ from app.services import (
     access_roster,
     credential_links,
     email_outbox,
+    features as feature_flags,
     identity,
     mailer,
     oidc_sign_in,
@@ -276,7 +277,7 @@ def serialize_user(user: Any) -> dict[str, Any]:
     # The optional features this deployment has switched on, so a client can draw (or not draw)
     # them from the payload it already holds — and a handset can keep the answer offline. While
     # both Aadhaar switches are off the verification columns are withheld too (services/aadhaar).
-    payload[FEATURES_KEY] = aadhaar_flags.features()
+    payload[FEATURES_KEY] = feature_flags.features()
     return aadhaar_flags.hide_columns(payload)
 
 

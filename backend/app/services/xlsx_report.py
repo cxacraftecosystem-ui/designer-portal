@@ -349,21 +349,25 @@ def _write_overview(ws: Worksheet, title: str, sheets: list[dict[str, Any]]) -> 
     ws.freeze_panes = "A4"
 
 
-def build_report_workbook(sheets: list[dict[str, Any]], title: str) -> bytes:
+def build_report_workbook(sheets: list[dict[str, Any]], title: str, *, overview: bool = True) -> bytes:
     """Render the report ``sheets`` into a styled .xlsx workbook and return its bytes.
 
     ``sheets`` is the list produced by data_browser's ``_report_sheets`` — each a dict of
-    ``{name, color (#hex), columns, rows}``. A leading Overview sheet is prepended.
+    ``{name, color (#hex), columns, rows}``. A leading Overview sheet is prepended unless
+    ``overview`` is false, for a caller whose first sheet is its own summary (the Ministry pack).
     """
     wb = Workbook()
 
-    used_titles: set[str] = {_OVERVIEW_NAME.lower()}
+    used_titles: set[str] = {_OVERVIEW_NAME.lower()} if overview else set()
     for sheet in sheets:
         sheet["_title"] = _safe_title(sheet.get("name") or "Sheet", used_titles)
 
-    overview = wb.active
-    overview.title = _OVERVIEW_NAME
-    _write_overview(overview, title, sheets)
+    first = wb.active
+    if overview:
+        first.title = _OVERVIEW_NAME
+        _write_overview(first, title, sheets)
+    else:
+        wb.remove(first)
 
     for sheet in sheets:
         ws = wb.create_sheet(title=sheet["_title"])
