@@ -135,7 +135,7 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 285 | 5619 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Backend unit (`backend/tests/`) | 286 | 5621 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 261 | 3074 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 302 | 3714 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 9 | 25 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
@@ -167,7 +167,7 @@ and this one asserted an absence it had never looked for.
 | `frontend/app` | 118 | 59,064 | 118 | 59,064 |
 | `frontend/components` | 360 | 141,658 | 360 | 141,658 |
 | `frontend/lib` | 172 | 79,633 | 172 | 79,633 |
-| `android/app/src/main/java` | 338 | 250,398 | 338 | 250,398 |
+| `android/app/src/main/java` | 338 | 250,397 | 338 | 250,397 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
