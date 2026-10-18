@@ -132,19 +132,20 @@ class LinkIn(BaseModel):
     expectedRemoteArtisanId: str | None = Field(default=None, max_length=64)
 
 
-def _peer_query(aadhaar: str | None, pehchan: str | None, settings: Any) -> dict[str, Any]:
+def _peer_query(aadhaar_code: str | None, pehchan: str | None) -> dict[str, Any]:
     body: dict[str, Any] = {}
     if pehchan:
         body["pehchanCardNumber"] = pehchan
-    if aadhaar:
-        body["aadhaarCode"] = cross_portal.aadhaar_code(aadhaar, settings.cross_portal_aadhaar_hmac_key)
+    if aadhaar_code:
+        body["aadhaarCode"] = aadhaar_code
     return body
 
 
 async def _lookup(
-    settings: Any, aadhaar: str | None, pehchan: str | None, user: Any
+    settings: Any, aadhaar_code: str | None, pehchan: str | None, user: Any
 ) -> dict[str, Any] | None:
-    body = _peer_query(aadhaar, pehchan, settings)
+    """Ask the documentation portal. ``aadhaar_code`` is the HMAC code, never the number."""
+    body = _peer_query(aadhaar_code, pehchan)
     if not body:
         return None
     try:
@@ -271,8 +272,10 @@ async def lookup_artisan(
             detail="Enter the Aadhaar number or the Pehchan card number first.",
         )
     await _assert_under_lookup_limit(current_user)
+    key = cross_portal.aadhaar_key(settings)
+    aadhaar_code = cross_portal.aadhaar_code(aadhaar, key) if aadhaar and key else None
     try:
-        match = await _lookup(settings, aadhaar, pehchan, current_user)
+        match = await _lookup(settings, aadhaar_code, pehchan, current_user)
     except HTTPException:
         await _log(current_user, ACTION_LOOKUP, "UNAVAILABLE")
         raise
@@ -303,7 +306,10 @@ async def link_artisan(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CONSENT_NEEDED)
     artisan = await require_record(db.artisan, artisan_id)
     await _assert_may_edit(artisan, current_user)
-    match = await _lookup(settings, artisan.aadhaarNumber, artisan.pehchanCardNumber, current_user)
+    # The saved artisan's code is its stored aadhaarFingerprint (the legacy number's code before the
+    # backfill): the number itself is not kept, so there is nothing to recompute it from.
+    stored_code = cross_portal.stored_aadhaar_code(artisan, cross_portal.aadhaar_key(settings))
+    match = await _lookup(settings, stored_code, artisan.pehchanCardNumber, current_user)
     if match is None:
         await _log(current_user, ACTION_LINK, "NO_MATCH", artisan_id=artisan_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NO_MATCH)

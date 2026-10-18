@@ -101,7 +101,7 @@ def _settings(**over):
     base = {
         "cross_portal_identity_enabled": True,
         "cross_portal_token": TOKEN,
-        "cross_portal_aadhaar_hmac_key": KEY,
+        "aadhaar_fingerprint_key": KEY,
         "field_repository_api_url": URL,
     }
     base.update(over)
@@ -255,6 +255,26 @@ async def test_link_re_derives_the_match_from_the_stored_numbers(world):
     assert world.calls[1][:2] == ("POST", "/artisans/fr1/links")
     assert world.db.crossportalartisanlink.rows[0]["consentRecordedById"] == "u1"
     assert world.asked_by == ["u1", "u1"], "the other side's log is told who asked"
+
+
+async def test_link_sends_the_stored_fingerprint_when_the_number_is_not_kept(world):
+    """Since the fingerprint release a saved artisan holds aadhaarFingerprint and aadhaarNumber NULL.
+    The link sends that fingerprint as the code: it is the code, so nothing is recomputed."""
+    row = world.db.artisan.rows[0]
+    row["aadhaarNumber"] = None
+    row["aadhaarFingerprint"] = cross_portal.aadhaar_code(AADHAAR, KEY)
+    row["aadhaarLast4"] = AADHAAR[-4:]
+    out = await routes.link_artisan("dp1", routes.LinkIn(consent=True, expectedRemoteArtisanId="fr1"), OWNER)
+    assert out["linked"] is True
+    assert world.calls[0][2] == {"aadhaarCode": cross_portal.aadhaar_code(AADHAAR, KEY)}
+
+
+async def test_lookup_and_link_are_off_without_the_fingerprint_key(world, monkeypatch):
+    monkeypatch.setattr(routes, "get_settings", lambda: _settings(aadhaar_fingerprint_key=None))
+    with pytest.raises(HTTPException) as caught:
+        await routes.lookup_artisan(routes.LookupIn(aadhaarNumber=AADHAAR, consent=True), OWNER)
+    assert caught.value.status_code == 404
+    assert world.calls == []
 
 
 async def test_a_link_the_other_side_refuses_is_never_written(world):
@@ -449,6 +469,9 @@ def test_the_config_defaults_to_off():
     fields = Settings.model_fields
     assert fields["cross_portal_identity_enabled"].default is False
     assert fields["cross_portal_token"].default is None
+    # Aadhaar codes are made under the register's fingerprint key; there is no second key to drift.
+    assert fields["aadhaar_fingerprint_key"].alias == "AADHAAR_FINGERPRINT_KEY"
+    assert "cross_portal_aadhaar_hmac_key" not in fields
     assert fields["field_repository_api_url"].default is None
 
 
