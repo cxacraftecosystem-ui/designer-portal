@@ -251,6 +251,8 @@ async def test_a_record_is_a_read_only_card_or_404(world, monkeypatch):
     assert record["title"] == f"Indigo stole {world.stamp}"
     assert record["openUrl"] == f"https://designer.example/products/{world.product_title.id}"
     assert {f["label"] for f in record["fields"]} >= {"Type", "Place"}
+    # The Field Repository's own consent check on a record view needs these, as on search rows.
+    assert record["linkedArtisanIds"] == [f"fr-{world.stamp}"]
     for secret in SECRETS:
         assert secret not in ok.body.decode()
 

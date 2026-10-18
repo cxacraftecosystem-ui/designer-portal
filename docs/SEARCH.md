@@ -12,7 +12,7 @@ and both clients use the legacy `GET /api/search` exactly as before (§6).
 | | |
 |---|---|
 | Backend | `backend/app/services/search_index.py` (what a record becomes), `search_indexer.py` (queue drain, embeddings), `search_query.py` (the ranking SQL), `search_embeddings.py` (the AI flag), `unified_search.py` (permissions, peer call, merge); `backend/app/api/routes/search.py` (`/search/unified`, `/search/remote/{type}/{id}`), `routes/cross_portal_search.py` (peer routes) |
-| Shared with the Field Repository, byte for byte | `backend/app/services/cross_portal.py`, `cross_portal_client.py`, `cross_portal_peer.py` |
+| Shared with the Field Repository, byte for byte | `backend/app/services/cross_portal.py`, `cross_portal_client.py`, `cross_portal_peer.py`, `search_embeddings.py` |
 | Web | `frontend/lib/unifiedSearch.ts`, `frontend/app/(protected)/search/page.tsx`, `frontend/app/(protected)/remote/[type]/[id]/page.tsx` |
 | Android | `ui/AppSearch.kt`, `ui/AppSearchSources.kt`, `ui/RemoteRecordScreen.kt`, `data/UnifiedSearch.kt` |
 | Schema | `20261025090000_search_document` |
@@ -56,18 +56,26 @@ to (`records._design_workshop_media_ids`).
 
 **Shareable** (may be shown to the Field Repository): the record names no artisan, or every artisan
 it names has a `CrossPortalArtisanLink` (the artisan's consent recorded on this portal). A record
-naming an artisan only as free text is never shareable, and design-workshop data never is.
+naming an artisan only as free text is never shareable, and design-workshop data never is. A
+process names its product's artisan. A file (media and transcripts) names its own artisan and the
+artisans of the product, tool or interview it hangs off, by the typed column or, where only the tag
+was filled, by `linkedRecordType`/`linkedRecordId`.
 
 ### Keeping it current
 
 `search_enqueue()` triggers sit on every source table. An insert or update lists the record in
 `SearchIndexQueue`; a delete removes its document in the same statement, so the index never outlives
 a record. A stage row lists its design workshop, a plan row or a workshop's cluster name lists the
-cluster, a process step its process, a response its interview, a link row its artisan. The queue
-worker (`app/worker.py`) drains 100 items every 15 seconds (`search_indexer.drain`, `FOR UPDATE
-SKIP LOCKED`), expands an artisan to its products, tools, interviews and media, and then embeds up to
-32 changed documents when embeddings are on. The migration only lists every record in the queue; the
-build happens in the worker after `UNIFIED_SEARCH_ENABLED` is switched on.
+cluster, a process step its process, a response or an interview-artisan link its interview, a link
+row its artisan. The queue worker (`app/worker.py`) drains 100 items every 15 seconds
+(`search_indexer.drain`) and deletes the rows it read only after building them, so a worker killed
+mid-batch loses nothing. It expands each record to the documents that take their artisans from it
+(`search_index.dependents_of`: an artisan to its products, their processes, tools, interviews and
+every file on any of them; a product to its processes and files; a tool or an interview to its
+files), and then embeds up to 32 changed documents when embeddings are on. The migration only lists
+every record in the queue; the build happens in the worker after `UNIFIED_SEARCH_ENABLED` is
+switched on. Until then the worker only compacts the queue to one row per record every ten minutes
+(`search_indexer.compact_queue`), so it never outgrows the number of records.
 
 `python -m scripts.search_reindex [--type media] [--drain]` (from `backend/`) lists records again
 after a builder changes.
@@ -89,11 +97,15 @@ predicates:
 They are fused by reciprocal rank, `score = Σ 1/(60 + rank)`, ties broken by id. Snippets are
 `ts_headline` plain text; highlights are character ranges computed in Python, so no HTML travels.
 
-**Embeddings (the AI flag).** `SEARCH_EMBEDDINGS_ENABLED`, a provider key, and the `embedding`
-column (probed once per process) must all be present; otherwise the response says `"mode": "text"`
+**Embeddings (the AI flag).** `SEARCH_EMBEDDINGS_ENABLED`, the AI master switch
+`AI_FEATURES_ENABLED` (`app.ai_features.settings`, the one variable that stops every paid AI call), a
+provider key, and the `embedding` column (probed once per process) must all be present; otherwise the response says `"mode": "text"`
 and no provider is called. The query is embedded once with a 1.5 s timeout and a 256-entry cache;
 any failure is text mode. Documents are embedded from title, subtitle and the first 8,000
-characters of the body. The vectors never leave this portal. With `SEARCH_EMBEDDING_PROVIDER=gemini` and the
+characters of the body. A batch the provider refuses is retried one document at a time: a
+document refused alone is marked (`embeddedHash = 'failed:' || contentHash`) and skipped until its
+text changes; when every one is refused the provider is down, and the worker waits 30 seconds,
+doubling to an hour, before the next call. The vectors never leave this portal. With `SEARCH_EMBEDDING_PROVIDER=gemini` and the
 OpenAI model name left as it is, `gemini-embedding-001` is asked for the same 768 dimensions.
 
 ## 3. API

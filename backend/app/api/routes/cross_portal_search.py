@@ -15,7 +15,8 @@ How a request is treated (docs/SEARCH.md §3.5):
 3. Each search is logged (``action=SEARCH``, the asking account, how many results) — never the query.
 4. 120 searches per 10 minutes per asking account; then a signed 429.
 5. What goes back is :data:`cross_portal.PEER_ITEM_KEYS` plus ``linkedArtisanIds`` (the Field
-   Repository's ids for the artisans a record names, so it can apply its own consent once more).
+   Repository's ids for the artisans a record names, so it can apply its own consent once more), on
+   search rows and on the single record alike.
    Never a media URL, a storage key, a phone number, e-mail, Aadhaar, Pehchan, date of birth or address.
 """
 
@@ -204,7 +205,8 @@ async def peer_search_record(
             where = search_query._where(scope, p)
             rows = await db.query_raw(
                 f"""SELECT d."entityType", d."entityId", d."title", d."subtitle", d."place",
-                           d."craftCodes", d."recordDate", d."openPath", left(d."body", 2000) AS body
+                           d."craftCodes", d."artisanIds", d."recordDate", d."openPath",
+                           left(d."body", 2000) AS body
                       FROM "SearchDocument" d
                      WHERE d."entityType" = {kind_ref} AND d."entityId" = {id_ref} AND {where}""",
                 *p.values,
@@ -218,6 +220,7 @@ async def peer_search_record(
     snippet = body_text[:RECORD_SNIPPET_CHARS].rstrip()
     if len(body_text) > RECORD_SNIPPET_CHARS:
         snippet += "…"
+    remote_ids = await _linked_remote_ids(list(row.get("artisanIds") or []))
     record = {
         "type": row["entityType"],
         "id": row["entityId"],
@@ -227,5 +230,9 @@ async def peer_search_record(
         "snippet": snippet,
         "recordDate": row.get("recordDate"),
         "openUrl": _open_url(settings, row["openPath"]),
+        # The Field Repository re-applies its own consent with these, as it does for search rows.
+        "linkedArtisanIds": [
+            remote_ids[a] for a in row.get("artisanIds") or [] if a in remote_ids
+        ],
     }
     return signed(settings, request, {"record": record})
