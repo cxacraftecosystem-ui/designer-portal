@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.CalendarMonth
 // The walkthrough's own glyph, and it must stay this one: `FIELD_NAV_ITEMS` gives the Walkthrough
 // row `Icons.Filled.Explore`, and a settings row that led to the same place behind a different
 // picture would be a second sign on one door.
@@ -75,6 +76,8 @@ import com.designprototype.workshop.data.dwAsrInstalledModelIds
 import com.designprototype.workshop.data.dwPackStates
 import com.designprototype.workshop.data.dwSpeechSummaryLine
 import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.WeeklyDigestPreferenceDto
+import com.designprototype.workshop.data.WeeklyDigestSwitch
 import com.designprototype.workshop.data.PreferencesDto
 import com.designprototype.workshop.ui.designworkshop.DW_DICTATION_LANGUAGES
 import com.designprototype.workshop.ui.designworkshop.DwAsrModelRun
@@ -468,6 +471,13 @@ fun AppearanceScreen(
     var saveJob by remember { mutableStateOf<Job?>(null) }
     val systemDark = isSystemInDarkTheme()
 
+    // THE MONDAY SUMMARY (data/WeeklyDigestPreference.kt): read once, drawn only for reviewers and
+    // officials. Optimistic: the switch moves at once and goes back if the save fails.
+    var digest by remember { mutableStateOf<WeeklyDigestPreferenceDto?>(null) }
+    var digestSaving by remember { mutableStateOf(false) }
+    var digestError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { digest = repository.weeklyDigestPreference() }
+
     // One-shot reconcile with the account. Keyed on Unit: `current` changes on every toggle and
     // re-running this would fight the user.
     val prefsContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
@@ -649,6 +659,37 @@ fun AppearanceScreen(
             summary = "Use your own OpenAI, Gemini or Claude key",
             onClick = onOpenMyAiKeys,
         )
+
+        val digestState = digest
+        if (digestState != null && WeeklyDigestSwitch.visible(digestState)) {
+            PreferenceCard {
+                PreferenceCardHeading(icon = Icons.Filled.CalendarMonth, title = WeeklyDigestSwitch.LABEL)
+                AppToggle(
+                    label = WeeklyDigestSwitch.LABEL,
+                    description = WeeklyDigestSwitch.description(digestState),
+                    checked = digestState.enabled,
+                    busy = digestSaving,
+                    onCheckedChange = { next ->
+                        val before = digestState
+                        digest = before.copy(enabled = next)
+                        digestError = null
+                        digestSaving = true
+                        scope.launch {
+                            runCatching { repository.saveWeeklyDigestPreference(next) }
+                                .onSuccess { digest = it }
+                                .onFailure {
+                                    digest = before
+                                    digestError = it.userMessage("Your choice could not be saved. Try again.")
+                                }
+                            digestSaving = false
+                        }
+                    },
+                )
+                digestError?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
 
         /*
          * ---- USAGE RECORDING ---------------------------------------------------------------------

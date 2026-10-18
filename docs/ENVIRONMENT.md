@@ -380,6 +380,7 @@ Mail is **on exactly when `MAIL_FROM_ADDRESS` is set**. Unset, nothing is queued
 | `MAIL_SES_CONFIGURATION_SET` | No | unset | No | An SES configuration set, for bounce and complaint event publishing. |
 | `MAIL_MAX_ATTEMPTS` | No | `5` | No | Sends per message before it is marked `FAILED`. A throttle or SES fault is retried after 1, 2, 4, 8 … minutes (capped at an hour); a rejected message or an unverified sender fails at once. |
 | `MAIL_BATCH_SIZE` | No | `10` | No | Messages sent per queue sweep (`MEDIA_QUEUE_INTERVAL_SECONDS` apart). The SES sandbox allows 1 a second; production access usually 14. |
+| `WEEKLY_DIGEST_ENABLED` | No | `true` | No | The Monday 08:00 IST summary for reviewers and officials (`services/weekly_digest.py`), sent in-app and, when mail is on, by e-mail. `false` stops the queue worker sending new ones; the Settings switch and past summaries keep working. |
 
 **The owner's steps to turn it on** (nothing in this repository creates AWS resources): verify the sending domain (its DKIM records) or the single sender address in SES **ap-south-1**; request SES production access for that region (until then SES delivers only to verified addresses); grant the backend IAM user `ses:SendEmail` on that identity; then add `MAIL_FROM_ADDRESS` (and optionally `MAIL_REPLY_TO`, `MAIL_FROM_NAME`, `MAIL_SES_CONFIGURATION_SET`) to the `BACKEND_ENV` secret and let the next deploy restart both units.
 

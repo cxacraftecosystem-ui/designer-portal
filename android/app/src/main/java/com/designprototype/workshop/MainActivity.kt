@@ -297,6 +297,7 @@ import com.designprototype.workshop.data.RecordRevisionDto
 import com.designprototype.workshop.data.DashboardRecentSubmissionDto
 import com.designprototype.workshop.data.DashboardStats
 import com.designprototype.workshop.data.DashboardStatsMine
+import com.designprototype.workshop.data.WeeklyDigestSwitch
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.GoogleAuthClient
 import com.designprototype.workshop.data.OidcAuthClient
@@ -4844,6 +4845,9 @@ private fun HomeScreen(
                     when {
                         workshopId != null -> { message = null; screen = Screen.DesignWorkshopStages(workshopId) }
                         link == "/settings" -> screen = Screen.Appearance
+                        // The Monday summary is a web page with no handset screen; its notice's
+                        // title and body already carry the figures. Intended: nothing opens.
+                        WeeklyDigestSwitch.isDigestLink(link) -> Unit
                     }
                 }
             )

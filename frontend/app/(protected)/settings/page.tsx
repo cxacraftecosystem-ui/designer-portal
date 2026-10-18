@@ -10,6 +10,7 @@ import { AadhaarVerifyPanel } from "@/components/aadhaar/AadhaarVerifyPanel";
 import { AppSettingsPanel } from "@/components/settings/AppSettingsPanel";
 import { ChangePasswordCard } from "@/components/settings/ChangePasswordCard";
 import { EmailNotificationsCard } from "@/components/settings/EmailNotificationsCard";
+import { WeeklyDigestCard } from "@/components/settings/WeeklyDigestCard";
 import { GetTheAppPanel } from "@/components/settings/GetTheAppPanel";
 import { GrievanceRedressalCard } from "@/components/settings/GrievanceRedressalCard";
 import { PublishAppUpdatePanel } from "@/components/settings/PublishAppUpdatePanel";
@@ -140,6 +141,7 @@ export default function SettingsPage() {
 
         {/* This account's e-mail opt-outs. Draws nothing on a deployment that sends no e-mail. */}
         <EmailNotificationsCard />
+        <WeeklyDigestCard />
 
         {/*
           NO ROLE GATE, AND HIGH UP, WITH THE OTHER TWO THINGS THIS ACCOUNT OWNS.

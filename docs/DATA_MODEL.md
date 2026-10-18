@@ -834,6 +834,28 @@ under a 200 reading "Stage saved".
 | `AssignedTask` | one row per assignee | a batch of five researchers is five rows sharing a `batchId` |
 | `Feedback`, `UserPreference` | one row per user each | |
 | `ReviewLog` | one row per review decision | append-only; an edit-then-approve writes two rows |
+| `WeeklyDigest` | one row per reviewer or official per week | the Monday summary's send log and snapshot; see below |
+
+### `WeeklyDigest` and `UserPreference.weeklyDigest` — added 2026-10-22
+
+Migration `20261022100000_weekly_digest`, additive and `IF NOT EXISTS` throughout; the documentation
+portal ships the same migration by name. Written only by `backend/app/services/weekly_digest.py`.
+
+- **`(userId, weekStart)` is unique, and it is the idempotency key.** The queue worker inserts the row
+  `PENDING` before building or sending anything; a unique violation means another pass already has
+  that person's week. `weekStart` is a `@db.Date`: the Monday, as an India Standard Time calendar
+  date. A row left `PENDING` for 15 minutes is reclaimed with a compare-and-set on `updatedAt`.
+- **`status`** is `PENDING`, `DELIVERED`, `SKIPPED_EMPTY` (nothing waiting, overdue or new) or
+  `SKIPPED_OPTOUT` (checked at send time; no payload kept).
+- **`payload`** holds exactly what the e-mail shows: counts, workshop titles and app paths. Never an
+  artisan, a contact detail or a review note. Rows older than 26 weeks are purged by the same pass,
+  and every row cascades with its account.
+- **`notificationId` and `emailMessageId` carry no foreign key**, as `Notification.emailMessageId`
+  does not: the send log may be pruned.
+- **`UserPreference.weeklyDigest`** is `BOOLEAN NOT NULL DEFAULT true`, an opt-out. It is read only
+  for accounts `is_authority` admits, which is what makes it "on by default for reviewers and
+  officials". It has its own route (`GET`/`PUT /api/notifications/digest`) so the switch works when
+  mail is off.
 
 ### `clientKey` on the four record models — added 2026-09-03
 

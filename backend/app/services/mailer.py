@@ -79,6 +79,9 @@ HAND_IN_DIGEST = "HAND_IN_DIGEST"
 #: it goes to the addresses an administrator set, and the link travels sealed like a password link.
 REPORT_DELIVERY = "REPORT_DELIVERY"
 
+#: The Monday summary for reviewers and officials (services/weekly_digest.py). Opt-out through
+#: ``UserPreference.weeklyDigest``; carries counts, workshop titles and app paths, nothing personal.
+WEEKLY_DIGEST = "WEEKLY_DIGEST"
 KINDS = frozenset(
     {
         PASSWORD_LINK,
@@ -91,6 +94,7 @@ KINDS = frozenset(
         REPORT_HANDED_IN,
         HAND_IN_DIGEST,
         REPORT_DELIVERY,
+        WEEKLY_DIGEST,
     }
 )
 
@@ -268,6 +272,139 @@ def _html(paragraphs: list[str], *, button: tuple[str, str] | None = None, quote
     return "".join(parts)
 
 
+# --------------------------------------------------------------------------------------
+# The Monday summary (services/weekly_digest.py)
+# --------------------------------------------------------------------------------------
+
+#: How many workshop titles the e-mail names under Waiting and Overdue; the page shows five.
+DIGEST_EMAIL_ITEMS = 3
+_DIGEST_LABEL = "margin:0 0 2px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#6b6457;"
+_DIGEST_FIGURE = "margin:0;font-size:22px;line-height:1.3;font-weight:600;color:#1f2328;"
+_DIGEST_NOTE = "margin:2px 0 0;font-size:13px;line-height:1.5;color:#6b6457;"
+
+
+def _count(value: Any) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def digest_title(waiting: Any, overdue: Any) -> str:
+    """The subject and the in-app title, one sentence for both."""
+    w, o = _count(waiting), _count(overdue)
+    return f"Your week: {w} waiting, {o} overdue" if o else f"Your week: {w} waiting"
+
+
+def coverage_words(coverage: dict[str, Any] | None) -> tuple[str, str, str]:
+    """``(label, figure, note)`` for the coverage block: "Reports in", "71%", "41 of 58"."""
+    cov = coverage or {}
+    label = str(cov.get("label") or "Coverage")
+    value = _count(cov.get("value"))
+    of = cov.get("of")
+    if of is None:
+        return label, str(value), ""
+    percent = cov.get("percent")
+    figure = f"{_count(percent)}%" if percent is not None else str(value)
+    return label, figure, f"{value} of {_count(of)}"
+
+
+# The lines whose workshops are listed by title. "and N more" counts only these, so a sanction order
+# or a record to review is never passed off as one more workshop.
+_TITLED_LINES = {"waiting": ("approvals", "inspections"), "overdue": ("stages", "reviews")}
+
+
+def _titled_total(section: dict[str, Any], key: str) -> int:
+    keys = _TITLED_LINES.get(key, ())
+    return sum(
+        _count(line.get("count"))
+        for line in section.get("lines") or []
+        if isinstance(line, dict) and line.get("key") in keys
+    )
+
+
+def _digest_blocks(sections: list[dict[str, Any]], coverage: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The four blocks in their fixed order, from the stored payload."""
+    by_key = {str(s.get("key")): s for s in sections or [] if isinstance(s, dict)}
+    blocks: list[dict[str, Any]] = []
+    for key, label in (("waiting", "Waiting for you"), ("overdue", "Overdue"), ("new", "New this week")):
+        section = by_key.get(key) or {}
+        total = _count(section.get("total"))
+        items = [i for i in (section.get("items") or []) if isinstance(i, dict)] if key != "new" else []
+        shown = items[:DIGEST_EMAIL_ITEMS]
+        blocks.append({"label": label, "figure": str(total), "note": "", "items": shown,
+                       "more": max(_titled_total(section, key) - len(shown), 0) if shown else 0})
+    label, figure, note = coverage_words(coverage)
+    blocks.append({"label": label, "figure": figure, "note": note, "items": [], "more": 0})
+    return blocks
+
+
+def _digest_html(
+    greeting: str,
+    blocks: list[dict[str, Any]],
+    *,
+    button: tuple[str, str],
+    footer: tuple[str, str],
+    settings: Settings | None = None,
+) -> str:
+    """The summary's HTML part, in :func:`_html`'s shell: the same page, card, button and fonts.
+
+    Four compact blocks, each a small uppercase label over one figure, with at most three linked
+    workshop titles under Waiting and Overdue. Every value is escaped here; nothing arrives escaped.
+    """
+    parts = [
+        '<!doctype html><html><body style="margin:0;padding:24px;background:#f6f5f2;'
+        'font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2328;">',
+        '<div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e3e0da;'
+        'border-radius:8px;padding:24px;">',
+        f'<p style="margin:0 0 16px;font-size:13px;letter-spacing:.04em;color:#6b6457;">'
+        f"{_e(PRODUCT_NAME)}</p>",
+        f'<p style="margin:0 0 18px;font-size:15px;line-height:1.55;">{_e(greeting)}</p>',
+    ]
+    for block in blocks:
+        parts.append('<div style="margin:0 0 16px;padding:0 0 14px;border-bottom:1px solid #efece6;">')
+        parts.append(f'<p style="{_DIGEST_LABEL}">{_e(block["label"])}</p>')
+        parts.append(f'<p style="{_DIGEST_FIGURE}">{_e(block["figure"])}</p>')
+        if block.get("note"):
+            parts.append(f'<p style="{_DIGEST_NOTE}">{_e(block["note"])}</p>')
+        for item in block.get("items") or []:
+            href = app_url(str(item.get("link") or ""), settings)
+            parts.append(
+                f'<p style="margin:6px 0 0;font-size:14px;line-height:1.45;"><a href="{_e(href)}" '
+                f'style="color:#b5651d;text-decoration:none;">{_e(item.get("title"))}</a></p>'
+            )
+        if block.get("more"):
+            parts.append(f'<p style="{_DIGEST_NOTE}">and {_e(block["more"])} more</p>')
+        parts.append("</div>")
+    label, href = button
+    parts.append(
+        f'<p style="margin:20px 0;"><a href="{_e(href)}" style="display:inline-block;background:#b5651d;'
+        'color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:6px;font-size:15px;">'
+        f"{_e(label)}</a></p>"
+    )
+    words, settings_href = footer
+    parts.append(
+        f'<p style="margin:0;font-size:13px;line-height:1.5;color:#6b6457;">{_e(words)} '
+        f'<a href="{_e(settings_href)}" style="color:#6b6457;">Settings</a>.</p>'
+    )
+    parts.append("</div></body></html>")
+    return "".join(parts)
+
+
+def _digest_text(greeting: str, blocks: list[dict[str, Any]], link: str, footer: str, settings_link: str,
+                 settings: Settings | None = None) -> str:
+    lines = [greeting, ""]
+    for block in blocks:
+        figure = f"{block['figure']} ({block['note']})" if block.get("note") else block["figure"]
+        lines.append(f"{block['label']}: {figure}")
+        for item in block.get("items") or []:
+            lines.append(f"  - {item.get('title')}: {app_url(str(item.get('link') or ''), settings)}")
+        if block.get("more"):
+            lines.append(f"  and {block['more']} more")
+    lines += ["", f"Open your digest: {link}", "", f"{footer} {settings_link}", "", f"— {PRODUCT_NAME}"]
+    return "\n".join(lines) + "\n"
+
+
 def _e(value: Any) -> str:
     return html.escape(str(value or ""), quote=True)
 
@@ -321,6 +458,8 @@ def subject_for(kind: str, params: dict[str, Any]) -> str:
         return f"{count} report{'s' if count != 1 else ''} handed in for review"
     if kind == REPORT_DELIVERY:
         return f"Approved report: “{title}”"
+    if kind == WEEKLY_DIGEST:
+        return digest_title(params.get("waiting"), params.get("overdue"))
     raise ValueError(f"Unknown e-mail kind {kind!r}")
 
 
@@ -494,6 +633,18 @@ def render(
         paragraphs.append(_e(why))
         body = _html(paragraphs, button=(_e(label), _e(link)), quote=_e(quote) if quote else None)
         return Rendered(subject, "\n\n".join(text_parts) + "\n", body)
+
+    if kind == WEEKLY_DIGEST:
+        blocks = _digest_blocks(list(params.get("sections") or []), params.get("coverage"))
+        link = app_url(f"/digest/{params.get('digestId') or ''}", settings)
+        settings_link = app_url("/settings", settings)
+        footer = "You get this every Monday. Turn it off in Settings."
+        text = _digest_text(greeting, blocks, link, footer, settings_link, settings)
+        body = _digest_html(
+            greeting, blocks, button=("Open your digest", link),
+            footer=("You get this every Monday. Turn it off in", settings_link), settings=settings,
+        )
+        return Rendered(subject, text, body)
 
     raise ValueError(f"Unknown e-mail kind {kind!r}")
 

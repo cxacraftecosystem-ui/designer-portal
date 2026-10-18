@@ -9363,6 +9363,14 @@ class WorkshopRepository(
         override suspend fun markRead(body: NotificationReadBody): NotificationReadResultDto = api.markNotificationsRead(body)
     }
 
+    /** The Monday summary's switch: null when it could not be read (the row is then not drawn). */
+    suspend fun weeklyDigestPreference(): WeeklyDigestPreferenceDto? =
+        runCatching { api.weeklyDigestPreference() }.getOrNull()
+
+    /** Save the switch. Throws on failure so the screen can put the old value back. */
+    suspend fun saveWeeklyDigestPreference(enabled: Boolean): WeeklyDigestPreferenceDto =
+        api.saveWeeklyDigestPreference(WeeklyDigestPreferenceBody(enabled))
+
     /** One pass of the activity list for the signed-in account; null when it could not be reached. */
     suspend fun syncNotifications(context: Context): Int? {
         val userId = tokenStore.getUser()?.id ?: return null
