@@ -10,6 +10,8 @@ import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { EMPTY_FUNNEL, FunnelFilters, type FunnelValue, type FunnelWorkshop } from "@/components/FunnelFilters";
 import { PageHeader } from "@/components/PageHeader";
+import { CompletenessFilter } from "@/components/records/CompletenessFilter";
+import { RowCompletenessRing } from "@/components/records/CompletenessRing";
 import { useAuth } from "@/components/AuthProvider";
 import { canCreateRecords } from "@/lib/permissions";
 import { Pagination } from "@/components/Pagination";
@@ -20,6 +22,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useListMemory } from "@/components/hooks/useListMemory";
 import { apiFetch, listResource } from "@/lib/api";
+import { parseCompletenessFilter, type CompletenessFilter as CompletenessValue } from "@/lib/completenessCore";
 import { formatDate } from "@/lib/format";
 import { RECORD_UPDATE_HREF, RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { Artisan, PageResult } from "@/lib/types";
@@ -34,6 +37,7 @@ export default function ArtisansPage() {
   const [page, setPage] = useState(1);
   const [funnel, setFunnel] = useState<FunnelValue>(EMPTY_FUNNEL);
   const [funnelReady, setFunnelReady] = useState(false);
+  const [completeness, setCompleteness] = useState<CompletenessValue>("");
   const [collabId, setCollabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const skipFirstDebounce = useRef(true);
@@ -50,7 +54,7 @@ export default function ArtisansPage() {
    * the same rows. Applied at the funnel's first answer, the one moment this page learns its own
    * defaults; see `useListMemory`.
    */
-  const memory = useListMemory("artisans", { query, applied, page, funnel }, data !== null);
+  const memory = useListMemory("artisans", { query, applied, page, funnel, filters: { completeness } }, data !== null);
 
   async function load() {
     const generation = (currentLoad.current += 1);
@@ -80,6 +84,7 @@ export default function ArtisansPage() {
         search: applied || undefined,
         workshopId: funnel.workshopId || undefined,
         craftId: funnel.craftId || undefined,
+        completeness: completeness || undefined,
         page,
         pageSize: 20
       });
@@ -97,7 +102,7 @@ export default function ArtisansPage() {
     if (!funnelReady) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [funnelReady, page, applied, funnel]);
+  }, [funnelReady, page, applied, funnel, completeness]);
 
   // Live search: debounce typing by 350ms; Enter applies immediately via onSubmit.
   useEffect(() => {
@@ -123,6 +128,7 @@ export default function ArtisansPage() {
         setQuery(remembered.query ?? "");
         setApplied(remembered.applied ?? "");
         setPage(remembered.page ?? 1);
+        setCompleteness(parseCompletenessFilter(remembered.filters?.completeness));
         // The restored query must not be re-debounced into a page-1 reset. Only when it CHANGES the
         // box: an unchanged value runs no effect, and a flag left up would eat the next keystroke.
         if ((remembered.query ?? "") !== query) skipFirstDebounce.current = true;
@@ -189,6 +195,15 @@ export default function ArtisansPage() {
         />
       </div>
       <FunnelFilters value={funnel} onChange={onFunnelChange} />
+      <div className="mb-3">
+        <CompletenessFilter
+          value={completeness}
+          onChange={(next) => {
+            setCompleteness(next);
+            setPage(1);
+          }}
+        />
+      </div>
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
       <section className="panel overflow-hidden">
         {!data ? (
@@ -220,6 +235,7 @@ export default function ArtisansPage() {
                   <OpenableRow key={artisan.id} href={RECORD_VIEW_HREF.artisan(artisan.id)}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
+                        <RowCompletenessRing block={artisan.completeness} />
                         <OpenableRowLink href={RECORD_VIEW_HREF.artisan(artisan.id)}>{artisan.name}</OpenableRowLink>
                         {/* Identity numbers are regulated data and never printed in a list: the chip
                             only answers "is this artisan's card on file?", which is what a

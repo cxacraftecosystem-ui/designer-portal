@@ -5442,13 +5442,17 @@ class WorkshopRepository(
     // list reads above return `.items` alone, so the picker could not tell the 101st artisan from no
     // artisan at all; these keep the total and pass the route's own `search`, so the box can reach
     // every record and the screen can say how many there are.
-    suspend fun artisanPage(search: String?) = api.artisans(pageSize = 100, search = search?.blankToNull())
+    suspend fun artisanPage(search: String?, completeness: String? = null) = api.artisans(pageSize = 100, search = search?.blankToNull(), completeness = completeness)
     suspend fun craftPage(search: String?) = api.crafts(pageSize = 100, search = search?.blankToNull())
-    suspend fun productPage(search: String?) = api.products(pageSize = 100, search = search?.blankToNull())
-    suspend fun toolPage(search: String?) = api.tools(pageSize = 100, search = search?.blankToNull())
+    suspend fun productPage(search: String?, completeness: String? = null) = api.products(pageSize = 100, search = search?.blankToNull(), completeness = completeness)
+    suspend fun toolPage(search: String?, completeness: String? = null) = api.tools(pageSize = 100, search = search?.blankToNull(), completeness = completeness)
     suspend fun processPage(search: String?) = api.processes(pageSize = 100, search = search?.blankToNull())
-    suspend fun workshopPage(search: String?) = api.workshops(pageSize = 100, search = search?.blankToNull())
-    suspend fun interviewPage(search: String?) = api.interviews(pageSize = 100, search = search?.blankToNull())
+    suspend fun workshopPage(search: String?, completeness: String? = null) = api.workshops(pageSize = 100, search = search?.blankToNull(), completeness = completeness)
+    suspend fun interviewPage(search: String?, completeness: String? = null) = api.interviews(pageSize = 100, search = search?.blankToNull(), completeness = completeness)
+    /** The completeness table in force on this phone: the newer of the cached/bundled copy and the server's. */
+    suspend fun completenessRules(context: android.content.Context): CompletenessRules =
+        RecordCompletenessStore.refresh(context) { api.completenessRules().toString() }
+
     suspend fun mediaPage(search: String?) = api.media(pageSize = 100, search = search?.blankToNull())
 
     suspend fun crafts(createdBy: String? = null): List<CraftDto> =

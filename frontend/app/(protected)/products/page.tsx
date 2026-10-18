@@ -14,6 +14,8 @@ import { EmptyState } from "@/components/EmptyState";
 import { EMPTY_FUNNEL, FunnelFilters, type FunnelValue, type FunnelWorkshop } from "@/components/FunnelFilters";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { PageHeader } from "@/components/PageHeader";
+import { CompletenessFilter } from "@/components/records/CompletenessFilter";
+import { RowCompletenessRing } from "@/components/records/CompletenessRing";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
@@ -22,6 +24,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useListMemory } from "@/components/hooks/useListMemory";
 import { apiFetch, listResource } from "@/lib/api";
+import { parseCompletenessFilter, type CompletenessFilter as CompletenessValue } from "@/lib/completenessCore";
 import { formatDate } from "@/lib/format";
 import { RECORD_UPDATE_HREF, RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { PageResult, ProductDocumentation } from "@/lib/types";
@@ -36,6 +39,7 @@ export default function ProductsPage() {
   const [page, setPage] = useState(1);
   const [funnel, setFunnel] = useState<FunnelValue>(EMPTY_FUNNEL);
   const [funnelReady, setFunnelReady] = useState(false);
+  const [completeness, setCompleteness] = useState<CompletenessValue>("");
   const [activePreview, setActivePreview] = useState<PreviewMedia | null>(null);
   const [collabId, setCollabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +64,7 @@ export default function ProductsPage() {
    */
   const currentLoad = useRef(0);
   /** Search, page, funnel and scroll, so Back from a product's page lands on the same rows. */
-  const memory = useListMemory("products", { query, applied, page, funnel }, data !== null);
+  const memory = useListMemory("products", { query, applied, page, funnel, filters: { completeness } }, data !== null);
 
   async function load() {
     const generation = (currentLoad.current += 1);
@@ -71,6 +75,7 @@ export default function ProductsPage() {
         workshopId: funnel.workshopId || undefined,
         craftId: funnel.craftId || undefined,
         artisanId: funnel.artisanId || undefined,
+        completeness: completeness || undefined,
         page,
         pageSize: 20
       });
@@ -88,7 +93,7 @@ export default function ProductsPage() {
     if (!funnelReady) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [funnelReady, page, applied, funnel]);
+  }, [funnelReady, page, applied, funnel, completeness]);
 
   // Live search: debounce typing by 350ms; Enter applies immediately via onSubmit.
   useEffect(() => {
@@ -113,6 +118,7 @@ export default function ProductsPage() {
       setApplied(remembered.applied ?? "");
       setFunnel(remembered.funnel ?? next);
       setPage(remembered.page ?? 1);
+      setCompleteness(parseCompletenessFilter(remembered.filters?.completeness));
       setFunnelReady(true);
       return;
     }
@@ -171,6 +177,15 @@ export default function ProductsPage() {
         />
       </div>
       <FunnelFilters value={funnel} onChange={onFunnelChange} showArtisan />
+      <div className="mb-3">
+        <CompletenessFilter
+          value={completeness}
+          onChange={(next) => {
+            setCompleteness(next);
+            setPage(1);
+          }}
+        />
+      </div>
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
       <section className="panel overflow-hidden">
         {!data ? (
@@ -201,7 +216,10 @@ export default function ProductsPage() {
                   // Update, Discuss, Delete and the preview tiles keep their own clicks (`OpenableRow`).
                   <OpenableRow key={product.id} href={RECORD_VIEW_HREF.product(product.id)}>
                     <td className="px-4 py-3">
-                      <OpenableRowLink href={RECORD_VIEW_HREF.product(product.id)}>{product.productName}</OpenableRowLink>
+                      <div className="flex items-center gap-2">
+                        <RowCompletenessRing block={product.completeness} />
+                        <OpenableRowLink href={RECORD_VIEW_HREF.product(product.id)}>{product.productName}</OpenableRowLink>
+                      </div>
                       <div className="text-xs text-ink-500">{product.localName ?? product.productType}</div>
                     </td>
                     <td className="px-4 py-3 text-ink-700">{product.craftName}</td>

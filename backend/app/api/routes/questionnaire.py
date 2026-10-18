@@ -37,6 +37,8 @@ from app.schemas.questionnaire import (
     QuestionnaireSectionUpdate,
 )
 from app.services.access import guard_record_edit, owner_download_scope
+from app.services.completeness import attach as attach_completeness
+from app.services.completeness import filter_or_422 as completeness_filter
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.questionnaire_consolidation import (
@@ -947,6 +949,8 @@ async def list_interviews(
     # My Activity page had to fetch page 1 of the WHOLE repository and sift it client-side, which
     # silently under-reported the moment the repository outgrew one page.
     createdBy: str | None = None,
+    # THE COMPLETENESS FILTER (2026-10-18): incomplete | required | complete. See ``list_artisans``.
+    completeness: str | None = None,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -989,6 +993,9 @@ async def list_interviews(
         where["status"] = enum_filter_or_422(statusFilter, RECORD_STATUSES)
     if createdBy:
         where["createdById"] = createdBy
+    complete_clause = completeness_filter("interview", completeness)
+    if complete_clause:
+        and_filters.append(complete_clause)
     if and_filters:
         where["AND"] = and_filters
     add_date_range(where, "interviewDate", dateFrom, dateTo)
@@ -1007,7 +1014,10 @@ async def list_interviews(
         media_url_owners(current_user),
     )
     return page_payload(
-        public_encode(items, current_user, media_urls=media_urls), total, page, page_size
+        await attach_completeness("interview", public_encode(items, current_user, media_urls=media_urls)),
+        total,
+        page,
+        page_size,
     )
 
 
@@ -1181,7 +1191,9 @@ async def merge_into_interview(
     await hydrate_relations([canonical], RELATIONS)
     # The viewer, so the client that just folded into the shared entry can DRAW its recordings rather
     # than being told they exist. See the banner above ``_DUPLICATE_SET_DETAIL``.
-    return public_encode(canonical, current_user, media_urls=await media_url_owners(current_user))
+    return await attach_completeness(
+        "interview", public_encode(canonical, current_user, media_urls=await media_url_owners(current_user))
+    )
 
 
 @router.post("/interviews", status_code=status.HTTP_201_CREATED)
@@ -1274,7 +1286,9 @@ async def create_interview(
     # The row we just inserted IS the response; only its links and answers were written afterwards,
     # and those load in one wave here instead of a re-read followed by six more statements.
     await hydrate_relations([created], RELATIONS)
-    return public_encode(created, current_user, media_urls=await media_url_owners(current_user))
+    return await attach_completeness(
+        "interview", public_encode(created, current_user, media_urls=await media_url_owners(current_user))
+    )
 
 
 @router.get("/interviews/by-artisans")
@@ -1316,7 +1330,9 @@ async def interview_for_artisan_set(
     await hydrate_relations([interview], RELATIONS)
     # This is the route a client calls BEFORE offering to create, so it is the first place the
     # existing entry's recordings are drawn. See the banner above ``_DUPLICATE_SET_DETAIL``.
-    return public_encode(interview, current_user, media_urls=await media_url_owners(current_user))
+    return await attach_completeness(
+        "interview", public_encode(interview, current_user, media_urls=await media_url_owners(current_user))
+    )
 
 
 COMPLETION_STATUSES = {"COMPLETED", "NEEDS_REVIEW", "NEEDS_REDO"}
@@ -1679,7 +1695,9 @@ async def get_interview(
     await hydrate_relations([interview], RELATIONS)
     # The detail read — the one screen that plays the sitting back. See the banner above
     # ``_DUPLICATE_SET_DETAIL``.
-    return public_encode(interview, current_user, media_urls=await media_url_owners(current_user))
+    return await attach_completeness(
+        "interview", public_encode(interview, current_user, media_urls=await media_url_owners(current_user))
+    )
 
 
 @router.patch("/interviews/{interview_id}")
@@ -1829,7 +1847,9 @@ async def update_interview(
     # in one parallel wave rather than letting the include walk them one after another.
     updated = await db.questionnaireinterview.find_unique(where={"id": interview_id})
     await hydrate_relations([updated], RELATIONS)
-    return public_encode(updated, current_user, media_urls=await media_url_owners(current_user))
+    return await attach_completeness(
+        "interview", public_encode(updated, current_user, media_urls=await media_url_owners(current_user))
+    )
 
 
 # --- Folding one interview into another, on the researcher's explicit instruction ----------------

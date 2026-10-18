@@ -232,6 +232,22 @@ import androidx.core.content.FileProvider
 import com.designprototype.workshop.data.ApiClient
 import com.designprototype.workshop.data.OfflineQueueResult
 import com.designprototype.workshop.data.ReadCache
+import com.designprototype.workshop.data.CompletenessDto
+import com.designprototype.workshop.data.CompletenessFilter
+import com.designprototype.workshop.data.CompletenessKind
+import com.designprototype.workshop.data.RecordCompletenessStore
+import com.designprototype.workshop.data.completenessSentence
+import com.designprototype.workshop.data.evaluateCompleteness
+import com.designprototype.workshop.data.liveCompletenessCounts
+import com.designprototype.workshop.ui.CompletenessAnchor
+import com.designprototype.workshop.ui.CompletenessFilterChips
+import com.designprototype.workshop.ui.CompletenessFilterMemory
+import com.designprototype.workshop.ui.CompletenessMeter
+import com.designprototype.workshop.ui.CompletenessRing
+import com.designprototype.workshop.ui.LiveCompletenessLine
+import com.designprototype.workshop.ui.ProvideCompletenessFocus
+import com.designprototype.workshop.ui.rememberCompletenessRules
+import com.designprototype.workshop.ui.rememberImageCount
 import com.designprototype.workshop.data.readCacheNotice
 import com.designprototype.workshop.data.unfiledLinkReason
 import com.designprototype.workshop.data.UNFILED_BY_CHOICE
@@ -1097,7 +1113,13 @@ private sealed interface Screen {
         val from: Screen? = null
     ) : Screen
     /** The form, reached from [View]'s Update or the picker's; [from] is where Back returns. */
-    data class Edit(val mode: EntryMode, val recordId: String, val from: Screen? = null) : Screen
+    data class Edit(
+        val mode: EntryMode,
+        val recordId: String,
+        val from: Screen? = null,
+        /** A completeness rule key (`craftStartDate`, `photo`, …): the field the form opens at. */
+        val focus: String? = null
+    ) : Screen
     // Hamburger-only screens (not on the dashboard).
     data object MyActivity : Screen
     data object ToolAssign : Screen
@@ -4471,11 +4493,11 @@ private fun HomeScreen(
                 recordId = s.recordId,
                 canUpdate = RecordOpen.mayUpdate(s.mode.name, user),
                 showProvenance = canViewProvenance,
-                onUpdate = { message = null; screen = Screen.Edit(s.mode, s.recordId, from = s) },
+                onUpdate = { focus -> message = null; screen = Screen.Edit(s.mode, s.recordId, from = s, focus = focus) },
                 onError = { showError(it) }
             )
 
-            is Screen.Create -> when (s.mode) {
+            is Screen.Create -> ProvideCompletenessFocus(null, key = s) { when (s.mode) {
                 EntryMode.CRAFT -> CraftForm(
                     repository = repository,
                     onDone = { message = "Craft saved"; refresh(); refreshLookups(); goDashboard() },
@@ -4714,9 +4736,9 @@ private fun HomeScreen(
                         onEnable = { requestAdminView(true) }
                     )
                 }
-            }
+            } }
 
-            is Screen.Edit -> if (s.mode == EntryMode.QUESTIONNAIRE) {
+            is Screen.Edit -> ProvideCompletenessFocus(s.focus, key = s) { if (s.mode == EntryMode.QUESTIONNAIRE) {
                 InterviewEditLoader(
                     repository = repository,
                     recordId = s.recordId,
@@ -4749,7 +4771,7 @@ private fun HomeScreen(
                 canDelete = isAdmin && adminChrome,
                 onDone = { message = "${s.mode.label} updated"; refresh(); refreshLookups(); goDashboard() },
                 onError = { showError(it) }
-            )
+            ) }
 
             is Screen.MyActivity -> MyActivityScreen(
                 repository = repository,
@@ -10167,6 +10189,10 @@ private fun LoadingCard(mode: EntryMode, failed: String? = null, onRetry: () -> 
     }
 }
 
+/** One row of the record picker: the record, its label, and its completeness block when it has one. */
+@kotlinx.serialization.Serializable
+private data class PickerRow(val id: String, val label: String, val completeness: CompletenessDto? = null)
+
 /**
  * The picker's read, with the last UNFILTERED list this phone read served when nothing reaches the
  * server (see [ReadCache]). A search is never answered from the device.
@@ -10175,21 +10201,19 @@ private suspend fun pickerReadCached(
     context: Context,
     mode: EntryMode,
     search: String?,
+    /** The completeness filter's wire value; each filtered list keeps its own copy. */
+    completeness: String? = null,
     onCached: (String) -> Unit,
-    fetch: suspend () -> Pair<Int, List<Pair<String, String>>>,
-): Pair<Int, List<Pair<String, String>>> {
+    fetch: suspend () -> Pair<Int, List<PickerRow>>,
+): Pair<Int, List<PickerRow>> {
     if (search != null) return fetch()
     val read = ReadCache.read(
         context,
-        "picker:${mode.name}",
+        // `picker2`: rows carry their completeness block now, so the older copies are not read back.
+        "picker2:${mode.name}" + (completeness?.let { ":$it" } ?: ""),
         kotlinx.serialization.builtins.PairSerializer(
             kotlinx.serialization.serializer<Int>(),
-            kotlinx.serialization.builtins.ListSerializer(
-                kotlinx.serialization.builtins.PairSerializer(
-                    kotlinx.serialization.serializer<String>(),
-                    kotlinx.serialization.serializer<String>(),
-                )
-            ),
+            kotlinx.serialization.builtins.ListSerializer(PickerRow.serializer()),
         ),
         fetch,
     )
@@ -10220,14 +10244,21 @@ private fun RecordPickerScreen(
     var loading by remember(mode) { mutableStateOf(true) }
     var loadError by remember(mode) { mutableStateOf<String?>(null) }
     var attempt by remember(mode) { mutableStateOf(0) }
-    var options by remember(mode) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var rows by remember(mode) { mutableStateOf<List<PickerRow>>(emptyList()) }
+    val options = remember(rows) { rows.map { it.id to it.label } }
     var total by remember(mode) { mutableStateOf(0) }
     var selected by remember(mode) { mutableStateOf("") }
 
     val pickerContext = LocalContext.current.applicationContext
+    // ALL · INCOMPLETE · MISSING REQUIRED, remembered per record kind on this phone. Only the five
+    // kinds the completeness table covers draw the chips; the rest list every record as before.
+    val completenessKind = CompletenessKind.forMode(mode.name)
+    var completenessFilter by remember(mode) { mutableStateOf(CompletenessFilterMemory.read(pickerContext, mode.name)) }
+    // Keep the table this phone evaluates with fresh while there is signal; offline it is the cached copy.
+    LaunchedEffect(Unit) { runCatching { repository.completenessRules(pickerContext) } }
     /** Set when the list is this phone's saved copy — see [ReadCache]. */
     var cachedNote by remember(mode) { mutableStateOf<String?>(null) }
-    LaunchedEffect(mode, query, attempt) {
+    LaunchedEffect(mode, query, attempt, completenessFilter) {
         // Typing settles before the server is asked, so one name is one request rather than six.
         if (query.isNotBlank()) delay(350)
         loading = true
@@ -10237,18 +10268,19 @@ private fun RecordPickerScreen(
         runCatching {
           // The last unfiltered list this phone read is offered with no signal, so a record can be
           // opened for a correction (see [cachedRecordForCorrection]); a search is always asked live.
-          pickerReadCached(pickerContext, mode, search, onCached = { cachedNote = it }) {
+          val wire = completenessFilter.wire.takeIf { completenessKind != null }
+          pickerReadCached(pickerContext, mode, search, wire, onCached = { cachedNote = it }) {
             when (mode) {
-                EntryMode.ARTISAN -> repository.artisanPage(search).let { p -> p.total to p.items.map { it.id to "${it.name} · ${it.place}" } }
-                EntryMode.CRAFT -> repository.craftPage(search).let { p -> p.total to p.items.map { it.id to (it.name + (it.place?.let { pl -> " · $pl" } ?: "")) } }
-                EntryMode.PRODUCT -> repository.productPage(search).let { p -> p.total to p.items.map { it.id to "${it.productName} · ${it.artisanName}" } }
-                EntryMode.PROCESS -> repository.processPage(search).let { p -> p.total to p.items.map { it.id to (it.name + (it.product?.productName?.let { pr -> " · $pr" } ?: "")) } }
-                EntryMode.TOOL -> repository.toolPage(search).let { p -> p.total to p.items.map { it.id to "${it.toolkitName} · ${it.artisanName}" } }
-                EntryMode.WORKSHOP -> repository.workshopPage(search).let { p -> p.total to p.items.map { it.id to it.title.ifBlank { "Untitled workshop" } } }
+                EntryMode.ARTISAN -> repository.artisanPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.name} · ${it.place}", it.completeness) } }
+                EntryMode.CRAFT -> repository.craftPage(search).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.place?.let { pl -> " · $pl" } ?: "")) } }
+                EntryMode.PRODUCT -> repository.productPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.productName} · ${it.artisanName}", it.completeness) } }
+                EntryMode.PROCESS -> repository.processPage(search).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.product?.productName?.let { pr -> " · $pr" } ?: "")) } }
+                EntryMode.TOOL -> repository.toolPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.toolkitName} · ${it.artisanName}", it.completeness) } }
+                EntryMode.WORKSHOP -> repository.workshopPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, it.title.ifBlank { "Untitled workshop" }, it.completeness) } }
                 EntryMode.MEDIA -> repository.mediaPage(search).let { p ->
-                    p.total to p.items.map { m -> m.id to (m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename) }
+                    p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename) }
                 }
-                EntryMode.QUESTIONNAIRE -> repository.interviewPage(search).let { p ->
+                EntryMode.QUESTIONNAIRE -> repository.interviewPage(search, wire).let { p ->
                     // Idempotent: all saved interview records for the same set of artisan(s) collapse
                     // into one entry (open the most recent); the label notes how many sessions exist.
                     p.total to p.items.groupBy { interviewGroupKey(it) }.values.map { group ->
@@ -10259,15 +10291,15 @@ private fun RecordPickerScreen(
                             rep.title.takeIf { it.isNotBlank() },
                             if (group.size > 1) "${group.size} sessions" else null
                         )
-                        rep.id to parts.joinToString(" · ").ifBlank { "Untitled interview" }
+                        PickerRow(rep.id, parts.joinToString(" · ").ifBlank { "Untitled interview" }, rep.completeness)
                     }
                 }
                 else -> 0 to emptyList()
             }
           }
-        }.onSuccess { (count, rows) ->
+        }.onSuccess { (count, fetched) ->
             // The server answers newest first; that order is what "Recently added" means below.
-            options = rows
+            rows = fetched
             total = count
         }.onFailure {
             if (it is kotlinx.coroutines.CancellationException) throw it
@@ -10292,11 +10324,19 @@ private fun RecordPickerScreen(
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Search),
             modifier = Modifier.fillMaxWidth()
         )
+        if (completenessKind != null) {
+            CompletenessFilterChips(value = completenessFilter) { next ->
+                completenessFilter = next
+                CompletenessFilterMemory.write(pickerContext, mode.name, next)
+            }
+        }
         cachedNote?.let { CachedCopyNote(it) }
         when {
             loadError != null -> LoadFailedCard(message = loadError.orEmpty(), onRetry = { attempt++ })
             loading && options.isEmpty() -> Text("Loading $noun records…", color = Muted)
             options.isEmpty() && query.isNotBlank() -> Text("No $noun record matches “${query.trim()}”.", color = Muted)
+            options.isEmpty() && completenessFilter != CompletenessFilter.ALL && completenessKind != null ->
+                Text("Every $noun record has these fields.", color = Muted)
             options.isEmpty() -> Text("There are no $noun records yet.", color = Muted)
             else -> {
                 DropdownField(
@@ -10320,7 +10360,9 @@ private fun RecordPickerScreen(
                     )
                 }
                 Text(if (query.isBlank()) "Recently added" else "Matches", color = Muted, fontSize = 12.sp)
-                options.take(if (query.isBlank()) 12 else 50).forEach { (id, label) ->
+                rows.take(if (query.isBlank()) 12 else 50).forEach { row ->
+                    val id = row.id
+                    val label = row.label
                     ElevatedCard(
                         colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard),
                         modifier = Modifier.fillMaxWidth()
@@ -10338,6 +10380,16 @@ private fun RecordPickerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                            row.completeness?.let { block ->
+                                CompletenessRing(
+                                    percent = block.percent,
+                                    size = 18.dp,
+                                    stroke = 3.dp,
+                                    showLabel = false,
+                                    description = completenessSentence(block),
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                )
+                            }
                             if (canUpdate) {
                                 TextButton(onClick = { onUpdate(id) }, modifier = Modifier.heightIn(min = 48.dp)) {
                                     Text(RecordOpen.UPDATE_LABEL, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -10369,12 +10421,16 @@ private fun RecordViewScreen(
     recordId: String,
     canUpdate: Boolean,
     showProvenance: Boolean,
-    onUpdate: () -> Unit,
+    /** Opens the form; the key is the field to open at (a completeness chip), or null. */
+    onUpdate: (String?) -> Unit,
     onError: (String) -> Unit
 ) {
+    // The record's completeness block, as the detail read below returns it (and caches it with the
+    // record, so it is there offline too). Only the five kinds the shared table covers have one.
+    var completeness by remember(recordId) { mutableStateOf<CompletenessDto?>(null) }
     if (canUpdate) {
         Button(
-            onClick = onUpdate,
+            onClick = { onUpdate(null) },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
         ) {
             Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -10382,10 +10438,14 @@ private fun RecordViewScreen(
             Text("${RecordOpen.UPDATE_LABEL} this ${mode.label.lowercase()}")
         }
     }
+    completeness?.let { block ->
+        CompletenessMeter(block = block, canUpdate = canUpdate, onUpdate = { key -> onUpdate(key) })
+    }
     ViewDataDetail(
         repository = repository,
         mode = mode,
         recordId = recordId,
+        onCompleteness = { completeness = it },
         // FALSE, not the admin's override: a tap on a matrix cell changes the completion status, and
         // this page changes nothing. The override stays on View Data and the forms.
         canOverrideCompletion = false,
@@ -11448,6 +11508,9 @@ private fun ArtisanForm(
     val craftFocus = remember { FocusRequester() }
     val dosFocus = remember { FocusRequester() }
     val dontsFocus = remember { FocusRequester() }
+    // The two dates' typed boxes, so a completeness chip lands the caret in the missing one.
+    val dateOfBirthFocus = remember { FocusRequester() }
+    val craftStartFocus = remember { FocusRequester() }
     val emailFocus = remember { FocusRequester() }
     val aadhaarFocus = remember { FocusRequester() }
     val pehchanFocus = remember { FocusRequester() }
@@ -11670,7 +11733,18 @@ private fun ArtisanForm(
             link.isDirty() || media.uris.isNotEmpty()
     )
 
+    val completenessRules = rememberCompletenessRules()
+    val liveCompleteness = completenessRules?.let { rules ->
+        evaluateCompleteness(
+            rules,
+            CompletenessKind.ARTISAN,
+            mapOf("dateOfBirth" to dateOfBirth, "craftStartDate" to craftStartDate, "craftId" to craftId.ifBlank { newCraftName }, "dos" to joinNumbered(dosItems), "donts" to joinNumbered(dontsItems), "locationId" to (media.location ?: editing?.location)),
+            liveCompletenessCounts(rules, CompletenessKind.ARTISAN, editing?.completeness, mapOf("photos" to rememberImageCount(media.uris))),
+        )
+    }
+
     RecordCard(title = if (isEdit) "Update artisan" else "Add artisan") {
+        liveCompleteness?.let { LiveCompletenessLine(it) }
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
@@ -11688,22 +11762,24 @@ private fun ArtisanForm(
           ("Or new craft name") is why this field never LOST a record — but a designer who reads an
           empty picker as "this craft is not in the system" types a duplicate of a craft that is.
         */
-        RegisterDropdownField(
-            label = "Craft *",
-            noun = "crafts",
-            options = crafts.map { it.id to it.name },
-            selectedValue = craftId,
-            load = craftRegister,
-            placeholder = "Select existing craft",
-            onSelect = { picked ->
-                craftId = picked
-                // An explicit pick replaces the remembered craft and retires the banner: from here on
-                // what is on screen is the researcher's own choice, not a suggestion.
-                crafts.firstOrNull { it.id == picked }?.let {
-                    carry.remember(CarryContext(craftId = it.id, craftName = it.name), explicit = true)
+        CompletenessAnchor("craft", craftFocus) {
+            RegisterDropdownField(
+                label = "Craft *",
+                noun = "crafts",
+                options = crafts.map { it.id to it.name },
+                selectedValue = craftId,
+                load = craftRegister,
+                placeholder = "Select existing craft",
+                onSelect = { picked ->
+                    craftId = picked
+                    // An explicit pick replaces the remembered craft and retires the banner: from here on
+                    // what is on screen is the researcher's own choice, not a suggestion.
+                    crafts.firstOrNull { it.id == picked }?.let {
+                        carry.remember(CarryContext(craftId = it.id, craftName = it.name), explicit = true)
+                    }
                 }
-            }
-        )
+            )
+        }
         OutlinedTextField(
             value = newCraftName,
             onValueChange = { newCraftName = it },
@@ -11737,24 +11813,30 @@ private fun ArtisanForm(
          * "Experience (months)", whose empty option is "Not stated". `shared/artisan-form-contract.json`
          * holds both portals and both clients to it.
          */
-        CalendarField(
-            label = "Date of birth *",
-            value = dateOfBirth,
-            onValueChange = { dateOfBirth = it; dateOfBirthError = null },
-            // Nobody is born tomorrow, and a future date derives nothing at all. The UTC day, because
-            // that is the day the server derives the age against.
-            maximum = java.time.LocalDate.now(java.time.ZoneOffset.UTC),
-            clearable = true,
-            supportingText = dateOfBirthError ?: "Shown as an age."
-        )
-        CalendarField(
-            label = "Craft start date *",
-            value = craftStartDate,
-            onValueChange = { craftStartDate = it; craftStartDateError = null },
-            maximum = java.time.LocalDate.now(java.time.ZoneOffset.UTC),
-            clearable = true,
-            supportingText = craftStartDateError ?: "Shown as years of experience."
-        )
+        CompletenessAnchor("dateOfBirth", dateOfBirthFocus) {
+            CalendarField(
+                label = "Date of birth *",
+                modifier = Modifier.focusRequester(dateOfBirthFocus),
+                value = dateOfBirth,
+                onValueChange = { dateOfBirth = it; dateOfBirthError = null },
+                // Nobody is born tomorrow, and a future date derives nothing at all. The UTC day, because
+                // that is the day the server derives the age against.
+                maximum = java.time.LocalDate.now(java.time.ZoneOffset.UTC),
+                clearable = true,
+                supportingText = dateOfBirthError ?: "Shown as an age."
+            )
+        }
+        CompletenessAnchor("craftStartDate", craftStartFocus) {
+            CalendarField(
+                label = "Craft start date *",
+                modifier = Modifier.focusRequester(craftStartFocus),
+                value = craftStartDate,
+                onValueChange = { craftStartDate = it; craftStartDateError = null },
+                maximum = java.time.LocalDate.now(java.time.ZoneOffset.UTC),
+                clearable = true,
+                supportingText = craftStartDateError ?: "Shown as years of experience."
+            )
+        }
         // WHY THE STATED PAIR STAYS, AND STAYS ENABLED, on a form whose experience is derived from
         // the date above: an artisan who says "about thirty years" is the ordinary case, and a
         // disabled box is left out of the body, which `ARTISAN_CLEARABLE_COLUMNS` reads as "clear it".
@@ -11907,25 +11989,33 @@ private fun ArtisanForm(
                 onKeepPhotograph = keepIdentityPhotograph,
             )
         }
-        NumberedListInput(
-            label = "Do's",
-            items = dosItems,
-            error = dosError,
-            focusRequester = dosFocus,
-            helper = "What the artisan has learnt to do. One point per line."
-        ) { dosItems = it; dosError = null }
-        NumberedListInput(
-            label = "Don'ts",
-            items = dontsItems,
-            error = dontsError,
-            focusRequester = dontsFocus,
-            helper = "What the artisan avoids. One point per line."
-        ) { dontsItems = it; dontsError = null }
+        CompletenessAnchor("dos", dosFocus) {
+            NumberedListInput(
+                label = "Do's",
+                items = dosItems,
+                error = dosError,
+                focusRequester = dosFocus,
+                helper = "What the artisan has learnt to do. One point per line."
+            ) { dosItems = it; dosError = null }
+        }
+        CompletenessAnchor("donts", dontsFocus) {
+            NumberedListInput(
+                label = "Don'ts",
+                items = dontsItems,
+                error = dontsError,
+                focusRequester = dontsFocus,
+                helper = "What the artisan avoids. One point per line."
+            ) { dontsItems = it; dontsError = null }
+        }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "artisan", recordId = editing!!.id, onError = onError)
         }
-        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
+        CompletenessAnchor("photo") {
+            CompletenessAnchor("location") {
+                MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
+            }
+        }
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
             idleLabel = if (isEdit) "Update artisan" else "Save artisan"
@@ -12176,7 +12266,18 @@ private fun WorkshopForm(
         WorkshopMappingCard(repository = repository, onOpenRecord = onOpenRecord, onError = onError)
     }
 
+    val completenessRules = rememberCompletenessRules()
+    val liveCompleteness = completenessRules?.let { rules ->
+        evaluateCompleteness(
+            rules,
+            CompletenessKind.WORKSHOP,
+            mapOf("startDate" to startDate, "endDate" to endDate),
+            liveCompletenessCounts(rules, CompletenessKind.WORKSHOP, editing?.completeness, mapOf("artisans" to selectedArtisans.size, "crafts" to selectedCrafts.size, "photos" to rememberImageCount(media.uris))),
+        )
+    }
+
     RecordCard(title = if (isEdit) "Update workshop" else "Add workshop") {
+        liveCompleteness?.let { LiveCompletenessLine(it) }
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
@@ -12206,44 +12307,54 @@ private fun WorkshopForm(
         // Web parity (components/forms/DateRangeField): the two dates are one answer — how long the
         // workshop ran — and they are labelled as one before being split into start and end.
         Text("Workshop duration", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f)) {
-                DatePickerField("Start date", startDate) { picked ->
-                    startDate = picked
-                    if (endDate == null || endDate!!.isBefore(picked)) endDate = picked
+        CompletenessAnchor("startDate") {
+            CompletenessAnchor("endDate") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        DatePickerField("Start date", startDate) { picked ->
+                            startDate = picked
+                            if (endDate == null || endDate!!.isBefore(picked)) endDate = picked
+                        }
+                    }
+                    Box(modifier = Modifier.weight(1f)) {
+                        DatePickerField("End date", endDate) { endDate = it }
+                    }
                 }
-            }
-            Box(modifier = Modifier.weight(1f)) {
-                DatePickerField("End date", endDate) { endDate = it }
             }
         }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
         // `Workshop.description` — the narrative of what happened at the workshop, and it prints.
         TextInput("Description", description, minLines = 3, rich = true) { description = it }
         MultiNoteInput(value = notes) { notes = it }
-        ArtisanMultiSelectField(
-            label = "Linked artisans",
-            artisans = artisans,
-            selectedIds = selectedArtisans
-        ) { id ->
-            selectedArtisans = if (selectedArtisans.contains(id)) selectedArtisans - id else selectedArtisans + id
+        CompletenessAnchor("artisans") {
+            ArtisanMultiSelectField(
+                label = "Linked artisans",
+                artisans = artisans,
+                selectedIds = selectedArtisans
+            ) { id ->
+                selectedArtisans = if (selectedArtisans.contains(id)) selectedArtisans - id else selectedArtisans + id
+            }
         }
-        CheckboxMultiSelectField(
-            label = "Crafts covered",
-            // The repository's own sentence for "answered, and this table has none" — see
-            // `unscopedEmptyLine`'s KDoc, which quotes this exact hand-rolled string (and its
-            // sibling below) as the two worked examples of the bug it exists to fix: a claim about
-            // the whole craft table, asserted from a read that this control never checks succeeded.
-            emptyMessage = unscopedEmptyLine("crafts"),
-            options = crafts.map { it.id to (it.name + (it.place?.let { p -> " · $p" } ?: "")) },
-            selectedIds = selectedCrafts
-        ) { id ->
-            selectedCrafts = if (selectedCrafts.contains(id)) selectedCrafts - id else selectedCrafts + id
+        CompletenessAnchor("crafts") {
+            CheckboxMultiSelectField(
+                label = "Crafts covered",
+                // The repository's own sentence for "answered, and this table has none" — see
+                // `unscopedEmptyLine`'s KDoc, which quotes this exact hand-rolled string (and its
+                // sibling below) as the two worked examples of the bug it exists to fix: a claim about
+                // the whole craft table, asserted from a read that this control never checks succeeded.
+                emptyMessage = unscopedEmptyLine("crafts"),
+                options = crafts.map { it.id to (it.name + (it.place?.let { p -> " · $p" } ?: "")) },
+                selectedIds = selectedCrafts
+            ) { id ->
+                selectedCrafts = if (selectedCrafts.contains(id)) selectedCrafts - id else selectedCrafts + id
+            }
         }
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "workshop", recordId = editing!!.id, onError = onError)
         }
-        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
+        CompletenessAnchor("photo") {
+            MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
+        }
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
             idleLabel = if (isEdit) "Update workshop" else "Save workshop"
@@ -12559,7 +12670,18 @@ private fun ProductForm(
         productSig() != initialSig || link.isDirty() || media.uris.isNotEmpty()
     )
 
+    val completenessRules = rememberCompletenessRules()
+    val liveCompleteness = completenessRules?.let { rules ->
+        evaluateCompleteness(
+            rules,
+            CompletenessKind.PRODUCT,
+            mapOf("artisanId" to artisanId, "sellingPrice" to sellingPrice, "costOfMaking" to costOfMaking, "timeTakenToCompleteProduct" to timeTaken, "lengthInches" to length, "breadthInches" to breadth, "heightInches" to height, "marketDemand" to marketDemand),
+            liveCompletenessCounts(rules, CompletenessKind.PRODUCT, editing?.completeness, mapOf("photos" to rememberImageCount(media.uris))),
+        )
+    }
+
     RecordCard(title = if (isEdit) "Update product" else "Add product") {
+        liveCompleteness?.let { LiveCompletenessLine(it) }
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
@@ -12591,29 +12713,31 @@ private fun ProductForm(
         } else {
             artisans
         }
-        DropdownField(
-            label = "Linked artisan (fills artisan + place)",
-            options = artisanOptionsForCraft.map { it.id to "${it.name} · ${it.place}" },
-            selectedValue = artisanId,
-            placeholder = if (craftId.isBlank()) "Select a linked craft first" else "Unlinked / type below",
-            enabled = craftId.isNotBlank()
-        ) { id ->
-            artisanId = id
-            artisans.firstOrNull { it.id == id }?.let {
-                artisanName = it.name
-                place = it.place
-                // An explicit pick replaces the remembered context and retires the banner: from here
-                // on the artisan on screen is the researcher's own choice, not a suggestion.
-                carry.remember(
-                    CarryContext(
-                        artisanId = it.id,
-                        artisanName = it.name,
-                        place = it.place,
-                        craftId = craftId.ifBlank { null },
-                        craftName = craftName.blankToNull()
-                    ),
-                    explicit = true
-                )
+        CompletenessAnchor("artisan") {
+            DropdownField(
+                label = "Linked artisan (fills artisan + place)",
+                options = artisanOptionsForCraft.map { it.id to "${it.name} · ${it.place}" },
+                selectedValue = artisanId,
+                placeholder = if (craftId.isBlank()) "Select a linked craft first" else "Unlinked / type below",
+                enabled = craftId.isNotBlank()
+            ) { id ->
+                artisanId = id
+                artisans.firstOrNull { it.id == id }?.let {
+                    artisanName = it.name
+                    place = it.place
+                    // An explicit pick replaces the remembered context and retires the banner: from here
+                    // on the artisan on screen is the researcher's own choice, not a suggestion.
+                    carry.remember(
+                        CarryContext(
+                            artisanId = it.id,
+                            artisanName = it.name,
+                            place = it.place,
+                            craftId = craftId.ifBlank { null },
+                            craftName = craftName.blankToNull()
+                        ),
+                        explicit = true
+                    )
+                }
             }
         }
         if (craftId.isNotBlank() && artisanOptionsForCraft.isEmpty()) {
@@ -12621,11 +12745,15 @@ private fun ProductForm(
         }
         RequiredInput("Artisan name", artisanName, artisanNameError, artisanNameFocus, titleCased = true) { artisanName = it }
         RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
-        TextInput("Time taken to complete", timeTaken) { timeTaken = it }
+        CompletenessAnchor("timeTaken") {
+            TextInput("Time taken to complete", timeTaken) { timeTaken = it }
+        }
         TextInput("Size", size) { size = it }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f)) { TextInput("Length (inches)", length, keyboardType = KeyboardType.Decimal, dictate = false) { length = it } }
-            Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal, dictate = false) { breadth = it } }
+        CompletenessAnchor("dimensions") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(modifier = Modifier.weight(1f)) { TextInput("Length (inches)", length, keyboardType = KeyboardType.Decimal, dictate = false) { length = it } }
+                Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal, dictate = false) { breadth = it } }
+            }
         }
         TextInput("Height (inches)", height, keyboardType = KeyboardType.Decimal, dictate = false) { height = it }
         /*
@@ -12675,11 +12803,17 @@ private fun ProductForm(
             },
             onHeight = { value, marker -> height = numToText(value); markers.accept("heightInches", height, marker) }
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f)) { TextInput("Cost of making", costOfMaking, keyboardType = KeyboardType.Decimal, dictate = false) { costOfMaking = it } }
-            Box(modifier = Modifier.weight(1f)) { TextInput("Selling price", sellingPrice, keyboardType = KeyboardType.Decimal, dictate = false) { sellingPrice = it } }
+        CompletenessAnchor("sellingPrice") {
+            CompletenessAnchor("costOfMaking") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Box(modifier = Modifier.weight(1f)) { TextInput("Cost of making", costOfMaking, keyboardType = KeyboardType.Decimal, dictate = false) { costOfMaking = it } }
+                    Box(modifier = Modifier.weight(1f)) { TextInput("Selling price", sellingPrice, keyboardType = KeyboardType.Decimal, dictate = false) { sellingPrice = it } }
+                }
+            }
         }
-        DropdownField("Market demand", marketDemandOptions.map { it to it }, marketDemand, includeNone = false) { marketDemand = it }
+        CompletenessAnchor("marketDemand") {
+            DropdownField("Market demand", marketDemandOptions.map { it to it }, marketDemand, includeNone = false) { marketDemand = it }
+        }
         /*
          * THE PRODUCT'S FOUR NARRATIVE COLUMNS, ALL FOUR WITH BOTH CONTROLS.
          *
@@ -12697,7 +12831,9 @@ private fun ProductForm(
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "product", recordId = editing!!.id, onError = onError)
         }
-        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
+        CompletenessAnchor("photo") {
+            MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
+        }
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
             idleLabel = if (isEdit) "Update product" else "Save product"
@@ -13361,7 +13497,18 @@ private fun ToolForm(
             media.uris.isNotEmpty() || stages.uris.isNotEmpty()
     )
 
+    val completenessRules = rememberCompletenessRules()
+    val liveCompleteness = completenessRules?.let { rules ->
+        evaluateCompleteness(
+            rules,
+            CompletenessKind.TOOL,
+            mapOf("artisanId" to artisanId, "localName" to localName, "material" to material, "lengthInches" to length, "breadthInches" to breadth, "heightInches" to heightInches, "maker" to maker, "traditionType" to traditionType, "replacementCost" to replacementCost),
+            liveCompletenessCounts(rules, CompletenessKind.TOOL, editing?.completeness, mapOf("photos" to rememberImageCount(media.uris))),
+        )
+    }
+
     RecordCard(title = if (isEdit) "Update tool" else "Add tool") {
+        liveCompleteness?.let { LiveCompletenessLine(it) }
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
@@ -13371,7 +13518,9 @@ private fun ToolForm(
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
         RecordWorkshopField(link = link, saving = saving)
         RequiredInput("Toolkit name", toolkitName, toolkitNameError, toolkitNameFocus, titleCased = true) { applyToolkitName(it) }
-        TextInput("Local name", localName) { localName = it }
+        CompletenessAnchor("localName") {
+            TextInput("Local name", localName) { localName = it }
+        }
         // TYPING HERE IS THE STICKY DIVORCE, and it counts even when what was typed is nothing:
         // emptying this box by hand is a statement about this box, so the mirror stops and the box
         // stays empty. Dictation lands through the same handler and divorces for the same reason.
@@ -13419,29 +13568,33 @@ private fun ToolForm(
                 // cannot be on this list, so a name looked up outside the selection could only ever
                 // be the wrong one.
                 toolArtisanOptions(artisanPool, craftIds.mapNotNull { id -> knownCraftNames[id]?.let { id to it } }.toMap())
-        SearchableMultiSelectField(
-            label = "Linked artisans (fills artisan + place)",
-            options = artisanOptions,
-            selected = artisanIds.toSet(),
-            placeholder = if (craftIds.isEmpty()) "Select a linked craft first" else "Unlinked / type below",
-            // TWO STATES, TWO SENTENCES, AND NEITHER SAYS "THERE ARE NONE". An empty list here means
-            // "nothing has been asked for yet" far more often than it means "this craft has no
-            // artisans", and `SearchableMultiSelectField.emptyMessage` is emphatic that a control
-            // inventing that claim speaks over a caller who knows better. This one replaces the
-            // trigger when there is nothing to tick, which is why the standalone notice line that
-            // used to sit under the old dropdown is gone: the primitive prints the sentence itself,
-            // and keeping both would print it twice.
-            emptyMessage = if (craftIds.isEmpty()) {
-                "Choose crafts above to list their artisans."
-            } else {
-                "No artisans for these crafts."
-            },
-            enabled = craftIds.isNotEmpty(),
-        ) { next -> onArtisansChanged(mergeSelection(artisanIds, next, artisanOptions.map { it.value })) }
+        CompletenessAnchor("artisan") {
+            SearchableMultiSelectField(
+                label = "Linked artisans (fills artisan + place)",
+                options = artisanOptions,
+                selected = artisanIds.toSet(),
+                placeholder = if (craftIds.isEmpty()) "Select a linked craft first" else "Unlinked / type below",
+                // TWO STATES, TWO SENTENCES, AND NEITHER SAYS "THERE ARE NONE". An empty list here means
+                // "nothing has been asked for yet" far more often than it means "this craft has no
+                // artisans", and `SearchableMultiSelectField.emptyMessage` is emphatic that a control
+                // inventing that claim speaks over a caller who knows better. This one replaces the
+                // trigger when there is nothing to tick, which is why the standalone notice line that
+                // used to sit under the old dropdown is gone: the primitive prints the sentence itself,
+                // and keeping both would print it twice.
+                emptyMessage = if (craftIds.isEmpty()) {
+                    "Choose crafts above to list their artisans."
+                } else {
+                    "No artisans for these crafts."
+                },
+                enabled = craftIds.isNotEmpty(),
+            ) { next -> onArtisansChanged(mergeSelection(artisanIds, next, artisanOptions.map { it.value })) }
+        }
         RequiredInput("Artisan name", artisanName, artisanNameError, artisanNameFocus, titleCased = true) { artisanName = it }
         RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
         TextInput("Process used in", processUsedIn) { processUsedIn = it }
-        TextInput("Material", material) { material = it }
+        CompletenessAnchor("material") {
+            TextInput("Material", material) { material = it }
+        }
         TextInput("Years in use", yearsInUse, keyboardType = KeyboardType.Number, dictate = false) { yearsInUse = it }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.weight(1f)) { TextInput("Height (cm)", height, keyboardType = KeyboardType.Decimal, dictate = false) { height = it; propagateDimension(it, ::inchesTextFromCm) { v -> heightInches = v } } }
@@ -13454,7 +13607,9 @@ private fun ToolForm(
             Box(modifier = Modifier.weight(1f)) { TextInput("Length (inches)", length, keyboardType = KeyboardType.Decimal, dictate = false) { length = it } }
             Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal, dictate = false) { breadth = it; propagateDimension(it, ::cmTextFromInches) { v -> width = v } } }
         }
-        TextInput("Height (inches)", heightInches, keyboardType = KeyboardType.Decimal, dictate = false) { heightInches = it; propagateDimension(it, ::cmTextFromInches) { v -> height = v } }
+        CompletenessAnchor("dimensions") {
+            TextInput("Height (inches)", heightInches, keyboardType = KeyboardType.Decimal, dictate = false) { heightInches = it; propagateDimension(it, ::cmTextFromInches) { v -> height = v } }
+        }
         Text(
             // THE NOTE THAT USED TO SAY THE OPPOSITE, REWRITTEN RATHER THAN DELETED. Until 2026-09-15
             // the web forms told a designer that the two height boxes were unrelated columns and to
@@ -13549,9 +13704,15 @@ private fun ToolForm(
                 propagateDimension(heightInches, ::cmTextFromInches) { v -> height = v }
             }
         )
-        DropdownField("Maker", makerOptions.map { it to it }, maker, includeNone = false) { maker = it }
-        DropdownField("Tradition type", traditionOptions.map { it to it }, traditionType, includeNone = false) { traditionType = it }
-        TextInput("Replacement cost", replacementCost, keyboardType = KeyboardType.Decimal, dictate = false) { replacementCost = it }
+        CompletenessAnchor("maker") {
+            DropdownField("Maker", makerOptions.map { it to it }, maker, includeNone = false) { maker = it }
+        }
+        CompletenessAnchor("traditionType") {
+            DropdownField("Tradition type", traditionOptions.map { it to it }, traditionType, includeNone = false) { traditionType = it }
+        }
+        CompletenessAnchor("replacementCost") {
+            TextInput("Replacement cost", replacementCost, keyboardType = KeyboardType.Decimal, dictate = false) { replacementCost = it }
+        }
         // The tool form's two narrative columns. `processUsedIn` above stays single-line and plain —
         // it is single-line on the web form too, and widening it here would put the two platforms out
         // of step over a field the review registry already disagrees with itself about.
@@ -13562,7 +13723,9 @@ private fun ToolForm(
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "tool", recordId = editing!!.id, onError = onError)
         }
-        MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
+        CompletenessAnchor("photo") {
+            MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
+        }
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
             idleLabel = if (isEdit) "Update tool" else "Save tool"
@@ -17599,7 +17762,9 @@ private fun ViewDataDetail(
     showProvenance: Boolean = false,
     onError: (String) -> Unit,
     /** A record's read-only page: no control on it changes the record — see [MediaWithTranscript]. */
-    readOnly: Boolean = false
+    readOnly: Boolean = false,
+    /** The loaded record's completeness block, for the read-only page's meter. */
+    onCompleteness: (CompletenessDto?) -> Unit = {}
 ) {
     val context = LocalContext.current
     // A failed read shows its reason and Try again instead of a card that never stops loading (DA-06).
@@ -17634,7 +17799,7 @@ private fun ViewDataDetail(
         }
         EntryMode.ARTISAN -> {
             var d by remember(recordId) { mutableStateOf<ArtisanDetailDto?>(null) }
-            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.artisan(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load artisan") } }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.artisan(recordId) }.onSuccess { d = it; onCompleteness(it.completeness) }.onFailure { loadFailed = it.userMessage("Unable to load artisan") } }
             val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.name.ifBlank { "Artisan" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
@@ -17673,7 +17838,7 @@ private fun ViewDataDetail(
         }
         EntryMode.PRODUCT -> {
             var d by remember(recordId) { mutableStateOf<ProductDetailDto?>(null) }
-            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.product(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load product") } }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.product(recordId) }.onSuccess { d = it; onCompleteness(it.completeness) }.onFailure { loadFailed = it.userMessage("Unable to load product") } }
             val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.productName.ifBlank { "Product" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
@@ -17692,7 +17857,7 @@ private fun ViewDataDetail(
         }
         EntryMode.TOOL -> {
             var d by remember(recordId) { mutableStateOf<ToolDetailDto?>(null) }
-            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.tool(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load tool") } }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.tool(recordId) }.onSuccess { d = it; onCompleteness(it.completeness) }.onFailure { loadFailed = it.userMessage("Unable to load tool") } }
             val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.toolkitName.ifBlank { "Tool" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
@@ -17710,7 +17875,7 @@ private fun ViewDataDetail(
         }
         EntryMode.WORKSHOP -> {
             var d by remember(recordId) { mutableStateOf<WorkshopDetailDto?>(null) }
-            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.workshop(recordId) }.onSuccess { d = it }.onFailure { loadFailed = it.userMessage("Unable to load workshop") } }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.workshop(recordId) }.onSuccess { d = it; onCompleteness(it.completeness) }.onFailure { loadFailed = it.userMessage("Unable to load workshop") } }
             val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.title.ifBlank { "Workshop" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
@@ -17756,7 +17921,10 @@ private fun ViewDataDetail(
                             .forEach { mediaById[it.id] = it }
                     }
                     group to mediaById.values.toList()
-                }.onSuccess { (g, media) -> members = g; groupMedia = media }
+                }.onSuccess { (g, media) ->
+                    members = g; groupMedia = media
+                    onCompleteness(g.firstOrNull { it.id == recordId }?.completeness)
+                }
                     .onFailure { loadFailed = it.userMessage("Unable to load interview") }
             }
             val g = members ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
@@ -19642,7 +19810,18 @@ private fun QuestionnaireForm(
         )
     }
 
+    val completenessRules = rememberCompletenessRules()
+    val liveCompleteness = completenessRules?.let { rules ->
+        evaluateCompleteness(
+            rules,
+            CompletenessKind.INTERVIEW,
+            mapOf("interviewDate" to editing?.interviewDate, "place" to place, "language" to language),
+            liveCompletenessCounts(rules, CompletenessKind.INTERVIEW, editing?.completeness, mapOf("artisans" to selectedArtisans.size, "answers" to answers.values.count { it.value.isNotBlank() }, "recordings" to media.uris.size)),
+        )
+    }
+
     RecordCard(title = if (isEdit) "Update interview" else "Add questionnaire interview") {
+        liveCompleteness?.let { LiveCompletenessLine(it) }
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
@@ -19683,7 +19862,9 @@ private fun QuestionnaireForm(
         // There is deliberately NO date field: the server derives interviewDate from recordedAt,
         // which is when the interview was actually captured. `absent` in the form contract holds all
         // three registers to that, so the box cannot come back through a guide.
-        TextInput("Place", place, titleCased = true) { place = it }
+        CompletenessAnchor("place") {
+            TextInput("Place", place, titleCased = true) { place = it }
+        }
         /*
           THE LIST IS NO LONGER WRITTEN HERE — see [DW_INTERVIEW_LANGUAGES], 2026-08-28.
 
@@ -19702,13 +19883,15 @@ private fun QuestionnaireForm(
           moving.
         */
         val languageOptions = remember(language) { dwInterviewLanguageOptions(language) }
-        DropdownField(
-            label = "Language",
-            options = languageOptions,
-            selectedValue = language,
-            placeholder = DW_INTERVIEW_LANGUAGE_PLACEHOLDER,
-            includeNone = false
-        ) { language = it }
+        CompletenessAnchor("language") {
+            DropdownField(
+                label = "Language",
+                options = languageOptions,
+                selectedValue = language,
+                placeholder = DW_INTERVIEW_LANGUAGE_PLACEHOLDER,
+                includeNone = false
+            ) { language = it }
+        }
         RecordWorkshopField(link = link, saving = saveState == SaveState.SAVING)
         // FOURTH AND FIFTH, not first: "Type of workshop" then "Workshop", drawn by the one control
         // every record form mounts. Nothing about what it does changed — see the order note above
@@ -19786,103 +19969,105 @@ private fun QuestionnaireForm(
                 )
             }
         }
-        SearchableMultiSelectField(
-            label = "Artisans interviewed",
-            options = artisanPickerOptions,
-            selected = selectedArtisans,
-            placeholder = "Select the artisans this interview is with",
-            /*
-              FIVE SENTENCES AND NOT ONE, because an empty roster means one of five different things
-              — the answer has not arrived, the read was refused, this device has never received one,
-              nobody is recorded at THIS workshop, nobody is recorded at all — and only the last two
-              are facts about the repository. The wall this control replaced printed a single
-              hard-coded line off no facts at all — "No artisans available yet. Create an artisan
-              first." — which is a claim about the register manufactured out of a claim about the
-              network, and the researcher who believes it goes off to create a duplicate of an
-              artisan who is already there.
+        CompletenessAnchor("artisans") {
+            SearchableMultiSelectField(
+                label = "Artisans interviewed",
+                options = artisanPickerOptions,
+                selected = selectedArtisans,
+                placeholder = "Select the artisans this interview is with",
+                /*
+                  FIVE SENTENCES AND NOT ONE, because an empty roster means one of five different things
+                  — the answer has not arrived, the read was refused, this device has never received one,
+                  nobody is recorded at THIS workshop, nobody is recorded at all — and only the last two
+                  are facts about the repository. The wall this control replaced printed a single
+                  hard-coded line off no facts at all — "No artisans available yet. Create an artisan
+                  first." — which is a claim about the register manufactured out of a claim about the
+                  network, and the researcher who believes it goes off to create a duplicate of an
+                  artisan who is already there.
 
-              THE HOUSE SENTENCES AND NOT NEW ONES. `ui/WorkshopOptions.kt` owns this wording for
-              every list on both clients, so a researcher meets the same words here that the workshop
-              box above them uses.
+                  THE HOUSE SENTENCES AND NOT NEW ONES. `ui/WorkshopOptions.kt` owns this wording for
+                  every list on both clients, so a researcher meets the same words here that the workshop
+                  box above them uses.
 
-              THE FOURTH IS NEW HERE AND IS ONLY SAYABLE NOW. Until 2026-09-17 this control printed
-              three and its comment said why it stopped: its roster was `loadArtisanRegister`'s
-              ALL-scoped register, so an empty list meant the REGISTER was empty whatever the
-              workshop box said, and `atWorkshopEmptyLine` printed off that read would have been the
-              unscoped-register defect wearing the fix's clothes. The roster IS fetched per workshop
-              now, so "nobody is recorded at this workshop" is a fact this control holds and a
-              different one from "nobody is recorded at all" — different remedy, different person to
-              go and see. Collapsing the two is what produced the duplicate-artisan report that
-              closed this drift, so `test_the_handset_keeps_the_four_empty_roster_sentences_apart`
-              holds them pairwise distinct rather than merely present.
+                  THE FOURTH IS NEW HERE AND IS ONLY SAYABLE NOW. Until 2026-09-17 this control printed
+                  three and its comment said why it stopped: its roster was `loadArtisanRegister`'s
+                  ALL-scoped register, so an empty list meant the REGISTER was empty whatever the
+                  workshop box said, and `atWorkshopEmptyLine` printed off that read would have been the
+                  unscoped-register defect wearing the fix's clothes. The roster IS fetched per workshop
+                  now, so "nobody is recorded at this workshop" is a fact this control holds and a
+                  different one from "nobody is recorded at all" — different remedy, different person to
+                  go and see. Collapsing the two is what produced the duplicate-artisan report that
+                  closed this drift, so `test_the_handset_keeps_the_four_empty_roster_sentences_apart`
+                  holds them pairwise distinct rather than merely present.
 
-              WHICH FACT EACH ARM READS, because they are not the same fact and two of them look
-              alike from here:
+                  WHICH FACT EACH ARM READS, because they are not the same fact and two of them look
+                  alike from here:
 
-                * NO WORKSHOP NAMED — the offer is the whole register and [lookupState] is what
-                  settles it, exactly as it did before this change. This arm is unchanged.
-                * `loadedArtisanScope != artisanScope.key` — a roster for THIS workshop has not
-                  landed. It covers the first read, every workshop change (rule 4 clears the scope
-                  before awaiting) and the in-flight window, which is the one state where waiting IS
-                  the next move.
-                * LIVE — the server answered, for this workshop, and answered empty. The only arm
-                  entitled to say anything about this workshop's roster.
-                * anything else — the read did not answer. `RegisterLoad.online` splits an answered
-                  refusal from a device that could not be reached, and CACHED lands here too: an
-                  empty file from an earlier connection plus a failed refresh is not today's answer
-                  about this workshop, and saying it was would be the same manufactured claim one
-                  cache older.
-            */
-            emptyMessage = when {
-                !artisanScope.narrowed -> when (lookupState) {
-                    CarryScopeState.PENDING -> loadingListLine("artisans")
-                    CarryScopeState.UNAVAILABLE -> couldNotListLine("artisans")
-                    CarryScopeState.LOADED -> unscopedEmptyLine("artisans")
-                }
-                loadedArtisanScope != artisanScope.key -> loadingListLine("artisans")
-                workshopArtisanLoad.source == RegisterSource.LIVE -> atWorkshopEmptyLine("artisans")
-                workshopArtisanLoad.online -> couldNotListLine("artisans")
-                else -> offlineListLine("artisans")
-            },
-        ) { next ->
-            /*
-              THE SHEET HANDS BACK THE WHOLE SELECTION, so this handler is pure replacement and there
-              is nothing to reconcile: `selectedArtisans` IS the answer. That is the difference from
-              the wall, which reported one id at a time and left the arithmetic here.
+                    * NO WORKSHOP NAMED — the offer is the whole register and [lookupState] is what
+                      settles it, exactly as it did before this change. This arm is unchanged.
+                    * `loadedArtisanScope != artisanScope.key` — a roster for THIS workshop has not
+                      landed. It covers the first read, every workshop change (rule 4 clears the scope
+                      before awaiting) and the in-flight window, which is the one state where waiting IS
+                      the next move.
+                    * LIVE — the server answered, for this workshop, and answered empty. The only arm
+                      entitled to say anything about this workshop's roster.
+                    * anything else — the read did not answer. `RegisterLoad.online` splits an answered
+                      refusal from a device that could not be reached, and CACHED lands here too: an
+                      empty file from an earlier connection plus a failed refresh is not today's answer
+                      about this workshop, and saying it was would be the same manufactured claim one
+                      cache older.
+                */
+                emptyMessage = when {
+                    !artisanScope.narrowed -> when (lookupState) {
+                        CarryScopeState.PENDING -> loadingListLine("artisans")
+                        CarryScopeState.UNAVAILABLE -> couldNotListLine("artisans")
+                        CarryScopeState.LOADED -> unscopedEmptyLine("artisans")
+                    }
+                    loadedArtisanScope != artisanScope.key -> loadingListLine("artisans")
+                    workshopArtisanLoad.source == RegisterSource.LIVE -> atWorkshopEmptyLine("artisans")
+                    workshopArtisanLoad.online -> couldNotListLine("artisans")
+                    else -> offlineListLine("artisans")
+                },
+            ) { next ->
+                /*
+                  THE SHEET HANDS BACK THE WHOLE SELECTION, so this handler is pure replacement and there
+                  is nothing to reconcile: `selectedArtisans` IS the answer. That is the difference from
+                  the wall, which reported one id at a time and left the arithmetic here.
 
-              THE CARRIED CONTEXT STILL MOVES ONLY ON THE WAY IN, unchanged from the toggle this
-              replaces: unticking says who the interview is NOT about, which is no statement about
-              where the researcher is sitting. `next - selectedArtisans` is the ids that just
-              arrived, and both `Set.plus` (inside the sheet's `draft`) and `Set.minus` here return
-              `LinkedHashSet`, so that difference is in TICK ORDER and its head is the artisan the
-              researcher just chose — the same rule `primaryInterviewArtisanId` states for the
-              browser.
+                  THE CARRIED CONTEXT STILL MOVES ONLY ON THE WAY IN, unchanged from the toggle this
+                  replaces: unticking says who the interview is NOT about, which is no statement about
+                  where the researcher is sitting. `next - selectedArtisans` is the ids that just
+                  arrived, and both `Set.plus` (inside the sheet's `draft`) and `Set.minus` here return
+                  `LinkedHashSet`, so that difference is in TICK ORDER and its head is the artisan the
+                  researcher just chose — the same rule `primaryInterviewArtisanId` states for the
+                  browser.
 
-              ONE CHANGE CAN NOW CARRY SEVERAL IDS, which the toggle could not, and the head is the
-              answer for that too. "Select all N matching" is the case; its head is the first row of
-              the filtered list rather than a row anybody pointed at. That is the honest reading of a
-              bulk action — nobody named one artisan — and it is the same thing the wall did when a
-              researcher ticked their way down it from the top.
-            */
-            val added = next - selectedArtisans
-            selectedArtisans = next
-            added.firstOrNull()?.let { id ->
-                // THE ROSTER FIRST AND THE REGISTER SECOND, because since this list became
-                // workshop-scoped the two are no longer the same set. An artisan on this workshop's
-                // roster but past page one of the deployment-wide register would otherwise be ticked
-                // and remembered as nobody, and the next form would open with no carried context at
-                // all — a silent loss of the one prefill this form exists to hand on.
-                (offeredArtisans.firstOrNull { it.id == id } ?: artisans.firstOrNull { it.id == id })?.let {
-                    carry.remember(
-                        CarryContext(
-                            artisanId = it.id,
-                            artisanName = it.name,
-                            place = it.place,
-                            craftId = it.craftId,
-                            craftName = it.craft?.name
-                        ),
-                        explicit = true
-                    )
+                  ONE CHANGE CAN NOW CARRY SEVERAL IDS, which the toggle could not, and the head is the
+                  answer for that too. "Select all N matching" is the case; its head is the first row of
+                  the filtered list rather than a row anybody pointed at. That is the honest reading of a
+                  bulk action — nobody named one artisan — and it is the same thing the wall did when a
+                  researcher ticked their way down it from the top.
+                */
+                val added = next - selectedArtisans
+                selectedArtisans = next
+                added.firstOrNull()?.let { id ->
+                    // THE ROSTER FIRST AND THE REGISTER SECOND, because since this list became
+                    // workshop-scoped the two are no longer the same set. An artisan on this workshop's
+                    // roster but past page one of the deployment-wide register would otherwise be ticked
+                    // and remembered as nobody, and the next form would open with no carried context at
+                    // all — a silent loss of the one prefill this form exists to hand on.
+                    (offeredArtisans.firstOrNull { it.id == id } ?: artisans.firstOrNull { it.id == id })?.let {
+                        carry.remember(
+                            CarryContext(
+                                artisanId = it.id,
+                                artisanName = it.name,
+                                place = it.place,
+                                craftId = it.craftId,
+                                craftName = it.craft?.name
+                            ),
+                            explicit = true
+                        )
+                    }
                 }
             }
         }

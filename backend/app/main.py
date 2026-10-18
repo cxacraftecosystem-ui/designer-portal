@@ -1098,6 +1098,9 @@ def create_app() -> FastAPI:
             TWO_FACTOR_REQUIRED_HEADER,
             # A duplicate account's 409 names the account that holds the address.
             EXISTING_ACCOUNT_HEADER,
+            # GET /records/completeness-rules (2026-10-18): the web keeps the rules in localStorage
+            # keyed by this tag and revalidates with If-None-Match, so it has to be able to read it.
+            "ETag",
         ],
     )
     # Added AFTER CORS so it wraps it (Starlette runs the most recently added middleware outermost),

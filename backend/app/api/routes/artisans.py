@@ -12,6 +12,8 @@ from app.schemas.records import ArtisanCreate, ArtisanUpdate, drop_masked_identi
 from app.services.access import guard_record_edit
 from app.services.artisan_form_contract import assert_required_dates, take_form_contract
 from app.services.artisan_identity import mask_aadhaar, normalize_aadhaar
+from app.services.completeness import attach as attach_completeness
+from app.services.completeness import filter_or_422 as completeness_filter
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (
@@ -354,6 +356,9 @@ async def list_artisans(
     # interview taken at the workshop, through the shared ``artisan_workshop_clause``, so the
     # consolidated-questionnaire index and the completion matrix cannot disagree about who was there.
     workshopIds: list[str] | None = Query(None),
+    # THE COMPLETENESS FILTER (2026-10-18): incomplete | required | complete, from the shared
+    # ``record-completeness.json``. AND-combined like every other OR-bearing clause.
+    completeness: str | None = None,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -417,6 +422,9 @@ async def list_artisans(
         where["status"] = enum_filter_or_422(statusFilter, RECORD_STATUSES)
     if createdBy:
         where["createdById"] = createdBy
+    complete_clause = completeness_filter("artisan", completeness)
+    if complete_clause:
+        and_filters.append(complete_clause)
     if and_filters:
         where["AND"] = and_filters
     total, items = await count_and_page(
@@ -432,7 +440,9 @@ async def list_artisans(
     # The encoder masks per node against this viewer, so a list of a hundred artisans is one
     # decision per artisan rather than one blanket decision for the page: the two the caller
     # recorded come back raw, the rest masked.
-    return page_payload(public_encode(items, current_user), total, page, page_size)
+    return page_payload(
+        await attach_completeness("artisan", public_encode(items, current_user)), total, page, page_size
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -483,7 +493,7 @@ async def create_artisan(
     await link_workshop_artisan(created.workshopId, created.id)
     # The creator is by definition entitled, but pass the viewer anyway rather than relying on
     # that: a future change to who may create an artisan would otherwise silently leak.
-    return public_encode(created, current_user)
+    return await attach_completeness("artisan", public_encode(created, current_user))
 
 
 @router.get("/{artisan_id}")
@@ -495,7 +505,7 @@ async def get_artisan(
     # Masked unless this caller is entitled to the raw number (creator, or professor+) — decided
     # inside the encoder now, so the same rule covers this route and every route that merely embeds
     # an Artisan relation without thinking about it.
-    return public_encode(artisan, current_user)
+    return await attach_completeness("artisan", public_encode(artisan, current_user))
 
 
 @router.patch("/{artisan_id}")
@@ -622,7 +632,7 @@ async def update_artisan(
     # needs cleaning up. See ``sync_workshop_artisan`` for what it deliberately does NOT try to
     # tell apart.
     await sync_workshop_artisan(previous_workshop_id, updated.workshopId, updated.id)
-    return public_encode(updated, current_user)
+    return await attach_completeness("artisan", public_encode(updated, current_user))
 
 
 @router.get("/lookup/aadhaar")

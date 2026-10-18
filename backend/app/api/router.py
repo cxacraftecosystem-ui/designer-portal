@@ -10,6 +10,7 @@ from app.api.routes import (
     artisans,
     asr_models,
     auth,
+    completeness,
     crafts,
     dashboard,
     data_access,
@@ -99,6 +100,8 @@ api_router.include_router(workshop_types.router)
 api_router.include_router(products.router)
 api_router.include_router(processes.router)
 api_router.include_router(tools.router)
+# GET /records/completeness-rules — the table behind every record's completeness block.
+api_router.include_router(completeness.router)
 api_router.include_router(media.router)
 api_router.include_router(questionnaire.router)
 # Custom questionnaires — /api/questionnaires (PLURAL), a form a designer authored themselves, as

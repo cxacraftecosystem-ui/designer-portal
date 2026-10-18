@@ -312,6 +312,8 @@ interface WorkshopRepositoryApi {
         // wire. Rationale on the server: backend/app/api/routes/artisans.py.
         @Query("createdBy") createdBy: String? = null,
         // The route's own text filter, used by the update-existing picker's search box (DA-08).
+        /** `incomplete` | `required` | `complete` — the record-completeness filter; null for every record. */
+        @Query("completeness") completeness: String? = null,
         @Query("search") search: String? = null
     ): PageResponse<ArtisanDto>
 
@@ -388,6 +390,8 @@ interface WorkshopRepositoryApi {
         // Server-side ownership filter — see the note on [artisans].
         @Query("createdBy") createdBy: String? = null,
         // The route's own text filter, used by the update-existing picker's search box (DA-08).
+        /** `incomplete` | `required` | `complete` — the record-completeness filter; null for every record. */
+        @Query("completeness") completeness: String? = null,
         @Query("search") search: String? = null
     ): PageResponse<ProductDetailDto>
 
@@ -414,6 +418,8 @@ interface WorkshopRepositoryApi {
         // Server-side ownership filter — see the note on [artisans].
         @Query("createdBy") createdBy: String? = null,
         // The route's own text filter, used by the update-existing picker's search box (DA-08).
+        /** `incomplete` | `required` | `complete` — the record-completeness filter; null for every record. */
+        @Query("completeness") completeness: String? = null,
         @Query("search") search: String? = null
     ): PageResponse<ToolDetailDto>
 
@@ -475,6 +481,8 @@ interface WorkshopRepositoryApi {
          */
         @Query("accessibleOnly") accessibleOnly: Boolean? = null,
         // The route's own text filter, used by the update-existing picker's search box (DA-08).
+        /** `incomplete` | `required` | `complete` — the record-completeness filter; null for every record. */
+        @Query("completeness") completeness: String? = null,
         @Query("search") search: String? = null
     ): PageResponse<WorkshopDetailDto>
 
@@ -841,8 +849,14 @@ interface WorkshopRepositoryApi {
         // Server-side ownership filter — see the note on [artisans].
         @Query("createdBy") createdBy: String? = null,
         // The route's own text filter (`questionnaire.py`'s `search`), used by the app-wide search.
+        /** `incomplete` | `required` | `complete` — the record-completeness filter; null for every record. */
+        @Query("completeness") completeness: String? = null,
         @Query("search") search: String? = null
     ): PageResponse<QuestionnaireInterviewDetailDto>
+
+    /** The completeness table as the server holds it. See [RecordCompletenessStore]. */
+    @GET("records/completeness-rules")
+    suspend fun completenessRules(): kotlinx.serialization.json.JsonElement
 
     @GET("questionnaire/interviews/{id}")
     suspend fun interview(@Path("id") id: String): QuestionnaireInterviewDetailDto

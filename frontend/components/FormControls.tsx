@@ -37,11 +37,17 @@ import { RequiredMark } from "@/components/ui/RequiredMark";
 export function Field({
   label,
   children,
-  required
+  required,
+  fieldKey
 }: {
   label: string;
   children: React.ReactNode;
   required?: boolean;
+  /**
+   * The completeness rule key this field answers (`shared/record-completeness.json`). Drawn as
+   * `data-field`, which is what a meter pill's `focus=<key>` scrolls to and focuses — `useFocusField`.
+   */
+  fieldKey?: string;
 }) {
   const labelId = useId();
   return (
@@ -49,7 +55,7 @@ export function Field({
     // without this any wide child — a dropdown holding a long workshop name, a long placeholder, an
     // unbroken URL — widens the column and spills over the field beside it. Applied here rather
     // than per control so the whole form inherits it.
-    <label className="grid min-w-0 gap-1">
+    <label className="grid min-w-0 gap-1" data-field={fieldKey}>
       <span id={labelId} className="field-label">
         {label}
         <RequiredMark when={required} />

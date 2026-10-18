@@ -7,6 +7,8 @@ from app.core.db import db
 from app.core.deps import assert_can_delete, get_current_user, require_record_creator
 from app.schemas.records import ProductCreate, ProductUpdate
 from app.services.access import guard_record_edit
+from app.services.completeness import attach as attach_completeness
+from app.services.completeness import filter_or_422 as completeness_filter
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (
@@ -210,6 +212,8 @@ async def list_products(
     # My Activity page had to fetch page 1 of the WHOLE repository and sift it client-side, which
     # silently under-reported the moment the repository outgrew one page.
     createdBy: str | None = None,
+    # THE COMPLETENESS FILTER (2026-10-18): incomplete | required | complete. See ``list_artisans``.
+    completeness: str | None = None,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -278,6 +282,9 @@ async def list_products(
         where["status"] = enum_filter_or_422(statusFilter, RECORD_STATUSES)
     if createdBy:
         where["createdById"] = createdBy
+    complete_clause = completeness_filter("product", completeness)
+    if complete_clause:
+        and_filters.append(complete_clause)
     if and_filters:
         where["AND"] = and_filters
     add_date_range(where, "createdAt", dateFrom, dateTo)
@@ -316,7 +323,7 @@ async def list_products(
         media_url_owners(current_user),
     )
     return page_payload(
-        public_encode(items, current_user, media_urls=media_urls),
+        await attach_completeness("product", public_encode(items, current_user, media_urls=media_urls)),
         total,
         page,
         page_size,
@@ -356,7 +363,7 @@ async def create_product(
         db.productdocumentation, payload.clientKey, user_id=current_user.id, include=INCLUDE
     )
     if replayed is not None:
-        return public_encode(replayed, current_user)
+        return await attach_completeness("product", public_encode(replayed, current_user))
     data = decimal_to_string(clean_data(payload.model_dump()))
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
@@ -397,11 +404,11 @@ async def create_product(
         )
         if raced is None:
             raise
-        return public_encode(raced, current_user)
+        return await attach_completeness("product", public_encode(raced, current_user))
     # No grant lookup on the create: a MediaFile points at its product by ``productId``, and this
     # product did not exist until the statement above, so ``media`` is empty by construction and there
     # is no URL for a resolved set to decide about. The viewer is still named, for the identity mask.
-    return public_encode(created, current_user)
+    return await attach_completeness("product", public_encode(created, current_user))
 
 
 @router.get("/{product_id}")
@@ -414,7 +421,10 @@ async def get_product(
     # hydrates comes through ``MediaFile.productId``, so it cannot be a design-workshop attachment.
     # See "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above; ``media_workshops`` is left empty on
     # purpose.
-    return public_encode(product, current_user, media_urls=await media_url_owners(current_user))
+    return await attach_completeness(
+        "product",
+        public_encode(product, current_user, media_urls=await media_url_owners(current_user)),
+    )
 
 
 @router.patch("/{product_id}")
@@ -487,7 +497,10 @@ async def update_product(
     # ``INCLUDE`` is derived from ``RELATIONS``, so the rows it returns are the same ``productId``-keyed
     # rows the list returns and the same reasoning settles the second half: the uploader set alone,
     # ``media_workshops`` empty by decision. See "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above.
-    return public_encode(updated, current_user, media_urls=await media_url_owners(current_user))
+    return await attach_completeness(
+        "product",
+        public_encode(updated, current_user, media_urls=await media_url_owners(current_user)),
+    )
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)

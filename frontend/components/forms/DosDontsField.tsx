@@ -28,9 +28,12 @@ export function DosDontsField({
   label,
   helper,
   defaultValue,
-  required = true
+  required = true,
+  fieldKey
 }: {
   name: string;
+  /** The completeness rule key this box answers — the `data-field` a meter pill scrolls to. */
+  fieldKey?: string;
   label: string;
   helper?: string;
   defaultValue?: string | null;
@@ -56,7 +59,7 @@ export function DosDontsField({
      * `NumberedPointRows`). Nothing here invents wording — "Do's (positive prompt)" and "1." are
      * both already on screen, so what is announced and what is printed are the same two things.
      */
-    <div className="relative grid content-start gap-1.5" role="group" aria-labelledby={groupId} aria-describedby={helper ? helperId : undefined}>
+    <div data-field={fieldKey} className="relative grid content-start gap-1.5" role="group" aria-labelledby={groupId} aria-describedby={helper ? helperId : undefined}>
       <span id={groupId} className="field-label">
         {label}
         <RequiredMark when={required} />

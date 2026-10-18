@@ -35,9 +35,9 @@ import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { ApiError, apiFetch, buildQuery, listResource } from "@/lib/api";
-import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useUnsavedChanges } from "@/lib/forms";
+import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useFocusField, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
-import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, type BatchProgress } from "@/lib/media";
+import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import {
@@ -51,6 +51,7 @@ import { EMAIL_PATTERN, emailValidationError } from "@/lib/textFormats";
 import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
 import { RequiredMark } from "@/components/ui/RequiredMark";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 
 // Android parity (MainActivity.kt genderOptions).
 const genderOptions = ["Male", "Female", "Transgender", "Other"];
@@ -384,6 +385,11 @@ function StatusField({
  *    is a separate component with its own owner; its stated-address boxes are named as a handoff
  *    rather than reached into from here.
  */
+/** The artisan's location is a `Location` row; on the form it is the captured point or the stated state. */
+const ARTISAN_COMPLETENESS_DERIVE = (data: FormData) => ({
+  locationId: data.get("latitude") || data.get("state") || null
+});
+
 export function ArtisanForm({
   initial,
   seed,
@@ -451,6 +457,8 @@ export function ArtisanForm({
   // "Can I see this craft?" and "is there any signal?" are different answers — see useCarryContext.
   const [craftListState, setCraftListState] = useState<CarryScopeState>("pending");
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
+  // A meter pill on the artisan's page opens this form with `focus=<key>`; the form mounts with its record.
+  useFocusField(true);
   const [error, setError] = useState<string | null>(null);
   // A rejected duplicate is not a generic error: it names an existing artisan the researcher should
   // open instead, so it gets its own state and its own panel with a link.
@@ -1118,6 +1126,13 @@ export function ArtisanForm({
       >
         {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
         <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
+        <LiveCompleteness
+          kind="artisan"
+          formRef={formRef}
+          stored={initial ?? null}
+          derive={ARTISAN_COMPLETENESS_DERIVE}
+          counts={{ photos: mediaFiles.filter((file) => inferMediaType(file) === "IMAGE").length }}
+        />
         {conflict ? (
           <div role="alert" className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm text-amber-800">
             <p className="font-medium">{conflict.message}</p>
@@ -1214,7 +1229,7 @@ export function ArtisanForm({
               markDirty();
             }}
           />
-          <Field label="Craft" required>
+          <Field label="Craft" required fieldKey="craft">
             {/* `searchable`: crafts are records and this list is capped (see the notice below it).
                 Nine crafts today is one either side of the option-count threshold, so without this
                 the same required field would have a filter box on one deployment and not on the
@@ -1307,7 +1322,7 @@ export function ArtisanForm({
               the server's precedence. */}
           {/* Not `Field`: see `derivedFieldsId` above for why a `<DateField>` may not be wrapped in
               a `<label>`, and why the hint sits outside it. */}
-          <div className="grid min-w-0 gap-1">
+          <div className="grid min-w-0 gap-1" data-field="dateOfBirth">
             {/*
               `DateField` and NOT `<TextInput type="date">`, and this was the last native date input
               left in the app. A native date input formats itself from the BROWSER's locale rather
@@ -1353,7 +1368,7 @@ export function ArtisanForm({
               migration deliberately refuses to guess one, so an old record showing this box empty is
               the expected state on read. Since 2026-10-17 it is REQUIRED on every new save, so an
               edit of such a record asks for it. "Craft start date", the documentation portal's word. */}
-          <div className="grid min-w-0 gap-1">
+          <div className="grid min-w-0 gap-1" data-field="craftStartDate">
             <CalendarField
               id={craftStartId}
               label="Craft start date"
@@ -1521,12 +1536,14 @@ export function ArtisanForm({
           </div>
           <DosDontsField
             name="dos"
+            fieldKey="dos"
             label="Do's"
             helper="One point per line."
             defaultValue={initial?.dos}
           />
           <DosDontsField
             name="donts"
+            fieldKey="donts"
             label="Don'ts"
             helper="One point per line."
             defaultValue={initial?.donts}
@@ -1537,27 +1554,31 @@ export function ArtisanForm({
         {initial ? (
           <ExistingMedia linkedRecordType="artisan" linkedRecordId={initial.id} recordHold={filing.stored} />
         ) : null}
-        <MediaCaptureField
-          files={mediaFiles}
-          onFilesChange={(files) => {
-            setMediaFiles(files);
-            markDirty();
-          }}
-          title="Artisan media"
-          description="Photos, audio, video and documents."
-        />
+        <div data-field="photo" className="min-w-0">
+          <MediaCaptureField
+            files={mediaFiles}
+            onFilesChange={(files) => {
+              setMediaFiles(files);
+              markDirty();
+            }}
+            title="Artisan media"
+            description="Photos, audio, video and documents."
+          />
+        </div>
         {/*
           `statedPlace` is the free-text box the researchers used while there was no district column
           — "Bagru, Jaipur, Rajasthan", "Rudraprayag, Dehradun" — and it is passed READ ONLY, so the
           card can tell a researcher that this record's Kharagpur coordinates disagree with the
           Rajasthan place they typed. Nothing is parsed out of it and written back.
         */}
-        <LocationFields
-          initial={initialLocation}
-          onDirty={markDirty}
-          subjectLabel="the artisan"
-          statedPlace={initial?.place}
-        />
+        <div data-field="location" className="min-w-0">
+          <LocationFields
+            initial={initialLocation}
+            onDirty={markDirty}
+            subjectLabel="the artisan"
+            statedPlace={initial?.place}
+          />
+        </div>
         {uploadProgress ? <UploadProgress progress={uploadProgress} files={mediaFiles} /> : null}
         {/*
           THE HOST'S OWN QUESTIONS, AT THE BOTTOM OF THE SAME LIST OF FIELDS — see

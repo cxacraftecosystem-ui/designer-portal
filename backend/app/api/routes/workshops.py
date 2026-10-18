@@ -65,6 +65,8 @@ from app.schemas.access import (
 )
 from app.schemas.records import WORKSHOP_TYPES, WorkshopCreate, WorkshopUpdate
 from app.services.access import guard_record_edit, record_revision
+from app.services.completeness import attach as attach_completeness
+from app.services.completeness import filter_or_422 as completeness_filter
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import (
     RECORD_STATUSES,
@@ -306,6 +308,8 @@ async def list_workshops(
     # searches the accessible set rather than reopening the whole table. That is what lets a scoped
     # picker keep a real search box over a truncated page.
     accessibleOnly: bool = False,
+    # THE COMPLETENESS FILTER (2026-10-18): incomplete | required | complete. See ``list_artisans``.
+    completeness: str | None = None,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -341,6 +345,9 @@ async def list_workshops(
         where["workshopType"] = workshopType
     if createdBy:
         where["createdById"] = createdBy
+    complete_clause = completeness_filter("workshop", completeness)
+    if complete_clause:
+        where.setdefault("AND", []).append(complete_clause)
     # dateFrom/dateTo filter on startDate — the workshop's own timeline, matching the ordering below.
     add_date_range(where, "startDate", dateFrom, dateTo)
     # ORDERING IS DELIBERATE — by the date the workshop HAPPENED, most recent first, NOT by
@@ -365,7 +372,7 @@ async def list_workshops(
         order=[{"startDate": "desc"}, {"date": "desc"}, {"createdAt": "desc"}],
         relations=RELATIONS,
     )
-    return page_payload(public_encode(items), total, page, page_size)
+    return page_payload(await attach_completeness("workshop", public_encode(items)), total, page, page_size)
 
 
 #: What an account that may not OPEN a workshop is told when it tries to. In ONE place because it is
@@ -465,7 +472,7 @@ async def create_workshop(
     replayed = await client_key_replay(db.workshop, payload.clientKey, user_id=current_user.id)
     if replayed is not None:
         await hydrate_relations([replayed], RELATIONS)
-        return public_encode(replayed)
+        return await attach_completeness("workshop", public_encode(replayed))
     data = clean_data(payload.model_dump())
     artisan_ids = data.pop("artisanIds", [])
     craft_ids = data.pop("craftIds", [])
@@ -502,12 +509,12 @@ async def create_workshop(
         if raced is None:
             raise
         await hydrate_relations([raced], RELATIONS)
-        return public_encode(raced)
+        return await attach_completeness("workshop", public_encode(raced))
     # The row we just wrote IS the response; only its links changed after the insert, and those are
     # loaded here. Reading the whole workshop back to learn what we already know cost another
     # cross-region round trip, plus one more per relation behind it.
     await hydrate_relations([created], RELATIONS)
-    return public_encode(created)
+    return await attach_completeness("workshop", public_encode(created))
 
 
 # --------------------------------------------------------------------------- the mapping gap
@@ -960,7 +967,7 @@ async def get_workshop(
 ) -> dict[str, Any]:
     workshop = await require_record(db.workshop, workshop_id)
     await hydrate_relations([workshop], RELATIONS)
-    return public_encode(workshop)
+    return await attach_completeness("workshop", public_encode(workshop))
 
 
 @router.patch("/{workshop_id}")
@@ -1066,7 +1073,7 @@ async def update_workshop(
     # ``update`` already handed back the saved row, so the relations are grafted onto it instead of
     # reading the whole workshop a second time from another region.
     await hydrate_relations([updated], RELATIONS)
-    return public_encode(updated)
+    return await attach_completeness("workshop", public_encode(updated))
 
 
 @router.get("/{workshop_id}/submission-check")

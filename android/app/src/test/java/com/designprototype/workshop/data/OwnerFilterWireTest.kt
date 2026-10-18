@@ -76,6 +76,19 @@ class OwnerFilterWireTest {
     }
 
     @Test
+    fun `the completeness filter rides on every list that carries a meter, and only when asked`() {
+        // The record-completeness filter (2026-10-18): the picker's All / Incomplete / Missing
+        // required chips. Null is "every record" and must send nothing.
+        assertEquals("required", urlOf { it.artisans(completeness = "required") }.queryParameter("completeness"))
+        assertEquals("incomplete", urlOf { it.products(completeness = "incomplete") }.queryParameter("completeness"))
+        assertEquals("incomplete", urlOf { it.tools(completeness = "incomplete") }.queryParameter("completeness"))
+        assertEquals("incomplete", urlOf { it.workshops(completeness = "incomplete") }.queryParameter("completeness"))
+        assertEquals("required", urlOf { it.interviews(completeness = "required") }.queryParameter("completeness"))
+        assertNull(urlOf { it.artisans() }.queryParameter("completeness"))
+        assertEquals("records/completeness-rules", urlOf { it.completenessRules() }.encodedPath.removePrefix("/api/"))
+    }
+
+    @Test
     fun `media asks by uploadedBy, which is not createdBy`() {
         val url = urlOf { it.media(uploadedBy = owner) }
 
