@@ -347,7 +347,7 @@ def test_the_id1_and_a6_pdfs(client, admin, world):
         response = client.get(f"/api/artisans/{world['main']}/card.pdf?size={size}&photo=0", headers=admin)
         assert response.status_code == 200, response.text
         assert response.headers["content-type"] == "application/pdf"
-        assert re.search(r'filename="artisan-card-D-[0-9A-Z-]+\.pdf"', response.headers["content-disposition"])
+        assert re.search(r'filename="DesignWorkshop_Artisan_\d{4}-\d{2}-\d{2}_[A-Za-z0-9_-]+_Artisan-Card\.pdf"', response.headers["content-disposition"])
         reader = _pdf(response.content)
         assert len(reader.pages) == 1
         assert _size_mm(reader.pages[0]) == expected
