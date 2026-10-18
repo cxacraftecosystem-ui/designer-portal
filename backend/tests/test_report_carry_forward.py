@@ -395,6 +395,7 @@ def _source_rows() -> dict[str, _SourceRow]:
             localName="ଭିକାରୀ ମେହେର",
             gender="Male",
             phone="9876543210",
+            phoneCountryCode="+91",
             email="bhikari.meher@example.in",
             place="Barpali",
             address="House 44, Weavers' Lane, Barpali",

@@ -53,6 +53,7 @@ from app.services.records import (
     take_expected_updated_at,
     viewable_where,
 )
+from app.services.standard_values import StandardValueError, apply_tool_values
 from app.services.workshop_access import (
     enforce_workshop_submission,
     pin_pending_if_late,
@@ -139,6 +140,7 @@ _LINK_RELATIONS = tuple(rel for rel in RELATIONS if rel.field in ("artisanLinks"
 # (``craftId``, ``craftName``, ``artisanId``) are ordinary NOT-NULL-or-global scalars and are
 # deliberately absent from this tuple for the reasons already given two paragraphs up.
 _CLEARABLE_COLUMNS = (
+    "materialFamily",
     "localName",
     "englishName",
     "processUsedIn",
@@ -861,6 +863,7 @@ async def create_tool(
     if replayed is not None:
         return _order_links(public_encode(replayed, current_user))
     data = decimal_to_string(clean_data(payload.model_dump()))
+    _standardise(apply_tool_values, data)
     # THE TWO LINK LISTS COME OUT HERE, before ``attach_location`` and long before Prisma sees
     # ``data``: neither names a column, so either one left in the dict is an unknown-argument error
     # on the create below. Resolving them here also means ``craftId``/``craftName``/``artisanId`` are
@@ -950,6 +953,7 @@ async def update_tool(
     data = decimal_to_string(
         clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     )
+    _standardise(apply_tool_values, data, tool)
     # The precondition is a question, not a column — taken out of the body here, asked inside the
     # transaction below. See ``records.take_expected_updated_at``.
     expected_updated_at = take_expected_updated_at(data)
@@ -1286,3 +1290,11 @@ async def _may_manage_tool_links(tool: Any, tool_id: str, current_user: Any) -> 
         return True
     tier = await effective_tier_for_record(current_user, owner_id, "tool", tool_id)
     return tier == "EDIT"
+
+
+def _standardise(apply: Any, data: dict[str, Any], stored: Any = None) -> None:
+    """The shared standard values (``services/standard_values``): a value off its list is a 422."""
+    try:
+        apply(data, stored)
+    except StandardValueError as exc:
+        raise HTTPException(status_code=422, detail=exc.message) from exc

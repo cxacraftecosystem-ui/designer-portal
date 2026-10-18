@@ -21,6 +21,7 @@ import type { InlineHostSeed, InlineRecordSurfaceProps, UseExistingArtisan } fro
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
+import { GENDER_OPTIONS } from "@/lib/standardValues";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
@@ -62,8 +63,8 @@ import {
 } from "@/lib/crossPortal";
 import type { StatedPrefill } from "@/components/forms/statedPrefill";
 
-// Android parity (MainActivity.kt genderOptions).
-const genderOptions = ["Male", "Female", "Transgender", "Other"];
+// The shared gender list (lib/standardValues, the same file in both portals and on Android).
+const genderOptions = GENDER_OPTIONS;
 
 /*
  * THE EXPERIENCE PAIR IS THE DOCUMENTATION PORTAL'S (owner decision, 2026-10-17): a number box,
@@ -944,6 +945,7 @@ export function ArtisanForm({
           ? Number(textValue(form, "experienceMonths"))
           : null,
         phone: textValue(form, "phone"),
+        phoneCountryCode: textValue(form, "phoneCountryCode"),
         email: textValue(form, "email"),
         place: requiredText(form, "place"),
         address: textValue(form, "address"),
@@ -1516,6 +1518,8 @@ export function ArtisanForm({
             <PhoneField
               key={`phone-${prefillKey}`}
               name="phone"
+              countryCodeName="phoneCountryCode"
+              countryCode={prefill.phone ? null : initial?.phoneCountryCode}
               defaultValue={prefill.phone ?? initial?.phone}
               onValueChange={markDirty}
             />

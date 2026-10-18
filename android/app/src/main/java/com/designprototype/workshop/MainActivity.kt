@@ -673,6 +673,7 @@ import com.designprototype.workshop.data.WorkshopAccessLevelDto
 import com.designprototype.workshop.data.WorkshopAssignmentDto
 import com.designprototype.workshop.data.DW_INTERVIEW_LANGUAGE_PLACEHOLDER
 import com.designprototype.workshop.data.DW_INTERVIEW_LANGUAGES
+import com.designprototype.workshop.data.StandardValues
 import com.designprototype.workshop.data.dwInterviewLanguageOptions
 import com.designprototype.workshop.data.WorkshopMappingRowDto
 import com.designprototype.workshop.data.WorkshopMappingWindowDto
@@ -7360,7 +7361,6 @@ private fun Stat(
 private val productTypeOptions = listOf("FINISHED_GOOD", "SAMPLE", "RAW_MATERIAL", "COMPONENT", "PACKAGING", "OTHER")
 private val marketDemandOptions = listOf("LOW", "MEDIUM", "HIGH", "SEASONAL", "UNKNOWN")
 private val makerOptions = listOf("ARTISAN", "LOCAL_BLACKSMITH", "CARPENTER", "WORKSHOP", "FACTORY", "UNKNOWN", "OTHER")
-private val traditionOptions = listOf("TRADITIONAL", "MODERN", "HYBRID", "UNKNOWN")
 private val statusOptions = listOf("DRAFT", "PENDING", "APPROVED", "REJECTED")
 
 /**
@@ -7551,7 +7551,8 @@ private fun UserDto.canManageUsers(): Boolean = roleRank(role) >= RANK_PROFESSOR
 
 /** The status a NEW record defaults to for the given role: APPROVED for professor+, PENDING below. */
 private fun defaultCreateStatus(role: String?): String = if (canSetRecordStatus(role)) "APPROVED" else "PENDING"
-private val genderOptions = listOf("Male", "Female", "Transgender", "Other")
+/** The shared gender list (StandardValues; the same in both portals and on the web). */
+private val genderOptions = StandardValues.GENDER_LABELS
 
 /**
  * App-level controller that lets a record form tell the back navigation "I have unsaved work, and
@@ -11329,7 +11330,7 @@ private fun ArtisanForm(
     // No pre-selected gender (UX audit 2026-10-16, DW-09 [both]): a box nobody touched used to save
     // "Male" as a claim about a person. Unanswered stays unanswered, and saves as null.
     var gender by remember(editing) { mutableStateOf(editing?.gender?.takeIf { it.isNotBlank() } ?: "") }
-    var phone by remember(editing) { mutableStateOf(editing?.phone ?: "") }
+    var phone by remember(editing) { mutableStateOf(StandardValues.phoneForEditing(editing?.phoneCountryCode, editing?.phone)) }
     var email by remember(editing) { mutableStateOf(editing?.email ?: "") }
     var place by remember(editing) { mutableStateOf(editing?.place ?: prefill?.place ?: "") }
     var address by remember(editing) { mutableStateOf(editing?.address ?: "") }
@@ -11609,7 +11610,10 @@ private fun ArtisanForm(
                 name = name.trim(),
                 localName = localName.blankToNull(),
                 gender = gender.blankToNull(),
-                phone = phone.blankToNull(),
+                // The two columns the server stores: digits and the code beside them. A value the
+                // rule cannot read goes as typed, and the server says why.
+                phone = StandardValues.normalizePhone(null, phone).digits ?: phone.blankToNull(),
+                phoneCountryCode = StandardValues.normalizePhone(null, phone).code,
                 email = email.blankToNull(),
                 place = place.trim(),
                 address = address.blankToNull(),
@@ -12889,6 +12893,7 @@ private fun ToolForm(
     val artisanId = artisanIds.firstOrNull().orEmpty()
     var processUsedIn by remember(editing) { mutableStateOf(editing?.processUsedIn ?: "") }
     var material by remember(editing) { mutableStateOf(editing?.material ?: "") }
+    var materialFamily by remember(editing) { mutableStateOf(editing?.materialFamily.orEmpty()) }
     var yearsInUse by remember(editing) { mutableStateOf(editing?.yearsInUse?.toString() ?: "") }
     /*
      * THE FIVE DIMENSION BOXES, AND THE TWO PAIRS AMONG THEM.
@@ -13271,6 +13276,7 @@ private fun ToolForm(
                 place = place.trim(),
                 processUsedIn = processUsedIn.blankToNull(),
                 material = material.blankToNull(),
+                materialFamily = materialFamily.blankToNull(),
                 yearsInUse = yearsInUse.toIntOrNull(),
                 height = height.toDoubleOrNull(),
                 width = width.toDoubleOrNull(),
@@ -13548,6 +13554,8 @@ private fun ToolForm(
         RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
         TextInput("Process used in", processUsedIn) { processUsedIn = it }
         TextInput("Material", material) { material = it }
+        // The material FAMILY from the shared list; the box above stays the free description.
+        DropdownField("Material type", StandardValues.MATERIAL_FAMILY_OPTIONS, materialFamily, placeholder = "Select material type") { materialFamily = it }
         TextInput("Years in use", yearsInUse, keyboardType = KeyboardType.Number, dictate = false) { yearsInUse = it }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.weight(1f)) { TextInput("Height (cm)", height, keyboardType = KeyboardType.Decimal, dictate = false) { height = it; propagateDimension(it, ::inchesTextFromCm) { v -> heightInches = v } } }
@@ -13656,7 +13664,7 @@ private fun ToolForm(
             }
         )
         DropdownField("Maker", makerOptions.map { it to it }, maker, includeNone = false) { maker = it }
-        DropdownField("Tradition type", traditionOptions.map { it to it }, traditionType, includeNone = false) { traditionType = it }
+        DropdownField("Tradition type", StandardValues.TRADITION_OPTIONS, traditionType, includeNone = false) { traditionType = it }
         TextInput("Replacement cost", replacementCost, keyboardType = KeyboardType.Decimal, dictate = false) { replacementCost = it }
         // The tool form's two narrative columns. `processUsedIn` above stays single-line and plain —
         // it is single-line on the web form too, and widening it here would put the two platforms out
@@ -17747,7 +17755,7 @@ private fun ViewDataDetail(
                 DetailRow("Craft", v.craft?.name)
                 DetailRow("Place", v.place)
                 DetailRow("Gender", v.gender)
-                DetailRow("Phone", v.phone)
+                DetailRow("Phone", StandardValues.formatPhone(v.phoneCountryCode, v.phone))
                 DetailRow("Email", v.email)
                 DetailRow("Address", v.address)
                 DetailRow("Notes", v.notes)
@@ -17806,6 +17814,7 @@ private fun ViewDataDetail(
                 DetailRow("Artisan", v.artisanName)
                 DetailRow("Place", v.place)
                 DetailRow("Material", v.material)
+                DetailRow("Material type", StandardValues.materialFamilyLabel(v.materialFamily))
                 DetailRow("Maker", v.maker)
                 DetailRow("Tradition", v.traditionType)
                 DetailRow("Used in", v.processUsedIn)
@@ -17871,7 +17880,7 @@ private fun ViewDataDetail(
                 if (showProvenance) ProvenanceSection(meta = rep.extraMetadata, createdByName = rep.createdBy?.name)
                 DetailRow("Artisans", rep.artisans.mapNotNull { it.artisan?.name }.joinToString(", ").ifBlank { null })
                 DetailRow("Place", rep.place)
-                DetailRow("Language", rep.language)
+                DetailRow("Language", StandardValues.languageName(rep.language))
                 DetailRow("Notes", rep.notes)
                 DetailRow("Status", rep.status)
                 val researchers = g.mapNotNull { it.createdBy?.name }.distinct().joinToString(", ")

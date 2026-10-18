@@ -132,6 +132,7 @@ from app.schemas.records import ArtisanCreate
 from app.services import design_workshops, records
 from app.services.artisan_identity import mask_aadhaar
 from app.services.artisan_xlsx import MAX_ARTISANS, ParsedArtisan, ParsedArtisanList
+from app.services.standard_values import StandardValueError, apply_artisan_values
 from app.services.xlsx_table import ParseProblem
 from prisma import Json
 
@@ -548,6 +549,13 @@ async def _create_one(
         return ImportOutcome.REFUSED, None
 
     data = records.clean_data(payload.model_dump())
+    try:
+        # The shared standard values: the phone splits into its country code and digits, the
+        # gender takes its list label. A value off the list refuses the ROW, like every rule above.
+        apply_artisan_values(data)
+    except StandardValueError as exc:
+        refuse(artisan.row, f"{artisan.name} could not be recorded: {exc.message}")
+        return ImportOutcome.REFUSED, None
     try:
         # ``allow_create=False`` — see this module's header. A typo'd craft name is a refused ROW,
         # never a new entry in the controlled vocabulary.

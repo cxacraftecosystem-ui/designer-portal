@@ -245,6 +245,8 @@ export type Artisan = {
   localName?: string | null;
   gender?: string | null;
   phone?: string | null;
+  /** The phone's country code; `phone` is digits only (lib/standardValues). */
+  phoneCountryCode?: string | null;
   email?: string | null;
   place: string;
   address?: string | null;
@@ -533,6 +535,8 @@ export type ToolDocumentation = {
   englishName?: string | null;
   processUsedIn?: string | null;
   material?: string | null;
+  /** A code from the shared material list (lib/standardValues). */
+  materialFamily?: string | null;
   yearsInUse?: number | null;
   /**
    * TWO HEIGHTS AND TWO WIDTHS, PAIRED 1:1 SINCE 2026-09-15 — read all four before writing any.

@@ -262,6 +262,8 @@ ARTISAN_CARRIED = {
     "localName": "participant.localName",
     "gender": "participant.gender",
     "phone": "participant.phone",
+    # Folded into the same box: hydration composes "+91 9876543210" from the two columns.
+    "phoneCountryCode": "participant.phone",
     "email": "participant.email",
     "place": "participant.village",            # the fallback when Location.village is empty
     "pehchanCardAvailable": "participant.pehchanCardAvailable",
@@ -516,6 +518,10 @@ TOOL_CARRIED = {
     ),
 }
 TOOL_NOT_CARRIED = {
+    "materialFamily": (
+        "the shared material-family code (services/standard_values); the stage asks its own "
+        "MATERIAL_FAMILY question, and the free `material` text is what the tool carries"
+    ),
     "measurementImageId": (
         "a working image from the measurement pipeline; see the product note, including why that "
         "note's claim about _reference_photos was false until the MEASUREMENT_GRID marker existed"

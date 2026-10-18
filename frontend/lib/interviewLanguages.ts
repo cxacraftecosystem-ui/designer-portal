@@ -28,38 +28,15 @@
  * at H and E among twenty-two others and make the common case the slowest to reach on both clients.
  */
 
+import { languageOptions } from "@/lib/standardValues";
+
 /**
  * The twenty-four options, in Android's order.
  *
  * `readonly` and exported as a value rather than a type: callers map over it, and the interview page
  * needs `.length` to reason about `SEARCH_THRESHOLD` without re-counting it in a comment.
  */
-export const INTERVIEW_LANGUAGES: readonly string[] = [
-  "Hindi",
-  "English",
-  "Bengali",
-  "Marathi",
-  "Telugu",
-  "Tamil",
-  "Gujarati",
-  "Urdu",
-  "Kannada",
-  "Odia",
-  "Malayalam",
-  "Punjabi",
-  "Assamese",
-  "Maithili",
-  "Sanskrit",
-  "Konkani",
-  "Nepali",
-  "Manipuri (Meitei)",
-  "Bodo",
-  "Dogri",
-  "Kashmiri",
-  "Santali",
-  "Sindhi",
-  "Other"
-] as const;
+export const INTERVIEW_LANGUAGES: readonly string[] = languageOptions(null).map((option) => option.label);
 
 /**
  * What the trigger reads while nothing is chosen. Android's own `placeholder = "Select language"`
@@ -103,12 +80,8 @@ export type InterviewLanguageOption = { value: string; label: string };
  * @param current the language already on the record, or null/undefined/"" for a new one.
  */
 export function interviewLanguageOptions(current?: string | null): InterviewLanguageOption[] {
-  const base = INTERVIEW_LANGUAGES.map((language) => ({ value: language, label: language }));
-  // Whitespace-only is "not answered", the same as empty — trimmed for the TEST but never for the
-  // VALUE: prepending the trimmed form would make the option and the stored string different
-  // strings, and the control would go back to matching nothing.
-  const existing = current ?? "";
-  if (!existing.trim()) return base;
-  if (INTERVIEW_LANGUAGES.some((language) => language === existing)) return base;
-  return [{ value: existing, label: existing }, ...base];
+  // SINCE CONVERGENCE POINT 10 the value is the shared standard CODE ("bn") and the label its name
+  // ("Bengali"); the list is `lib/standardValues`, the same file in both portals. The preserve rule
+  // below still holds for a free-text value stored before the list.
+  return languageOptions(current);
 }

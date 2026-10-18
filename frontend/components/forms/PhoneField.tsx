@@ -84,16 +84,32 @@ export function PhoneField({
    * `stage_completeness` when a report is generated, not by the browser at save time — so a
    * `required` reaching that surface would refuse a save the repository is happy to accept.
    */
-  required = false
+  required = false,
+  countryCode,
+  countryCodeName
 }: {
   name?: string;
   defaultValue?: string | null;
+  /** The stored `phoneCountryCode` beside a digits-only `defaultValue` (the record columns). */
+  countryCode?: string | null;
+  /**
+   * Set on a record form: the mirror then submits the digits under `name` and the dial code under
+   * this name, the two columns the server stores (lib/standardValues). Unset, it submits the one
+   * "+91 9876543210" string a stage box carries.
+   */
+  countryCodeName?: string;
   onValueChange?: (value: string) => void;
   disabled?: boolean;
   mirror?: boolean;
   required?: boolean;
 }) {
-  const [{ iso2, digits }, setState] = useState(() => splitStoredPhone(defaultValue));
+  const [{ iso2, digits }, setState] = useState(() =>
+    splitStoredPhone(
+      countryCode && defaultValue && !defaultValue.trim().startsWith("+")
+        ? `${countryCode} ${defaultValue.trim()}`
+        : defaultValue
+    )
+  );
   /**
    * Whether anybody has touched this control since it was seeded. Only ever set, never cleared.
    *
@@ -285,16 +301,32 @@ export function PhoneField({
           `mirror={false}` for a caller that reads the value through `onValueChange` and has no form
           to submit — see the component doc block. */}
       {mirror ? (
-        <input
-          type="text"
-          name={name}
-          value={combined}
-          pattern={digits ? (dialCode === DEFAULT_DIAL_CODE ? "\\+91 \\d{10}" : "\\+\\d{1,4} \\d{4,14}") : undefined}
-          onChange={() => undefined}
-          tabIndex={-1}
-          aria-hidden="true"
-          className="pointer-events-none absolute h-0 w-0 border-0 p-0 opacity-0"
-        />
+        countryCodeName ? (
+          <>
+            <input
+              type="text"
+              name={name}
+              value={digits}
+              pattern={digits ? (dialCode === DEFAULT_DIAL_CODE ? "\\d{10}" : "\\d{4,14}") : undefined}
+              onChange={() => undefined}
+              tabIndex={-1}
+              aria-hidden="true"
+              className="pointer-events-none absolute h-0 w-0 border-0 p-0 opacity-0"
+            />
+            <input type="hidden" name={countryCodeName} value={digits ? dialCode : ""} />
+          </>
+        ) : (
+          <input
+            type="text"
+            name={name}
+            value={combined}
+            pattern={digits ? (dialCode === DEFAULT_DIAL_CODE ? "\\+91 \\d{10}" : "\\+\\d{1,4} \\d{4,14}") : undefined}
+            onChange={() => undefined}
+            tabIndex={-1}
+            aria-hidden="true"
+            className="pointer-events-none absolute h-0 w-0 border-0 p-0 opacity-0"
+          />
+        )
       ) : null}
     </div>
   );

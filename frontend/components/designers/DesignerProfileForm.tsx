@@ -661,6 +661,7 @@ export function DesignerProfileForm({
           */}
           <PhoneField
             name="phone"
+            countryCode={profile.phoneCountryCode}
             defaultValue={profile.phone}
             onValueChange={markDirty}
             required={isDesignerProfileFieldRequired("phone")}

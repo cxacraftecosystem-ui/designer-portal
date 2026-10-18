@@ -73,6 +73,8 @@ class ArtisanCreate(APIModel):
     # ``contact_formats.validate_email``'s docstring, which carries the same note from the other
     # side.
     phone: str | None = None
+    # The country code beside it (services/standard_values); +91 when a number carries none.
+    phoneCountryCode: str | None = Field(default=None, max_length=8)
     email: str | None = None
     place: str = Field(min_length=1, max_length=180)
     address: str | None = None
@@ -247,6 +249,8 @@ class ArtisanUpdate(APIModel):
     # above ``ArtisanCreate.phone``. A PATCH re-sends what is stored, so a rule added here refuses
     # an edit over a value the editor never typed.
     phone: str | None = None
+    # The country code beside it (services/standard_values); +91 when a number carries none.
+    phoneCountryCode: str | None = Field(default=None, max_length=8)
     email: str | None = None
     place: str | None = Field(default=None, min_length=1, max_length=180)
     address: str | None = None
@@ -772,6 +776,8 @@ class ToolCreate(APIModel):
     englishName: str | None = None
     processUsedIn: str | None = None
     material: str | None = None
+    # A code from the shared material list (services/standard_values); `material` stays free text.
+    materialFamily: str | None = Field(default=None, max_length=40)
     # `yearsInUse` has carried this bound since it was added; every measurement beside it and the
     # replacement cost below now do too. See NON_NEGATIVE_MEASURES above.
     yearsInUse: int | None = Field(default=None, ge=0)
@@ -870,6 +876,8 @@ class ToolUpdate(APIModel):
     englishName: str | None = None
     processUsedIn: str | None = None
     material: str | None = None
+    # A code from the shared material list (services/standard_values); `material` stays free text.
+    materialFamily: str | None = Field(default=None, max_length=40)
     # Bounded on update as well as create — see NON_NEGATIVE_MEASURES above.
     yearsInUse: int | None = Field(default=None, ge=0)
     height: Decimal | None = Field(default=None, ge=0)

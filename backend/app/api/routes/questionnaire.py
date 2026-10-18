@@ -8,10 +8,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from prisma.errors import UniqueViolationError
 
-# csv_response is SHARED with the export router rather than restated: both hand a researcher a .csv
-# over the same Content-Disposition and charset, and a download that saves differently depending on
-# which endpoint produced it is exactly the drift that helper exists to prevent. (export.py imports
-# from data_browser.py for the same reason; nothing in that chain imports this module back.)
 from app.api.routes.export import csv_response
 from app.core.db import db
 from app.core.deps import (
@@ -78,6 +74,12 @@ from app.services.records import (
     take_expected_updated_at,
     viewable_where,
 )
+
+# csv_response is SHARED with the export router rather than restated: both hand a researcher a .csv
+# over the same Content-Disposition and charset, and a download that saves differently depending on
+# which endpoint produced it is exactly the drift that helper exists to prevent. (export.py imports
+# from data_browser.py for the same reason; nothing in that chain imports this module back.)
+from app.services.standard_values import StandardValueError, apply_interview_values
 from app.services.text_format import by_count, count_noun
 from app.services.workshop_access import (
     WorkshopSubmissionCheck,
@@ -1259,6 +1261,7 @@ async def create_interview(
     # ``tests/test_permission_matrix`` pins both halves and caught exactly this.
     await assert_referenced_records_exist(payload.artisanIds, payload.responses)
     data = clean_data(payload.model_dump(exclude={"artisanIds", "responses"}))
+    _standardise(apply_interview_values, data)
     # No longer a user-facing field: fall back to when the interview was actually recorded.
     default_interview_date(data)
     data = await attach_location(data)
@@ -1718,6 +1721,7 @@ async def update_interview(
         # ``status``, ``recordedAt`` and ``recordedTimezone`` are NOT NULL and stay out.
         clearable=("interviewDate", "place", "language", "notes"),
     )
+    _standardise(apply_interview_values, data, interview)
     # The precondition is a question, not a column: popped before anything reads ``data``, asked
     # inside the transaction below. See ``records.take_expected_updated_at``.
     expected_updated_at = take_expected_updated_at(data)
@@ -2331,3 +2335,11 @@ async def delete_interview(
     # records are its content (``services/record_design_workshop``, 2026-10-09).
     await assert_may_write_a_record_filed_under(interview.designWorkshopId, current_user)
     await db.questionnaireinterview.delete(where={"id": interview_id})
+
+
+def _standardise(apply: Any, data: dict[str, Any], stored: Any = None) -> None:
+    """The shared standard values (``services/standard_values``): a value off its list is a 422."""
+    try:
+        apply(data, stored)
+    except StandardValueError as exc:
+        raise HTTPException(status_code=422, detail=exc.message) from exc

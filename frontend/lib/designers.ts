@@ -379,6 +379,8 @@ export type DesignerProfile = {
   /** The paragraph that appears as "Designer's profile" in stage 3 of every report. */
   biography: string | null;
   phone: string | null;
+  /** The country code beside `phone`, which is digits only (lib/standardValues). */
+  phoneCountryCode?: string | null;
   email: string | null;
   website: string | null;
   addressLine: string | null;
@@ -492,6 +494,8 @@ export type DesignerProfileUpdateBody = {
   experienceMonths: number | null;
   biography: string | null;
   phone: string | null;
+  /** The country code beside `phone`, which is digits only (lib/standardValues). */
+  phoneCountryCode?: string | null;
   email: string | null;
   website: string | null;
   addressLine: string | null;

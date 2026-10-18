@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.StandardValues
 import com.designprototype.workshop.ui.CalendarField
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.ui.destructiveAction
@@ -250,7 +251,7 @@ internal fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
     experienceYears = experienceYears?.toString().orEmpty(),
     experienceMonths = experienceMonths?.toString().orEmpty(),
     biography = biography.orEmpty(),
-    phone = phone.orEmpty(),
+    phone = StandardValues.phoneForEditing(phoneCountryCode, phone),
     email = email.orEmpty(),
     website = website.orEmpty(),
     // THE COLUMN AS IT IS — prose, or the web's `{"blocks":[…]}` document. The address box is the

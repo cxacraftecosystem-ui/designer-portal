@@ -45,6 +45,7 @@ from fastapi import HTTPException, status
 # unrelated failure as if the designer's work had been stored.
 from prisma.errors import UniqueViolationError
 
+from app.services.standard_values import compose_phone, language_name
 from app.services.text_format import by_count, count_noun
 from app.core.db import db
 from app.core.deps import can_run_design_workshops, has_rank, is_admin
@@ -1999,7 +2000,8 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
                 else _meta_value(_meta(r), "age")
             ),
             "gender": r.gender,
-            "phone": r.phone,
+            # The stage box carries the one-string "+91 9876543210" its phone format reads.
+            "phone": compose_phone(getattr(r, "phoneCountryCode", None), r.phone),
             "email": r.email,
             # ── IDENTITY: BOTH NUMBERS, BOTH MASKED — REVERSED BY THE OWNER 2026-08-24 ──────
             #
@@ -2786,7 +2788,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         sublabel=lambda r: _joined(
             _iso_date(r.interviewDate),
             r.place,
-            r.language,
+            language_name(r.language),
             _interview_artisan_phrase(r),
             _review_flag(r),
         ),
@@ -2828,7 +2830,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "interviewTitle": r.title,
             "interviewDate": _iso_date(r.interviewDate),
             "interviewPlace": r.place,
-            "interviewLanguage": r.language,
+            "interviewLanguage": language_name(r.language),
             "interviewArtisanCount": _interview_artisan_count(r),
             "interviewSectionsCovered": _interview_sections_covered(r),
             "interviewQuestionsAnswered": _interview_questions_answered(r),

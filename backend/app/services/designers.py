@@ -34,12 +34,14 @@ neither, and outside the two Gmail domains it would merge two different people.
 from datetime import UTC, datetime
 from typing import Any
 
+from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from prisma.errors import UniqueViolationError
 
 from app.core.db import db
 from app.services import identity, rich_text
 from app.services.concurrency import gather_reads
+from app.services.standard_values import StandardValueError, apply_phone, compose_phone
 
 # Every column of ``DesignerProfile`` a person may write. Named once, here, and consumed by the
 # serializer, the updater and the schema's field list alike — three copies of a twenty-two-name
@@ -79,6 +81,8 @@ PROFILE_FIELDS: tuple[str, ...] = (
     "experienceMonths",
     "biography",
     "phone",
+    # The country code beside the digits (services/standard_values). +91 when none is given.
+    "phoneCountryCode",
     "email",
     "website",
     "addressLine",
@@ -1226,6 +1230,14 @@ async def update_profile(user_id: str, values: dict[str, Any]) -> Any:
     # `identity.resolve_profile_keys` for the whole argument; the short version is that 44 live
     # profiles here share one empanelment number, and a 409 would leave 43 designers unable to
     # save their own biography over a data problem none of them caused.
+    # The shared phone rule (services/standard_values): digits in `phone`, the code beside them.
+    # A stored legacy value re-sent unchanged is left alone. The sign-in key below is the last ten
+    # digits either way, so it does not move.
+    if "phone" in data or "phoneCountryCode" in data:
+        try:
+            apply_phone(data, await db.designerprofile.find_unique(where={"userId": user_id}))
+        except StandardValueError as exc:
+            raise HTTPException(status_code=422, detail=exc.message) from exc
     if "phone" in data or "empanelmentNo" in data:
         stored = await db.designerprofile.find_unique(where={"userId": user_id})
         keys = await identity.resolve_profile_keys(
@@ -1505,6 +1517,8 @@ async def prefill_from_profile(user_id: str) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for column, field_key in PREFILL_MAP:
         value = getattr(profile, column, None)
+        if column == "phone":
+            value = compose_phone(getattr(profile, "phoneCountryCode", None), value)
         if isinstance(value, str):
             # ── THE READ BOUNDARY, AND THIS IS THE ONE DOOR FROM A PROFILE COLUMN TO A REPORT ──
             #
