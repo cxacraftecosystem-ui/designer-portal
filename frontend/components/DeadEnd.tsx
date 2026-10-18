@@ -225,7 +225,7 @@ export function DeadEndWayBack({
                 because somebody who arrived at a dead end was looking for a particular record, and
                 this is the page that finds one. */}
             <Link href="/search" className="field-button-secondary">
-              Browse records
+              Search
             </Link>
           </>
         ) : (

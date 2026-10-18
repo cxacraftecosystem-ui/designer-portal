@@ -809,7 +809,10 @@ jobs:
         # names it) offers no 18, and prisma-client-py's frozen Prisma 5.17 schema engine predates it
         # (docs/OPEN_FINDINGS.md).
         # The container is created empty on every run, so the bump carries no data to migrate.
-        image: postgres:17
+        # pgvector's build OF THAT SAME postgres:17 (2026-10-25): the search migration installs
+        # `vector` only where the extension exists, and this image is what lets the meaning-ranking
+        # tests run here rather than skip (docs/SEARCH.md).
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

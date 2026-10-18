@@ -27,9 +27,8 @@ record is refreshed FROM it, never the other way round.
    caller checks before it reads a word. A man in the middle holding neither can neither ask nor
    answer, and a captured answer cannot be replayed against another request: its nonce is not the
    one the caller just sent. :func:`bearer_matches`, :func:`sign`, :func:`signature_matches`.
-3. **Nothing works until both servers are configured.** :func:`active` is the flag AND the
-   cross-portal token AND the Aadhaar fingerprint key (32 characters or more each); the designer
-   portal adds its URL for the other server. A server
+3. **Nothing works until both servers are configured.** :func:`active` is the flag AND both secrets
+   (32 characters or more each); the designer portal adds its URL for the other server. A server
    that is not active answers 404 on every route here, so a half-configured pair fails closed.
 
 What a lookup shares is :data:`SHARED_FIELDS` plus the craft and the stated address, and the words
@@ -48,8 +47,6 @@ import hashlib
 import hmac
 import re
 from typing import Any
-
-from app.services import aadhaar_fingerprint
 
 #: Shortest secret either server accepts. A shorter one leaves the feature off.
 MIN_SECRET_LENGTH = 32
@@ -163,7 +160,7 @@ def aadhaar_code(number: str, key: str) -> str:
     ``Artisan.aadhaarFingerprint`` is this code.
     """
     digits = "".join(ch for ch in number if ch.isdigit())
-    return aadhaar_fingerprint.fingerprint(digits, key)
+    return hmac.new(key.strip().encode("utf-8"), digits.encode("ascii"), hashlib.sha256).hexdigest()
 
 
 def stored_aadhaar_code(artisan: Any, key: str | None) -> str | None:
@@ -228,3 +225,77 @@ def shared_fields(artisan: Any) -> dict[str, Any]:
             value = value.isoformat()
         out[key] = value
     return out
+
+# ── ONE SEARCH ACROSS BOTH PORTALS (docs/SEARCH.md) ─────────────────────────────────────────────
+#
+# The same signed channel, now two-way: each portal answers the other's search over
+# ``POST /cross-portal/peer/search`` and ``.../search/record``. What crosses is a text projection of
+# each hit (:data:`PEER_ITEM_KEYS`) — never a file, a URL to one, or an identity field — and only for
+# records the answering portal marks shareable and whose artisans' consent is live.
+
+#: Every search type, in the order groups are shown. Both portals use this vocabulary; clusters,
+#: designWorkshops and reports exist on the designer portal only.
+SEARCH_TYPES: tuple[str, ...] = (
+    "artisans",
+    "crafts",
+    "clusters",
+    "workshops",
+    "designWorkshops",
+    "interviews",
+    "transcripts",
+    "reports",
+    "products",
+    "tools",
+    "processes",
+    "media",
+)
+
+#: Who may see the other portal's results. No field contributor, no crowdsource volunteer.
+CROSS_PORTAL_SEARCH_ROLES: frozenset[str] = frozenset(
+    {
+        "MASTER_ADMIN",
+        "ADMIN",
+        "MINISTRY_ADMIN",
+        "REGIONAL_DIRECTOR",
+        "ASSISTANT_DIRECTOR",
+        "PROFESSOR",
+        "INSPECTOR",
+        "DESIGNER",
+        "RESEARCHER",
+    }
+)
+
+#: The keys one peer search item may carry, and nothing else.
+PEER_ITEM_KEYS: tuple[str, ...] = (
+    "type",
+    "id",
+    "title",
+    "subtitle",
+    "snippet",
+    "highlights",
+    "place",
+    "craftCodes",
+    "recordDate",
+    "openUrl",
+)
+
+
+def peer_api_url(settings: Any) -> str:
+    """The other portal's API base up to ``/api``: FIELD_REPOSITORY_API_URL on the designer portal,
+    DESIGNER_PORTAL_API_URL on the Field Repository. Empty when neither is set."""
+    for name in ("field_repository_api_url", "designer_portal_api_url"):
+        value = (getattr(settings, name, None) or "").strip()
+        if value:
+            return value.rstrip("/")
+    return ""
+
+
+def search_active(settings: Any) -> bool:
+    """Cross-portal search may run: its own flag, both shared secrets, and the other portal's URL."""
+    if not getattr(settings, "cross_portal_search_enabled", False):
+        return False
+    if not _secret_ok(getattr(settings, "cross_portal_token", None)):
+        return False
+    if not _secret_ok(aadhaar_key(settings)):
+        return False
+    return bool(peer_api_url(settings))

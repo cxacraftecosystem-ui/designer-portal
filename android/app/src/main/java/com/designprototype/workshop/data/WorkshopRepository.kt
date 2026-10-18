@@ -6718,6 +6718,13 @@ class WorkshopRepository(
     suspend fun interviews(createdBy: String? = null): List<QuestionnaireInterviewDetailDto> =
         api.interviews(pageSize = 100, createdBy = createdBy?.blankToNull()).items
 
+    // One search across both portals (docs/SEARCH.md): ranked groups from this portal's index and,
+    // for the roles allowed, the Field Repository's. A 404 means the server's switch is off.
+    suspend fun unifiedSearch(query: String, limit: Int = 5): UnifiedSearchResponse =
+        api.unifiedSearch(q = query.trim(), limit = limit)
+
+    suspend fun remoteRecord(type: String, id: String): RemoteRecord = api.remoteRecord(type, id)
+
     // The app-wide search panel's three list sources (`ui/AppSearchSources.kt`). Each is the list
     // route's own `search` filter, so a match means what it means on that list's screen.
     suspend fun searchCrafts(query: String, pageSize: Int = 10): List<CraftDto> =

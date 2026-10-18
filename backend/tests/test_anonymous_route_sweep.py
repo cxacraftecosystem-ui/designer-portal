@@ -139,6 +139,19 @@ def _aadhaar_routes_switched_on(monkeypatch):
     monkeypatch.setattr(get_settings(), "aadhaar_online_auth_enabled", True)
 
 
+@pytest.fixture(autouse=True)
+def _cross_portal_search_switched_on(monkeypatch):
+    """THE PEER SEARCH ROUTES ANSWER 404 UNTIL CROSS-PORTAL SEARCH IS CONFIGURED, for the same reason
+    as the Aadhaar routes above. Switched on, a caller without the peer token must get a 401. The
+    values are placeholders; nothing is called."""
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "cross_portal_search_enabled", True)
+    monkeypatch.setattr(get_settings(), "cross_portal_token", "s" * 40)
+    monkeypatch.setattr(get_settings(), "aadhaar_fingerprint_key", "h" * 40)
+    monkeypatch.setattr(get_settings(), "field_repository_api_url", "https://peer.invalid/api")
+
+
 @pytest.fixture(scope="module")
 def client():
     """One client for the whole sweep. ``TestClient`` runs the lifespan, which is why this module

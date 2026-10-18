@@ -5,8 +5,10 @@ import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DesignServices
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Mic
@@ -19,11 +21,15 @@ import androidx.compose.material.icons.filled.Security
 import com.designprototype.workshop.data.ArtisanDto
 import com.designprototype.workshop.data.CraftDto
 import com.designprototype.workshop.data.DwWorkshopRecordType
+import com.designprototype.workshop.data.UnifiedSearchItemDto
+import com.designprototype.workshop.data.UnifiedSearchResponse
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
+import com.designprototype.workshop.data.knownItems
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import retrofit2.HttpException
 import java.io.IOException
 
 /*
@@ -31,7 +37,10 @@ import java.io.IOException
  *
  * The shared file holds the rules and the UI; this one names this app's sources:
  *
- *  - RECORDS: `GET /search` (artisans, workshops, products, tools, media and design workshops — the
+ *  - RECORDS: `GET /search/unified` first (docs/SEARCH.md): one ranked answer across this portal
+ *    and, for the roles allowed, the Field Repository, whose rows carry a portal chip and open
+ *    [RemoteRecordScreen]. Where it answers 404 (switched off on the server), the older fan-out:
+ *    `GET /search` (artisans, workshops, products, tools, media and design workshops — the
  *    server drops a bucket this account may not read, so nothing here re-implements that gate), plus
  *    the `search` filter of `GET /crafts`, `GET /processes`, `GET /questionnaire/interviews` and,
  *    for the roles that may author them, `GET /questionnaires`. Each source that fails is skipped;
@@ -107,11 +116,103 @@ fun appSearchCachedItems(
         ) { openRecord(DwWorkshopRecordType.CRAFT.wire, c.id) }
     }
 
+/** How each unified type is drawn here: its group, its icon, and the record type this app opens. */
+private class UnifiedKind(
+    val group: AppSearchGroup,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val recordType: String?
+)
+
+private val UNIFIED_KINDS: Map<String, UnifiedKind> = mapOf(
+    "artisans" to UnifiedKind(AppSearchGroup.ARTISANS, Icons.Filled.Person, SearchRecordTypes.ARTISAN),
+    "crafts" to UnifiedKind(AppSearchGroup.CRAFTS, Icons.Filled.Brush, DwWorkshopRecordType.CRAFT.wire),
+    "clusters" to UnifiedKind(AppSearchGroup.CLUSTERS, Icons.Filled.Hub, null),
+    "workshops" to UnifiedKind(AppSearchGroup.WORKSHOPS, Icons.Filled.Groups, SearchRecordTypes.WORKSHOP),
+    "designWorkshops" to UnifiedKind(AppSearchGroup.DESIGN_WORKSHOPS, Icons.Filled.DesignServices, SearchRecordTypes.DESIGN_WORKSHOP),
+    "interviews" to UnifiedKind(AppSearchGroup.INTERVIEWS, Icons.Filled.Quiz, DwWorkshopRecordType.QUESTIONNAIRE.wire),
+    "transcripts" to UnifiedKind(AppSearchGroup.TRANSCRIPTS, Icons.Filled.Mic, SearchRecordTypes.MEDIA),
+    "reports" to UnifiedKind(AppSearchGroup.REPORTS, Icons.Filled.Description, SearchRecordTypes.DESIGN_WORKSHOP),
+    "products" to UnifiedKind(AppSearchGroup.PRODUCTS, Icons.Filled.Inventory2, SearchRecordTypes.PRODUCT),
+    "tools" to UnifiedKind(AppSearchGroup.TOOLS, Icons.Filled.Build, SearchRecordTypes.TOOL),
+    "processes" to UnifiedKind(AppSearchGroup.PROCESSES, Icons.Filled.AccountTree, DwWorkshopRecordType.PROCESS.wire),
+    "media" to UnifiedKind(AppSearchGroup.MEDIA, Icons.Filled.PermMedia, SearchRecordTypes.MEDIA),
+)
+
+/** The id a local item opens: a report opens its design workshop, named in its `href`. */
+internal fun unifiedOpenId(item: UnifiedSearchItemDto): String =
+    if (item.type == "reports") {
+        item.href?.substringAfter("/design-workshops/", "")?.substringBefore('?')?.ifBlank { null } ?: item.id
+    } else {
+        item.id
+    }
+
+/**
+ * The panel's items for a unified answer, in the server's group and rank order. A local item opens
+ * this app's own screen; a remote one carries [AppSearchItem.portal] and opens the read-only card.
+ */
+fun unifiedSearchItems(
+    response: UnifiedSearchResponse,
+    openRecord: (recordType: String, recordId: String) -> Unit,
+    openCluster: (name: String) -> Unit,
+    openRemote: (type: String, id: String) -> Unit
+): List<AppSearchItem> = response.knownItems().mapNotNull { item ->
+    val kind = UNIFIED_KINDS[item.type] ?: return@mapNotNull null
+    val remote = !item.local
+    AppSearchItem(
+        kind.group,
+        item.id,
+        item.title.ifBlank { item.id },
+        kind.icon,
+        subtitle = item.subtitle?.ifBlank { null } ?: item.place,
+        portal = if (remote) item.portal else null
+    ) {
+        val recordType = kind.recordType
+        when {
+            remote -> openRemote(item.type, item.id)
+            recordType == null -> openCluster(item.title)
+            else -> openRecord(recordType, unifiedOpenId(item))
+        }
+    }
+}
+
 /**
  * Every server source for [query], at once. Throws [IOException] only when every source failed and
  * at least one of them for want of a network, which is the panel's cue to say it is offline.
+ *
+ * `GET /search/unified` is asked first; only its 404 (switched off) brings in the older sources.
  */
 suspend fun appSearchRemoteItems(
+    repository: WorkshopRepository,
+    query: String,
+    includeCustomQuestionnaires: Boolean,
+    openRecord: (recordType: String, recordId: String) -> Unit,
+    openCustomQuestionnaire: (questionnaireId: String) -> Unit,
+    openCluster: (name: String) -> Unit = {},
+    openRemote: (type: String, id: String) -> Unit = { _, _ -> }
+): List<AppSearchItem> {
+    val unified = try {
+        repository.unifiedSearch(query, limit = APP_SEARCH_GROUP_CAP)
+    } catch (e: HttpException) {
+        if (e.code() == 404) null else throw e
+    }
+    if (unified != null) {
+        val items = unifiedSearchItems(unified, openRecord, openCluster, openRemote)
+        if (!includeCustomQuestionnaires) return items
+        // Custom questionnaires are not in the index; the designer's own list still answers.
+        val questionnaires = runCatching { repository.customQuestionnaires(pageSize = 10, search = query).items }
+        (questionnaires.exceptionOrNull() as? CancellationException)?.let { throw it }
+        return items + questionnaires.getOrNull().orEmpty().map { q ->
+            AppSearchItem(
+                AppSearchGroup.QUESTIONNAIRES, q.id, q.title, Icons.AutoMirrored.Filled.ListAlt,
+                subtitle = q.designWorkshopTitle ?: q.kindLabel
+            ) { openCustomQuestionnaire(q.id) }
+        }
+    }
+    return appSearchLegacyItems(repository, query, includeCustomQuestionnaires, openRecord, openCustomQuestionnaire)
+}
+
+/** The fan-out the panel used before `GET /search/unified`, kept for a server that answers it 404. */
+private suspend fun appSearchLegacyItems(
     repository: WorkshopRepository,
     query: String,
     includeCustomQuestionnaires: Boolean,

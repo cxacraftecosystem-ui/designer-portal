@@ -144,7 +144,7 @@ export function MapPointPanel({
           </ul>
           {truncated ? (
             <p className="mt-2 text-[11px] text-ink-500">
-              Showing the most recent of each type. Open Browse records for the full list.
+              Showing the most recent of each type. Open Search for the full list.
             </p>
           ) : null}
         </>
@@ -154,7 +154,7 @@ export function MapPointPanel({
         href={browseHref}
         className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-purple-700 dark:text-purple-300 hover:underline focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-700"
       >
-        Open these in Browse records
+        Open these in Search
         <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
       </Link>
     </section>

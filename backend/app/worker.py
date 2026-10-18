@@ -41,6 +41,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 from contextlib import suppress
 
 from app.core.config import get_settings
@@ -51,9 +52,40 @@ from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 from app.services.ministry_export import process_next_ministry_exports
 from app.services.weekly_digest import run_weekly_digests
+from app.services.search_indexer import (
+    compact_queue as compact_search_queue,
+    drain as drain_search_index,
+    embed_pending as embed_search_documents,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("app.worker")
+
+#: Seconds between search-index passes (docs/SEARCH.md). Small batches, because the box is
+#: memory-bound: 100 records and 32 embeddings a pass at most.
+SEARCH_INDEX_INTERVAL_SECONDS = 15.0
+SEARCH_INDEX_BATCH = 100
+SEARCH_EMBED_BATCH = 32
+#: Seconds between queue compactions while UNIFIED_SEARCH_ENABLED is off.
+SEARCH_COMPACT_INTERVAL_SECONDS = 600.0
+
+_last_search_compaction = {"at": float("-inf")}
+
+
+async def run_search_index_pass(settings) -> None:
+    """One pass of the search indexer: drain the queue, then embed what changed. While
+    UNIFIED_SEARCH_ENABLED is off nothing is built; the queue is only compacted to one row per
+    record every ten minutes, so it stays bounded. Embeddings are a no-op unless meaning ranking
+    is available."""
+    if not settings.unified_search_enabled:
+        now = time.monotonic()
+        if now - _last_search_compaction["at"] >= SEARCH_COMPACT_INTERVAL_SECONDS:
+            _last_search_compaction["at"] = now
+            await compact_search_queue()
+        return
+    await drain_search_index(batch=SEARCH_INDEX_BATCH)
+    await asyncio.sleep(0)
+    await embed_search_documents(batch=SEARCH_EMBED_BATCH, settings=settings)
 
 
 async def _run() -> None:
@@ -72,6 +104,7 @@ async def _run() -> None:
         await connect_db()
 
     logger.info("Media queue worker started (interval=%.1fs)", interval)
+    last_search_pass = 0.0
     try:
         while not stop.is_set():
             try:
@@ -113,6 +146,13 @@ async def _run() -> None:
                 await run_weekly_digests(settings=settings)
             except Exception:
                 logger.exception("Weekly digest pass failed")
+            # THE SEARCH INDEX RIDES IT TOO, every SEARCH_INDEX_INTERVAL_SECONDS, in its own try.
+            if time.monotonic() - last_search_pass >= SEARCH_INDEX_INTERVAL_SECONDS:
+                last_search_pass = time.monotonic()
+                try:
+                    await run_search_index_pass(settings)
+                except Exception:
+                    logger.exception("Search index pass failed; backing off")
             # Sleep for the interval but wake immediately on shutdown.
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval)

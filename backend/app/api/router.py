@@ -16,6 +16,7 @@ from app.api.routes import (
     craft_codes,
     crafts,
     cross_portal,
+    cross_portal_search,
     dashboard,
     data_access,
     data_browser,
@@ -92,6 +93,8 @@ api_router.include_router(artisan_cards.router)
 api_router.include_router(crafts.router)
 api_router.include_router(craft_codes.router)
 api_router.include_router(cross_portal.router)
+# The Field Repository's searches of this portal (signed peer routes; docs/SEARCH.md).
+api_router.include_router(cross_portal_search.router)
 api_router.include_router(workshops.router)
 # The "Type of workshop" vocabulary — /api/workshop-types. Mounted immediately under `workshops`
 # because the two are read together on every record form: this list fills the FIRST of the form's two

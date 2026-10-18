@@ -41,6 +41,8 @@ import { canViewDesignWorkshopData } from "@/lib/permissions";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { Artisan, Craft, MediaFile, ProductDocumentation, ToolDocumentation, Workshop } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { UnifiedResults } from "@/components/search/UnifiedResults";
+import { fetchUnified, unifiedApplies, type UnifiedResponse, type UnifiedType } from "@/lib/unifiedSearch";
 
 type SearchResult = {
   artisans: Artisan[];
@@ -127,6 +129,9 @@ const MATCHED_IN_SHOWN = 3;
  */
 const PAGE_SIZE = 20;
 
+/** One answer: unified (`/search/unified`) or legacy (`/search`), never both. */
+type SearchAnswer = { unified: UnifiedResponse | null; legacy: SearchResult | null };
+
 /** Filters as they were when Search was pressed — the pager must not drift with the live inputs. */
 type AppliedFilters = { q: string; filters: SearchFilters };
 
@@ -168,6 +173,10 @@ export default function SearchPage() {
   const [result, setResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The unified answer (`GET /search/unified`) when the question went there; null on the legacy path. */
+  const [unified, setUnified] = useState<UnifiedResponse | null>(null);
+  /** "Show all" on one unified group: that type, paged. */
+  const [unifiedFocus, setUnifiedFocus] = useState<{ type: UnifiedType; page: number } | null>(null);
 
   /**
    * THE WORKSHOP SCOPE, and why this page has to have it.
@@ -258,18 +267,41 @@ export default function SearchPage() {
     if (!applied) return;
     let cancelled = false;
     setLoading(true);
-    apiFetch<SearchResult>(
-      `/search${buildQuery({
-        q: applied.q,
-        ...searchFilterParams(applied.filters),
-        workshopIds: scope.queryValue,
-        page,
-        pageSize: PAGE_SIZE
-      })}`
-    )
-      .then((data) => {
+    const params = searchFilterParams(applied.filters);
+    // A typed question goes to the unified route (both portals, ranked); a 404 there means it is
+    // switched off, and the legacy browse below answers instead. Browsing (no text) and the artisan
+    // and media-type filters stay on the legacy route.
+    const unifiedQuestion = unifiedApplies(applied.q, applied.filters)
+      ? fetchUnified({
+          q: applied.q,
+          types: params.types ? params.types.split(",") : undefined,
+          type: unifiedFocus?.type,
+          page: unifiedFocus?.page,
+          limit: unifiedFocus ? PAGE_SIZE : undefined,
+          craftId: params.craftId,
+          place: params.place,
+          dateFrom: params.dateFrom,
+          dateTo: params.dateTo,
+          workshopIds: scope.queryValue
+        })
+      : Promise.resolve({ kind: "legacy" as const });
+    unifiedQuestion
+      .then((outcome): Promise<SearchAnswer> | SearchAnswer => {
+        if (outcome.kind === "unified") return { unified: outcome.data, legacy: null };
+        return apiFetch<SearchResult>(
+          `/search${buildQuery({
+            q: applied.q,
+            ...params,
+            workshopIds: scope.queryValue,
+            page,
+            pageSize: PAGE_SIZE
+          })}`
+        ).then((legacy): SearchAnswer => ({ unified: null, legacy }));
+      })
+      .then((data: SearchAnswer) => {
         if (cancelled) return;
-        setResult(data);
+        setUnified(data.unified);
+        setResult(data.legacy);
         setError(null);
       })
       .catch((err) => {
@@ -282,7 +314,7 @@ export default function SearchPage() {
     return () => {
       cancelled = true;
     };
-  }, [applied, page, scope.queryValue]);
+  }, [applied, page, scope.queryValue, unifiedFocus]);
 
   /**
    * A WORKSHOP PICK IS A SEARCH IN ITS OWN RIGHT, and without this it was a control that did nothing.
@@ -328,6 +360,7 @@ export default function SearchPage() {
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPage(1);
+    setUnifiedFocus(null);
     setApplied({ q: query.trim(), filters });
   }
 
@@ -340,6 +373,7 @@ export default function SearchPage() {
   function changeFilters(next: SearchFilters) {
     setFilters(next);
     setPage(1);
+    setUnifiedFocus(null);
     setApplied((current) => ({ q: current?.q ?? "", filters: next }));
   }
 
@@ -503,7 +537,7 @@ export default function SearchPage() {
           looked at". The list is the server's; the sentence is this client's, because it names the
           NEXT MOVE and the API has no business writing a web page's copy. (The other server
           sentence, `designWorkshopSearchScope`, is printed by the bucket it describes, not here.) */}
-      {result?.typesRefused?.length ? (
+      {result?.typesRefused?.length || unified?.typesRefused?.length ? (
         <p className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">
           Design workshops are not searched at your access level. Ask an admin.
         </p>
@@ -523,6 +557,7 @@ export default function SearchPage() {
             ...scope,
             setWorkshopIds: (next: string[]) => {
               setPage(1);
+              setUnifiedFocus(null);
               scope.setWorkshopIds(next);
             }
           }}
@@ -530,6 +565,15 @@ export default function SearchPage() {
         />
       </div>
 
+      {unified ? (
+        <UnifiedResults
+          data={unified}
+          focus={unifiedFocus}
+          pageSize={PAGE_SIZE}
+          loading={loading}
+          onFocus={setUnifiedFocus}
+        />
+      ) : null}
       {result && shown === 0 ? (
         <EmptyState
           title={page > 1 ? "No more results" : "No matching records"}

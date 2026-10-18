@@ -714,7 +714,8 @@ class Settings(BaseSettings):
     )
     cross_portal_token: str | None = Field(default=None, alias="CROSS_PORTAL_TOKEN")
     # The documentation portal's API base, up to and including ``/api`` — e.g.
-    # https://api.<docs-domain>/api . The designer portal calls it; it never calls back.
+    # https://api.<docs-domain>/api . The designer portal calls it; with cross-portal search on, the
+    # Field Repository also calls back at its DESIGNER_PORTAL_API_URL (docs/SEARCH.md).
     field_repository_api_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_API_URL")
 
     # ── ARTISAN QR CARDS (services/artisan_card.py; docs/ENVIRONMENT.md) ────────────────────────
@@ -735,6 +736,21 @@ class Settings(BaseSettings):
     )
     # The letter this portal's cards carry: D here, F on the Field Repository. Never change it.
     artisan_card_issuer: str = Field(default="D", alias="ARTISAN_CARD_ISSUER")
+
+    # ── ONE SEARCH ACROSS BOTH PORTALS (docs/SEARCH.md; docs/ENVIRONMENT.md) ──────────────────────
+    # ALL OFF BY DEFAULT. ``UNIFIED_SEARCH_ENABLED`` opens ``GET /search/unified`` and lets the queue
+    # worker drain ``SearchIndexQueue``; off, the route answers 404 and every client falls back to the
+    # legacy ``GET /search``. ``SEARCH_EMBEDDINGS_ENABLED`` is the AI flag: meaning ranking calls the
+    # embedding provider on the deployment's key, so it stays off until the owner turns it on, and
+    # even then runs only where pgvector is installed. ``CROSS_PORTAL_SEARCH_ENABLED`` also needs the
+    # C27 token, AADHAAR_FINGERPRINT_KEY and FIELD_REPOSITORY_API_URL (``cross_portal.search_active``).
+    unified_search_enabled: bool = Field(default=False, alias="UNIFIED_SEARCH_ENABLED")
+    search_embeddings_enabled: bool = Field(default=False, alias="SEARCH_EMBEDDINGS_ENABLED")
+    search_embedding_provider: str = Field(default="openai", alias="SEARCH_EMBEDDING_PROVIDER")
+    search_embedding_model: str = Field(
+        default="text-embedding-3-small", alias="SEARCH_EMBEDDING_MODEL"
+    )
+    cross_portal_search_enabled: bool = Field(default=False, alias="CROSS_PORTAL_SEARCH_ENABLED")
 
     # ABSOLUTE, NOT ".env". See rule 2 in this module's header: a relative env_file is resolved
     # against the working directory, so `python -m uvicorn app.main:app` from backend/ and the same

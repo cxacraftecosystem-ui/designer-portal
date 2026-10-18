@@ -1468,6 +1468,55 @@ async def test_the_registers_progress_column_is_counts_and_carries_no_value_and_
 
 
 # --------------------------------------------------------------------------------------
+# Reader 18: the unified search index — EXEMPT, and fenced (2026-10-18)
+# --------------------------------------------------------------------------------------
+#
+# `services/search_index._design_workshop` builds one workshop's search document. It reads the
+# live entries' `stageKey` and `searchText` — the text the stage save already flattened for
+# GET /search — and nothing else off the row. The document it serves is words to match on and a
+# snippet; it names nobody and carries no author, so there is nothing to attribute. The test drives
+# it against STAMPED rows whose `data` holds values that are not in `searchText`: if the builder
+# ever starts reading `data` or the stamp, those values reach the document and this fails.
+async def test_the_search_index_serves_search_text_and_no_value_or_author_off_the_row(monkeypatch):
+    from app.services import search_index
+
+    entry = _row(
+        "ent_s1", COLLECTION_STAGE, "participant",
+        {"name": "Sita Devi", "phone": "9000011111"}, STAMPS,
+    )
+    entry.searchText = "indigo vats fermented"
+    workshop = SimpleNamespace(
+        id="dw_1", deletedAt=None, title="Dyers meet", craftName=None, clusterName="Bagru",
+        district="Jaipur", state="Rajasthan", workshopCode="DW-1", venue="Hall",
+        workshopId=None, startDate=None, createdAt=datetime(2026, 3, 1, tzinfo=UTC),
+    )
+
+    async def _find_unique(where=None):
+        return workshop
+
+    async def _find_many(where=None, order=None):
+        return [entry]
+
+    monkeypatch.setattr(
+        search_index,
+        "db",
+        SimpleNamespace(
+            designworkshop=SimpleNamespace(find_unique=_find_unique),
+            dwstageentry=SimpleNamespace(find_many=_find_many),
+        ),
+    )
+
+    served = repr(await search_index._design_workshop("dw_1"))
+
+    assert "indigo vats fermented" in served, "the stage's search text is the point of the read"
+    for leaked in ("Sita Devi", "9000011111", ASHA.name, ASHA.id, MEENA.id, "byName"):
+        assert leaked not in served, (
+            f"{leaked!r} reached the search document off the stage row. The index is EXEMPT from "
+            "resolving provenance only because it reads `searchText` and serves no value or author."
+        )
+
+
+# --------------------------------------------------------------------------------------
 # Reader 16: taking the designer's name off a workshop — EXEMPT, and fenced
 # --------------------------------------------------------------------------------------
 #
@@ -1774,6 +1823,9 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         # export flattens VALUES through `design_workshop_data.flatten` (identity numbers masked) and
         # attributes nothing to anybody. FENCED by `tests/test_ministry_dashboard_attention_export.py`.
         "app/services/ministry_export.py",
+        # Classified 2026-10-18 with the unified search index. EXEMPT: it reads `stageKey` and
+        # `searchText` and serves match text with no author, FENCED by the test under "Reader 18".
+        "app/services/search_index.py",
     }
     root = Path(__file__).resolve().parents[1] / "app"
     found = set()
