@@ -1,6 +1,7 @@
 "use client";
 
 import { ToggleSwitch } from "@/components/ui/Toggle";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,6 +9,7 @@ import { AnimatePresence, motion, useMotionValueEvent, useScroll } from "framer-
 import {
   Activity,
   BadgeCheck,
+  Bell,
   Binoculars,
   Boxes,
   Brush,
@@ -705,6 +707,9 @@ export const NAV_ITEMS: NavItem[] = [
     can: canRunDesignWorkshops,
     gate: "get_current_user (narrowed here to can_run_design_workshops)"
   },
+  // The activity list (C25): every notice the server sends, in-app, mail or no mail. The bell in the
+  // island opens the same page; this row is the keyboard and sheet route to it. Android: "Notifications".
+  { href: "/notifications", label: "Notifications", icon: Bell, group: "Account", can: everyone, gate: "get_current_user (GET /notifications)" },
   { href: "/settings", label: "Settings", icon: SettingsIcon, group: "Account", can: everyone, gate: "get_current_user (PUT /preferences/me)" },
   // Android's Workshop access entry, which the menu had no equivalent for: the destination is the
   // fork, and for anyone below admin it opens their own request page directly. Ungated because
@@ -1081,6 +1086,7 @@ export function DynamicIslandNav() {
                 className="min-h-9! rounded-full border border-line-200 bg-card py-0 pl-2.5 pr-1 max-sm:hidden pointer-coarse:min-h-11!"
               />
             ) : null}
+            <NotificationBell active={isActivePath("/notifications")} />
             <button
               ref={menuButtonRef}
               type="button"

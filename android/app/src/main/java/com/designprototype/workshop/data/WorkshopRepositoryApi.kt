@@ -2189,6 +2189,13 @@ interface WorkshopRepositoryApi {
     @GET("design-workshop-inspections/awaiting-count")
     suspend fun awaitingInspectionCount(): AwaitingInspectionCountDto
 
+    // THE IN-APP ACTIVITY LIST (C25, data/AppNotifications.kt). The same routes on both servers.
+    @GET("notifications")
+    suspend fun notifications(@Query("limit") limit: Int): NotificationPageDto
+
+    @POST("notifications/read")
+    suspend fun markNotificationsRead(@Body body: NotificationReadBody): NotificationReadResultDto
+
     @POST("access/roster")
     suspend fun addToAccessRoster(@Body body: AccessRosterCreateBody): AccessRosterDto
 

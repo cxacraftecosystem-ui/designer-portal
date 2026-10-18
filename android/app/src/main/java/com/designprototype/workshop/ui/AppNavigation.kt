@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Dashboard
@@ -705,6 +706,8 @@ enum class NavDestination {
      * in. Not [DESIGNER_ROSTER], which is the narrower question of who is empanelled as a designer.
      */
     ACCESS_ROSTER,
+    /** The in-app activity list (C25), kept offline; the web's /notifications. */
+    NOTIFICATIONS,
     SETTINGS,
     GIVE_FEEDBACK,
     /**
@@ -892,6 +895,9 @@ val FIELD_NAV_ITEMS: List<NavEntry> = listOf(
     // to a crowdsource volunteer would be offering them a form whose twenty answers nothing in the
     // app would ever read back — and `PUT /designers/me/profile` refuses them anyway.
     NavEntry(NavDestination.DESIGNER_PROFILE, "My designer profile", Icons.Filled.Badge, NavGroup.ACCOUNT, FieldPermissions::canRunDesignWorkshops, "can_run_design_workshops"),
+    // The activity list (C25): every notice the server sends, mail or no mail. The web's bell opens
+    // the same list; the unread count is this row's badge.
+    NavEntry(NavDestination.NOTIFICATIONS, "Notifications", Icons.Filled.Notifications, NavGroup.ACCOUNT, everyone, "get_current_user (GET /notifications)"),
     NavEntry(NavDestination.SETTINGS, "Settings", Icons.Filled.Settings, NavGroup.ACCOUNT, everyone, "get_current_user (PUT /preferences/me)"),
     NavEntry(NavDestination.GIVE_FEEDBACK, "Give app feedback", Icons.Filled.RateReview, NavGroup.ACCOUNT, everyone, "get_current_user (PUT /feedback/me)"),
     // The agreement the sign-in box accepts. `everyone` and no gate at all: the nine clauses are
@@ -961,7 +967,9 @@ fun AppNavigationDrawerContent(
     pendingAccessCount: Int = 0,
     /** How many of this inspector's workshops wait for their review — the badge on "Workshops to
      *  inspect" (2026-10-18). Same loop, same rule: zero draws nothing. */
-    awaitingInspectionCount: Int = 0
+    awaitingInspectionCount: Int = 0,
+    /** Unread notices in the activity list (C25); the badge on "Notifications". */
+    unreadNotifications: Int = 0
 ) {
     val items = visibleNavItems(user, adminMode)
     val rootItems = items.filter { it.group == null }
@@ -1022,12 +1030,12 @@ fun AppNavigationDrawerContent(
                 .verticalScroll(rememberScrollState())
         ) {
             rootItems.forEach { entry ->
-                NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount))
+                NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount, unreadNotifications))
             }
             groups.forEach { (group, entries) ->
                 NavGroupHeading(group.label)
                 entries.forEach { entry ->
-                    NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount))
+                    NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount, unreadNotifications))
                 }
             }
             Spacer(Modifier.padding(bottom = 8.dp))
@@ -1088,11 +1096,14 @@ private fun NavGroupHeading(label: String) {
  * you are writing it and silently wrong six months later, when a second badge arrives and the
  * condition is copied one entry down.
  */
-internal fun navBadge(entry: NavEntry, pendingAccessCount: Int, awaitingInspectionCount: Int = 0): String? =
+internal fun navBadge(entry: NavEntry, pendingAccessCount: Int, awaitingInspectionCount: Int = 0, unreadNotifications: Int = 0): String? =
     when {
         entry.destination == NavDestination.ACCESS_ROSTER && pendingAccessCount > 0 -> pendingAccessCount.toString()
         entry.destination == NavDestination.DESIGN_WORKSHOP_INSPECTIONS && awaitingInspectionCount > 0 ->
             awaitingInspectionCount.toString()
+        // The activity list's unread count (C25), capped like the web's pill.
+        entry.destination == NavDestination.NOTIFICATIONS && unreadNotifications > 0 ->
+            if (unreadNotifications > 99) "99+" else unreadNotifications.toString()
         else -> null
     }
 

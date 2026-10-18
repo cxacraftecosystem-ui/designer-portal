@@ -19,7 +19,11 @@ SECRETS. ``params`` holds only what may be kept. The set-password link travels F
 lines carry the row id, the kind and the recipient's ACCOUNT id — never an address, never a body,
 never a link.
 
-PREFERENCES. A notification (:data:`mailer.REVIEW_SUGGESTION`, :data:`mailer.REVIEW_SENT_BACK`)
+IN-APP. Every notice goes through :func:`app.services.notifications.notify`, which writes the
+person's in-app activity list as well as calling :func:`enqueue` — so a notice is never lost to mail
+being off. New notices go through ``notify`` too; :func:`enqueue` alone is for a password link.
+
+PREFERENCES. A notification e-mail (:data:`mailer.REVIEW_SUGGESTION`, :data:`mailer.REVIEW_SENT_BACK`)
 is queued only for somebody whose ``UserPreference.emailReviewNotes`` is not false — opt-out, so
 an account that never saved a preference is e-mailed. A password link an administrator chose to
 e-mail is not a notification and is not governed by it.
@@ -349,33 +353,44 @@ async def notify_review_note(
     sent_back: bool,
     settings: Settings | None = None,
 ) -> int:
-    """E-mail a workshop's designers that an inspector filed a suggestion or sent it back.
+    """Tell a workshop's designers that an inspector filed a suggestion or sent it back: in-app
+    always, and by e-mail where mail is on and they have not opted out (``emailReviewNotes``).
 
-    NEVER RAISES. The suggestion or the send-back has already been written; failing to queue a
-    notice about it must not turn the inspector's 201 into an error. Returns how many were queued.
+    Goes through :func:`app.services.notifications.notify`, so the notice lands in each designer's
+    activity list even when mail is off. NEVER RAISES. The suggestion or the send-back has already
+    been written; failing to tell anybody must not turn the inspector's 201 into an error. Returns
+    how many E-MAILS were queued (the in-app rows are not counted).
     """
+    from app.services.notifications import notify
+
     settings = settings or get_settings()
-    if not mailer.mail_configured(settings):
-        return 0
     queued = 0
     try:
         kind = mailer.REVIEW_SENT_BACK if sent_back else mailer.REVIEW_SUGGESTION
+        workshop_id = str(_value(record, "id"))
         for person in await workshop_designers(record):
-            if person.id == _value(actor, "id") or not person.email:
-                continue
-            if not await wants_review_notes(person.id):
+            if person.id == _value(actor, "id"):
                 continue
             params = {
                 "recipientName": person.name,
-                "workshopId": str(_value(record, "id")),
+                "workshopId": workshop_id,
                 "workshopTitle": _value(record, "title"),
                 "inspectorName": _value(actor, "name"),
                 "note": (note or "").strip(),
                 "stageTitle": _stage_title(stage_key),
             }
-            if await enqueue(
-                kind, to_address=person.email, recipient_id=person.id, params=params, settings=settings
-            ):
+            delivery = await notify(
+                person,
+                kind,
+                mailer.subject_for(kind, params),
+                params["note"] or None,
+                f"/design-workshops/{workshop_id}",
+                email_kind=kind,
+                email_params=params,
+                preference="emailReviewNotes",
+                settings=settings,
+            )
+            if delivery.emailed:
                 queued += 1
     except Exception:  # see the docstring: the decision stands either way
         logger.exception("mail: could not queue review notices for workshop %s", _value(record, "id"))
@@ -394,26 +409,29 @@ async def notify_password_event(
     the address it held BEFORE an administrator changed it in the same request (security review N4),
     so the person who owned the account hears of it at the inbox they still read.
 
-    NEVER RAISES, and a no-op when mail is off. The password has already been written; failing to
-    queue a notice about it must not turn the change into an error. Returns whether one was queued.
+    Also written to the account's in-app list (:func:`app.services.notifications.notify`), mail or
+    no mail. NEVER RAISES. The password has already been written; failing to queue a notice about
+    it must not turn the change into an error. Returns whether an e-mail was queued.
     """
     if kind not in mailer.PASSWORD_NOTICES:
         raise ValueError(f"Not a password notice: {kind!r}")
-    try:
-        row = await enqueue(
-            kind,
-            to_address=to_address or _value(user, "email") or "",
-            recipient_id=_value(user, "id"),
-            params={
-                "recipientName": _value(user, "name"),
-                "at": datetime.now(UTC).isoformat(),
-                "by": by,
-            },
-        )
-    except Exception:  # see the docstring
-        logger.exception("mail: could not queue a password notice for %s", _value(user, "id"))
-        return False
-    return row is not None
+    from app.services.notifications import notify
+
+    params = {"recipientName": _value(user, "name"), "at": datetime.now(UTC).isoformat(), "by": by}
+    # In-app too, once: the copy sent to a previous address (``to_address``) is the same event for
+    # the same account, so it writes no second row.
+    delivery = await notify(
+        user,
+        kind,
+        mailer.subject_for(kind, params),
+        None,
+        "/settings",
+        email_kind=kind,
+        email_params=params,
+        to_address=to_address,
+        in_app=to_address is None,
+    )
+    return delivery.emailed
 
 
 # --------------------------------------------------------------------------------------

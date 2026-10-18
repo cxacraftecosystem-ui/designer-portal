@@ -165,6 +165,9 @@ class OutboxSyncJobService : JobService() {
                     // is told the same way `DwInductionFlusher` tells it, so no pass is spent on a 401.
                     if (!com.designprototype.workshop.ui.mustChangePasswordBlocks(tokens.getUser())) {
                         runCatching { DwInductionQueue.flush(app) }
+                        // The activity list (C25): the background half of the local alerts, so a
+                        // notice is announced even while the app is closed.
+                        runCatching { repository.syncNotifications(app) }
                     }
                     val waiting = runCatching { repository.outboxCounts(app).waiting }.getOrDefault(0)
                     retry = backgroundSyncShouldRetry(
