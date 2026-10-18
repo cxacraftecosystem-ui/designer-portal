@@ -157,7 +157,7 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 248 | 171,985 | 248 | 171,985 |
+| `backend/app` | 248 | 171,997 | 248 | 171,997 |
 | `frontend/app` | 110 | 59,679 | 110 | 59,679 |
 | `frontend/components` | 336 | 137,021 | 336 | 137,021 |
 | `frontend/lib` | 161 | 77,661 | 161 | 77,661 |

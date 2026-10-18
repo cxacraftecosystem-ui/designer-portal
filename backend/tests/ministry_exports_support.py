@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.config import get_settings
@@ -27,6 +28,25 @@ def private(work: Any) -> Any:
             return await work()
         finally:
             await db.disconnect()
+
+    return asyncio.run(connected())
+
+
+def own_client(work: Any) -> Any:
+    """Run ``work(client)`` on a PRIVATE ``Prisma()``, for a test whose ``TestClient`` is alive.
+
+    The shared ``db`` belongs to the app while a client runs, so connecting it here would be
+    ``AlreadyConnectedError``; a client of our own on a loop of our own touches nothing the app holds.
+    """
+    from prisma import Prisma
+
+    async def connected() -> Any:
+        client = Prisma()
+        await client.connect()
+        try:
+            return await work(client)
+        finally:
+            await client.disconnect()
 
     return asyncio.run(connected())
 
@@ -62,6 +82,8 @@ async def make_user(role: str, slug: str = "", email: str | None = None) -> Any:
 async def make_workshop(owner_id: str, kind: str | None, **extra: Any) -> Any:
     tag = uuid.uuid4().hex[:6]
     data = {"title": f"Pack workshop {tag}", "createdById": owner_id, "workshopKind": kind, **extra}
+    if data.get("status") == "APPROVED":
+        data.setdefault("approvedAt", datetime.now(UTC))  # DesignWorkshop_approved_has_approvedAt
     return await db.designworkshop.create(data=data)
 
 

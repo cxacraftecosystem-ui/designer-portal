@@ -984,3 +984,19 @@ async def promote_entry(
             ),
         )
     return record
+
+
+async def live_entries_for_year(plan_year: int, workshop_kind: str, *, take: int) -> list[Any]:
+    """The plan's live (not withdrawn) rows for one year and kind, in workshop-number order.
+
+    The Ministry export pack's Annual plan sheet reads the plan through here, so the table keeps its
+    two clients: this module and its routes. The pack lists PLANNED rows on their own sheet and never
+    counts them as workshops.
+    """
+    return list(
+        await db.annualplanentry.find_many(
+            where={"planYear": plan_year, "workshopKind": workshop_kind, "withdrawnAt": None},
+            order=[{"workshopNoKey": "asc"}],
+            take=take,
+        )
+    )

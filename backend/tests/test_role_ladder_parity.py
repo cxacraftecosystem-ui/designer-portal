@@ -1408,6 +1408,13 @@ LADDER_SHAPED = 5
 #: reason has to be "this does not purport to enumerate the ladder" — never "this failure was
 #: inconvenient". Anything that DOES enumerate belongs in ``MIRRORS``, not here.
 KNOWN_NON_MIRRORS: dict[str, str] = {
+    "frontend/e2e/ministry-exports-unit.spec.ts": (
+        "A SAMPLE of each side of the `/ministry-exports` gate, and NOT an enumeration: three tiers "
+        "it must admit and four it must refuse, asked of `ROUTE_GUARDS`, plus ADMIN alone for the "
+        "feature switch. The gate's whole membership is held by the `partial` mirror of "
+        "`MINISTRY_EXPORT_ROLES` above, and the spec asserts that list equals "
+        "`OVERSIGHT_ASSIGNER_ROLES` rather than restating it."
+    ),
     "android/app/src/test/java/com/designprototype/workshop/ui/RecordOpenTest.kt": (
         "Tiers named in individual assertions, and NOT an enumeration -- no tuple, map or loop over "
         "roles. It pins `RecordOpen.mayUpdate` (who is offered 'Update' on a read-only record) at its "

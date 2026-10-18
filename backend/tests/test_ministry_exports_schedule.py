@@ -148,17 +148,14 @@ def test_a_racing_insert_is_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
                 "status": packs.READY,
             }
         )
-        real_find = db.ministryexportpack.find_many
+        actions = type(db.ministryexportpack)  # slotted: patch the class, not the instance
 
-        async def stale_find(*args: Any, **kwargs: Any) -> list[Any]:
+        async def stale_find(self: Any, *args: Any, **kwargs: Any) -> list[Any]:
             return []  # as if another writer inserted between our read and our create
 
-        monkeypatch.setattr(db.ministryexportpack, "find_many", stale_find)
-        try:
-            created = await packs.ensure_scheduled("2026-08")
-        finally:
-            monkeypatch.setattr(db.ministryexportpack, "find_many", real_find)
-        return created
+        with monkeypatch.context() as patch:
+            patch.setattr(actions, "find_many", stale_find)
+            return await packs.ensure_scheduled("2026-08")
 
     assert private(work) == 6
     rows = _rows()

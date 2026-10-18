@@ -22,7 +22,7 @@ from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import get_current_user
 from app.schemas.ministry_exports import LinkRequest, PackRequest, RecipientUpdate
-from app.services import ministry_exports as packs
+from app.services import ministry_exports as packs, records
 from app.services.design_workshop_oversight import OVERSIGHT_ASSIGNER_ROLES
 from app.services.ministry_pack_sheets import UNSTATED, scheme_keys, scheme_label
 
@@ -134,8 +134,8 @@ async def eligible_accounts(
     term = (search or "").strip()
     if term:
         where["OR"] = [
-            {"name": {"contains": term, "mode": "insensitive"}},
-            {"email": {"contains": term, "mode": "insensitive"}},
+            {"name": records.contains(term)},
+            {"email": records.contains(term)},
         ]
     users = list(
         await db.user.find_many(where=where, order={"name": "asc"}, take=ELIGIBLE_LIMIT * 2)

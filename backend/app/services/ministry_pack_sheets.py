@@ -160,7 +160,7 @@ def period_bounds(period: str, tz: Any) -> tuple[datetime, datetime]:
 
 
 def plan_year_for(period: str) -> int:
-    """The financial year (April to March) a period falls in, as ``AnnualPlanEntry.planYear``."""
+    """The financial year (April to March) a period falls in, as the annual plan stores its ``planYear``."""
     parsed = parse_period(period)
     if parsed is None:
         raise ValueError(f"Not a period: {period!r}")

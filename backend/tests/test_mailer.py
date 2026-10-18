@@ -175,7 +175,7 @@ def test_the_ministry_pack_digest_names_each_scheme_and_links_the_page() -> None
     assert mailer.subject_for(mailer.MINISTRY_PACKS_READY, params) == rendered.subject
     for body in (rendered.text, rendered.html):
         assert "Skill Upgradation — 41 workshops" in body
-        assert "Other — 1 workshop" in body and "1 workshops" not in body
+        assert "Other — 1 workshop" in body and "— 1 workshops" not in body
         assert "/ministry-exports?period=2026-09" in body
         assert "X-Amz" not in body
     assert rendered.text.startswith("Dear Asha,")

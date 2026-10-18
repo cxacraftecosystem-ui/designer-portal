@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 from conftest import needs_db
-from ministry_exports_support import FakeBucket, bearer, make_user, private, reset
+from ministry_exports_support import FakeBucket, bearer, make_user, own_client, private, reset
 
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.core.config import get_settings
@@ -196,8 +196,8 @@ def test_generating_refuses_a_future_or_malformed_month_and_replays_by_key(
 
 
 def _ready_pack(**extra: Any) -> Any:
-    async def work() -> Any:
-        return await db.ministryexportpack.create(
+    async def work(client: Any) -> Any:
+        return await client.ministryexportpack.create(
             data={
                 "period": "2026-08",
                 "scheme": "OTHER",
@@ -211,7 +211,7 @@ def _ready_pack(**extra: Any) -> Any:
             }
         )
 
-    return private(work)
+    return own_client(work)
 
 
 def test_a_link_is_refused_before_ready(world: dict[str, Any]) -> None:
@@ -257,10 +257,10 @@ def test_a_link_is_short_lived_and_logged(
     )
     assert bucket.presigned[-1]["expires_in"] == 300
 
-    async def downloads() -> list[Any]:
-        return list(await db.ministryexportdownload.find_many(where={"packId": pack.id}))
+    async def downloads(client: Any) -> list[Any]:
+        return list(await client.ministryexportdownload.find_many(where={"packId": pack.id}))
 
-    [row] = private(downloads)
+    [row] = own_client(downloads)
     assert row.userId == viewer.id and row.file == "xlsx" and row.revision == 1
 
     payload = (

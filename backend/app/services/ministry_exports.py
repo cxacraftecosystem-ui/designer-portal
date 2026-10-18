@@ -46,7 +46,7 @@ from prisma.errors import UniqueViolationError
 
 from app.core.config import Settings, get_settings
 from app.core.db import db
-from app.services import email_outbox, mailer, ministry_pack_sheets as sheets_mod
+from app.services import annual_plan, email_outbox, mailer, ministry_pack_sheets as sheets_mod
 from app.services.design_workshop_oversight import OVERSIGHT_ASSIGNER_ROLES
 from app.services.ministry_pack_sheets import (
     UNSTATED,
@@ -508,11 +508,7 @@ async def _load(pack: Any, settings: Settings) -> dict[str, Any]:
             "implementingAgency": entry.implementingAgency,
             "designWorkshopId": entry.designWorkshopId,
         }
-        for entry in await db.annualplanentry.find_many(
-            where={"planYear": plan_year, "workshopKind": kind, "withdrawnAt": None},
-            order=[{"workshopNoKey": "asc"}],
-            take=cap,
-        )
+        for entry in await annual_plan.live_entries_for_year(plan_year, kind, take=cap)
     ]
     start, end = period_bounds(pack.period, IST)
     return {
