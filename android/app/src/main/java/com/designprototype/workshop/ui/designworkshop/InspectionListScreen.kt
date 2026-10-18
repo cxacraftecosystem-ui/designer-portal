@@ -42,6 +42,7 @@ import com.designprototype.workshop.data.DwInspectionAttempt
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.canInspectDesignWorkshops
 import com.designprototype.workshop.data.dwInspectorSearchTerm
+import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.designWorkshopStatusLabel
 import com.designprototype.workshop.ui.field
@@ -356,6 +357,16 @@ fun InspectionListScreen(
  */
 @Composable
 private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> Unit) {
+    // Never blank: the typed title, else its generated default (NAMING 2.4).
+    val shownTitle = workshopDisplayTitle(
+        workshop.title,
+        date = workshop.startDate,
+        workshopCode = workshop.workshopCode,
+        clusterName = workshop.clusterName,
+        district = workshop.district,
+        state = workshop.state,
+        craftName = workshop.craftName,
+    )
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
         shape = RoundedCornerShape(12.dp),
@@ -365,14 +376,14 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .openable(workshop.title.ifBlank { "Untitled workshop" }, RoundedCornerShape(12.dp), onOpen = onOpen)
+                .openable(shownTitle, RoundedCornerShape(12.dp), onOpen = onOpen)
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
                 // Never blank: an untitled row in a list of fourteen is a row nobody can identify,
                 // and on this screen there is no second way to tell two of them apart.
-                workshop.title.ifBlank { "Untitled workshop" },
+                shownTitle,
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.titleMedium,

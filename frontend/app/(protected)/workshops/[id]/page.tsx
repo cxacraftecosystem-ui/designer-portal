@@ -7,6 +7,7 @@ import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { RecordFieldList, RecordViewPage } from "@/components/records/RecordView";
 import { workshopFields } from "@/components/records/recordFields";
 import type { Workshop } from "@/lib/types";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 /**
  * One crafts workshop, read-only. Update is drawn for Professor and above
@@ -21,7 +22,7 @@ export default function WorkshopViewPage() {
       endpoint={`/workshops/${encodeURIComponent(id)}`}
       noun="workshop"
       icon={<MapPinned className="h-5 w-5" aria-hidden />}
-      titleOf={(workshop) => workshop.title?.trim() || "Untitled workshop"}
+      titleOf={(workshop) => workshopDisplayTitle(workshop)}
       collabType="workshop"
     >
       {(workshop) => (

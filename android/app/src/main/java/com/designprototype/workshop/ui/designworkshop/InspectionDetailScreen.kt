@@ -51,6 +51,7 @@ import com.designprototype.workshop.data.dwInspectionIsReadOnly
 import com.designprototype.workshop.data.dwInspectionUnansweredCount
 import com.designprototype.workshop.data.liveFields
 import com.designprototype.workshop.data.singleton
+import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.serialization.json.JsonElement
@@ -221,7 +222,15 @@ fun InspectionDetailScreen(
         }
 
         Text(
-            record.title.ifBlank { "Untitled workshop" },
+            workshopDisplayTitle(
+                record.title,
+                date = record.startDate,
+                workshopCode = record.workshopCode,
+                clusterName = record.clusterName,
+                district = record.district,
+                state = record.state,
+                craftName = record.craftName,
+            ),
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.typography.headlineSmall

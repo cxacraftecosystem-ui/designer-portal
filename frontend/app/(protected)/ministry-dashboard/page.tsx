@@ -1246,7 +1246,7 @@ function OtherTable({ rows, hrefFor }: { rows: OtherRegisterPage["items"]; hrefF
         {rows.map((row) => (
           <OpenableRow key={row.id} href={hrefFor(row.id)}>
             <td className="px-4 py-3">
-              <OpenableRowLink href={hrefFor(row.id)}>{row.title?.trim() || "Untitled workshop"}</OpenableRowLink>
+              <OpenableRowLink href={hrefFor(row.id)}>{workshopDisplayTitle(row)}</OpenableRowLink>
             </td>
             <td className="px-4 py-3 text-ink-700">
               {row.workshopType === "DESIGN_PROTOTYPE" ? "Design & prototype" : "Other"}

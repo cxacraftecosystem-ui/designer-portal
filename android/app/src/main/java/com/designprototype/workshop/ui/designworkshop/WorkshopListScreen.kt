@@ -98,6 +98,8 @@ import com.designprototype.workshop.data.isConnectionFailure
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.overallPercent
 import com.designprototype.workshop.data.visibleDesignWorkshops
+import com.designprototype.workshop.data.workshopCreateTitle
+import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.ui.ANY_WORKSHOP_KIND
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.SearchableMultiSelectField
@@ -494,7 +496,15 @@ fun WorkshopListScreen(
                     context = appContext,
                     localId = localId,
                     remoteId = dto.id,
-                    title = dto.title,
+                    title = workshopDisplayTitle(
+                        dto.title,
+                        date = dto.startDate,
+                        workshopCode = dto.workshopCode,
+                        clusterName = dto.clusterName,
+                        district = dto.district,
+                        state = dto.state,
+                        craftName = dto.craftName,
+                    ),
                     subtitle = listOfNotNull(
                         dto.craftName, dto.clusterName, dto.district, dto.state,
                         // The plain word, from the one mapping the picker and the inspector's list
@@ -533,7 +543,7 @@ fun WorkshopListScreen(
                         context = appContext,
                         localId = id,
                         remoteId = draft.remoteId,
-                        title = draft.title.ifBlank { "Untitled workshop" },
+                        title = workshopCreateTitle(draft.title, draft.createdAt),
                         subtitle = if (isLocalOnlyWorkshop(id)) "On this device only" else "Not synced",
                         updatedAt = draft.updatedAt,
                         schema = registry,
@@ -2726,7 +2736,7 @@ private suspend fun rowFor(
     return WorkshopRow(
         localId = localId,
         remoteId = remoteId,
-        title = title.ifBlank { "Untitled workshop" },
+        title = workshopDisplayTitle(title),
         subtitle = subtitle,
         percent = overallPercent(stages),
         requiredFilled = stages.sumOf { it.requiredFilled },

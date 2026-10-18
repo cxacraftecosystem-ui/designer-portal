@@ -65,6 +65,7 @@ import type {
   Workshop
 } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 // ---------------------------------------------------------------------------
 // Local types for the /data browsing endpoints
@@ -773,7 +774,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     load: async (page) =>
       browsePage(await listResource<Workshop>("/workshops", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
-        name: x.title?.trim() || "Untitled workshop",
+        name: workshopDisplayTitle(x),
         creator: x.createdBy?.name ?? "-",
         createdAt: x.createdAt
       }))

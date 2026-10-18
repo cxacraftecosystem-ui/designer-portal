@@ -64,6 +64,7 @@ import type {
   WorkshopType
 } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 // The API includes the workshop's linked crafts (not yet in the Workshop TS type); used to pre-fill
 // the "Crafts covered" selection when editing.
@@ -919,7 +920,7 @@ function WorkshopsPageBody() {
                   // The whole row opens the workshop read-only; Update loads it into the form above.
                   <OpenableRow key={workshop.id} href={RECORD_VIEW_HREF.workshop(workshop.id)}>
                     <td className="px-4 py-3">
-                      <OpenableRowLink href={RECORD_VIEW_HREF.workshop(workshop.id)}>{workshop.title?.trim() || "Untitled workshop"}</OpenableRowLink>
+                      <OpenableRowLink href={RECORD_VIEW_HREF.workshop(workshop.id)}>{workshopDisplayTitle(workshop)}</OpenableRowLink>
                       <div className="text-xs text-ink-500">{workshop.description ?? "-"}</div>
                     </td>
                     <td className="px-4 py-3 text-ink-700">

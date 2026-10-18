@@ -18,6 +18,7 @@ import { readableError } from "@/components/review/reviewErrors";
 import { listDesignWorkshops, restoreDesignWorkshop, type DwSummary } from "@/lib/designWorkshops";
 import { formatDateTime } from "@/lib/format";
 import type { PageResult } from "@/lib/types";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 /**
  * THE TRASH — deleted design workshops, and the one control that brings one back.
@@ -211,7 +212,7 @@ export function DeletedWorkshopsCard() {
               {result.items.map((item) => (
                 <tr key={item.id}>
                   <td className="px-4 py-3">
-                    <div className="font-medium text-ink-900">{item.title || "Untitled workshop"}</div>
+                    <div className="font-medium text-ink-900">{workshopDisplayTitle(item)}</div>
                     {/*
                       The code is the identity an admin recognises a workshop by on paper, and it is
                       denormalised from stage 1 — so it is legitimately null on a workshop deleted
