@@ -8,6 +8,7 @@ import { ActionGroup } from "@/components/ui/ActionGroup";
 import { Toggle } from "@/components/ui/Toggle";
 import {
   DIGEST_LABEL,
+  DIGEST_SWITCH,
   LATEST_LINK,
   digestCardView,
   fetchDigestPreference,
@@ -62,9 +63,10 @@ export function WeeklyDigestCard() {
       </div>
       <Toggle
         className="mt-2"
-        label={DIGEST_LABEL}
+        label={DIGEST_SWITCH}
         description={`${view.description} ${view.channel}`}
         checked={state.enabled}
+        busy={saving}
         onChange={(next) => void change(next)}
         testId="weekly-digest-switch"
       />

@@ -109,6 +109,7 @@ export async function fetchDigest(id: string): Promise<Digest> {
 // ── The Settings card ────────────────────────────────────────────────────────────────────────────
 
 export const DIGEST_LABEL = "Weekly summary";
+export const DIGEST_SWITCH = "Send it to me";
 export const DIGEST_DESCRIPTION = "Mondays at 08:00: what waits for you, what is overdue, what came in.";
 export const LATEST_LINK = "Open last Monday's summary";
 

@@ -200,3 +200,20 @@ def test_the_digest_counts_the_same_six_record_types_the_queue_lists() -> None:
         for _type, delegate, _fields in review_route._PENDING_SOURCES
     )
     assert names == review_queue.PENDING_MODELS
+
+
+def test_and_more_counts_only_the_workshops_listed_by_title() -> None:
+    payload = _payload()
+    waiting = payload["sections"][0]  # type: ignore[index]
+    waiting["total"] = 9
+    waiting["lines"] = [
+        {"key": "approvals", "label": "Reports to approve", "count": 3, "link": "/design-workshop-approvals"},
+        {"key": "sanctions", "label": "Sanction orders missing setup", "count": 6, "link": "/sanction-orders"},
+    ]
+    waiting["items"] = waiting["items"][:3]
+    rendered = mailer.render(mailer.WEEKLY_DIGEST, payload)
+    assert ">9<" in rendered.html
+    assert "more" not in rendered.text.split("Overdue")[0]
+    waiting["lines"][0]["count"] = 5
+    rendered = mailer.render(mailer.WEEKLY_DIGEST, payload)
+    assert "and 2 more" in rendered.html and "and 2 more" in rendered.text

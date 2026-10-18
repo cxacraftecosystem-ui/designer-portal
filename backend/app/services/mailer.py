@@ -271,6 +271,20 @@ def coverage_words(coverage: dict[str, Any] | None) -> tuple[str, str, str]:
     return label, figure, f"{value} of {_count(of)}"
 
 
+# The lines whose workshops are listed by title. "and N more" counts only these, so a sanction order
+# or a record to review is never passed off as one more workshop.
+_TITLED_LINES = {"waiting": ("approvals", "inspections"), "overdue": ("stages", "reviews")}
+
+
+def _titled_total(section: dict[str, Any], key: str) -> int:
+    keys = _TITLED_LINES.get(key, ())
+    return sum(
+        _count(line.get("count"))
+        for line in section.get("lines") or []
+        if isinstance(line, dict) and line.get("key") in keys
+    )
+
+
 def _digest_blocks(sections: list[dict[str, Any]], coverage: dict[str, Any] | None) -> list[dict[str, Any]]:
     """The four blocks in their fixed order, from the stored payload."""
     by_key = {str(s.get("key")): s for s in sections or [] if isinstance(s, dict)}
@@ -281,7 +295,7 @@ def _digest_blocks(sections: list[dict[str, Any]], coverage: dict[str, Any] | No
         items = [i for i in (section.get("items") or []) if isinstance(i, dict)] if key != "new" else []
         shown = items[:DIGEST_EMAIL_ITEMS]
         blocks.append({"label": label, "figure": str(total), "note": "", "items": shown,
-                       "more": max(total - len(shown), 0) if shown else 0})
+                       "more": max(_titled_total(section, key) - len(shown), 0) if shown else 0})
     label, figure, note = coverage_words(coverage)
     blocks.append({"label": label, "figure": figure, "note": note, "items": [], "more": 0})
     return blocks

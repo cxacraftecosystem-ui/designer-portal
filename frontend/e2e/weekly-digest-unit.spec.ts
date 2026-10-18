@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { expect, test } from "@playwright/test";
 
 import {
@@ -114,4 +117,10 @@ test("the title is the Monday, read as a calendar date", () => {
   expect(weekTitle("2026-10-19")).toBe("Week of 19 Oct");
   expect(weekTitle("2027-01-04")).toBe("Week of 4 Jan");
   expect(weekTitle("nonsense")).toBe("Weekly summary");
+});
+
+test("the card's switch is busy while saving and does not repeat the heading", () => {
+  const card = readFileSync(join(__dirname, "..", "components/settings/WeeklyDigestCard.tsx"), "utf8");
+  expect(card).toContain("busy={saving}");
+  expect(card).toContain("label={DIGEST_SWITCH}");
 });
