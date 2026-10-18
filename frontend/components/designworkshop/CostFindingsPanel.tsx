@@ -57,6 +57,7 @@ import {
   type CostFindingsPayload,
   type CostRow
 } from "@/lib/costIntegrity";
+import { usableCheck } from "@/lib/stageAssist";
 
 /** The stage this panel appears on. Exported so the stage form has one name for the condition. */
 export const COSTING_STAGE = "COSTING_MARKET_LINKAGE";
@@ -79,11 +80,20 @@ const NO_ROWS: DwRow[] = [];
 
 export function CostFindingsPanel({
   workshopId,
-  collections
+  collections,
+  onUse,
+  disabled = false
 }: {
   workshopId: string;
   /** Stage 17's rows exactly as the form holds them, so a subtotal typed a second ago is checked. */
   collections: Record<string, DwRow[]>;
+  /**
+   * "Use ₹X from the lines" (owner, A16): write the lines' total into one sheet's subtotal. Offered
+   * only on the live reading, and only where the lines could all be read — nothing changes without
+   * the designer's tap.
+   */
+  onUse?: (sheetEntryId: string, key: string, value: string) => void;
+  disabled?: boolean;
 }) {
   const sheets = useMemo(() => collections.costSheet ?? NO_ROWS, [collections]);
   const materialLines = useMemo(() => collections.costMaterialLine ?? NO_ROWS, [collections]);
@@ -250,6 +260,16 @@ export function CostFindingsPanel({
                 <li key={check.key} className="flex flex-wrap items-start gap-2">
                   <VerdictChip verdict={check.verdict} />
                   <span className="min-w-0 flex-1 text-sm leading-6 text-ink-700">{check.message}</span>
+                  {onUse && source === "local" && sheet.entryId && usableCheck(check) ? (
+                    <button
+                      type="button"
+                      className="field-button-secondary min-h-9 px-3 py-1 text-xs"
+                      disabled={disabled}
+                      onClick={() => onUse(sheet.entryId, check.key, (check.computed as number).toFixed(2))}
+                    >
+                      Use {formatRupees(check.computed as number)}
+                    </button>
+                  ) : null}
                 </li>
               ))}
               <li className="flex flex-wrap items-start gap-2">
@@ -262,6 +282,10 @@ export function CostFindingsPanel({
       </div>
     </section>
   );
+}
+
+function formatRupees(value: number): string {
+  return `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /**

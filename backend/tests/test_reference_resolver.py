@@ -1160,9 +1160,14 @@ async def test_the_flag_travels_and_the_stage_s_answers_do_not(monkeypatch):
     assert [(o["id"], o["tentative"]) for o in payload["options"]] == [
         ("ent_1", True), ("ent_0", False),
     ]
-    assert all(o["data"] == {} for o in payload["options"]), (
+    # NARROW, AND WIDENED BY ONE DECISION ONLY (owner, C10, 2026-10-17): the one-tap "Use from the
+    # sketch" reads the sketch's name, materials and intended size off this payload. Never the flag:
+    # no hydration maps a sketch's keys, so nothing here can tick a box on the new sketch.
+    allowed = {"name", "materials", "lengthCm", "widthCm", "heightCm"}
+    assert all(set(o["data"]) <= allowed for o in payload["options"]), (
         "the reference payload is deliberately narrow; a stage's answers are not a picker's business"
     )
+    assert all("isTentative" not in o["data"] for o in payload["options"])
 
 
 async def test_the_payload_says_it_reordered_and_names_the_registry_s_word(monkeypatch):

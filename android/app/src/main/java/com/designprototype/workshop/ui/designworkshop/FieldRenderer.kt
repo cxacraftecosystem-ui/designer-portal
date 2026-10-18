@@ -392,6 +392,11 @@ fun FieldRenderer(
         // A phone that has not yet fetched that registry still sees LONG_TEXT and still captures a
         // plain string, and the server reads a plain string as unformatted prose — so the two
         // builds interoperate in both directions and no fieldwork is lost either way.
+        // C7/C8 (owner, 2026-10-17): a count the stage works out replaces the typed box.
+        if (field.computedKind.isNotBlank()) {
+            DwComputedCount(field, value)
+            return@Column
+        }
         when (type) {
             // `value` is passed through untouched. It is `{"blocks":[…]}` for a field edited
             // since the promotion and a bare JSON string for one written before it; `fromJson`
@@ -667,6 +672,8 @@ fun FieldRenderer(
                     onChange = onChange,
                     onMessage = services.onMessage,
                 )
+                // A21 (owner, 2026-10-17): the position a photo carries, in one tap.
+                DwLocationFromPhoto(enabled = enabled) { location -> onChange(dwLocationToValue(location)) }
             } else {
                 GeoField(field, value, onChange, enabled, error, resetKey)
             }

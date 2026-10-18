@@ -209,6 +209,7 @@ from app.services.design_workshops import (
     REFERENCE_LIMIT_DEFAULT,
     REFERENCE_LIMIT_MAX,
     assemble_workshop_data,
+    report_survey_sittings,
     assert_every_designer_may_be_named,
     attach_district_anchors,
     attach_report_ai_layers,
@@ -2776,6 +2777,23 @@ async def get_stage(
     payload["transcripts"] = transcripts
     payload["customSchemaVersion"] = definition.version
     return payload
+
+
+@router.get("/{workshop_id}/stages/{stage_key}/assist")
+async def get_stage_assist(
+    workshop_id: str, stage_key: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """One-tap suggestions and the computed counts for one stage. Read-only; see `stage_assist`.
+
+    Answers every stage, with an empty list where it has nothing to offer, so a client can ask on
+    every open without knowing which stages carry suggestions.
+    """
+    from app.services.stage_assist import load_assist
+
+    record = await load_workshop_or_404(workshop_id, current_user)
+    if not any(s.key == stage_key for s in stages()):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown stage")
+    return await load_assist(record, stage_key)
 
 
 @router.get("/{workshop_id}/provenance")
@@ -5640,7 +5658,9 @@ async def _report_inputs(
     a client wrote there — see ``design_workshops.media_resolver``.
     """
     entries = await entry_rows(workshop_id)
-    data = assemble_workshop_data(record, entries)
+    data = assemble_workshop_data(
+        record, entries, survey_sittings=await report_survey_sittings(record)
+    )
     # THE SIGN-OFF LINES (2026-10-10): who approved the report and where it went, printed under the
     # Certification signatures. One name lookup, and none for a report nobody has approved.
     if getattr(record, "approvedAt", None) is not None:

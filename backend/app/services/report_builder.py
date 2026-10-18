@@ -891,6 +891,18 @@ FIGURES: dict[str, tuple[str, str]] = {
 }
 
 
+def printable_collections(spec: Any) -> list[EntitySpec]:
+    """The stage's collections that can print anything: at least one live field is not HIDDEN.
+
+    Ported by ``frontend/lib/offlineReport/builder.ts`` and Android's ``ReportScreen``.
+    """
+    return [
+        e
+        for e in spec.collections
+        if any(f.report_role is not ReportRole.HIDDEN for f in e.fields if not f.deprecated)
+    ]
+
+
 def _as_number(value: Any) -> float | None:
     """A stored value as a finite float, or None for anything that is not one.
 
@@ -2418,7 +2430,7 @@ class ReportBuilder:
         # renders nothing cannot leave the previous stage's key standing.
         self._stage_key = spec.key
         singleton_data = self.data.singleton(spec.key)
-        has_rows = any(self.data.rows(spec.key, e.key) for e in spec.collections)
+        has_rows = any(self.data.rows(spec.key, e.key) for e in printable_collections(spec))
         has_any = bool(singleton_data) or has_rows
         if not has_any and section.omit_if_empty:
             return
@@ -2445,7 +2457,12 @@ class ReportBuilder:
                     self._place_image_groups(plates, section)
                     wrote = True
 
-        for entity in spec.collections:
+        # AN ENTITY WITH NOTHING PRINTABLE IS NOT PART OF THE DOCUMENT (2026-10-17): stage 22's
+        # planned follow-ups hold due dates for the designer and every field is HIDDEN, so the
+        # entity neither prints, nor says "None were recorded", nor turns the stage's one real
+        # collection into one of two that each need a heading.
+        collections = printable_collections(spec)
+        for entity in collections:
             if section.entities and entity.key not in section.entities:
                 continue
             rows = self.data.rows(spec.key, entity.key)
@@ -2454,7 +2471,7 @@ class ReportBuilder:
                     self.doc.heading(entity.title, 2, numbered=self.template.number_headings)
                     self.doc.para(f"No {entity.title.lower()} were recorded.", style=ParaStyle.NOTE)
                 continue
-            if len(spec.collections) > 1:
+            if len(collections) > 1:
                 self.doc.heading(entity.title, 2, numbered=self.template.number_headings)
             presentation = section.presentation
             if presentation is Presentation.AUTO:
@@ -2470,7 +2487,7 @@ class ReportBuilder:
             # heading sits one level below whatever named this collection, which is the entity
             # heading above when the stage has several collections and the stage's own heading
             # when it has one, so the group never outranks the thing it is part of.
-            group_level = 3 if len(spec.collections) > 1 else 2
+            group_level = 3 if len(collections) > 1 else 2
             for title, group_rows in groups:
                 self.doc.heading(title, group_level, numbered=self.template.number_headings)
                 wrote |= self._render_rows(entity, group_rows, section, presentation, group_level)

@@ -928,7 +928,8 @@ class DwParentGroupTest {
                 declined += 1
             }
         }
-        assertEquals(39, declined)
+        // 40 since 2026-10-17: stage 22's parentless `plannedFollowUp` (the planned visits' due dates).
+        assertEquals(40, declined)
     }
 
     // ── The artefact a reader actually opens ─────────────────────────────────────────────────────

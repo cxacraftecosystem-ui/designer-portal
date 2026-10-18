@@ -59,7 +59,7 @@ test("stage 17 mounts a cost panel the way stage 9 mounts the market one", () =>
   const page = read(STAGE_PAGE);
   expect(page).toContain("COSTING_STAGE, CostFindingsPanel");
   expect(page).toContain("{stageKey === COSTING_STAGE ? (");
-  expect(page).toContain("<CostFindingsPanel workshopId={id} collections={collections} />");
+  expect(page).toMatch(/<CostFindingsPanel\s+workshopId=\{id\}\s+collections=\{collections\}/);
 });
 
 test("the panel names the stage the server names", () => {
@@ -89,9 +89,12 @@ test("the panel writes nothing back into stage 17", () => {
   expect(panel).not.toContain("onChange");
   expect(panel).not.toContain("onPatch");
   expect(panel).not.toContain("saveStage");
-  // And the props it does take are exactly two, both read-only.
   expect(panel).toContain("workshopId: string;");
   expect(panel).toContain("collections: Record<string, DwRow[]>;");
+  // THE ONE WRITE IS THE OWNER'S (A16, 2026-10-17): "Use ₹X from the lines", on the designer's
+  // tap, into one subtotal. Nothing changes without the tap.
+  expect(panel).toContain("onUse?: (sheetEntryId: string, key: string, value: string) => void;");
+  expect(panel).toContain("onClick={() => onUse(sheet.entryId, check.key,");
 });
 
 test("an unsynced sheet suppresses the deleted-sheet caution but never a warning", () => {

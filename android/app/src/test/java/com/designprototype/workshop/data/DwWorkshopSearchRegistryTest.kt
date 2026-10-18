@@ -296,6 +296,16 @@ class DwWorkshopSearchRegistryTest {
         // have to keep true. An entity holding no free-text field at all would be one the search can
         // never reach, and it must fail here — not be quietly skipped by the `?: continue` above,
         // which is how this test would otherwise degrade into one that exercises less and less.
-        assertEquals(registry.stages.sumOf { it.entities.size }, exercised)
+        //
+        // THE ONE EXCEPTION IS AN ENTITY NOBODY WRITES IN: every field HIDDEN and none of them text.
+        // Stage 22's planned follow-ups (2026-10-17) hold a product, an interval and a due date that
+        // the app planned — there is no written answer in them to find.
+        val unwritten = registry.stages.sumOf { stage ->
+            stage.entities.count { entity ->
+                entity.liveFields.all { it.reportRole == "HIDDEN" && !DwFieldType.of(it.type).isFreeText }
+            }
+        }
+        assertEquals(1, unwritten)
+        assertEquals(registry.stages.sumOf { it.entities.size } - unwritten, exercised)
     }
 }

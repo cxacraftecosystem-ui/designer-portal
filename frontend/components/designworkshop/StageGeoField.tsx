@@ -33,12 +33,13 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { LocateFixed, MapPinned } from "lucide-react";
+import { ImageIcon, LocateFixed, MapPinned } from "lucide-react";
 
 import { MapPointPicker, mapPickerAvailable } from "@/components/forms/MapPointPicker";
 import { resolvePoint, type PointAddress } from "@/components/forms/LocationFields";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { geoValue, readNumber, type DwGeoValue, type DwValue } from "@/lib/designWorkshops";
+import { photoPosition, type PhotoPosition } from "@/lib/photoPosition";
 
 /** Shorter than the location card's own hunt: somebody is standing there with a finger on a button. */
 const FIX_TIMEOUT_MS = 30_000;
@@ -65,6 +66,22 @@ export function StageGeoField({
   const [mapOpen, setMapOpen] = useState(false);
   const [place, setPlace] = useState<PointAddress | null>(null);
   const [placeLooking, setPlaceLooking] = useState(false);
+  /** A21: the position a chosen photo carries, offered until applied. */
+  const [fromPhoto, setFromPhoto] = useState<PhotoPosition | null>(null);
+  const photoInput = useRef<HTMLInputElement | null>(null);
+
+  async function readPhoto(file: File | undefined) {
+    if (!file) return;
+    setProblem(null);
+    const found = await photoPosition(file);
+    if (photoInput.current) photoInput.current.value = "";
+    if (!found) {
+      setFromPhoto(null);
+      setProblem("That photo has no location.");
+      return;
+    }
+    setFromPhoto(found);
+  }
 
   /*
    * THERE IS DELIBERATELY NO EFFECT RE-SEEDING THESE TWO BOXES FROM `value`.
@@ -220,7 +237,46 @@ export function StageGeoField({
             {mapOpen ? "Hide the map" : "Pick on map"}
           </button>
         ) : null}
+        <button
+          type="button"
+          className="field-button-secondary"
+          disabled={disabled}
+          onClick={() => photoInput.current?.click()}
+        >
+          <ImageIcon className="h-4 w-4" aria-hidden />
+          From a photo
+        </button>
       </ActionGroup>
+      <input
+        ref={photoInput}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => void readPhoto(event.target.files?.[0])}
+      />
+      {fromPhoto ? (
+        <div className="flex flex-col gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 sm:flex-row sm:items-center">
+          <p className="min-w-0 flex-1 text-xs leading-5 text-ink-700">
+            {fromPhoto.lat.toFixed(5)}, {fromPhoto.lon.toFixed(5)}
+            {fromPhoto.takenAt ? ` · taken ${fromPhoto.takenAt}` : ""}
+          </p>
+          <ActionGroup inline align="end" className="max-sm:w-full">
+            <button
+              type="button"
+              className="field-button-secondary"
+              disabled={disabled}
+              onClick={() => {
+                setLat(String(fromPhoto.lat));
+                setLon(String(fromPhoto.lon));
+                commit(String(fromPhoto.lat), String(fromPhoto.lon));
+                setFromPhoto(null);
+              }}
+            >
+              Use this location
+            </button>
+          </ActionGroup>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 empty:hidden">
         {recordingPlace ? (

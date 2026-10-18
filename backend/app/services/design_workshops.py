@@ -61,6 +61,7 @@ from app.services import (
     dictation_consent,
     entry_provenance,
     rich_text,
+    stage_computed,
 )
 from app.services.address import DISTRICTS_BY_STATE
 from app.services.concurrency import gather_reads
@@ -132,6 +133,7 @@ from app.services.stage_schema import (
     # why both matter. Nothing about WHEN it is applied changed: `hydrate_entries` below is still
     # the only thing that writes it, and still writes it only at save time.
     REFERENCE_HYDRATION,
+    REFERENCE_SUGGESTIONS,
     Cardinality,
     EntitySpec,
     FieldSpec,
@@ -3040,9 +3042,18 @@ def _internal_carry_keys(entity: EntitySpec) -> tuple[str, ...]:
     DECLARATION ORDER, not set order, so a picker response is byte-stable between two calls — a
     payload that reshuffles its keys defeats every cache comparison the clients make on it.
     """
+    # The one-tap suggestions read their sources off the same payload (owner, C10), so their
+    # source keys are carried too — fill and hint alike.
+    tables = [
+        *REFERENCE_HYDRATION.items(),
+        *(
+            (path, {**parts.get("fill", {}), **parts.get("hint", {})})
+            for path, parts in REFERENCE_SUGGESTIONS.items()
+        ),
+    ]
     wanted = {
         source
-        for path, mapping in REFERENCE_HYDRATION.items()
+        for path, mapping in tables
         for source in mapping
         if (owner := next((e for _s, e in all_entities() if e.key == path.partition(".")[0]), None))
         and (ref := owner.field(path.rpartition(".")[2])) is not None
@@ -5564,6 +5575,53 @@ async def save_stage(
     # every `PendingEntry` keeps the dataclass about one entry.
     await hydrate_entries(pending, workshop_id=workshop_id)
 
+    # COUNTS THAT REPLACE TYPED BOXES (owner, C7/C8): totals, days attended, completions and
+    # survey responses are worked out from the rows this save leaves behind and stored over
+    # whatever was sent. See `stage_computed`.
+    if spec.key in stage_computed.STAGES_WITH_COMPUTED:
+        swept = (touched_entities - merged_entities) | set(payload.emptiedEntities)
+        survivors: dict[str, list[dict[str, Any]]] = {}
+        for item in pending:
+            survivors.setdefault(item.entity.key, []).append(item.data)
+        sent_ids = {item.row_id for item in pending if item.row_id}
+        for row in live:
+            entity = entities.get(row.entityKey)
+            if entity is None or entity.cardinality is Cardinality.SINGLETON or row.id in sent_ids:
+                continue
+            if payload.replaceCollections and row.entityKey in swept:
+                continue
+            survivors.setdefault(row.entityKey, []).append(dict(row.data or {}))
+
+        def singleton_for(entity_key: str) -> PendingEntry | None:
+            held = pending_singletons.get(entity_key)
+            if held is not None:
+                return held
+            entity = entities.get(entity_key)
+            if entity is None:
+                return None
+            row = next((r for r in live if r.entityKey == entity_key), None)
+            item = PendingEntry(
+                entity=entity,
+                data=dict(row.data or {}) if row is not None else {},
+                previous=dict(row.data or {}) if row is not None else {},
+                row_id=row.id if row is not None else None,
+                ordinal=0,
+                client_key=singleton_key,
+                previous_provenance=entry_provenance.entry_provenance(row) if row is not None else {},
+                adopt_client_key=(
+                    _reserved_key_upgrade(row, entity_key, singleton_key, existing)
+                    if row is not None
+                    else None
+                ),
+                seen_version=int(getattr(row, "version", 0) or 0) if row is not None else 0,
+                error_scope=entity_key,
+            )
+            pending.append(item)
+            pending_singletons[entity_key] = item
+            return item
+
+        await stage_computed.apply_on_save(workshop_id, spec.key, pending, survivors, singleton_for)
+
     for item in pending:
         # COMPUTED AFTER HYDRATION AND BEFORE THE WRITE, which is the only window in which both
         # halves of the answer exist: `item.hydrated` is populated by the pass above and `item.data`
@@ -6707,11 +6765,32 @@ def workshop_completeness(entries: list[Any], *, definition: Any = None) -> dict
 # --------------------------------------------------------------------------------------
 
 
-def assemble_workshop_data(record: Any, entries: list[Any]) -> WorkshopData:
+async def report_survey_sittings(record: Any) -> int | None:
+    """The sitting count ``assemble_workshop_data`` re-counts stage 8 with; ``None`` once frozen.
+
+    A handed-on report is the document that was approved, so a sitting recorded afterwards must not
+    move its figure. Everything else re-counts from the rows the frozen record already holds.
+    """
+    if design_workshop_approvals.frozen_refusal(
+        getattr(record, "status", None), getattr(record, "handedOnAt", None)
+    ):
+        return None
+    return await stage_computed.market_survey_sittings(record.id)
+
+
+def assemble_workshop_data(
+    record: Any, entries: list[Any], *, survey_sittings: int | None = None
+) -> WorkshopData:
     """Turn stage entry rows into the shape the report builder reads.
 
     The same shape the phone assembles from its local draft, which is what makes the on-device
     report and the server report the same document rather than two similar ones.
+
+    COMPUTED COUNTS ARE RE-COUNTED HERE (owner, C7/C8): the save stores each one only when its own
+    stage is saved, so the report reads ``stage_computed.refresh_counts`` rather than a figure that
+    went stale when stage 3's attendance or a questionnaire sitting changed. ``survey_sittings`` is
+    the market-survey sitting count (``stage_computed.market_survey_sittings``); ``None`` leaves
+    stage 8's stored figure as it is.
     """
     cardinality = {e.key: e.cardinality for s in stages() for e in s.entities}
     singletons: dict[str, dict[str, Any]] = {}
@@ -6770,6 +6849,15 @@ def assemble_workshop_data(record: Any, entries: list[Any]) -> WorkshopData:
             singletons[row.stageKey] = data
         else:
             collections.setdefault(row.stageKey, {}).setdefault(row.entityKey, []).append(data)
+
+    stage_computed.refresh_counts(
+        singletons,
+        collections,
+        sittings=survey_sittings,
+        client_keys={
+            row.id: key for row in entries if (key := getattr(row, "clientKey", None))
+        },
+    )
 
     return WorkshopData(
         workshop_id=record.id,

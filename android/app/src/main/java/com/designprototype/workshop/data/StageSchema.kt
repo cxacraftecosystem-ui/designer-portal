@@ -421,6 +421,25 @@ data class FieldDto(
     val captionFor: String = "",
     val deprecated: Boolean = false,
     val replacedBy: String = "",
+    /** How a NEW row numbers this field: a prefix ("S" → "S-01") or "#" for 1, 2, 3. See [DwAutoNumber]. */
+    val autoNumber: String = "",
+    /** Number within the rows sharing this sibling's value (iterations per prototype). */
+    val autoNumberWithin: String = "",
+    /** A date a new row takes from the workshop's start date and this sibling's day number. */
+    val autoDateFromDay: String = "",
+    /** A count the server stores on save, drawn read-only. See [DwStageComputed]. */
+    val computedKind: String = "",
+    /** Drawn by a dedicated control, never as a box. `ATTENDANCE`: stage 3's daily tick-list. */
+    val widget: String = "",
+    /** One-tap carries from the chosen in-workshop record (C10). */
+    val refSuggest: RefSuggestDto? = null,
+)
+
+/** `fill` keys are copied into blank boxes on a tap; `hint` keys are shown and never copied. */
+@Serializable
+data class RefSuggestDto(
+    val fill: Map<String, String> = emptyMap(),
+    val hint: Map<String, String> = emptyMap(),
 )
 
 /** One record shape within a stage: the stage's own answers, or one row of a repeating list. */

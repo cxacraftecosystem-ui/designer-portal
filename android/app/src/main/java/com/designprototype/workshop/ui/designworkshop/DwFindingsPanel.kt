@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -17,6 +18,7 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,6 +45,7 @@ import com.designprototype.workshop.data.WorkshopDraftStore
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.rowsFor
+import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.serialization.json.JsonPrimitive
@@ -59,8 +62,9 @@ import kotlinx.serialization.json.JsonPrimitive
  * directly above, and nothing added them up. Both findings existed — on the server, days later, at a
  * desk, about a workshop that had ended.
  *
- * IT NEVER WRITES TO THE STAGE. Nothing in this file returns a value, seeds a field or offers to
- * "fix" anything. The designer's declared band and typed subtotal stay exactly as typed. A subtotal
+ * IT NEVER WRITES TO THE STAGE ON ITS OWN. The one exception is the owner's (A16, 2026-10-17): a
+ * cost sheet's subtotal can take its lines' total, on the designer's tap, through `onUse`. Nothing
+ * else here returns a value, seeds a field or offers to "fix" anything. The designer's declared band and typed subtotal stay exactly as typed. A subtotal
  * can legitimately differ from its lines and a band can legitimately be a considered judgement about
  * a market the survey under-sampled — the designer was in the room and the arithmetic was not. What
  * changes is that the judgement is now made in front of the evidence.
@@ -82,10 +86,15 @@ fun DwStageFindings(
     repository: WorkshopRepository,
     /** This stage's collection rows as the form currently holds them, keyed by entity. */
     rows: Map<String, List<DwDataRow>>,
+    /**
+     * "Use ₹X from the lines" (owner, A16, 2026-10-17): write the lines' total into one sheet's
+     * subtotal on the designer's tap. Null leaves the card read-only.
+     */
+    onUse: ((sheetEntryId: String, key: String, value: String) -> Unit)? = null,
 ) {
     when (stage.key) {
         STAGE_MARKET_ANALYSIS -> MarketFindingsCard(workshopId, repository, rows)
-        STAGE_COSTING -> CostFindingsCard(workshopId, rows)
+        STAGE_COSTING -> CostFindingsCard(workshopId, rows, onUse)
         else -> Unit
     }
 }
@@ -290,7 +299,11 @@ private fun DistributionLine(label: String, dist: DwDistribution?) {
 // --------------------------------------------------------------------------------------
 
 @Composable
-private fun CostFindingsCard(workshopId: String, rows: Map<String, List<DwDataRow>>) {
+private fun CostFindingsCard(
+    workshopId: String,
+    rows: Map<String, List<DwDataRow>>,
+    onUse: ((String, String, String) -> Unit)? = null,
+) {
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
 
@@ -386,6 +399,17 @@ private fun CostFindingsCard(workshopId: String, rows: Map<String, List<DwDataRo
                     good = check.verdict == "AGREES",
                     bad = check.verdict == "MISMATCH",
                 )
+                val computed = check.computed
+                if (onUse != null && sheet.entryId.isNotEmpty() && computed != null && dwUsableCheck(check)) {
+                    ActionRow {
+                        OutlinedButton(
+                            onClick = { onUse(sheet.entryId, check.key, String.format(java.util.Locale.ROOT, "%.2f", computed)) },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) {
+                            Text("Use ${dwRupees(computed)}")
+                        }
+                    }
+                }
             }
             Verdict(
                 token = sheet.margin.verdict,
@@ -509,3 +533,15 @@ private fun Verdict(token: String, headline: String, body: String, good: Boolean
         Text(body, color = ink, style = MaterialTheme.typography.bodySmall)
     }
 }
+
+/** The two subtotals a line roll-up may fill (A16), and only when it disagrees or nothing was typed. */
+internal fun dwUsableCheck(check: com.designprototype.workshop.data.DwCostCheck): Boolean =
+    (check.key == "materialCost" || check.key == "labourCost") &&
+        check.computed != null &&
+        (check.verdict == "MISMATCH" || check.verdict == "NOT_DECLARED")
+
+internal fun dwRupees(value: Double): String =
+    "₹" + java.text.NumberFormat.getNumberInstance(java.util.Locale.forLanguageTag("en-IN")).apply {
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+    }.format(value)

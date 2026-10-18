@@ -2065,7 +2065,7 @@ private fun renderStageSection(
       with an underscore.
      */
     val answered = singletonValues.filterKeys { !it.startsWith("_") }
-    val hasCollections = stage.collections.any { stored?.rowsFor(it.key).orEmpty().isNotEmpty() }
+    val hasCollections = stage.printableCollections.any { stored?.rowsFor(it.key).orEmpty().isNotEmpty() }
     /*
       A STAGE WITH NOTHING IN IT IS SKIPPED ENTIRELY. Printing 22 headings with nothing under them
       turns a five-page report into a twenty-page one that says the same amount.
@@ -2160,7 +2160,7 @@ private fun renderStageSection(
       none, and a stored section's title is `min_length=1`). See [renderCustomSection].
     */
 
-    stage.collections.forEach { entity ->
+    stage.printableCollections.forEach { entity ->
         if (section.entities.isNotEmpty() && entity.key !in section.entities) return@forEach
         val rows = stored?.rowsFor(entity.key).orEmpty().map { it.values }
         if (rows.isEmpty()) {
@@ -2175,7 +2175,7 @@ private fun renderStageSection(
         }
         // Only where the stage has more than one, because a lone collection is already named by the
         // stage heading directly above it.
-        if (stage.collections.size > 1) {
+        if (stage.printableCollections.size > 1) {
             builder.heading(entity.title, level = 2, numbered = template.numberHeadings)
         }
 
@@ -2211,7 +2211,7 @@ private fun renderStageSection(
         // (`DocxWriter.emitHeading` indexes a four-element table by level and
         // `DocumentBuilder.heading` coerces to 1..4); a fifth would be an index out of bounds in the
         // middle of an export a designer is waiting on.
-        val groupLevel = if (stage.collections.size > 1) 3 else 2
+        val groupLevel = if (stage.printableCollections.size > 1) 3 else 2
         groups.forEach { group ->
             builder.heading(group.heading, level = groupLevel, numbered = template.numberHeadings)
             wrote = renderCollection(
@@ -4468,3 +4468,10 @@ private fun renderTranscriptAnnexure(
         pageBreakBefore = section.pageBreakBefore,
     )
 }
+
+/**
+ * The stage's collections that can print anything — `report_builder.printable_collections`. An entity
+ * whose every field is HIDDEN (stage 22's planned follow-ups) is never part of the document.
+ */
+internal val com.designprototype.workshop.data.StageDto.printableCollections: List<com.designprototype.workshop.data.EntityDto>
+    get() = collections.filter { entity -> entity.fields.any { !it.deprecated && it.reportRole != "HIDDEN" } }

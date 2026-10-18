@@ -39,6 +39,7 @@ import time in debug) enforces all three:
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -335,6 +336,23 @@ class Cardinality(str, Enum):
 # ALL means the whole table. Stage 3 is deliberately ALL: it is where the roster is BUILT, so
 # narrowing it to the roster would be circular and a designer could never add the artisan who
 # turned up on day two.
+#: ``FieldSpec.auto_number`` for an INT that numbers 1, 2, 3 … rather than ``PREFIX-NN``.
+AUTO_NUMBER_SEQUENCE = "#"
+
+#: What a ``computed_kind`` field counts.
+#:   ROSTER_COUNT      participant rows on stage 3
+#:   ROSTER_WOMEN      of those, the ones whose gender reads as female
+#:   ATTENDANCE_DAYS   the workshop days the participant was not marked absent on
+#:   ROSTER_COMPLETED  participants present on every workshop day
+#:   SURVEY_RESPONSES  stage 8 response rows plus the sittings of the workshop's market-survey forms
+COMPUTED_KINDS = frozenset(
+    {"ROSTER_COUNT", "ROSTER_WOMEN", "ATTENDANCE_DAYS", "ROSTER_COMPLETED", "SURVEY_RESPONSES"}
+)
+
+#: ``FieldSpec.widget`` values. ATTENDANCE: the day numbers a participant was absent on, edited
+#: through stage 3's daily tick-list ("All present" by default).
+FIELD_WIDGETS = frozenset({"ATTENDANCE"})
+
 REF_SCOPE_WORKSHOP = "WORKSHOP"
 REF_SCOPE_ALL = "ALL"
 REF_SCOPES = frozenset({REF_SCOPE_WORKSHOP, REF_SCOPE_ALL})
@@ -511,6 +529,25 @@ class FieldSpec:
     phase_note: str = ""  # a reviewer comment from the source document
     deprecated: bool = False
     replaced_by: str = ""
+    #: NUMBERING A NEW ROW (owner, 2026-10-17: "S-01", "P-01", "D-01" per row type). A prefix
+    #: numbers a TEXT code as ``PREFIX-NN``; :data:`AUTO_NUMBER_SEQUENCE` numbers an INT. Both
+    #: clients fill it when a row is ADDED and never touch an existing row, so a number a designer
+    #: typed or a row that already exists is never renumbered. Still editable. See
+    #: :func:`next_auto_number`, which both clients port.
+    auto_number: str = ""
+    #: Number within the rows that share this sibling's value (iterations per prototype).
+    auto_number_within: str = ""
+    #: A DATE that a new row takes from the workshop's start date and the day number held in this
+    #: sibling INT field (stage 3's schedule). Editable like any date.
+    auto_date_from_day: str = ""
+    #: A count the server works out from other rows and STORES ON SAVE, replacing the typed box —
+    #: see :data:`COMPUTED_KINDS` and ``app.services.stage_computed``. Clients draw it read-only.
+    #: When nothing can be counted (no roster yet) the stored value is left as it was, so a box
+    #: typed on an older workshop stays readable.
+    computed_kind: str = ""
+    #: Drawn by a dedicated control rather than the generic box (:data:`FIELD_WIDGETS`). Clients
+    #: that do not know the widget fall back to the ordinary box for the field's type.
+    widget: str = ""
 
     @property
     def is_free_text(self) -> bool:
@@ -1535,11 +1572,11 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
     # object's measured length are not the same fact, and copying one into the other would put a
     # number in a ministry report under a heading that claims it was measured.
     #
-    # ── THE THIRTEEN INTERNAL REFS THIS RULE LEAVES UN-HYDRATED, EACH BY NAME ──────────────────
+    # ── THE FOURTEEN INTERNAL REFS THIS RULE LEAVES UN-HYDRATED, EACH BY NAME ──────────────────
     #
     # Written out rather than merely absent, because "no mapping here" and "nobody looked at this
-    # one" are the same silence, and this table is the evidence that they are different. Fifteen
-    # live REF fields point at a ``Dw…`` model; two are below and these are the other thirteen.
+    # one" are the same silence, and this table is the evidence that they are different. Sixteen
+    # live REF fields point at a ``Dw…`` model; two are below and these are the other fourteen.
     #
     #  * ``sketch.supersedesSketch`` — a successor sketch EXISTS because something changed, so the
     #    predecessor's dimensions, materials and colours are exactly the answers that must not be
@@ -1577,6 +1614,8 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
     #    is the one thing the stage was built not to do.
     #  * ``costMaterialLine.costSheetRef``, ``costLabourLine.costSheetRef`` — a line item is an
     #    item, a quantity, a unit and a rate. The sheet holds none of those; it holds their totals.
+    #  * ``plannedFollowUp.productRef`` — a planned visit is a due date and an interval; nothing it
+    #    holds is a property of the product.
     #  * ``followUp.productRef`` — a follow-up is what happened to the product MONTHS LATER (units
     #    made, units sold, revenue, adoption). Nothing it asks is a property of the product.
     #
@@ -1660,6 +1699,30 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "processSummary": "makingProcess",
     },
 }
+
+
+#: ONE-TAP SUGGESTIONS FROM A CHOSEN IN-WORKSHOP RECORD (owner, C10, 2026-10-17). Unlike
+#: :data:`REFERENCE_HYDRATION` nothing here is written without the designer's tap: the client shows
+#: "Use from the sketch" beside the picker while a mapped box is blank, and applies only blanks.
+#: ``hint`` pairs are shown as placeholder text and never copied — the sketch's intended size is
+#: not the prototype's measured one (the argument recorded above ``prototype.sketchRef``).
+#: ``finalProduct.prototypeRef`` -> ``artisanRef`` carries the maker BY REFERENCE: the same roster
+#: row's id, never a copy of the name.
+REFERENCE_SUGGESTIONS: dict[str, dict[str, dict[str, str]]] = {
+    "prototype.sketchRef": {
+        "fill": {"name": "name", "materials": "materials"},
+        "hint": {"lengthCm": "lengthCm", "widthCm": "widthCm", "heightCm": "heightCm"},
+    },
+    "finalProduct.prototypeRef": {
+        "fill": {"artisanRef": "artisanRef"},
+        "hint": {},
+    },
+}
+
+
+def reference_suggestions_for(entity_key: str, field_key: str) -> dict[str, dict[str, str]]:
+    """The suggestion mapping one REF field offers, or an empty dict."""
+    return REFERENCE_SUGGESTIONS.get(f"{entity_key}.{field_key}", {})
 
 
 def reference_hydration_for(entity_key: str, field_key: str) -> dict[str, str]:
@@ -2116,6 +2179,56 @@ def validate_registry() -> list[str]:
                     "which is deprecated and is dropped from the row on its next save"
                 )
 
+    problems.extend(_behaviour_problems())
+    return problems
+
+
+_AUTO_PREFIX = re.compile(r"^[A-Z]{1,3}$")
+
+
+def _behaviour_problems() -> list[str]:
+    """The rules for numbering, computed counts, widgets and one-tap suggestions."""
+    problems: list[str] = []
+    for stage_spec, entity in all_entities():
+        for spec in entity.fields:
+            where = f"{stage_spec.key}.{entity.key}.{spec.key}"
+            if spec.auto_number:
+                if spec.auto_number == AUTO_NUMBER_SEQUENCE:
+                    if spec.type is not FieldType.INT:
+                        problems.append(f"{where} numbers as a sequence but is not INT")
+                elif spec.type is not FieldType.TEXT or not _AUTO_PREFIX.match(spec.auto_number):
+                    problems.append(f"{where} declares auto_number {spec.auto_number!r}")
+            if spec.auto_number_within and (
+                not spec.auto_number or entity.field(spec.auto_number_within) is None
+            ):
+                problems.append(f"{where} numbers within {spec.auto_number_within!r}, not a sibling")
+            if spec.auto_date_from_day:
+                day = entity.field(spec.auto_date_from_day)
+                if spec.type is not FieldType.DATE or day is None or day.type is not FieldType.INT:
+                    problems.append(f"{where} takes its date from a field that is not an INT day")
+            if spec.computed_kind:
+                if spec.computed_kind not in COMPUTED_KINDS:
+                    problems.append(f"{where} declares unknown computed_kind {spec.computed_kind!r}")
+                if spec.type is not FieldType.INT or spec.required or spec.derived_kind:
+                    problems.append(f"{where} is computed and must be an optional, underived INT")
+            if spec.widget and spec.widget not in FIELD_WIDGETS:
+                problems.append(f"{where} declares unknown widget {spec.widget!r}")
+            if spec.widget == "ATTENDANCE" and spec.type is not FieldType.TAGS:
+                problems.append(f"{where} is the attendance list and must be TAGS")
+    entities_by_key = {e.key: e for _s, e in all_entities()}
+    entities_by_model = {e.name: e for _s, e in all_entities()}
+    for path, mapping in REFERENCE_SUGGESTIONS.items():
+        entity_key, _, field_key = path.partition(".")
+        entity = entities_by_key.get(entity_key)
+        ref = entity.field(field_key) if entity else None
+        source = entities_by_model.get(ref.ref_model) if ref is not None else None
+        if entity is None or ref is None or ref.type is not FieldType.REF or source is None:
+            problems.append(f"suggestion path {path!r} names no in-workshop REF field")
+            continue
+        for part in ("fill", "hint"):
+            for source_key, target_key in mapping.get(part, {}).items():
+                if source.field(source_key) is None or entity.field(target_key) is None:
+                    problems.append(f"suggestion {path}[{source_key!r}] names an unknown field")
     return problems
 
 
@@ -2510,6 +2623,13 @@ def validate_entry(
         if error:
             errors[spec.key] = error
             continue
+        if spec.widget == "ATTENDANCE" and isinstance(raw, list) and not raw:
+            # "ALL PRESENT" IS AN ANSWER, NOT A BLANK. An empty tick-list list is what tells a row
+            # the attendance card counted apart from one whose days were typed on an older
+            # workshop (`stage_computed.is_legacy_attendance`); dropping it would turn every
+            # all-present row into a legacy one on its next save.
+            cleaned[spec.key] = []
+            continue
         if value is None or (isinstance(value, list) and not value):
             # BLANK AND DERIVABLE MEANS COMPUTE IT, which is what the field's own help text has
             # been promising. `durationDays` says "Leave blank to derive it from the start and end
@@ -2894,6 +3014,12 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
         hydration = reference_hydration_for(entity_key, f.key)
         if hydration:
             out["refHydration"] = dict(hydration)
+        suggestions = reference_suggestions_for(entity_key, f.key)
+        if suggestions:
+            out["refSuggest"] = {
+                "fill": dict(suggestions.get("fill", {})),
+                "hint": dict(suggestions.get("hint", {})),
+            }
     if f.ref_filter_by:
         out["refFilterBy"] = f.ref_filter_by
     if f.max_length:
@@ -2985,6 +3111,16 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
     if f.derived_kind:
         out["derivedKind"] = f.derived_kind
         out["derivedFrom"] = list(f.derived_from)
+    if f.auto_number:
+        out["autoNumber"] = f.auto_number
+    if f.auto_number_within:
+        out["autoNumberWithin"] = f.auto_number_within
+    if f.auto_date_from_day:
+        out["autoDateFromDay"] = f.auto_date_from_day
+    if f.computed_kind:
+        out["computedKind"] = f.computed_kind
+    if f.widget:
+        out["widget"] = f.widget
     if f.column_width_pct:
         out["columnWidthPct"] = f.column_width_pct
     if f.caption_for:
@@ -3126,6 +3262,7 @@ def _registry_fingerprint() -> tuple[Any, ...]:
                 f.store_masked,
                 f.text_format.value,
                 f.min_items,
+                (f.auto_number, f.auto_number_within, f.auto_date_from_day, f.computed_kind, f.widget),
             )
             for s in STAGES
             for e in s.entities
@@ -3165,6 +3302,7 @@ def _registry_digest(fingerprint: tuple[Any, ...]) -> str:
             store_masked,
             text_format,
             min_items,
+            behaviour,
         ) = field
         # In DECLARATION order, not sorted: the mapping's order is what decides which
         # source key wins if two ever named one target, so a reordering is a change.
@@ -3177,6 +3315,9 @@ def _registry_digest(fingerprint: tuple[Any, ...]) -> str:
             f"{int(required)}:{enum}:{int(deprecated)}:"
             f"{derived_kind}:{','.join(derived_from)}:{hydration}:"
             f"{int(store_masked)}:{text_format}:{min_items}"
+            # Appended only when a field declares one, so every older field's part string — and
+            # therefore the digest of a registry without them — is byte-for-byte unchanged.
+            + (f":{'/'.join(behaviour)}" if any(behaviour) else "")
         )
     return hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()[:16]
 
@@ -3338,3 +3479,46 @@ def derive_value(spec: FieldSpec, row: dict[str, Any]) -> Any:
         return f"{total:.2f}" if spec.type is FieldType.MONEY else round(total, 4)
 
     return None
+
+
+# --------------------------------------------------------------------------------------
+# Numbering a new row
+# --------------------------------------------------------------------------------------
+
+
+def format_auto_number(prefix: str, number: int) -> str:
+    """``S-01``, ``P-12``, ``D-103`` — two digits at least, so a list of codes sorts as it reads."""
+    return f"{prefix}-{number:02d}"
+
+
+def next_auto_number(spec: FieldSpec, rows: Sequence[dict[str, Any]], scope: Any = None) -> Any:
+    """The number a NEW row of ``rows``' entity takes in ``spec``, or ``None`` if it numbers nothing.
+
+    THE ONE DEFINITION; ``frontend/lib/autoNumber.ts`` and Android's ``DwAutoNumber`` are ports.
+    One past the highest number already used — or past the row count, when earlier rows carry
+    codes in some other spelling — so a typed "Sk3" never makes the next row collide with it.
+    ``scope`` is the new row's value of ``auto_number_within`` (its prototype), and only rows that
+    share it are counted.
+    """
+    if not spec.auto_number:
+        return None
+    considered = [
+        row
+        for row in rows
+        if not spec.auto_number_within or row.get(spec.auto_number_within) == scope
+    ]
+    highest = 0
+    if spec.auto_number == AUTO_NUMBER_SEQUENCE:
+        for row in considered:
+            try:
+                highest = max(highest, int(str(row.get(spec.key) or "0").strip()))
+            except ValueError:
+                continue
+        return max(highest, len(considered)) + 1
+    pattern = re.compile(rf"^\s*{re.escape(spec.auto_number)}\s*-?\s*(\d+)\s*$", re.IGNORECASE)
+    for row in considered:
+        match = pattern.match(str(row.get(spec.key) or ""))
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return format_auto_number(spec.auto_number, max(highest, len(considered)) + 1)
+
