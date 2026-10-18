@@ -355,7 +355,7 @@ async def link_artisan(
 
 def _as_column(key: str, value: Any) -> Any:
     if key == "dateOfBirth" and isinstance(value, str) and value:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(value)
     if key == "pehchanCardNumber":
         return normalize_pehchan(value) if value else None
     return value

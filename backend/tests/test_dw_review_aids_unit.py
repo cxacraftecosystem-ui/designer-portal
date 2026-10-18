@@ -11,8 +11,10 @@ from types import SimpleNamespace
 import pytest
 
 import app.services.stage_definitions  # noqa: F401  - installs the registry
-from app.schemas import design_workshop_approvals as approvals_plans
-from app.schemas import design_workshop_review_loop as loop
+from app.schemas import (
+    design_workshop_approvals as approvals_plans,
+    design_workshop_review_loop as loop,
+)
 from app.services import design_workshop_review_aids as aids
 from app.services.stage_schema import stages
 
@@ -127,7 +129,7 @@ def test_a_send_back_batch_marks_one_row_as_the_send_back():
     batch = _batch(sends_back=True)
     assert [row.data["sentBack"] for row in batch.rows] == [True, False]
     covered = _batch(sends_back=True, cover="Please revise these two.")
-    assert [row.data["note"] for row in covered.rows][0] == "Please revise these two."
+    assert next(row.data["note"] for row in covered.rows) == "Please revise these two."
     assert [row.data["sentBack"] for row in covered.rows] == [True, False, False]
     assert covered.rows[0].data["stageKey"] is None
     assert covered.cover.startswith("Please revise these two.")
@@ -245,4 +247,4 @@ def test_a_snapshot_carries_no_provenance():
 
 
 def test_the_purge_keeps_a_year_after_deletion():
-    assert aids.SNAPSHOT_RETENTION_AFTER_DELETE == timedelta(days=365)
+    assert timedelta(days=365) == aids.SNAPSHOT_RETENTION_AFTER_DELETE

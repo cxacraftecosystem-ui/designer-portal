@@ -62,7 +62,6 @@ from fastapi import (
 from fastapi.responses import Response
 
 from app.core.db import db
-from app.services import cross_portal_codes
 from app.core.deps import (
     can_run_design_workshops,
     get_current_user,
@@ -80,6 +79,7 @@ from app.schemas.questionnaire import (
     QuestionnaireReuse,
     QuestionnaireUpdate,
 )
+from app.services import cross_portal_codes
 from app.services.concurrency import gather_reads
 from app.services.design_workshop_viewers import has_viewer_grant
 from app.services.design_workshops import load_workshop_or_404

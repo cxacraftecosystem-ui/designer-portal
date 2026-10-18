@@ -160,7 +160,14 @@ from app.core.deps import (
     role_value,
 )
 from app.core.security import hash_password
-from app.services import access_roster, annual_plan, credential_links, designers, email_outbox, mailer
+from app.services import (
+    access_roster,
+    annual_plan,
+    credential_links,
+    designers,
+    email_outbox,
+    mailer,
+)
 from app.services.account_provisioning import is_master_email
 from app.services.design_workshops import (
     attach_the_named_designer,

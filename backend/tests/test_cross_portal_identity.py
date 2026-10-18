@@ -177,7 +177,7 @@ def world(monkeypatch):
         return True
 
     monkeypatch.setattr(routes, "db", fake)
-    monkeypatch.setattr(routes, "get_settings", lambda: _settings())
+    monkeypatch.setattr(routes, "get_settings", _settings)
     monkeypatch.setattr(routes, "peer_call", fake_peer)
     monkeypatch.setattr(routes, "assert_may_write_a_record_filed_under", allowed)
     monkeypatch.setattr(routes, "guard_record_edit", guard)
@@ -337,7 +337,7 @@ async def test_refresh_copies_only_the_identity_fields(world):
     out = await routes.refresh_artisan("dp1", OWNER)
     row = world.db.artisan.rows[0]
     assert row["name"] == "Meena Devi" and row["pehchanCardNumber"] == "PEH12345"
-    assert row["dateOfBirth"] == datetime(1980, 5, 1)
+    assert row["dateOfBirth"] == datetime.fromisoformat("1980-05-01")
     assert "phone" not in row and "place" not in row  # suggested once, never refreshed
     assert set(out["changed"]) <= set(cross_portal.IDENTITY_FIELDS)
     assert out["link"]["lastRefreshedAt"] is not None
