@@ -71,7 +71,7 @@ const NOW = new Date("2026-10-10T09:30:00Z");
 
 test("the .docx is a Word document carrying the workshop's text, in both scripts", async () => {
   const file = await generateOfflineFile(registry, fixture, "DOCX", { includeTranscripts: true }, writers(), NOW);
-  expect(file.fileName).toBe("DesignWorkshop_Workshop_2026-10-10_Odisha_Sambalpuri-Ikat_DW-OD-2026-014_Report.docx");
+  expect(file.fileName).toBe("DesignWorkshop_Workshop_2026-10-10_Barpali_Sambalpuri-Ikat_DW-OD-2026-014_Report.docx");
   const zip = await JSZip.loadAsync(await file.blob.arrayBuffer());
   const xml = await zip.file("word/document.xml")!.async("string");
   expect(xml).toContain("Sambalpuri ikat design workshop");
