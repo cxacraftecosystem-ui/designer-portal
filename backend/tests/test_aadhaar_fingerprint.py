@@ -4,11 +4,11 @@ Owner decision #2 (2026-10-17). What is pinned here:
 
 * the fingerprint is deterministic, keyed, and computed over the NORMALISED number only — so one
   person typed two ways is one fingerprint, and the formula is byte for byte the cross-portal code;
-* duplicates are still found: by fingerprint, and by the legacy column for rows the backfill has
-  not reached yet, on create, on edit and in the mid-form lookup (POST and the old GET);
+* duplicates are still found by fingerprint, on create, on edit and in the mid-form lookup (POST
+  and the old GET); the legacy column was dropped on 2026-10-19 after the backfill;
 * no response, export, edit-history entry or log line carries the full number or the fingerprint;
-* the backfill is a dry run by default, idempotent, verifies what it wrote, and scrubs old
-  edit-history values; the deferred drop migration refuses until it has finished.
+* the drop migration that removed the legacy column ships guarded: it refuses while any row
+  still holds a number without its fingerprint.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from app.services.artisan_identity import validate_aadhaar, verhoeff_ok
 KEY = TEST_AADHAAR_FINGERPRINT_KEY
 BACKEND = Path(__file__).resolve().parents[1]
 DROP_MIGRATION = (
-    BACKEND / "prisma" / "deferred_migrations" / "20261029090000_drop_aadhaar_number" / "migration.sql"
+    BACKEND / "prisma" / "migrations" / "20261029090000_drop_aadhaar_number" / "migration.sql"
 )
 
 
@@ -157,8 +157,8 @@ def test_seal_replaces_the_number_with_its_fingerprint_and_last_four() -> None:
     assert fp.seal(data, _settings()) == number
     assert data["aadhaarFingerprint"] == fp.fingerprint(number, KEY)
     assert data["aadhaarLast4"] == number[-4:]
-    # The legacy column is written only to clear it.
-    assert data["aadhaarNumber"] is None
+    # The legacy column is dropped, so the request field leaves the payload entirely.
+    assert "aadhaarNumber" not in data
     assert number not in repr(data)
 
 
@@ -171,7 +171,7 @@ def test_seal_leaves_a_payload_without_the_number_alone() -> None:
 def test_seal_retracts_on_an_explicit_null() -> None:
     data: dict[str, Any] = {"aadhaarNumber": None}
     fp.seal(data, _settings())
-    assert data == {"aadhaarNumber": None, "aadhaarFingerprint": None, "aadhaarLast4": None}
+    assert data == {"aadhaarFingerprint": None, "aadhaarLast4": None}
 
 
 def test_re_sending_the_stored_number_changes_nothing() -> None:
@@ -192,11 +192,10 @@ def test_a_legacy_row_re_sending_its_own_number_gains_the_columns_without_a_retr
     assert data == {"aadhaarFingerprint": fp.fingerprint(number, KEY), "aadhaarLast4": number[-4:]}
 
 
-def test_the_lookup_matches_the_fingerprint_and_the_legacy_column() -> None:
+def test_the_lookup_matches_the_fingerprint_only() -> None:
     number = _fresh_aadhaar()
-    where = fp.match_where(number, _settings())
-    assert {"aadhaarFingerprint": fp.fingerprint(number, KEY)} in where["OR"]
-    assert {"aadhaarNumber": number} in where["OR"]
+    # The legacy column is dropped: the number itself never reaches a WHERE.
+    assert fp.match_where(number, _settings()) == {"aadhaarFingerprint": fp.fingerprint(number, KEY)}
 
 
 # ── The read side ───────────────────────────────────────────────────────────────────────────────
@@ -217,10 +216,10 @@ def test_an_encoded_artisan_carries_the_mask_and_never_the_fingerprint() -> None
     out = public_encode({"artisan": row}, admin)["artisan"]
     assert out["aadhaarNumber"] == f"XXXX XXXX {number[-4:]}"
     assert "aadhaarFingerprint" not in out
-    # A legacy row (before the backfill) is masked too, even for its own creator and an admin.
+    # A stray full number under the dropped column's name is never served, not even masked.
     legacy = {"id": "a2", "createdById": "viewer", "aadhaarNumber": number, "aadhaarLast4": None}
     out = public_encode([legacy], admin)[0]
-    assert out["aadhaarNumber"] == f"XXXX XXXX {number[-4:]}"
+    assert out["aadhaarNumber"] is None
 
 
 def test_every_export_surface_prints_the_mask_from_the_last_four() -> None:
@@ -314,14 +313,14 @@ def test_an_aadhaar_in_a_logged_query_string_is_redacted(sep: str) -> None:
     assert fp.redact_path("/api/artisans/abc") == "/api/artisans/abc"
 
 
-def test_the_drop_migration_is_deferred_and_guarded() -> None:
-    """Shipped in prisma/migrations it would run at deploy, before the backfill, and fail it."""
-    assert not (BACKEND / "prisma" / "migrations" / DROP_MIGRATION.parent.name).exists()
+def test_the_drop_migration_ships_guarded() -> None:
+    # Shipped 2026-10-19, after the backfill printed "Nothing left" on the box.
+    assert not (BACKEND / "prisma" / "deferred_migrations").exists()
     sql = DROP_MIGRATION.read_text(encoding="utf-8")
     guard_at = sql.index("RAISE EXCEPTION")
     assert guard_at < sql.index('UPDATE "Artisan" SET "aadhaarNumber" = NULL')
     assert guard_at < sql.index('DROP COLUMN "aadhaarNumber"')
-    assert fp.LEGACY_COLUMN_PRESENT, "flip this only in the commit that ships the drop migration"
+    assert not fp.LEGACY_COLUMN_PRESENT, "the column is gone, so nothing may name it"
 
 
 # ── Against a database ──────────────────────────────────────────────────────────────────────────
@@ -406,9 +405,7 @@ def _no_secret_in(text: str, number: str) -> None:
 @needs_db
 def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(world, caplog) -> None:
     client, designer, admin = world["client"], world["headers"]["designer"], world["headers"]["admin"]
-    # A shared test database can hold legacy rows other suites wrote; with none left (as on a box
-    # after the backfill) the typed number never travels to the database at all, not even in a WHERE.
-    asyncio.run(_backfill(None, apply=True, retract=True))
+    # The legacy column is dropped, so the typed number never travels to the database at all.
     fp.reset_legacy_pending()
     caplog.set_level(logging.DEBUG)
     number = _fresh_aadhaar()
@@ -421,7 +418,7 @@ def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(wo
     _no_secret_in(created.text, number)
 
     row = asyncio.run(_row(artisan_id))
-    assert row.aadhaarNumber is None
+    assert getattr(row, "aadhaarNumber", None) is None
     assert row.aadhaarFingerprint == fp.fingerprint(number, KEY)
     assert row.aadhaarLast4 == number[-4:]
 
@@ -474,7 +471,7 @@ def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(wo
     _no_secret_in(edited.text, replacement)
     row = asyncio.run(_row(artisan_id))
     assert row.aadhaarFingerprint == fp.fingerprint(replacement, KEY)
-    assert row.aadhaarLast4 == replacement[-4:] and row.aadhaarNumber is None
+    assert row.aadhaarLast4 == replacement[-4:] and getattr(row, "aadhaarNumber", None) is None
 
     history = client.get(
         "/api/data-access/revisions",
@@ -499,105 +496,3 @@ def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(wo
     )
     _no_secret_in(ours, number)
     _no_secret_in(ours, replacement)
-
-
-async def _legacy(world: dict[str, Any], number: str, *, history_value: str | None = None) -> str:
-    """An artisan as production holds it before the backfill: the number in the legacy column."""
-    from prisma import Json
-
-    db = _client()
-
-    await db.connect()
-    try:
-        row = await db.artisan.create(
-            data={
-                "name": f"Legacy {world['tag']}",
-                "place": "Bagru",
-                "aadhaarNumber": number,
-                "createdById": world["people"]["designer"].id,
-            }
-        )
-        if history_value:
-            await db.recordrevision.create(
-                data={
-                    "recordType": "artisan",
-                    "recordId": row.id,
-                    "changes": Json({"aadhaarNumber": {"old": history_value, "new": number}}),
-                }
-            )
-        return row.id
-    finally:
-        await db.disconnect()
-
-
-async def _backfill(ids: list[str] | None, *, apply: bool, retract: bool = False) -> Any:
-    import scripts.backfill_aadhaar_fingerprint as backfill
-
-    db = _client()
-    await db.connect()
-    real, backfill.db = backfill.db, db
-    try:
-        return await backfill.run(apply=apply, retract_unusable=retract, only_ids=ids, batch=1)
-    finally:
-        backfill.db = real
-        await db.disconnect()
-
-
-async def _drop_guard_refuses() -> bool:
-    """Run the drop migration's guard (its first statement) and report whether it refused."""
-    guard = DROP_MIGRATION.read_text(encoding="utf-8")
-    guard = guard[guard.index("DO $$") : guard.index("END $$;") + len("END $$;")]
-    db = _client()
-    await db.connect()
-    try:
-        await db.execute_raw(guard)
-        return False
-    except Exception as exc:  # noqa: BLE001 - the guard's RAISE arrives as whatever Prisma wraps it in
-        assert "Refusing to drop" in str(exc)
-        return True
-    finally:
-        await db.disconnect()
-
-
-@needs_db
-def test_the_backfill_is_a_dry_run_by_default_idempotent_and_unlocks_the_drop(world) -> None:
-    client, designer = world["client"], world["headers"]["designer"]
-    number, older = _fresh_aadhaar(), _fresh_aadhaar()
-    artisan_id = asyncio.run(_legacy(world, number, history_value=older))
-    fp.reset_legacy_pending()
-
-    # Before the backfill the legacy row is still a duplicate, and is served masked.
-    clash = client.post("/api/artisans", json=_body(world, number), headers=designer)
-    assert clash.status_code == 409 and clash.json()["detail"]["existingArtisan"]["id"] == artisan_id
-    shown = client.get(f"/api/artisans/{artisan_id}", headers=world["headers"]["admin"])
-    assert shown.json()["aadhaarNumber"] == f"XXXX XXXX {number[-4:]}"
-    _no_secret_in(shown.text, number)
-    assert asyncio.run(_drop_guard_refuses())
-
-    dry = asyncio.run(_backfill([artisan_id], apply=False))
-    assert (dry.would_fill, dry.filled, dry.revisions_would_scrub) == (1, 0, 1)
-    assert asyncio.run(_row(artisan_id)).aadhaarFingerprint is None, "a dry run wrote"
-
-    applied = asyncio.run(_backfill([artisan_id], apply=True))
-    assert (applied.filled, applied.verified, applied.revisions_scrubbed) == (1, 1, 1)
-    assert applied.unfinished == 0
-    row = asyncio.run(_row(artisan_id))
-    assert row.aadhaarFingerprint == fp.fingerprint(number, KEY)
-    assert row.aadhaarLast4 == number[-4:]
-
-    again = asyncio.run(_backfill([artisan_id], apply=True))
-    assert (again.filled, again.done_already, again.revisions_scrubbed) == (0, 1, 0)
-
-    history = client.get(
-        "/api/data-access/revisions",
-        params={"recordType": "artisan", "recordId": artisan_id},
-        headers=world["headers"]["admin"],
-    )
-    _no_secret_in(history.text, number)
-    _no_secret_in(history.text, older)
-    # The guard is global, and other suites leave legacy rows in a shared test database, so the
-    # whole table is backfilled (unusable test values retracted) before the guard is asked again.
-    everything = asyncio.run(_backfill(None, apply=True, retract=True))
-    assert everything.unfinished == 0, everything.lines(True)
-    assert not asyncio.run(_drop_guard_refuses())
-

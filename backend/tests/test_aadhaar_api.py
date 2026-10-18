@@ -81,13 +81,18 @@ def world():
             volunteer = await user("CROWDSOURCE_VOLUNTEER", "Sunita Sharma")
             other = await user("RESEARCHER", "Another Researcher")
 
+            from app.services import aadhaar_fingerprint
+
             async def artisan(name: str, number: str | None) -> str:
                 row = await db.artisan.create(
                     data={
                         "name": name,
                         "place": "Bagru",
                         "createdById": researcher.id,
-                        "aadhaarNumber": number,
+                        # As the register holds an Aadhaar: the keyed fingerprint and the last four
+                        # (the full-number column was dropped on 2026-10-19).
+                        "aadhaarFingerprint": aadhaar_fingerprint.fingerprint_of(number) if number else None,
+                        "aadhaarLast4": number[-4:] if number else None,
                     }
                 )
                 return row.id

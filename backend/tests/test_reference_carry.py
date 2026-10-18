@@ -279,9 +279,8 @@ ARTISAN_CARRIED = {
     # `test_no_column_is_both_carried_and_refused` only fires if it is in BOTH. This ledger is the
     # evidence table for "nothing was missed", and a carried column sitting in the refused list
     # would make it evidence for the opposite.
-    "aadhaarNumber": "participant.aadhaarNumber (MASKED — see the identity test)",
-    # Since 2026-10-17 the mask is built from the last four (services/aadhaar_fingerprint.py); the
-    # legacy number above is read only for a row the backfill has not reached.
+    # The mask is built from the last four (services/aadhaar_fingerprint.py, since 2026-10-17); the
+    # legacy `aadhaarNumber` column that held the full number was dropped on 2026-10-19.
     "aadhaarLast4": "participant.aadhaarNumber (MASKED, as XXXX XXXX + these four)",
     "address": "participant.address",
     "notes": "participant.recordNotes",
@@ -1359,7 +1358,7 @@ def test_both_identity_numbers_arrive_masked_and_neither_arrives_bare():
     # because a mask asserted through the masker is a test of nothing.
     assert data["aadhaarNumber"] == "XXXX XXXX 0123"
     assert row.pehchanCardNumber not in str(data), "the bare card number is in the carried data"
-    assert row.aadhaarNumber not in str(data), "the bare Aadhaar digits are in the carried data"
+    assert row.aadhaarFingerprint not in str(data), "the Aadhaar fingerprint is in the carried data"
 
 
 #: Words in an identity-number label that describe the SHAPE OF THE BOX rather than which card the
@@ -1792,7 +1791,8 @@ def _artisan_row(**overrides):
     fields = dict(
         id="art_1", name="Latha Devi", localName="ଲତା ଦେବୀ", gender="Female",
         phone="9876500001", email="latha@example.org", place="Barpali",
-        aadhaarNumber="234567890123", pehchanCardAvailable=True,
+        # As the register holds an Aadhaar since 2026-10-17: a keyed fingerprint and the last four.
+        aadhaarFingerprint="ab" * 32, aadhaarLast4="0123", pehchanCardAvailable=True,
         pehchanCardNumber="PEHCHAN5678", address="House 4, Weavers' lane",
         notes="Prefers morning sessions.", dos="1. Speak in Odia\n2. Show samples",
         donts="1. Do not photograph the loom shed",
@@ -3913,7 +3913,7 @@ async def test_re_pointing_at_a_thinly_documented_record_clears_all_of_the_new_f
     """
     thin = _artisan_row(
         id="art_2", name="Sita Bai", localName=None, gender=None, phone=None, email=None,
-        aadhaarNumber=None, pehchanCardNumber=None, address=None, notes=None, dos=None,
+        aadhaarFingerprint=None, aadhaarLast4=None, pehchanCardNumber=None, address=None, notes=None, dos=None,
         donts=None, extraMetadata={}, craft=None, location=None, place="Kutch",
         # THIN MEANS THIN, INCLUDING THE RELATIONS. An artisan typed in during a workshop has no
         # `workshopId` (the column is nullable) and nothing attached, and both have to be spelled

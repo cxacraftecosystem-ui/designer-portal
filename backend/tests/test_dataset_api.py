@@ -1028,7 +1028,10 @@ def _artisan_row() -> SimpleNamespace:
     return SimpleNamespace(
         id="a1",
         name="Ramesh",
-        aadhaarNumber="123456789012",
+        # As the register holds an Aadhaar since 2026-10-17 (the full-number column was dropped on
+        # 2026-10-19): a keyed fingerprint and the last four.
+        aadhaarFingerprint="ab" * 32,
+        aadhaarLast4="9012",
         pehchanCardNumber="PC12345678",
         createdById="someone-else",
     )
@@ -1050,11 +1053,11 @@ def test_a_master_admin_can_ask_for_unmasked_numbers(api) -> None:
     mask, and never the fingerprint."""
     api.user("root", "MASTER_ADMIN")
     row = _artisan_row()
-    row.aadhaarNumber = None
-    row.aadhaarFingerprint = "ab" * 32
-    row.aadhaarLast4 = "9012"
+    # A stray full number under the dropped column's name is never served, not even masked.
     legacy = _artisan_row()
     legacy.id = "a2"
+    legacy.aadhaarNumber = "123456789012"
+    legacy.aadhaarFingerprint = None
     legacy.aadhaarLast4 = None
     api.table("artisan", [row, legacy])
 
@@ -1062,7 +1065,7 @@ def test_a_master_admin_can_ask_for_unmasked_numbers(api) -> None:
         "/api/datasets/artisans?includeIdentityNumbers=true", token=api.token("root")
     ).json()
 
-    assert [item["aadhaarNumber"] for item in payload["items"]] == ["XXXX XXXX 9012"] * 2
+    assert [item["aadhaarNumber"] for item in payload["items"]] == ["XXXX XXXX 9012", None]
     assert payload["items"][0]["pehchanCardNumber"] == "PC12345678"
     assert "aadhaarFingerprint" not in str(payload) and "ab" * 32 not in str(payload)
     assert "123456789012" not in str(payload)

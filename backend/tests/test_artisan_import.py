@@ -397,14 +397,22 @@ async def test_the_row_supplies_the_stated_address_and_the_workshop_supplies_the
 # --------------------------------------------------------------------------------------
 
 
-def existing_artisan(**overrides):
+def _stored(number: str) -> dict:
+    """An Aadhaar as the register holds it: the keyed fingerprint and the last four (the full-number
+    column was dropped on 2026-10-19)."""
+    from app.services import aadhaar_fingerprint
+
+    return {"aadhaarFingerprint": aadhaar_fingerprint.fingerprint_of(number), "aadhaarLast4": number[-4:]}
+
+
+def existing_artisan(*, aadhaar: str | None = None, **overrides):
     base = {
         "id": "artisan-existing",
         "name": "Ramesh Devi",
         "place": "Bagru",
         "phone": "9000000000",
         "email": None,
-        "aadhaarNumber": AADHAAR_A,
+        **_stored(aadhaar or AADHAAR_A),
         "pehchanCardNumber": None,
         "designWorkshopId": "cmworkshop00000000000099",
         "designWorkshop": SimpleNamespace(title="An earlier workshop"),
@@ -484,9 +492,9 @@ async def test_a_row_that_loses_the_unique_race_is_linked_rather_than_failing_th
     # lands — which is exactly the window the unique index exists to close. The fake reproduces it
     # by raising the driver's message once and having the row already present for the re-read.
     world.db.artisan.create_error = Exception(
-        "Unique constraint failed on the fields: (`aadhaarNumber`)"
+        "Unique constraint failed on the fields: (`aadhaarFingerprint`)"
     )
-    world.db.artisan.rows = [existing_artisan(id="artisan-winner", aadhaarNumber=AADHAAR_B)]
+    world.db.artisan.rows = [existing_artisan(id="artisan-winner", aadhaar=AADHAAR_B)]
     parsed = parse_artisan_workbook(
         sheet([artisan_row(aadhaarNumber=AADHAAR_B)]), defaults=DEFAULTS
     )

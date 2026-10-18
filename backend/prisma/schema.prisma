@@ -1100,10 +1100,9 @@ model Artisan {
   /// holds artisans recorded before the field existed, and the only ways to satisfy a NOT NULL would
   /// be to invent numbers or delete rows. Those rows keep NULL, exempt from the unique index.
   ///
-  /// `aadhaarNumber` is the LEGACY column that held the full number. Nothing writes it any more
-  /// except to clear it; `scripts/backfill_aadhaar_fingerprint.py` fingerprints what it holds, and
-  /// the guarded migration in `prisma/deferred_migrations/` drops it. backend/DEPLOY_AWS.md has the order.
-  aadhaarNumber      String? @unique
+  /// The LEGACY `aadhaarNumber` column that held the full number was dropped by migration
+  /// `20261029090000_drop_aadhaar_number` (2026-10-19), after `scripts/backfill_aadhaar_fingerprint.py
+  /// --apply` reported nothing left on the box. backend/DEPLOY_AWS.md has the order.
   aadhaarFingerprint String? @unique
   aadhaarLast4       String?
   /// Does this artisan hold an Artisan Pehchan Card (the PM Vishwakarma ID)? Defaults to true,
