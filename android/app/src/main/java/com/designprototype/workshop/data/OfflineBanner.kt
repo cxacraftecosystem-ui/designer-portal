@@ -337,6 +337,12 @@ data class OutboxFailureRow(
      * the rest of this projection gives.
      */
     val files: List<OutboxQueuedFile> = emptyList(),
+    /**
+     * The records the server held this create for as a likely duplicate, top first. Non-empty only
+     * on that hold, which is never a [conflict]: the tray offers "Same person" and "Different
+     * person" instead of Try again. See `PendingEntry.duplicateCandidates`.
+     */
+    val possibleDuplicates: List<OutboxDuplicateCandidate> = emptyList(),
 )
 
 /**
@@ -541,6 +547,7 @@ fun outboxFailureRows(
                 // The same test the drain holds the entry on, so the tray and the pass agree.
                 needsAadhaar = entry.createdId == null && AadhaarAtRest.numberWithheld(entry.payloadJson),
                 aadhaarLast4 = AadhaarAtRest.withheldLast4(entry.payloadJson),
+                possibleDuplicates = entry.duplicateCandidates,
             )
         }
 

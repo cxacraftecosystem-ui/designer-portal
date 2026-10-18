@@ -1,6 +1,9 @@
 package com.designprototype.workshop.ui
 
 import com.designprototype.workshop.data.UserDto
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * WHAT A TAP ON A RECORD DOES, AND WHO IS OFFERED "UPDATE" — the owner's ruling of 2026-10-16, the
@@ -47,6 +50,19 @@ object RecordOpen {
             "ARTISAN", "PRODUCT", "PROCESS", "TOOL", "QUESTIONNAIRE" -> true
             else -> false
         }
+    }
+
+    /**
+     * The survivor an `artisan_merged` 404 points at, or null for any other answer. A merged
+     * artisan's id keeps working: `GET /artisans/{id}` names the record it was merged into, and the
+     * handset opens that one (`WorkshopRepository.artisan`).
+     */
+    fun mergedSurvivorId(code: Int, body: String?): String? {
+        if (code != 404 || body.isNullOrBlank()) return null
+        val root = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+        val detail = root["detail"] as? JsonObject ?: return null
+        if ((detail["code"] as? JsonPrimitive)?.content != "artisan_merged") return null
+        return (detail["survivorId"] as? JsonPrimitive)?.content?.trim()?.ifBlank { null }
     }
 
     /** What a whole-card tap announces to TalkBack: the verb, then the record. */

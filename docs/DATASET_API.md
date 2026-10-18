@@ -319,6 +319,11 @@ Bytes come **straight from S3**, never through the API — the web box is a sing
 | `404` | unknown dataset name — the message lists the real ones |
 | `422` | `.csv` on a dataset the field registry does not describe (`media`) |
 
+**A merged artisan.** `GET /api/artisans/{id}` on the id of a record that was merged into another
+answers `404 {"detail": {"code": "artisan_merged", "survivorId": "…"}}`. The id stays valid for ever as
+a pointer: fetch the survivor, and treat rows that named the old id as the survivor's. Datasets list
+only the survivor. See [ARTISAN_DUPLICATES.md](ARTISAN_DUPLICATES.md).
+
 **Five more that only `POST /api/datasets/token` answers**, all of them reachable with a *correct*
 password — which is why they are tabulated separately rather than folded into the rows above:
 

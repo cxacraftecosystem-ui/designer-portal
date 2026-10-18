@@ -402,6 +402,17 @@ data class PendingEntry(
     val tempId: String? = null,
     /** A stale correction already re-based and re-sent once because its review was empty. */
     val staleRetried: Boolean = false,
+    /**
+     * THE SERVER HELD THIS CREATE AS A LIKELY DUPLICATE (409 `artisan_possible_duplicate`). Not a
+     * clash, and never read as one: nothing is wrong with the record, and only the person who was in
+     * the room can say whether it is somebody already recorded. "Same person"
+     * ([OfflineOutbox.attachToExisting]) sends the files to that record; "Different person"
+     * ([OfflineOutbox.acknowledgeDuplicates]) sends it again with these ids acknowledged. Empty on
+     * every other entry, and on every entry an earlier build wrote.
+     */
+    val duplicateCandidates: List<OutboxDuplicateCandidate> = emptyList(),
+    /** "Same person" was chosen: [createdId] is an existing record and nothing new was created. */
+    val attachedToExisting: Boolean = false,
 ) {
     /**
      * The link columns this entry's author DELIBERATELY emptied, and which a replay must therefore
@@ -1395,6 +1406,7 @@ object OfflineOutbox {
         danglingField: String? = null,
         stale: Boolean = false,
         currentUpdatedAt: String? = null,
+        duplicateCandidates: List<OutboxDuplicateCandidate> = emptyList(),
     ) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = read(context)
@@ -1411,6 +1423,8 @@ object OfflineOutbox {
                                 danglingField = danglingField,
                                 staleCorrection = stale,
                                 currentUpdatedAt = currentUpdatedAt,
+                                // Written on every call, like the flags above it.
+                                duplicateCandidates = duplicateCandidates,
                             )
                         } else {
                             it
@@ -1480,6 +1494,7 @@ object OfflineOutbox {
                             skewRun = null,
                             conflict = false,
                             danglingField = null,
+                            duplicateCandidates = emptyList(),
                             staleCorrection = false,
                         )
                     } else {
@@ -1682,6 +1697,7 @@ object OfflineOutbox {
                             skewRun = null,
                             conflict = false,
                             danglingField = null,
+                            duplicateCandidates = emptyList(),
                             staleCorrection = false,
                         )
                     } else {
@@ -1692,6 +1708,41 @@ object OfflineOutbox {
             true
         }
     }
+
+    /**
+     * "SAME PERSON" on a held create: the entry becomes an upload to [artisanId]. Nothing is created
+     * and no field of the queued record is copied onto the existing one; only its files go there.
+     * The next pass skips the create leg because [PendingEntry.createdId] is set.
+     *
+     * @return true when a held entry with that id was found and changed.
+     */
+    suspend fun attachToExisting(context: Context, entryId: String, artisanId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val current = read(context)
+                val held = current.firstOrNull { it.id == entryId }
+                if (held == null || !samePersonAllowed(held, artisanId)) return@withLock false
+                write(context, current.map { if (it.id == entryId) samePersonEntry(it, artisanId) else it })
+                true
+            }
+        }
+
+    /**
+     * "DIFFERENT PERSON" on a held create: the same body again, with the candidates it was held for
+     * added to `duplicateAcknowledged`, so the server saves it as a new artisan.
+     *
+     * @return true when a held entry with that id was found and changed.
+     */
+    suspend fun acknowledgeDuplicates(context: Context, entryId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val current = read(context)
+                val held = current.firstOrNull { it.id == entryId }
+                if (held == null || held.duplicateCandidates.isEmpty()) return@withLock false
+                write(context, current.map { if (it.id == entryId) differentPersonEntry(it) else it })
+                true
+            }
+        }
 
     /**
      * Unmark every refusal at once, for "try all of them again" after a sign-in or an update.
@@ -1734,6 +1785,7 @@ object OfflineOutbox {
                             skewRun = null,
                             conflict = false,
                             danglingField = null,
+                            duplicateCandidates = emptyList(),
                             staleCorrection = false,
                         )
                     }
@@ -2040,4 +2092,31 @@ fun createdFromStoredAnswer(body: kotlinx.serialization.json.JsonElement?): Pair
 data class IdempotencyAnswerDto(
     val statusCode: Int = 0,
     val body: kotlinx.serialization.json.JsonElement? = null,
+)
+
+/** "Same person" is offered only on a held create, and only for one of the records it was held for. */
+internal fun samePersonAllowed(entry: PendingEntry, artisanId: String): Boolean =
+    entry.createdId == null && entry.targetId == null &&
+        entry.duplicateCandidates.any { it.id == artisanId }
+
+/** The entry after "Same person". Pure. See [OfflineOutbox.attachToExisting]. */
+internal fun samePersonEntry(entry: PendingEntry, artisanId: String): PendingEntry = entry.copy(
+    createdId = artisanId,
+    attachedToExisting = true,
+    duplicateCandidates = emptyList(),
+    failure = null,
+    failedAt = null,
+    conflict = false,
+)
+
+/** The entry after "Different person". Pure. See [OfflineOutbox.acknowledgeDuplicates]. */
+internal fun differentPersonEntry(entry: PendingEntry): PendingEntry = entry.copy(
+    payloadJson = PossibleDuplicates.payloadWithAcknowledged(
+        entry.payloadJson,
+        entry.duplicateCandidates.map { it.id },
+    ),
+    duplicateCandidates = emptyList(),
+    failure = null,
+    failedAt = null,
+    conflict = false,
 )

@@ -529,6 +529,12 @@ cards for existing artisans with `python -m scripts.backfill_artisan_cards --app
 | `ARTISAN_CARD_RESOLVE_MISS_LIMIT` | No | `20` | No | Card lookups that matched nobody, per account per 10 minutes, before the next is a 429. |
 | `ARTISAN_CARD_ISSUER` | No | `D` | No | The letter this portal's cards carry (`F` on the Field Repository). Never change it. |
 
+### Duplicate artisans — on by default
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `ARTISAN_DUPLICATE_HOLD` | No | `true` | No | The hold at save time (`app/services/artisan_duplicates.py`): a create that sends `duplicateAcknowledged` is answered 409 `artisan_possible_duplicate` while a likely duplicate (score 0.75 or more) was not shown to the person saving it. `false` is a kill switch for the hold only; scoring, `POST /api/artisan-duplicates/check` and the admin review screen stay on. The nightly scan and the 30-day merge-snapshot purge run from the queue worker; the Field Repository half of the scan rides the cross-portal settings above and needs nothing new. |
+
 ### AI-drafted interview answers (C28) — shipped OFF
 
 | Variable | Required | Default | Secret | Notes |

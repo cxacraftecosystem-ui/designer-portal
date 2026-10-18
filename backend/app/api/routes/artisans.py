@@ -13,7 +13,7 @@ from app.core.deps import (
     require_record_creator,
 )
 from app.schemas.records import ArtisanCreate, ArtisanUpdate, drop_masked_identity_numbers
-from app.services import aadhaar_fingerprint, artisan_card
+from app.services import aadhaar_fingerprint, artisan_card, artisan_duplicates, artisan_merge
 from app.services.access import guard_record_edit
 from app.services.artisan_form_contract import assert_required_dates, take_form_contract
 from app.services.artisan_identity import aadhaar_error, mask_aadhaar, normalize_aadhaar
@@ -437,6 +437,88 @@ async def _guard_identity_conflicts(
 # it as a success. The argument is written out in full at the function.
 
 
+async def _likely_duplicates(
+    payload: ArtisanCreate, data: dict[str, Any], viewer: Any = None
+) -> list[tuple[artisan_duplicates.Profile, artisan_duplicates.Score]]:
+    """Stored artisans scoring 0.60 or more against this create. Advisory: a failure is logged and
+    reads as "none", so the duplicate finder can never stop a record being saved."""
+    from app.api.routes.artisan_duplicates import profile_from_form
+
+    try:
+        location = payload.location
+        profile = await profile_from_form(
+            name=payload.name,
+            localName=payload.localName,
+            gender=payload.gender,
+            dateOfBirth=payload.dateOfBirth,
+            phone=payload.phone,
+            place=payload.place,
+            state=getattr(location, "state", None),
+            district=getattr(location, "district", None),
+            village=getattr(location, "village", None),
+            craftId=payload.craftId,
+            craftName=payload.craftName,
+            fingerprint=data.get(aadhaar_fingerprint.FINGERPRINT_FIELD),
+            pehchanCardNumber=data.get("pehchanCardNumber"),
+        )
+        return await artisan_duplicates.candidates_for_profile(profile, viewer=viewer)
+    except Exception:
+        logger.exception("duplicate scoring failed on an artisan create")
+        return []
+
+
+def _hold_if_duplicate(
+    likely: list[tuple[artisan_duplicates.Profile, artisan_duplicates.Score]],
+    acknowledged: list[str] | None,
+) -> None:
+    """409 ``artisan_possible_duplicate`` when a pair at 0.75+ was not shown and set aside."""
+    if acknowledged is None or not getattr(get_settings(), "artisan_duplicate_hold", True):
+        return
+    seen = set(acknowledged)
+    held = [
+        (other, result)
+        for other, result in likely
+        if result.score >= artisan_duplicates.HOLD_THRESHOLD and other.id not in seen
+    ]
+    if not held:
+        return
+    shown = held[: artisan_duplicates.CHECK_MAX_CANDIDATES]
+    top = shown[0][0]
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "artisan_possible_duplicate",
+            "message": (
+                f"This may be {top.display.get('name')} ({top.display.get('place')}), "
+                "already recorded."
+            ),
+            "candidates": [
+                artisan_duplicates.candidate_payload(other, result, typed_aadhaar=True)
+                for other, result in shown
+            ],
+            "existingArtisan": {
+                "id": top.id,
+                "name": top.display.get("name"),
+                "place": top.display.get("place"),
+                "craft": top.display.get("craft"),
+            },
+        },
+    )
+
+
+async def _store_likely(
+    artisan_id: str,
+    likely: list[tuple[artisan_duplicates.Profile, artisan_duplicates.Score]],
+    acknowledged: list[str] | None,
+) -> None:
+    try:
+        await artisan_duplicates.store_candidates(
+            artisan_id, likely, source="CREATE", acknowledged=frozenset(acknowledged or ())
+        )
+    except Exception:
+        logger.exception("storing likely duplicates failed on an artisan create")
+
+
 @router.get("")
 async def list_artisans(
     current_user: Any = Depends(get_current_user),
@@ -567,7 +649,10 @@ async def create_artisan(
     current_user: Any = Depends(require_record_creator),
     request: Request = None,  # type: ignore[assignment]  # FastAPI injects it; direct calls may omit it
 ) -> dict[str, Any]:
-    data = clean_data(payload.model_dump())
+    # Not a column: the ids of the likely duplicates the creator was shown and called different
+    # people. ``None`` (every build before the duplicate finder) means "never held".
+    acknowledged = payload.duplicateAcknowledged
+    data = clean_data(payload.model_dump(exclude={"duplicateAcknowledged"}))
     # The typed Aadhaar becomes its fingerprint and last four here, before anything else reads the
     # payload; ``aadhaar`` is held only for the duplicate check below.
     aadhaar = _seal_aadhaar(data)
@@ -590,6 +675,14 @@ async def create_artisan(
     # craft, so a create refused AFTER them left behind a `Location` nothing references and, for a
     # craft name the register lacked, a craft no record uses — on every refused save.
     await assert_payload_workshop(data, current_user, filed_under=None)
+    # Aadhaar / Pehchan are the dedup keys: point the researcher at the existing artisan instead of
+    # letting the unique index surface as a 500. A read only, so it sits above the two lines below
+    # that write (a refused create leaves no Location behind), and above the softer hold after it.
+    await _guard_identity_conflicts(data, aadhaar=aadhaar)
+    # LIKELY DUPLICATES (services/artisan_duplicates.py). Scored on every create; held only when the
+    # client sends the list (``[]`` when it showed nothing) and a pair at 0.75 or more is not in it.
+    likely = await _likely_duplicates(payload, data, current_user)
+    _hold_if_duplicate(likely, acknowledged)
     data = await resolve_craft_id(data, current_user)
     data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
@@ -598,9 +691,6 @@ async def create_artisan(
     apply_status_policy_create(current_user, data)
     # After the status policy, so a late submission outranks the submitter's own approval rights.
     pin_pending_if_late(data, current_user, check=check)
-    # Aadhaar / Pehchan are the dedup keys: point the researcher at the existing artisan instead of
-    # letting the unique index surface as a 500.
-    await _guard_identity_conflicts(data, aadhaar=aadhaar)
     try:
         created = await db.artisan.create(data=data, include=INCLUDE)
     except Exception as exc:
@@ -622,6 +712,7 @@ async def create_artisan(
             )
         except Exception:
             logger.warning("artisan create: card not issued yet", exc_info=True)
+    await _store_likely(created.id, likely, acknowledged)
     # The creator is by definition entitled, but pass the viewer anyway rather than relying on
     # that: a future change to who may create an artisan would otherwise silently leak.
     return await attach_completeness("artisan", public_encode(created, current_user))
@@ -631,7 +722,16 @@ async def create_artisan(
 async def get_artisan(
     artisan_id: str, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    artisan = await require_record(db.artisan, artisan_id)
+    artisan = await db.artisan.find_unique(where={"id": artisan_id})
+    if artisan is None:
+        # A record merged into another answers with where it went, so a stale link, an offline
+        # queue or a dataset consumer can follow it (services/artisan_merge.resolve).
+        survivor = await artisan_merge.resolve(artisan_id)
+        if survivor:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=artisan_merge.merged_detail(survivor)
+            )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     await hydrate_relations([artisan], RELATIONS)
     # Masked unless this caller is entitled to the raw number (creator, or professor+) — decided
     # inside the encoder now, so the same rule covers this route and every route that merely embeds
@@ -754,6 +854,8 @@ async def update_artisan(
     # needs cleaning up. See ``sync_workshop_artisan`` for what it deliberately does NOT try to
     # tell apart.
     await sync_workshop_artisan(previous_workshop_id, updated.workshopId, updated.id)
+    # An edit can make or unmake a likely duplicate; advisory, never fails the save.
+    await artisan_duplicates.rescore_artisan(updated.id)
     return await attach_completeness("artisan", public_encode(updated, current_user))
 
 

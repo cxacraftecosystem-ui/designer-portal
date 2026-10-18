@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Boxes, ClipboardList, Hammer, Users } from "lucide-react";
 
 import { ArtisanCardPanel } from "@/components/artisans/ArtisanCardPanel";
 import { ArtisanQuestionnairePanel } from "@/components/ArtisanQuestionnairePanel";
 import { useAuth } from "@/components/AuthProvider";
+import { MERGED_FROM_FLAG, MergedIntoToast, PossibleDuplicateBanner } from "@/components/duplicates/ArtisanDuplicateNotices";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { RecordFieldList, RecordViewPage } from "@/components/records/RecordView";
 import { artisanFields } from "@/components/records/recordFields";
+import { mergedSurvivorId } from "@/lib/duplicates";
 import { canCreateRecords } from "@/lib/permissions";
 import type { Artisan } from "@/lib/types";
 
@@ -32,6 +34,7 @@ function entryHref(path: string, artisan: Artisan) {
 export default function ArtisanViewPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const router = useRouter();
   const creator = canCreateRecords(user);
   return (
     <RecordViewPage<Artisan>
@@ -42,9 +45,18 @@ export default function ArtisanViewPage() {
       icon={<Users className="h-5 w-5" aria-hidden />}
       titleOf={(artisan) => artisan.name}
       collabType="artisan"
+      onLoadError={(error) => {
+        // A merged record answers with where it went: go there.
+        const survivor = mergedSurvivorId(error);
+        if (!survivor) return false;
+        router.replace(`/artisans/${encodeURIComponent(survivor)}?${MERGED_FROM_FLAG}=1`);
+        return true;
+      }}
     >
       {(artisan) => (
         <>
+          <MergedIntoToast name={artisan.name} />
+          <PossibleDuplicateBanner artisanId={artisan.id} />
           <RecordFieldList rows={artisanFields(artisan)} />
           {/* The printable QR card. Draws nothing while cards are off here. */}
           <ArtisanCardPanel artisanId={artisan.id} canReissue={creator} />

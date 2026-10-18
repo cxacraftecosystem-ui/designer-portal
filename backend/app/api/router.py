@@ -9,6 +9,7 @@ from app.api.routes import (
     answer_drafts,
     app_release,
     artisan_cards,
+    artisan_duplicates,
     artisans,
     asr_models,
     auth,
@@ -90,6 +91,10 @@ api_router.include_router(annual_plan.router)
 api_router.include_router(artisans.router)
 # Artisan QR cards: /artisans/{id}/card*, /artisan-cards/* (services/artisan_card.py).
 api_router.include_router(artisan_cards.router)
+# Likely-duplicate artisans and their merges — /api/artisan-duplicates, /api/artisan-merges. Their own
+# prefixes, so nothing is shadowed by /artisans/{artisan_id}.
+api_router.include_router(artisan_duplicates.router)
+api_router.include_router(artisan_duplicates.merges_router)
 api_router.include_router(crafts.router)
 api_router.include_router(craft_codes.router)
 api_router.include_router(cross_portal.router)

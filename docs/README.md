@@ -81,6 +81,7 @@ flowchart TD
 
 | Document | Answers |
 |---|---|
+| [ARTISAN_DUPLICATES.md](ARTISAN_DUPLICATES.md) | Duplicate artisans — the server-side score and its bands, the hold at save time on web and Android (offline creates are asked on sync), the admin review and merge screen, the 30-day undo and redirect, and the ids-only cross-portal match |
 | [DATASET_API.md](DATASET_API.md) | Mass download for a **machine** — the `dataset:read` token, the catalogue, the streamed `.ndjson` / `.csv` with no row cap, and how artisan identity numbers are masked |
 
 ### Engineering results

@@ -1022,3 +1022,24 @@ code for the linked artisan, pulled at link and refresh, so a scanned `F` card r
 network call. Cards are issued by `backend/scripts/backfill_artisan_cards.py` at deploy and lazily on
 first read. There is no cluster column: the card face derives it from the workshop's `clusterName`,
 then `Location.village`, `Location.district`, then `Artisan.place`.
+
+## Duplicate artisans and merges — added 2026-10-18
+
+**`ArtisanDuplicateCandidate`** is one likely-duplicate pair. `kind` is `WITHIN` (two artisans here,
+`artisanAId < artisanBId`) or `CROSS_PORTAL` (one artisan here and a Field Repository id in
+`remoteArtisanId`; no Field Repository data is stored). A CHECK holds each kind to its own shape, and
+two partial unique indexes keep one row per pair. `score`, `band` and `reasons` (codes and short labels,
+never a value) are refreshed by every scan. `status` (`OPEN`, `NOT_DUPLICATE`, `LINKED`) is set only by
+an admin, and a scan never changes a decided row's status. `creatorSaidDifferent` records that the
+creator was shown the pair and saved anyway. Rows cascade away with either artisan.
+
+**`ArtisanMerge`** is the merge record, kept for ever. `mergedId` is the deleted record's id, unique
+among live merges (a partial index on `undoneAt IS NULL`, so an undone pair can be merged again),
+and the redirect key that `GET /api/artisans/{id}` follows to `survivorId`. `choices` holds the field
+keys and the side chosen, never values. `snapshot`, `moves` and `crossPortal` hold what undo needs, and
+the daily purge sets them to null after `undoUntil` (30 days), stamping `snapshotPurgedAt`.
+
+**`ArtisanPeerScan`** is when the nightly scan last asked the Field Repository about one artisan
+(`artisanId`, `askedAt`; no foreign key). The scan asks the least recently asked first, and a restarted
+worker reads the newest `askedAt` before spending the peer's daily budget again.
+Migration `20261023090000_artisan_duplicates`, additive. See [ARTISAN_DUPLICATES.md](ARTISAN_DUPLICATES.md).

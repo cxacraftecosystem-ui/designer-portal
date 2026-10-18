@@ -38,6 +38,7 @@ import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
 import { MediaActionButton } from "@/components/media/MediaActionButton";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast, type ToastTone } from "@/components/ui/Toast";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 import { listResource } from "@/lib/api";
 import { downloadLocalMedia } from "@/lib/localMediaDownload";
 import {
@@ -50,6 +51,8 @@ import {
   getServerOutboxHealth,
   getServerOutboxQueuedHere,
   getServerOutboxSnapshot,
+  markDifferentPerson,
+  markSamePerson,
   outboxEntriesForAnotherAccount,
   outboxIsAnswering,
   outboxOtherAccountLine,
@@ -707,7 +710,12 @@ export function OutboxBanner() {
                 {new Date(entry.createdAt).toLocaleString()}
                 {fileCount(entry) ? ` · ${countNoun(fileCount(entry), "file")}` : ""}
               </span>
-              {entry.failure ? (
+              {entry.failure && entry.possibleDuplicate ? (
+                <div className="mt-0.5 text-xs">
+                  <p className="font-semibold text-amber-800 dark:text-amber-100">May already be recorded</p>
+                  <p className="text-ink-700">{entry.failure}</p>
+                </div>
+              ) : entry.failure ? (
                 <p className="mt-0.5 flex items-start gap-1 text-xs text-error-600">
                   <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
                   {entry.failure}
@@ -739,7 +747,55 @@ export function OutboxBanner() {
                 </ul>
               ) : null}
             </div>
-            {entry.failure ? (
+            {entry.failure && entry.possibleDuplicate ? (
+              <div className="flex shrink-0 flex-wrap items-center gap-3">
+                {/* A likely duplicate: one tap either way. "Same person" sends the files to the
+                    existing record and creates nothing; "Different person" saves it as new. */}
+                <ActionGroup align="end" inline>
+                  <button
+                    type="button"
+                    className="field-button-secondary"
+                    disabled={syncing}
+                    onClick={async () => {
+                      const target = entry.possibleDuplicate?.candidates[0]?.artisan.id;
+                      if (!target) return;
+                      await markSamePerson(entry.id!, target).catch(() => undefined);
+                      await drain("manual");
+                    }}
+                  >
+                    Same person
+                  </button>
+                  <button
+                    type="button"
+                    className="field-button"
+                    disabled={syncing}
+                    onClick={async () => {
+                      await markDifferentPerson(entry.id!).catch(() => undefined);
+                      await drain("manual");
+                    }}
+                  >
+                    Different person
+                  </button>
+                </ActionGroup>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-error-600"
+                  onClick={() =>
+                    void discardOutboxEntry(entry.id!).catch(() =>
+                      toast({
+                        id: "outbox-discard",
+                        tone: "error",
+                        title: "That entry couldn't be discarded",
+                        description: "It's still here. Reload and try again."
+                      })
+                    )
+                  }
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  Discard
+                </button>
+              </div>
+            ) : entry.failure ? (
               <div className="flex shrink-0 items-center gap-3">
                 {/*
                   THE THIRD BUTTON, AND THE ONLY ROW IN THIS BANNER WITH A REMEDY THAT WORKS.

@@ -23,6 +23,7 @@ from app.schemas.records import (
 from app.services.access import effective_tier_for_record, guard_record_edit, record_revision
 from app.services.completeness import attach as attach_completeness
 from app.services.completeness import filter_or_422 as completeness_filter
+from app.services.artisan_merge import redirect_ids, redirect_payload
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (
@@ -871,6 +872,9 @@ async def create_tool(
     if replayed is not None:
         return await attach_completeness("tool", _order_links(public_encode(replayed, current_user)))
     data = decimal_to_string(clean_data(payload.model_dump()))
+    # A queued or stale write that still names a merged artisan lands on the survivor
+    # (services/artisan_merge.redirect_payload) instead of a dangling-reference 422.
+    await redirect_payload(data)
     # THE TWO LINK LISTS COME OUT HERE, before ``attach_location`` and long before Prisma sees
     # ``data``: neither names a column, so either one left in the dict is an unknown-argument error
     # on the create below. Resolving them here also means ``craftId``/``craftName``/``artisanId`` are
@@ -963,6 +967,7 @@ async def update_tool(
     data = decimal_to_string(
         clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     )
+    await redirect_payload(data)
     # The precondition is a question, not a column — taken out of the body here, asked inside the
     # transaction below. See ``records.take_expected_updated_at``.
     expected_updated_at = take_expected_updated_at(data)
@@ -1223,7 +1228,8 @@ async def assign_tool_artisans(
     # Every artisan being added is fetched in ONE query and every link written in ONE insert. Asking
     # per artisan cost two cross-region round trips each, so assigning a tool to a workshop's worth
     # of makers took longer than recording the tool did.
-    wanted = [aid for aid in dict.fromkeys(payload.artisanIds) if aid and aid not in have]
+    asked = await redirect_ids(list(payload.artisanIds)) or []
+    wanted = [aid for aid in dict.fromkeys(asked) if aid and aid not in have]
     if not wanted:
         return await _assigned_artisans(tool_id, current_user)
     artisans = await db.artisan.find_many(where={"id": {"in": wanted}})

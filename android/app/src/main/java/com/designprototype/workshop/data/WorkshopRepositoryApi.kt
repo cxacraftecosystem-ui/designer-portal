@@ -336,6 +336,10 @@ interface WorkshopRepositoryApi {
         @Header("X-Client-App") clientApp: String = "android",
     ): ArtisanDto
 
+    /** Likely duplicates of the artisan being typed. At most five, none below 0.60. */
+    @POST("artisan-duplicates/check")
+    suspend fun checkDuplicates(@Body body: DuplicateCheckRequest): DuplicateCheckResponse
+
     // Pre-flight duplicate check for the artisan form's Aadhaar field. Declared BEFORE `artisan(id)`
     // only for readability — Retrofit matches on the literal path, so "lookup/aadhaar" can never be
     // swallowed by the "{id}" route the way a server-side router would.

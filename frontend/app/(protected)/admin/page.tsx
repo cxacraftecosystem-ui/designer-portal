@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import {
+  CopyCheck,
   Activity,
   AudioLines,
   BadgeCheck,
@@ -42,6 +43,7 @@ import { RowActions, rowAction } from "@/components/RowActions";
 import { useAuth } from "@/components/AuthProvider";
 import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
 import { apiFetch } from "@/lib/api";
+import { listPairs } from "@/lib/duplicates";
 import { bytes, formatDateTime } from "@/lib/format";
 import {
   canManageAccessRoster,
@@ -101,6 +103,21 @@ export default function AdminHubPage() {
    */
   const pendingAccess = usePendingAccessCount(permitted && canManageAccessRoster(user));
 
+  /** Likely-duplicate artisans waiting for a decision. No badge when it cannot be read. */
+  const [openDuplicates, setOpenDuplicates] = useState<number | null>(null);
+  useEffect(() => {
+    if (authLoading || !permitted) return;
+    let cancelled = false;
+    listPairs({ status: "OPEN", pageSize: 1 })
+      .then((page) => {
+        if (!cancelled) setOpenDuplicates(page.total);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, permitted]);
+
   /**
    * A RECOVERED FILE OF A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM, a relink
    * included: the server refuses a post holder a relink out of that workshop or into it
@@ -159,6 +176,13 @@ export default function AdminHubPage() {
       description: "Approve, reject, or send submissions back for revision.",
       href: "/review",
       icon: ClipboardCheck
+    },
+    {
+      label: "Duplicate artisans",
+      description: "Review likely duplicates and merge them.",
+      href: "/admin/duplicates",
+      icon: CopyCheck,
+      badge: openDuplicates || null
     },
     {
       label: "Recovered recordings",

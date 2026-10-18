@@ -1365,7 +1365,15 @@ data class ArtisanCreateRequest(
      * null, is omitted on the wire (`explicitNulls = false`) and lands as the old shape the server
      * still accepts. A non-null default would stamp every old entry with the new rule on replay.
      */
-    val formContract: Int? = null
+    val formContract: Int? = null,
+    /**
+     * THE LIKELY DUPLICATES THE DESIGNER WAS SHOWN AND CALLED DIFFERENT PEOPLE — creates only.
+     *
+     * A list, `[]` when nothing was shown, is what lets the server hold a likely duplicate
+     * (409 `artisan_possible_duplicate`); null — every entry queued by an earlier build, and every
+     * edit — is never held and is omitted on the wire. See `data/PossibleDuplicates.kt`.
+     */
+    val duplicateAcknowledged: List<String>? = null
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -1913,6 +1921,58 @@ data class ArtisanIdentityMatchDto(
     val craft: String? = null,
     val workshop: String? = null
 )
+
+/**
+ * Body of `POST /artisan-duplicates/check`: what the artisan form knows so far. The Aadhaar travels
+ * in the body only; the server fingerprints it and never stores or echoes it.
+ */
+@Serializable
+data class DuplicateCheckRequest(
+    val name: String,
+    val localName: String? = null,
+    val gender: String? = null,
+    val dateOfBirth: String? = null,
+    val phone: String? = null,
+    val place: String? = null,
+    val state: String? = null,
+    val district: String? = null,
+    val village: String? = null,
+    val craftId: String? = null,
+    val craftName: String? = null,
+    val aadhaar: String? = null,
+    val pehchanCardNumber: String? = null,
+    val excludeArtisanId: String? = null,
+)
+
+@Serializable
+data class DuplicateReasonDto(val code: String, val label: String)
+
+/** A likely duplicate as the server describes it: birth year, never a date or an identifier. */
+@Serializable
+data class DuplicateArtisanDto(
+    val id: String,
+    val name: String,
+    val localName: String? = null,
+    val place: String? = null,
+    val state: String? = null,
+    val district: String? = null,
+    val craft: String? = null,
+    val workshop: String? = null,
+    val birthYear: Int? = null,
+    val photoUrl: String? = null,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class DuplicateCandidateDto(
+    val artisan: DuplicateArtisanDto,
+    val score: Double,
+    val band: String,
+    val reasons: List<DuplicateReasonDto> = emptyList(),
+)
+
+@Serializable
+data class DuplicateCheckResponse(val candidates: List<DuplicateCandidateDto> = emptyList())
 
 /**
  * Answer from `GET /artisans/lookup/aadhaar`. "Not found" is the expected, successful answer (the

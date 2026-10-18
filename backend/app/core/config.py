@@ -669,6 +669,11 @@ class Settings(BaseSettings):
     # unmatchable; changing it needs the numbers again. Backed up in SSM at
     # /iit/shared/aadhaar-fingerprint-key. Unset: any write or lookup carrying an Aadhaar is refused.
     aadhaar_fingerprint_key: str | None = Field(default=None, alias="AADHAAR_FINGERPRINT_KEY")
+    # The duplicate-artisan hold at save time (services/artisan_duplicates.py): a create from a client
+    # that sends ``duplicateAcknowledged`` is answered 409 ``artisan_possible_duplicate`` while a
+    # likely duplicate (score 0.75+) was not shown to it. A kill switch for the hold only: scoring,
+    # the form's check and the admin review screen stay on when it is false. Not a secret.
+    artisan_duplicate_hold: bool = Field(default=True, alias="ARTISAN_DUPLICATE_HOLD")
     # Regulation 18(3) (services/aadhaar/log_retention.py): Aadhaar log entries older than two years
     # are archived to AADHAAR_LOG_ARCHIVE_BUCKET by the queue worker, once a day, and deleted
     # AADHAAR_LOG_ARCHIVE_YEARS (at least 5) later, unless the record is under a legal hold.

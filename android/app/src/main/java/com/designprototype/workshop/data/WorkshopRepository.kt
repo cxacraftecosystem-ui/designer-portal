@@ -16,6 +16,7 @@ import androidx.annotation.VisibleForTesting
 import com.designprototype.workshop.ui.ConsolidatedQuestionnaireDto
 // Backwards for a different reason: the gate's one reading of `mustChangePassword` lives with its
 // copy and is pinned by `PasswordSetupCopyTest`, and the outbox must hold back on exactly that test.
+import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.mustChangePasswordBlocks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -5784,7 +5785,18 @@ class WorkshopRepository(
         // refused as "a different request" on its replay (2026-10-16 release blocker).
         api.createArtisan(withIdentityAnswer(body), idempotencyKey)
 
-    suspend fun artisan(id: String): ArtisanDetailDto = api.artisan(id)
+    /**
+     * One artisan. A record merged into another answers 404 `artisan_merged` with the survivor's id
+     * (`GET /artisans/{id}`), and this opens the survivor instead, so a card, a QR code or a cached
+     * list that still names the merged id lands on the record the person now is.
+     */
+    suspend fun artisan(id: String): ArtisanDetailDto = try {
+        api.artisan(id)
+    } catch (e: HttpException) {
+        val survivor = RecordOpen.mergedSurvivorId(e.code(), peekErrorBody(e))
+        if (survivor == null || survivor == id) throw e
+        api.artisan(survivor)
+    }
 
     suspend fun artisanCard(id: String): ArtisanCardDto = api.artisanCard(id)
 
@@ -5852,6 +5864,10 @@ class WorkshopRepository(
      */
     suspend fun lookupArtisanByAadhaar(number: String): AadhaarLookupDto =
         api.lookupArtisanByAadhaar(AadhaarLookupRequest(number.trim()))
+
+    /** Who already looks like the artisan being typed (`POST /artisan-duplicates/check`). */
+    suspend fun checkDuplicates(body: DuplicateCheckRequest): List<DuplicateCandidateDto> =
+        api.checkDuplicates(body).candidates
 
     suspend fun updateArtisan(
         id: String,
@@ -7411,6 +7427,24 @@ class WorkshopRepository(
      * gone was removed by [syncOutbox] on a successful replay, and nothing else in the app removes one
      * except a person's explicit discard, which cannot happen inside this call.
      */
+    /**
+     * Answer a create the server held as a likely duplicate, then send it. [samePersonId] set:
+     * "Same person", the files go to that record and nothing is created. Null: "Different person",
+     * the body goes again with the candidates acknowledged.
+     */
+    suspend fun resolvePossibleDuplicate(
+        context: Context,
+        entryId: String,
+        samePersonId: String?,
+    ): OutboxRetryResult {
+        if (samePersonId != null) {
+            OfflineOutbox.attachToExisting(context, entryId, samePersonId)
+        } else {
+            OfflineOutbox.acknowledgeDuplicates(context, entryId)
+        }
+        return retryOutboxEntry(context, entryId)
+    }
+
     suspend fun retryOutboxEntry(context: Context, entryId: String): OutboxRetryResult {
         // READ BEFORE THE PASS, because `syncOutbox` returns 0 both for "no signal, nothing attempted"
         // and for "attempted and refused again", and those need different sentences. The failure is
@@ -8112,6 +8146,7 @@ class WorkshopRepository(
                             danglingField = outcome.danglingField,
                             stale = outcome.stale,
                             currentUpdatedAt = outcome.currentUpdatedAt,
+                            duplicateCandidates = outcome.duplicateCandidates,
                         )
                         // SAID WHEN IT CHANGES, NOT ON EVERY PASS THAT REACHES IT. Until a schema
                         // refusal could be re-attempted, an entry was refused exactly once and this
@@ -8210,6 +8245,11 @@ class WorkshopRepository(
             val stale: Boolean = false,
             /** The record's `updatedAt` in that refusal. */
             val currentUpdatedAt: String? = null,
+            /**
+             * The server held this create as a likely duplicate (409 `artisan_possible_duplicate`).
+             * Not a [conflict]: see [PendingEntry.duplicateCandidates].
+             */
+            val duplicateCandidates: List<OutboxDuplicateCandidate> = emptyList(),
         ) : ReplayOutcome
     }
 
@@ -8285,6 +8325,23 @@ class WorkshopRepository(
                         conflict = false,
                         stale = true,
                         currentUpdatedAt = staleAt.ifBlank { null },
+                    )
+                }
+                // A LIKELY DUPLICATE IS ITS OWN ARM, NOT A CLASH (409 `artisan_possible_duplicate`):
+                // the record is fine and the question is only whether the person is already
+                // recorded. Read from a PEEK, so the clash arm below still gets the whole body.
+                val held = if (entry.targetId == null && e is HttpException) {
+                    PossibleDuplicates.heldCandidates(e.code(), peekErrorBody(e))
+                } else {
+                    null
+                }
+                if (held != null) {
+                    val kept = PossibleDuplicates.forOutbox(held)
+                    return ReplayOutcome.Rejected(
+                        PossibleDuplicates.traySentence(kept),
+                        schemaSkew = false,
+                        conflict = false,
+                        duplicateCandidates = kept,
                     )
                 }
                 val clash = isConflictRefusal(e)

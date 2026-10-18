@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MessageSquare, Pencil } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -43,6 +43,7 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
   description,
   titleOf,
   collabType,
+  onLoadError,
   children
 }: {
   kind: ViewableRecord;
@@ -56,12 +57,19 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
   titleOf: (record: T) => string;
   /** The comments-and-history record type, or omit where the kind has none. */
   collabType?: string;
+  /** Handle a failed load (true = handled, draw no error) — the artisan page follows a merge. */
+  onLoadError?: (error: unknown) => boolean;
   children: (record: T) => ReactNode;
 }) {
   const { user } = useAuth();
   const [record, setRecord] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [collabOpen, setCollabOpen] = useState(false);
+  // Through a ref, so a new callback each render does not refetch the record.
+  const onLoadErrorRef = useRef(onLoadError);
+  useEffect(() => {
+    onLoadErrorRef.current = onLoadError;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +79,7 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
       })
       .catch((err) => {
         if (cancelled) return;
+        if (onLoadErrorRef.current?.(err)) return;
         if (err instanceof ApiError && err.status === 404) {
           setError(`This ${noun} could not be found. It may have been deleted, or it is not shared with your account.`);
         } else if (err instanceof ApiError && err.status === 403) {

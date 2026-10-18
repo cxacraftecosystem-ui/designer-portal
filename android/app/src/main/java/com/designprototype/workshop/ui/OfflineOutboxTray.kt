@@ -373,6 +373,22 @@ fun OfflineOutboxTray(
                             },
                             onDiscard = { confirmDiscard = row },
                             onReview = { reviewing = row },
+                            onSamePerson = { artisanId ->
+                                act {
+                                    outboxRetryMessage(
+                                        label = row.label,
+                                        result = repository.resolvePossibleDuplicate(appContext, row.entryId, artisanId),
+                                    )
+                                }
+                            },
+                            onDifferentPerson = {
+                                act {
+                                    outboxRetryMessage(
+                                        label = row.label,
+                                        result = repository.resolvePossibleDuplicate(appContext, row.entryId, null),
+                                    )
+                                }
+                            },
                         )
                     }
                 }
@@ -445,7 +461,10 @@ private fun OutboxFailureCard(
     onDiscard: () -> Unit,
     onReview: () -> Unit = {},
     onRetype: () -> Unit = {},
+    onSamePerson: (String) -> Unit = {},
+    onDifferentPerson: () -> Unit = {},
 ) {
+    val heldFor = row.possibleDuplicates.firstOrNull()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -501,6 +520,14 @@ private fun OutboxFailureCard(
                 "NEEDS THE AADHAAR NUMBER AGAIN",
                 color = MaterialTheme.field.warning,
                 style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        if (heldFor != null) {
+            Text(
+                "MAY ALREADY BE RECORDED",
+                color = MaterialTheme.field.warning,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -565,6 +592,18 @@ private fun OutboxFailureCard(
         // row is still drawn, with the server's reason and the line above, for
         // [OutboxCounts.otherAccount]'s reason: work that silently disappears is work people conclude
         // was lost. The remedy is on the line above and it is the only one there is.
+        if (!row.otherAccount && heldFor != null) {
+            // A LIKELY DUPLICATE: two answers, one tap each, on one line. Try again is not drawn —
+            // it would be held again for the identical reason. Throw away stays where it is.
+            ActionRow {
+                OutlinedButton(onClick = { onSamePerson(heldFor.id) }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Same person", fontSize = 12.sp)
+                }
+                OutlinedButton(onClick = onDifferentPerson, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Different person", fontSize = 12.sp)
+                }
+            }
+        }
         if (!row.otherAccount) {
             ActionRow {
                 if (row.needsAadhaar) {
@@ -592,7 +631,7 @@ private fun OutboxFailureCard(
                 }
                 // The shared tonal media button — icon and word, 48dp — so Try again reads the same on
                 // every queued row as Retry and Download do on every media card.
-                if (!row.needsAadhaar) {
+                if (!row.needsAadhaar && heldFor == null) {
                     MediaActionButton(label = "Try again", icon = Icons.Filled.Refresh, onClick = onRetry, enabled = !busy)
                 }
                 OutlinedButton(onClick = onDiscard, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).destructiveAction()) {
