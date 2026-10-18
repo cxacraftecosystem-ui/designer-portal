@@ -945,7 +945,7 @@ later, [AADHAAR.md](AADHAAR.md) §3).
 from the artisan), `keyVersion` the version of `ARTISAN_CARD_KEY` that signed its QR, and
 `revokedAt` / `revokedById` / `revokedReason` (`LOST`, `DAMAGED`, `OTHER`) mark a reissued card. At
 most one live card per artisan: the partial unique index `ArtisanCard_one_live_per_artisan` (raw SQL
-in `20261021100000_artisan_cards`, which Prisma cannot express) holds it, and it is also what makes
+in `20261023090000_artisan_cards`, which Prisma cannot express) holds it, and it is also what makes
 two first reads racing each other issue one card. A revoked row stays, so the old card answers
 "replaced" rather than "unknown". The QR carries `CXA1:<issuer><keyVersion>:<code>:<tag>` and the
 short code under it `D-XXXXX-XXXXX-XX`; neither holds a record id or anything personal. The token

@@ -298,12 +298,11 @@ fun RecordCodeSection(
     /*
      * AN ARTISAN SHOWS ITS QR CARD, not a DPW1 code: the card's token is signed by the server and
      * holds no record id, so it is fetched (`GET /artisans/{id}/card`) rather than derived. While
-     * cards are off that route answers 404 and the section is not drawn. An artisan not yet on the
-     * server shows the refusal the printed sheet shows.
+     * cards are off that route answers 404 and the artisan keeps its DPW1 code, as before. An artisan
+     * not yet on the server shows the refusal the printed sheet shows.
      */
     val isArtisan = recordType == DwWorkshopRecordType.ARTISAN
     var artisanRender by remember(recordType, recordId) { mutableStateOf<CodeRender?>(null) }
-    var cardsOff by remember(recordType, recordId) { mutableStateOf(false) }
     if (isArtisan) {
         LaunchedEffect(recordId) {
             artisanRender = if (recordId.isNullOrBlank()) {
@@ -313,8 +312,8 @@ fun RecordCodeSection(
                     val card = repository.artisanCard(recordId)
                     renderCardToken(card.token, card.shortCode)
                 } catch (e: HttpException) {
-                    if (e.code() == 404) cardsOff = true
-                    CodeRender.Refused(DW_ARTISAN_CARD_UNSYNCED)
+                    if (e.code() == 404) renderRecordCode(recordType, recordId)
+                    else CodeRender.Refused("The card couldn't be loaded. Try again.")
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -323,7 +322,6 @@ fun RecordCodeSection(
             }
         }
     }
-    if (isArtisan && cardsOff) return
     val render = if (isArtisan) {
         artisanRender ?: CodeRender.Refused("Loading…")
     } else {

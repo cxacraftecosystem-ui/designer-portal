@@ -494,6 +494,8 @@ A printable card per artisan (ID-1 or A6 PDF, or a sheet for a workshop) with a 
 opaque token and a short code a person can type. On by default, but **nothing is drawn or served
 until `ARTISAN_CARD_KEY` is set**: without it every card route answers 404 and
 `/api/artisan-cards/status` says `enabled:false`, which hides every card control on both clients.
+Until then an artisan keeps its DPW1 code: the edit page, the Android record view and both clients'
+Cards & tags roster sheet print it as before.
 Resolving a Field Repository card also needs the cross-portal settings above. Secrets go to the GitHub
 Actions secrets, the box `.env` and an SSM SecureString backup. After the release is live, issue
 cards for existing artisans with `python -m scripts.backfill_artisan_cards --apply` from `backend/`.

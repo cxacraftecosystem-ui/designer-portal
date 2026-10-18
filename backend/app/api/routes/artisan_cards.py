@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.routes import cross_portal as cross_portal_routes
 from app.core.db import db
 from app.core.deps import can_create_records, get_current_user, get_value
-from app.services import artisan_card, artisan_card_pdf, artisan_card_store as store, cross_portal
+from app.services import artisan_card, artisan_card_pdf, artisan_card_store as store, cross_portal, naming
 from app.services.records import media_url_owners, require_record
 
 router = APIRouter(tags=["artisan-cards"])
@@ -151,6 +151,18 @@ async def _photo_bytes(artisan_ids: list[str], viewer: Any, wanted: bool) -> dic
     return await asyncio.to_thread(artisan_card_pdf.load_photos, keys)
 
 
+PORTAL = naming.PORTAL_DESIGN_WORKSHOP
+def _card_file_name(faces: list[Any]) -> str:
+    """One card names its artisan; a sheet is the day's artisan cards (services/naming.py)."""
+    if len(faces) == 1:
+        face = faces[0]
+        return naming.file_name(
+            PORTAL, "Artisan", "Artisan-Card", "pdf",
+            day=naming.ist_date(), place=face.cluster, craft=face.craft, subject=face.name,
+        )
+    return naming.file_name(PORTAL, "Artisan", "Artisan-Cards", "pdf", day=naming.ist_date())
+
+
 def _pdf(content: bytes, filename: str) -> Response:
     return Response(
         content=content,
@@ -182,7 +194,7 @@ async def card_pdf(
     await store.log_event(
         store.ACTION_PRINT, _source(source), user_id=user_id, artisan_id=artisan_id, card_code=card.code
     )
-    return _pdf(content, f"artisan-card-{faces[0].short_code}.pdf")
+    return _pdf(content, _card_file_name(faces))
 
 
 class SheetIn(BaseModel):
@@ -270,7 +282,7 @@ async def sheet_pdf(payload: SheetIn, current_user: Any = Depends(get_current_us
             artisan_card_pdf.render_cards, faces, "a6", PORTAL_NAME, photo=payload.photo
         )
     await store.log_event(store.ACTION_PRINT, source, user_id=user_id, count=len(faces))
-    return _pdf(content, f"artisan-cards-{len(faces)}.pdf")
+    return _pdf(content, _card_file_name(faces))
 
 
 # ── Resolve ───────────────────────────────────────────────────────────────────────────────────

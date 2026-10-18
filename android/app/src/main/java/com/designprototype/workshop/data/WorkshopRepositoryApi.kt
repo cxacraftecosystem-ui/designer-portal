@@ -312,7 +312,9 @@ interface WorkshopRepositoryApi {
         // wire. Rationale on the server: backend/app/api/routes/artisans.py.
         @Query("createdBy") createdBy: String? = null,
         // The route's own text filter, used by the update-existing picker's search box (DA-08).
-        @Query("search") search: String? = null
+        @Query("search") search: String? = null,
+        // Labels the card events this list issues as the app's (`x-client-app`, services/usage.py).
+        @Header("X-Client-App") clientApp: String = "android",
     ): PageResponse<ArtisanDto>
 
     @GET("crafts")
@@ -326,7 +328,11 @@ interface WorkshopRepositoryApi {
     ): PageResponse<CraftDto>
 
     @POST("artisans")
-    suspend fun createArtisan(@Body body: ArtisanCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): ArtisanDto
+    suspend fun createArtisan(
+        @Body body: ArtisanCreateRequest,
+        @Header("Idempotency-Key") idempotencyKey: String? = null,
+        @Header("X-Client-App") clientApp: String = "android",
+    ): ArtisanDto
 
     // Pre-flight duplicate check for the artisan form's Aadhaar field. Declared BEFORE `artisan(id)`
     // only for readability — Retrofit matches on the literal path, so "lookup/aadhaar" can never be

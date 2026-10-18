@@ -113,7 +113,7 @@ fun ArtisanCardScanSheet(
                 is CardResolution.Found -> onResolved(answer.artisanId, answer.name)
                 is CardResolution.Pending ->
                     if (acceptPending) onPending(ArtisanCardCode.pendingValue(answer.card))
-                    else message = "Offline. The card is valid; try again online."
+                    else message = "Offline. Try again once you're online."
                 is CardResolution.Replaced -> {
                     message = cardResolutionMessage(answer)
                     replacedId = answer.artisanId.ifBlank { null }

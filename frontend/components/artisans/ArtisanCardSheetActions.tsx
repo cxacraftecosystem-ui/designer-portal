@@ -18,8 +18,9 @@ import { artisanCardStatus, downloadArtisanCardSheet, type CardSheetRequest, typ
 /** The most cards one request prints (the server's SHEET_LIMIT). */
 export const CARD_SHEET_LIMIT = 200;
 
-export function useArtisanCardsEnabled(): boolean {
-  const [enabled, setEnabled] = useState(false);
+/** Whether cards are on here: null until `GET /artisan-cards/status` answers. */
+export function useArtisanCardsStatus(): boolean | null {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
   useEffect(() => {
     let cancelled = false;
     void artisanCardStatus().then((status) => {
@@ -30,6 +31,10 @@ export function useArtisanCardsEnabled(): boolean {
     };
   }, []);
   return enabled;
+}
+
+export function useArtisanCardsEnabled(): boolean {
+  return useArtisanCardsStatus() === true;
 }
 
 export function ArtisanCardSheetActions({

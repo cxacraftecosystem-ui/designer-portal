@@ -5727,7 +5727,8 @@ class WorkshopRepository(
                 else -> CardResolution.Refused(CARD_NO_MATCH)
             }
         } catch (error: HttpException) {
-            if (isTransient(error) && error.code() != 429) CardResolution.Pending(parsed)
+            // 401: the session expired. Kept pending so the outbox resumes after sign-in, not held.
+            if ((isTransient(error) && error.code() != 429) || error.code() == 401) CardResolution.Pending(parsed)
             else CardResolution.Refused(error.serverDetail() ?: CARD_NO_MATCH)
         } catch (error: IOException) {
             CardResolution.Pending(parsed)

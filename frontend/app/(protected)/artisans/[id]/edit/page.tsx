@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { ArtisanCardPanel } from "@/components/artisans/ArtisanCardPanel";
+import { useArtisanCardsStatus } from "@/components/artisans/ArtisanCardSheetActions";
 import { AadhaarVerifyPanel } from "@/components/aadhaar/AadhaarVerifyPanel";
 import { ArtisanForm } from "@/components/forms/ArtisanForm";
 import { ArtisanQuestionnairePanel } from "@/components/ArtisanQuestionnairePanel";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { apiFetch } from "@/lib/api";
 import type { Artisan } from "@/lib/types";
 
@@ -16,6 +18,7 @@ export default function EditArtisanPage() {
   const params = useParams<{ id: string }>();
   const [record, setRecord] = useState<Artisan | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const cardsStatus = useArtisanCardsStatus();
 
   useEffect(() => {
     apiFetch<Artisan>(`/artisans/${params.id}`)
@@ -31,8 +34,12 @@ export default function EditArtisanPage() {
         <div className="grid gap-6">
           <ArtisanForm initial={record} />
           {/* The artisan's QR card: an opaque signed token, never the record id (services/artisan_card.py).
-              Older DPW1:A cards still scan; nothing prints them now. */}
-          <ArtisanCardPanel artisanId={record.id} />
+              Until the card key is set here, the DPW1 card code as before. */}
+          {cardsStatus === false ? (
+            <RecordCodeCard recordType="artisan" id={record.id} title={record.name} />
+          ) : (
+            <ArtisanCardPanel artisanId={record.id} />
+          )}
           {/* Draws nothing unless the server has switched an Aadhaar method on. */}
           <AadhaarVerifyPanel subject={{ kind: "artisan", id: record.id }} recordName={record.name} />
           <ArtisanQuestionnairePanel artisanId={record.id} />

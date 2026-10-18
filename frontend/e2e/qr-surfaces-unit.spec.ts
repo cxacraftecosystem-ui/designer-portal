@@ -85,12 +85,13 @@ const PRINT_SHEET = "components/designworkshop/WorkshopCodeSheet.tsx";
  * reason. If a prototype ever gets a record screen, delete this and let the assertion below fail
  * until it has a card.
  */
-const NO_CARD: readonly string[] = ["prototype", "artisan"];
+const NO_CARD: readonly string[] = ["prototype"];
 /*
  * AN ARTISAN HAS A CARD, JUST NOT A DPW1 ONE. Since the artisan QR card (`lib/artisanCard.ts`,
  * `backend/app/services/artisan_card.py`) an artisan's code is a server-signed opaque token shown by
  * `ArtisanCardPanel`; the old `DPW1:A:<id>` printed the record id in clear. Old DPW1:A cards still
- * decode and resolve; nothing draws one. The test after the inventory pins where the panel is.
+ * decode and resolve. Until the card key is set here the edit page keeps the DPW1 code; the test
+ * after the inventory pins both.
  */
 
 /**
@@ -369,6 +370,7 @@ test("every record type that has a screen shows its code there, and every mount 
   //     for both all along; this is where the web stopped disagreeing with it.
   expect(files.sort()).toEqual(
     [
+      "app/(protected)/artisans/[id]/edit/page.tsx",
       "app/(protected)/crafts/page.tsx",
       "app/(protected)/design-workshops/page.tsx",
       "app/(protected)/media/page.tsx",
@@ -403,8 +405,11 @@ test("an artisan's code is the QR card, on its page, its edit page and straight 
       "components/forms/ArtisanForm.tsx"
     ].sort()
   );
-  // And no surface draws a DPW1 artisan code any more.
-  expect(filesUsing(/<RecordCodeCard\b[^>]*recordType="artisan"/)).toEqual([]);
+  // A DPW1 artisan code is drawn in one place, as the edit page's fallback while cards are off.
+  expect(filesUsing(/<RecordCodeCard\b[^>]*recordType="artisan"/)).toEqual(["app/(protected)/artisans/[id]/edit/page.tsx"]);
+  expect(codeOf("app/(protected)/artisans/[id]/edit/page.tsx")).toMatch(
+    /cardsStatus === false \? \(\s*<RecordCodeCard recordType="artisan"/
+  );
 });
 
 test("a CXA1 card reaches the server's resolve route through the shared control", () => {

@@ -191,6 +191,8 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
   const prototypeRows = useMemo(() => rowsOf(draft, prototypeEntity), [draft, prototypeEntity]);
   const rosterRows = useMemo(() => rowsOf(draft, rosterEntity), [draft, rosterEntity]);
 
+  const cardsEnabled = useArtisanCardsEnabled();
+
   const cards: WorkshopCodeCard[] = useMemo(() => {
     if (kind === "prototype") {
       if (!prototypeEntity) return [];
@@ -209,10 +211,19 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         lines: [inputValue(row.prototypeCode), listValue(row.materials).join(", ")].filter(Boolean)
       }));
     }
-    // Artisan cards are no longer drawn here: they are the server's PDF (ArtisanCardSheetActions),
-    // whose QR is an opaque signed token. The old DPW1:A card printed the record id in clear.
-    return [];
-  }, [kind, prototypeEntity, prototypeRows]);
+    // With cards on, artisan cards are the server's PDF (ArtisanCardSheetActions), whose QR is an
+    // opaque signed token. Until the card key is set the roster keeps its DPW1 card.
+    if (cardsEnabled || !rosterEntity) return [];
+    const refKey = artisanRefKey(rosterEntity.entity);
+    return rosterRows.map((row, index) => ({
+      key: row._entryId ?? row._clientKey ?? `row-${index}`,
+      recordType: "artisan" as const,
+      id: refKey ? inputValue(row[refKey]) : null,
+      title: rowTitle(rosterEntity.entity, row, index),
+      // Serial and village, and nothing else: a card is a public object once it leaves the room.
+      lines: [inputValue(row.serialNo) ? `S. No. ${inputValue(row.serialNo)}` : "", inputValue(row.village)].filter(Boolean)
+    }));
+  }, [kind, prototypeEntity, prototypeRows, cardsEnabled, rosterEntity, rosterRows]);
 
   /**
    * What a scanned code points at.
@@ -282,7 +293,6 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
   );
 
   const registryUnderstood = kind === "prototype" ? prototypeEntity !== null : rosterEntity !== null;
-  const cardsEnabled = useArtisanCardsEnabled();
   /** The server's id for this workshop; a device-only draft has none and its roster prints once it syncs. */
   const serverWorkshopId = isLocalWorkshopId(id) ? draft?.remoteId ?? null : id;
 
@@ -297,7 +307,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
             <Link href={`/design-workshops/${id}`} className="field-button-secondary">
               Stages
             </Link>
-            <button type="button" className="field-button" onClick={() => window.print()} disabled={!cards.length || kind !== "prototype"}>
+            <button type="button" className="field-button" onClick={() => window.print()} disabled={!cards.length}>
               <Printer className="h-4 w-4" aria-hidden />
               Print
             </button>
@@ -329,7 +339,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
       </div>
 
       <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="What to print">
-        {((cardsEnabled ? ["prototype", "artisan"] : ["prototype"]) as WorkshopRecordType[]).map((option) => (
+        {(["prototype", "artisan"] as WorkshopRecordType[]).map((option) => (
           <button
             key={option}
             type="button"
@@ -366,7 +376,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
           <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
             {kind === "prototype" ? "Prototype tags" : "Artisan cards"} can&rsquo;t be printed. Reload to update the app.
           </p>
-        ) : kind === "artisan" ? (
+        ) : kind === "artisan" && cardsEnabled ? (
           <div className="panel grid gap-3 p-4">
             <p className="text-sm text-ink-700">
               {rosterRows.length

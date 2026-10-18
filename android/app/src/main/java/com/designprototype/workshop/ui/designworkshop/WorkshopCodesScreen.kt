@@ -229,7 +229,10 @@ fun WorkshopCodesScreen(
     // The artisan register with each artisan's QR card (cached first, then refreshed), which is
     // where an artisan card's token and face come from.
     var artisanRegister by remember { mutableStateOf<Map<String, ArtisanDto>>(emptyMap()) }
+    // Off until the server says cards are on, so the sheet keeps the DPW1 artisan card meanwhile.
+    var artisanCardsOn by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
+        artisanCardsOn = runCatching { repository.artisanCardsEnabled(appContext) }.getOrDefault(false)
         runCatching {
             loadArtisanRegister(appContext, repository) { list -> artisanRegister = list.associateBy { it.id } }
         }
@@ -272,10 +275,10 @@ fun WorkshopCodesScreen(
      * of each is tens of milliseconds on the cheapest handset in the room, and it would otherwise be
      * paid on every keystroke in the lookup box below.
      */
-    val cards: List<DwCardRender> = remember(source, draft, remoteStages, kind, artisanRegister) {
+    val cards: List<DwCardRender> = remember(source, draft, remoteStages, kind, artisanRegister, artisanCardsOn) {
         val current = source ?: return@remember emptyList()
         val rows = workshopCardRows(current, draft, remoteStages)
-        workshopCardSpecs(kind, current, rows, artisanRegister).map { renderWorkshopCard(it) }
+        workshopCardSpecs(kind, current, rows, artisanRegister, artisanCardsOn).map { renderWorkshopCard(it) }
     }
 
     /**

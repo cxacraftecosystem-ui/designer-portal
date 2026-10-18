@@ -214,6 +214,11 @@ data class DwCardSpec(
      */
     val cardToken: String? = null,
     val cardShortCode: String? = null,
+    /**
+     * True when this artisan card is the server's signed QR card. False while cards are off here
+     * (no card key yet), and the sheet prints the DPW1 artisan card it always has.
+     */
+    val signedCard: Boolean = false,
 )
 
 /** The refusal an artisan row with no card prints, rather than being skipped. */
@@ -286,6 +291,8 @@ fun workshopCardSpecs(
     rows: List<DwDataRow>,
     /** The artisan register by id, cards included — where an artisan card's token comes from. */
     register: Map<String, ArtisanDto> = emptyMap(),
+    /** Whether the server prints signed QR cards (`GET /artisan-cards/status`). Off keeps the DPW1 card. */
+    artisanCardsOn: Boolean = true,
 ): List<DwCardSpec> = rows.mapIndexed { index, row ->
     val key = (row["_entryId"] as? JsonPrimitive)?.content?.takeIf { it.isNotEmpty() }
         ?: (row["_clientKey"] as? JsonPrimitive)?.content?.takeIf { it.isNotEmpty() }
@@ -314,6 +321,19 @@ fun workshopCardSpecs(
             // no artisan behind them and gets a refusal saying so.
             val artisanId = artisanRefKey(source.entity)?.let { DwValues.text(row[it]) }?.takeIf { it.isNotBlank() }
             val artisan = artisanId?.let { register[it] }
+            if (!artisanCardsOn) {
+                // Cards off: the DPW1 card, serial and village and nothing else.
+                return@mapIndexed DwCardSpec(
+                    key = key,
+                    recordType = recordType,
+                    id = artisanId,
+                    title = dwCardRowTitle(source.entity, row, index),
+                    lines = listOf(
+                        DwValues.text(row["serialNo"]).let { if (it.isBlank()) "" else "S. No. $it" },
+                        DwValues.text(row["village"]),
+                    ).filter { it.isNotBlank() },
+                )
+            }
             DwCardSpec(
                 key = key,
                 recordType = recordType,
@@ -327,6 +347,7 @@ fun workshopCardSpecs(
                 ),
                 cardToken = artisan?.card?.token,
                 cardShortCode = artisan?.card?.shortCode,
+                signedCard = true,
             )
         }
 
@@ -358,7 +379,7 @@ fun workshopCardSpecs(
  * is the normal condition of a tag by day ten, not the exceptional one.
  */
 fun renderWorkshopCard(spec: DwCardSpec): DwCardRender {
-    if (spec.recordType == DwWorkshopRecordType.ARTISAN) return renderArtisanCard(spec)
+    if (spec.recordType == DwWorkshopRecordType.ARTISAN && spec.signedCard) return renderArtisanCard(spec)
     val encoded = encodeWorkshopCode(spec.recordType, spec.id)
     if (encoded is DwEncodeResult.Refused) return DwCardRender.Refused(spec, encoded.message)
     val ok = encoded as DwEncodeResult.Ok

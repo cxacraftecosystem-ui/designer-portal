@@ -386,6 +386,22 @@ class DwWorkshopCardsTest {
     }
 
     @Test
+    fun `while cards are off here an artisan still prints the DPW1 card, serial and village`() {
+        val source = findRosterSource(registry)!!
+        val rows = workshopCardRows(
+            source,
+            draftWith("PARTICIPANTS", listOf(participantRow("a1b2c3d4-0000-4000-8000-000000000001", artisanId))),
+            emptyMap(),
+        )
+        val unsynced = mapOf(artisanId to register.getValue(artisanId).copy(card = null))
+        val spec = workshopCardSpecs(DwWorkshopRecordType.ARTISAN, source, rows, unsynced, artisanCardsOn = false)[0]
+        assertEquals(listOf("S. No. 4", "Bagru"), spec.lines)
+        val card = renderWorkshopCard(spec)
+        assertTrue(card is DwCardRender.Ok)
+        assertTrue((card as DwCardRender.Ok).code.startsWith("DPW1"))
+    }
+
+    @Test
     fun `an artisan the server has not issued a card for yet prints the refusal card, not a DPW1 code`() {
         val source = findRosterSource(registry)!!
         val rows = workshopCardRows(
