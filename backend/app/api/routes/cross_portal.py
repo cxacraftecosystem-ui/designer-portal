@@ -53,6 +53,7 @@ from app.services import (
 )
 from app.services.access import effective_tier_for_record, guard_record_edit
 from app.services.artisan_identity import normalize_pehchan, validate_aadhaar
+from app.services.coverage import coverage_peer_active
 from app.services.cross_portal_client import PeerUnavailable, peer_call
 from app.services.record_design_workshop import assert_may_write_a_record_filed_under
 from app.services.records import (
@@ -371,6 +372,8 @@ async def cross_portal_status(_: Any = Depends(get_current_user)) -> dict[str, A
         "enabled": cross_portal.active(get_settings(), needs_url=True),
         # The consent tick's list, from the one list the lookup answer is built from.
         "sharedFields": cross_portal.consent_fields_phrase(),
+        # The coverage map's "Field Repository" toggle: aggregate counts only, behind its own flag.
+        "coverageEnabled": coverage_peer_active(get_settings()),
     }
 
 

@@ -599,6 +599,8 @@ model User {
   artisanDuplicatesDecided ArtisanDuplicateCandidate[] @relation("DupDecidedBy")
   artisanMergesMade        ArtisanMerge[]              @relation("ArtisanMergedBy")
   artisanMergesUndone      ArtisanMerge[]              @relation("ArtisanMergeUndoneBy")
+  /// The coverage map's place aliases this administrator saved. SetNull: an alias outlives its author.
+  geoAliasesCreated GeoAlias[] @relation("GeoAliasCreatedBy")
 
   @@index([role])
 }
@@ -7494,4 +7496,25 @@ model ArtisanMerge {
   @@index([createdAt])
   @@index([mergedById])
   @@index([undoneById])
+}
+
+/// A free-text place spelling an administrator mapped to an LGD state (and district) for the coverage
+/// map. Resolution happens when the map is read (services/lgd.resolve): canonical names first, then
+/// this table, then the place atlas. Keys are the normalised raw text (cross_portal_codes.normalise);
+/// an empty rawDistrictKey maps a raw STATE spelling, and districtLgd null is a state-only match.
+/// One row applies to every record with that spelling; each write is recorded in RecordRevision
+/// (recordType "geoAlias") and a row can be deleted. Nothing else in the schema stores an LGD code.
+model GeoAlias {
+  id             String   @id @default(cuid())
+  rawStateKey    String
+  rawDistrictKey String   @default("")
+  stateLgd       Int
+  districtLgd    Int?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  createdBy User? @relation("GeoAliasCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([rawStateKey, rawDistrictKey])
+  @@index([createdById])
 }

@@ -915,6 +915,9 @@ async def download_entitlements(
             "Downloading the beneficiary list needs dataset-download access — Professor and above, "
             "or an explicit grant. Ask an admin to grant it."
         ),
+        # The coverage map (``/map?view=coverage``) is under this router's own gate, so every caller
+        # who reached here may open it. Sent rather than assumed, like the key above.
+        "coverageMap": True,
     }
 
 

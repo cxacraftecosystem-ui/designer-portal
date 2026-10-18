@@ -535,6 +535,21 @@ cards for existing artisans with `python -m scripts.backfill_artisan_cards --app
 |---|---|---|---|---|
 | `ARTISAN_DUPLICATE_HOLD` | No | `true` | No | The hold at save time (`app/services/artisan_duplicates.py`): a create that sends `duplicateAcknowledged` is answered 409 `artisan_possible_duplicate` while a likely duplicate (score 0.75 or more) was not shown to the person saving it. `false` is a kill switch for the hold only; scoring, `POST /api/artisan-duplicates/check` and the admin review screen stay on. The nightly scan and the 30-day merge-snapshot purge run from the queue worker; the Field Repository half of the scan rides the cross-portal settings above and needs nothing new. |
 
+### Cross-portal coverage counts — shipped OFF
+
+The coverage map (`/map?view=coverage`, ministry readers) has no flag of its own. This one switches on
+its "Field Repository" toggle: the designer portal asks the documentation portal for its AGGREGATE
+counts per LGD district (`GET /api/cross-portal/peer/coverage` — no names, no ids, no record stubs),
+over the same bearer token, signature, nonce and access log as the artisan lookup, and draws them as a
+separate row that is never added to its own. It does not need the identity flag or the Aadhaar key.
+Unset or unreachable, the map draws this portal's figures and says the other could not be reached.
+Secrets go to the GitHub Actions secrets **and** the box `.env`.
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `CROSS_PORTAL_COVERAGE_ENABLED` | No | **`false`** | No | Set on BOTH servers. Also needs `CROSS_PORTAL_TOKEN` (above) on both and `FIELD_REPOSITORY_API_URL` here. |
+| `FIELD_REPOSITORY_WEB_URL` | No | — | No | The documentation portal's web address, e.g. `https://<docs-domain>`, for the district panel's "Open in Field Repository" link. Unset: no link. |
+
 ### AI-drafted interview answers (C28) — shipped OFF
 
 | Variable | Required | Default | Secret | Notes |

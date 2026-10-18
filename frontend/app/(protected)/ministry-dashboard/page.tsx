@@ -583,6 +583,11 @@ export default function MinistryDashboardPage() {
         title="Ministry dashboard"
         description="Every workshop and each designer's progress."
         icon={<LayoutDashboard className="h-5 w-5" aria-hidden />}
+        actions={
+          <Link href="/map?view=coverage" className="field-button-secondary">
+            Coverage map
+          </Link>
+        }
       />
 
       {/* THE SCOPE, IN THE SERVER'S OWN WORDS. See the header: this is the sentence that stops an

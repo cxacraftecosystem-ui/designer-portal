@@ -35,6 +35,7 @@ from app.api.routes import (
     export,
     feedback,
     idempotency_keys,
+    map_coverage,
     map_points,
     media,
     ministry_dashboard,
@@ -250,6 +251,7 @@ api_router.include_router(analytics.router)
 # app/services/usage.py for the batched writer and the consent rules that gate it.
 api_router.include_router(usage.router)
 api_router.include_router(search.router)
+api_router.include_router(map_coverage.router)
 api_router.include_router(map_points.router)
 api_router.include_router(review.router)
 api_router.include_router(export.router)

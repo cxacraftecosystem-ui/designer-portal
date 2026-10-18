@@ -46,10 +46,15 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { Crosshair, Info, MapPin } from "lucide-react";
+import type React from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Crosshair, Info, Map as MapIcon, MapPin } from "lucide-react";
 
 import { EmptyState } from "@/components/EmptyState";
+import { useAuth } from "@/components/AuthProvider";
+import { coverageAllowed } from "@/components/map/coverage/coverageApi";
+import { CoverageView } from "@/components/map/coverage/CoverageView";
+import { canSeeMinistryDashboard } from "@/lib/permissions";
 import { useRevealRow } from "@/components/hooks/useRevealRow";
 import { IndiaMap } from "@/components/map/IndiaMap";
 import { MapPlaceList } from "@/components/map/MapPlaceList";
@@ -116,7 +121,7 @@ const LEVEL_COPY: Record<AdminLevel, { label: string; hint: string }> = {
   }
 };
 
-export default function MapPage() {
+function PlacesView({ viewSwitch }: { viewSwitch?: React.ReactNode }) {
   const searchParams = useSearchParams();
 
   // The URL SEEDS the state, exactly as it does on the Search page, so a link from a record's
@@ -405,6 +410,8 @@ export default function MapPage() {
         description="Where crafts are from, and where they were recorded."
         icon={<MapPin className="h-5 w-5" aria-hidden />}
         actions={
+          <>
+          {viewSwitch}
           <Link
             href={`/search${buildQuery({
               ...filtersToLinkParams(applied.filters),
@@ -417,6 +424,7 @@ export default function MapPage() {
           >
             Browse as a list
           </Link>
+          </>
         }
       />
 
@@ -784,6 +792,81 @@ function Stat({
         {label}
       </dt>
       <dd className="mt-0.5 font-display text-xl font-bold text-ink-900">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * `/map` holds two views. **Places** (the default, unchanged) plots records where they are.
+ * **Coverage** (`?view=coverage`) shades districts by how much of the programme has reached them,
+ * and lists the gaps; it is for the ministry's readers, so it appears only when
+ * `/ministry-dashboard/entitlements` says this account may open it.
+ */
+export default function MapPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const { user } = useAuth();
+  const [allowed, setAllowed] = useState(false);
+  const wantsCoverage = searchParams.get("view") === "coverage";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!canSeeMinistryDashboard(user)) {
+      setAllowed(false);
+      return;
+    }
+    coverageAllowed().then((ok) => {
+      if (!cancelled) setAllowed(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const view = wantsCoverage && allowed ? "coverage" : "places";
+  const viewSwitch = allowed ? (
+    <ViewSwitch
+      view={view}
+      onChange={(next) => router.replace(next === "coverage" ? "/map?view=coverage" : "/map", { scroll: false })}
+    />
+  ) : null;
+
+  if (view === "places") return <PlacesView viewSwitch={viewSwitch} />;
+  return (
+    <div>
+      <PageHeader
+        title="Coverage"
+        description="Where the programme has reached, and where it hasn't."
+        icon={<MapIcon className="h-5 w-5" aria-hidden />}
+        actions={viewSwitch}
+      />
+      <CoverageView />
+    </div>
+  );
+}
+
+function ViewSwitch({ view, onChange }: { view: "places" | "coverage"; onChange: (view: "places" | "coverage") => void }) {
+  // A segmented choice between two named views, not an action row.
+  return (
+    <div
+      role="group"
+      aria-label="Map view"
+      className="inline-flex overflow-hidden rounded-md border border-line-200 bg-card"
+      data-testid="map-view-switch"
+    >
+      {(["places", "coverage"] as const).map((option) => (
+        <button
+          key={option}
+          type="button"
+          aria-pressed={view === option}
+          onClick={() => onChange(option)}
+          className={`min-h-10 px-4 text-sm font-medium transition ${
+            view === option ? "bg-purple-700 text-white dark:bg-purple-400 dark:text-purple-950" : "text-ink-900 hover:bg-purple-50"
+          }`}
+        >
+          {option === "places" ? "Places" : "Coverage"}
+        </button>
+      ))}
     </div>
   );
 }
