@@ -5426,6 +5426,14 @@ class WorkshopRepository(
     suspend fun transcribeNow(mediaId: String): MediaFileDto = api.transcribeNow(mediaId)
 
     /**
+     * The summary, key quotes and translation of one transcript, or null: the feature is switched
+     * off (404), the caller may not read it, the media is gone, or the phone is offline. Never cached
+     * and never an error banner.
+     */
+    suspend fun transcriptInsight(mediaId: String): TranscriptInsightViewDto? =
+        insightOrHidden { api.transcriptInsight(mediaId) }
+
+    /**
      * Download an update APK to the cache and return the file, for handing to the system installer.
      *
      * ── A 2xx IS NOT A WHOLE FILE, AND THIS USED TO TREAT IT AS ONE ──────────────────────────────

@@ -1,0 +1,146 @@
+"""Transcript insights against a REAL Postgres with the migration applied.
+
+What only a real database can show: the unique ``(mediaFileId, version)`` index, the cascade on
+media delete, the new job type being accepted, and enqueue/generate/supersede running through the
+real client. Skips itself unless ``DATABASE_URL`` names a LOCAL database, as
+``test_media_processing_jobs`` does.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import secrets
+from datetime import UTC, datetime
+
+import pytest
+
+_URL = os.environ.get("DATABASE_URL", "")
+_LOCAL = any(host in _URL for host in ("localhost", "127.0.0.1"))
+
+pytestmark = [
+    pytest.mark.skipif(
+        not _LOCAL, reason="needs a LOCAL database; refuses to run against a remote DATABASE_URL"
+    ),
+    pytest.mark.anyio,
+]
+
+
+@pytest.fixture(scope="module")
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
+async def client(monkeypatch):
+    from app.services import transcript_insights as ti
+    from prisma import Prisma
+
+    prisma = Prisma(datasource={"url": _URL})
+    await prisma.connect()
+    monkeypatch.setattr(ti, "db", prisma)
+    monkeypatch.setattr(ti, "enabled", lambda: True)
+    try:
+        yield prisma
+    finally:
+        await prisma.disconnect()
+
+
+async def _media(client, text: str = "We dye with indigo. It takes three days.") -> str:
+    tag = secrets.token_hex(4)
+    user = await client.user.create(
+        data={"email": f"ti-{tag}@example.invalid", "name": "Insight test"}
+    )
+    media = await client.mediafile.create(
+        data={
+            "originalFilename": "talk.webm",
+            "mediaType": "AUDIO",
+            "mimeType": "audio/webm",
+            "sizeBytes": 10,
+            "bucket": "b",
+            "objectKey": f"ti/{tag}.webm",
+            "uploadedById": user.id,
+            "transcriptText": text,
+            "transcriptStatus": "COMPLETED",
+        }
+    )
+    return media.id
+
+
+def _row(media_id: str, version: int) -> dict:
+    from prisma import Json
+
+    return {
+        "mediaFileId": media_id,
+        "version": version,
+        "sourceHash": "h",
+        "translationStatus": "NOT_NEEDED",
+        "provider": "openai",
+        "modelId": "gpt-4o-mini",
+        "promptVersion": "transcript-insights/1",
+        "generated": Json({"summaryLines": [], "quotes": [], "translationText": None}),
+        "generatedAt": datetime.now(UTC),
+    }
+
+
+async def test_the_database_rejects_a_duplicate_version(client):
+    from prisma.errors import UniqueViolationError
+
+    media_id = await _media(client)
+    await client.transcriptinsight.create(data=_row(media_id, 1))
+    with pytest.raises(UniqueViolationError):
+        await client.transcriptinsight.create(data=_row(media_id, 1))
+
+
+async def test_deleting_media_cascades_to_its_insights(client):
+    media_id = await _media(client)
+    await client.transcriptinsight.create(data=_row(media_id, 1))
+    await client.transcriptinsight.create(data=_row(media_id, 2))
+    await client.mediafile.delete(where={"id": media_id})
+    assert await client.transcriptinsight.count(where={"mediaFileId": media_id}) == 0
+
+
+async def test_enqueue_and_generate_through_the_real_client(client, monkeypatch):
+    from app.services import ai, transcript_insights as ti
+
+    reply = json.dumps(
+        {
+            "primaryLanguage": "en",
+            "summary": ["Indigo dyeing takes three days."],
+            "quotes": [
+                {"original": "It takes three days.", "english": "It takes three days.",
+                 "speaker": None}
+            ],
+        }
+    )
+
+    async def run_chat_verb(**_kwargs):
+        return {"available": True, "status": "COMPLETED", "text": reply, "provider": "openai",
+                "model": "gpt-4o-mini"}
+
+    monkeypatch.setattr(ai, "_run_chat_verb", run_chat_verb)
+    media_id = await _media(client)
+    job = await ti.enqueue(media_id)
+    assert job is not None and job.jobType == "TRANSCRIPT_INSIGHTS" and job.priority == 80
+    assert await ti.enqueue(media_id) is None  # one active job at a time
+
+    media = await client.mediafile.find_unique(where={"id": media_id})
+    first = await ti.generate(media, user_id=None)
+    second = await ti.generate(media, user_id=None)
+    assert (first["version"], second["version"]) == (1, 2)
+    rows = await client.transcriptinsight.find_many(
+        where={"mediaFileId": media_id}, order={"version": "asc"}
+    )
+    assert rows[0].supersededAt is not None and rows[1].supersededAt is None
+    assert rows[1].quotes == [
+        {"original": "It takes three days.", "english": "It takes three days.", "speaker": None}
+    ]
+    assert (await ti.current_insight(media_id)).id == rows[1].id
+
+
+async def test_the_drain_filter_on_the_job_type_is_valid_sql(client):
+    """``not_in`` on the enum column, as the drain sends it with both kinds held back."""
+    rows = await client.mediaprocessingjob.find_many(
+        where={"jobType": {"not_in": ["TRANSCRIPTION", "TRANSCRIPT_INSIGHTS"]}}, take=1
+    )
+    assert isinstance(rows, list)

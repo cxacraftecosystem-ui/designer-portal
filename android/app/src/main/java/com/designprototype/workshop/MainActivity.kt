@@ -744,6 +744,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 import com.designprototype.workshop.ui.FieldCircularProgressIndicator
+import com.designprototype.workshop.ui.TranscriptInsightsCard
 import com.designprototype.workshop.ui.FieldProgressDefaults
 
 /*
@@ -15477,6 +15478,14 @@ private fun MediaWithTranscript(
                 // Render with the Markdown renderer so an approved (refined) transcript keeps its
                 // formatting/section breaks; a plain raw transcript is unaffected.
                 MarkdownText(markdown = transcriptText!!, color = Body)
+            }
+            // Summary, key quotes and translation, read-only. Draws nothing while the feature is off.
+            if (repository != null && status == "COMPLETED") {
+                TranscriptInsightsCard(
+                    mediaId = media.id,
+                    load = { id -> repository.transcriptInsight(id) },
+                    formatDate = ::formatIsoDate
+                )
             }
             // AI refinement controls under the transcript (only where a repository is available, i.e.
             // the record/update & view screens). Turns the raw transcript into a clean conversation,

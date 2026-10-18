@@ -22,6 +22,10 @@ class Capability(StrEnum):
     FOREGROUND_SEPARATION = "foreground_separation"
     VECTORISATION = "vectorisation"
     MARKET_RESEARCH = "market_research"
+    #: The one text capability: a summary, key quotes and an English translation of an interview
+    #: transcript (services/transcript_insights). Gated and probed here like the others, but its
+    #: calls go through the existing chat plumbing (ai._run_chat_verb) rather than a provider class.
+    TRANSCRIPT_INSIGHTS = "transcript_insights"
 
 
 #: How a resource number was arrived at. Never label an unmeasured number MEASURED — the point of

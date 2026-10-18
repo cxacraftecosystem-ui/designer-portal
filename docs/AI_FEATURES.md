@@ -1,7 +1,8 @@
-# AI features — background removal, layer separation, vectorisation, market research
+# AI features — background removal, layer separation, vectorisation, market research, transcript insights
 
-**Status: dormant.** Every capability described here is off by default, nothing in the API imports
-the package, and none of its dependencies are installed anywhere. A fresh clone with no new
+**Status: dormant.** Every capability described here is off by default, and none of the image
+dependencies are installed anywhere. The one part of the API that reads the package is the
+transcript-insights switch (§11), and with that switch off it draws and sends nothing. A fresh clone with no new
 environment variables behaves exactly as it did before this document existed. That is deliberate:
 the features were built so they are *ready*, not so they are *running*.
 
@@ -16,7 +17,8 @@ them.** The fourth — **market research**, which goes and finds what comparable
 who sells them — has its own document, [MARKET_RESEARCH.md](MARKET_RESEARCH.md), because it has a
 different provider set, a different legal surface and a provenance problem the image features do
 not have. Its variables are listed here in §3 with everything else, so this file stays the single
-index of what the package reads. §10 summarises it.
+index of what the package reads. §10 summarises it. **Transcript insights** — a summary, key quotes
+and an English translation of each interview transcript — is the fifth, and §11 is its page.
 
 Code: `backend/app/ai_features/`. It is called `ai_features`, not `ai`, because
 `backend/app/services/ai.py` is the existing transcription service and the two have nothing to do
@@ -32,6 +34,7 @@ with each other.
 | **Foreground/background separation** | Three PNGs: subject layer, background layer, and the alpha matte between them | `AI_FOREGROUND_SEPARATION_ENABLED` |
 | **Image vectorisation** | One SVG traced from the raster | `AI_IMAGE_VECTORISATION_ENABLED` |
 | **Market research** | Comparable products: name, seller, price, currency, source URL, retrieval timestamp — see [MARKET_RESEARCH.md](MARKET_RESEARCH.md) | `AI_MARKET_RESEARCH_ENABLED` |
+| **Transcript insights** | Per transcript: five English summary lines, key quotes (original + English), an English translation when the source is another language — see §11 | `AI_TRANSCRIPT_INSIGHTS_ENABLED` |
 
 Removal and separation are the same underlying operation — matting — exposed twice on purpose.
 Removal is the common case and callers should not have to do their own compositing to get it;
@@ -73,6 +76,7 @@ picks the first one that is installed and configured.
 | `local_catalogue` | local | market research | `AI_MARKET_RESEARCH_CATALOGUE_PATH` — **nothing to install** | none | 28 MB *(MEASURED)* | 0.18 s / 5k rows *(MEASURED)* | free |
 | `serper_shopping` | hosted | market research | `SERPER_API_KEY` | none | ~20 MB *(ESTIMATED)* | 1–3 s/query *(ESTIMATED)* | 2,500 free *(VENDOR-STATED)*; ~$1.00→$0.30 per 1,000 *(THIRD-PARTY REPORTED)* |
 | `serpapi_shopping` | hosted | market research | `SERPAPI_API_KEY` | none | ~20 MB *(ESTIMATED)* | 2–6 s/query *(ESTIMATED)* | 250/month free, $25/1,000 → $275/30,000 *(VENDOR-STATED)* |
+| `text_verbs` | hosted | transcript insights | an AI key the text verbs already use (the requester's own, else the deployment's) | none | no audio is loaded | 10–60 s per transcript | per token on the resolved key *(VENDOR-STATED)* |
 
 Every number in those tables is labelled. **MEASURED** means it was run on a machine and the method
 is in §7. **ESTIMATED** means somebody reasoned about it — plausible, unverified. **VENDOR-STATED**
@@ -131,6 +135,7 @@ back to `backend/.env` — the same file the rest of the backend uses. **All fla
 | `AI_FOREGROUND_SEPARATION_ENABLED` | `false` | Capability 1. Needs the master switch too. |
 | `AI_IMAGE_VECTORISATION_ENABLED` | `false` | Capability 3. Needs the master switch too. |
 | `AI_MARKET_RESEARCH_ENABLED` | `false` | Capability 4. Needs the master switch too. |
+| `AI_TRANSCRIPT_INSIGHTS_ENABLED` | `false` | Capability 5 (§11). Needs the master switch too. Off in production; see D7 on the launch list. |
 
 Two levels because the master switch is what an incident responder flips: one variable stops the
 whole package without having to work out which of four features is misbehaving.
@@ -143,6 +148,7 @@ whole package without having to work out which of four features is misbehaving.
 | `AI_FOREGROUND_SEPARATION_PROVIDER` | `auto` | `auto`, `remove_bg`, `rembg_local` |
 | `AI_IMAGE_VECTORISATION_PROVIDER` | `auto` | `auto`, `vtracer_local`, `vectorizer_ai` |
 | `AI_MARKET_RESEARCH_PROVIDER` | `auto` | `auto`, `local_catalogue`, `serper_shopping`, `serpapi_shopping` |
+| `AI_TRANSCRIPT_INSIGHTS_PROVIDER` | `auto` | `auto`, `text_verbs` (the only one) |
 
 `auto` prefers **hosted for matting** (the box cannot host U2Net), **local for vectorisation**
 (VTracer has no model and no per-image charge) and **local for market research** (a curated price
@@ -225,6 +231,15 @@ Full treatment in [MARKET_RESEARCH.md](MARKET_RESEARCH.md); these are the exact 
 | `SERPAPI_API_KEY` | unset | **Secret**, and it travels in the query string because that is the only place SerpApi accepts it — so a proxy that logs full URLs will log this key. |
 | `SERPAPI_ENDPOINT` | `https://serpapi.com/search.json` | Override for a proxy or a test double. |
 
+### Transcript insights
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AI_TRANSCRIPT_INSIGHTS_MAX_TRANSLATE_CHARS` | `96000` | How much of a non-English transcript is translated in one run, in 12,000-character chunks. Beyond it the translation is marked PARTIAL. Below `4000`, or unreadable, it falls back to the default with a note in the probe. |
+
+These three are flags, not secrets. When they are switched on they go in the box `backend/.env`
+**and** the deploy workflow's env, as every setting does.
+
 ---
 
 ## 4. Turning one on
@@ -289,6 +304,23 @@ AI_FEATURES_LOCAL_MODEL_DIR=/var/lib/fieldrepo/models   # must be writable
 plus `pip install -e '.[ai-local]'` (~400 MB of wheels) and a 176 MB model download on first call.
 **Not on the t3.micro.** The first call is slow — import, session build, download — and every call
 after it holds the session resident.
+
+### Transcript insights
+
+```bash
+AI_FEATURES_ENABLED=true
+AI_TRANSCRIPT_INSIGHTS_ENABLED=true
+```
+
+Nothing to install, and no new key: it runs on the AI key the text verbs already use. Restart the
+API and the queue worker, then queue summaries for the transcripts that already exist — dry run
+first, it prints the count and the total characters to estimate the cost:
+
+```bash
+cd backend
+python -m scripts.backfill_transcript_insights            # dry run
+python -m scripts.backfill_transcript_insights --execute  # queue them at the lowest priority
+```
 
 ---
 
@@ -523,6 +555,51 @@ Four things to know before reading further:
   MARKET_RESEARCH.md §6 says exactly what an operator agrees to by enabling one.
 - **The offline provider is the `auto` default** and needs nothing installed — a CSV price list on
   disk, answered on the device, in a village with no signal.
+
+---
+
+## 11. Transcript insights, in one page
+
+For each transcript — design-workshop recordings and any other recording with one — the queue worker
+writes a `TranscriptInsight` row ([DATA_MODEL.md](DATA_MODEL.md)): up to five English summary lines,
+up to five key quotes in the speaker's own words with their English, and an English translation of
+the whole transcript when it is in another language. Code:
+`backend/app/services/transcript_insights.py`, the routes in
+`backend/app/api/routes/transcript_insights.py`, the backfill in
+`backend/scripts/backfill_transcript_insights.py`. The Field Repository has the same table, routes
+and contract; each portal generates its own.
+
+- **When it runs.** A job (`TRANSCRIPT_INSIGHTS`) is queued when a transcription lands COMPLETED with
+  text, when an admin's "Transcribe now" does, and when a researcher replaces a transcript — unless
+  the summary was edited by a researcher, which is never replaced automatically and shows as stale
+  instead. The job is text only: it loads no audio, and it is not held to the processing window or
+  the transcription cooldown. While the switch is off, nothing is queued and queued jobs wait.
+- **Whose key.** Automatic runs and the backfill use the deployment's key and spend nobody's daily
+  allowance. A researcher's Regenerate uses their own key when they have one, and counts one run
+  against their daily writing-help allowance (`TRANSCRIPT_INSIGHTS` on `DwAiVerbDailyUsage`) when
+  it reaches a provider.
+- **Consent.** The artisan's recorded answer is checked when Regenerate is pressed and again by the
+  worker at the moment of sending (`dictation_consent.INSIGHTS`). A refusal sends nothing.
+- **Who sees it.** Exactly who may read the transcript: an insight is a copy of it, so a media row is
+  encoded for the viewer and, if its transcript does not survive, neither does the insight. The
+  uploader or an admin may edit or regenerate it, except a person who inspects or supervises a
+  workshop the recording belongs to.
+- **Provenance.** Every row carries provider, model, response model, prompt version
+  (`transcript-insights/1`) and when it was generated. An edit changes the current row and stamps
+  it from the server; the machine's output stays frozen in `generated`, and each regeneration is a
+  new version.
+- **Invented quotes are dropped.** A quote whose original words are not found in the transcript
+  (case and spacing aside) is discarded before it is stored.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /api/media/{id}/insights` | anyone who may read the transcript | the view, with the full translation |
+| `GET /api/media/insights?ids=a,b` | the same, per id; at most 50 | the views without translation text |
+| `PATCH /api/media/{id}/insights` | uploader or admin | edit the current version (`version` must match) |
+| `POST /api/media/{id}/insights/regenerate` | uploader or admin | queue a new version (202) |
+
+All four answer 404 while the switch is off, and both clients then draw nothing.
+
 ---
 
 ## How this document is kept true

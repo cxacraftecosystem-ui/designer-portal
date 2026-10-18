@@ -25,7 +25,7 @@ from app.schemas.media import (
     TranscriptRefineRequest,
     TranscriptUpdateRequest,
 )
-from app.services import design_workshop_posts, dictation_consent
+from app.services import design_workshop_posts, dictation_consent, transcript_insights
 from app.services.ai import (
     UnknownDimension,
     analyze_measurement_image_bytes,
@@ -1763,6 +1763,10 @@ async def set_media_transcript(
         },
         include=INCLUDE,
     )
+    # A new transcript re-queues its summary unless a researcher has edited the summary; then
+    # nothing is queued and GET /media/{id}/insights shows it as stale.
+    if transcript_insights.enabled():
+        await transcript_insights.enqueue_after_transcript(media.id)
     return await _public(updated, current_user)
 
 

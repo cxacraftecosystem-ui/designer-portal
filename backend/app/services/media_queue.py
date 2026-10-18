@@ -9,7 +9,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.core.config import Settings, get_settings
 from app.core.db import db
-from app.services import dictation_consent
+from app.services import ai_verb_cap, dictation_consent, transcript_insights
 from app.services.ai import (
     analyze_measurement_image_bytes,
     redact_secrets,
@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 
 TRANSCRIPTION = "TRANSCRIPTION"
 MEASUREMENT = "MEASUREMENT"
+#: Summary, key quotes and translation of a transcript (services/transcript_insights). Text only:
+#: it never loads the audio, and it is not held back by the processing window or the transcription
+#: rate-limit cooldown. Drained only while its AI capability flag is on.
+TRANSCRIPT_INSIGHTS = "TRANSCRIPT_INSIGHTS"
 QUEUED = "QUEUED"
 PROCESSING = "PROCESSING"
 COMPLETED = "COMPLETED"
@@ -488,8 +492,16 @@ async def process_next_media_jobs(
     allow_transcription = (
         within_processing_window(app_settings) or _server_is_idle()
     ) and not _transcription_in_cooldown(now)
+    held_back: list[str] = []
     if not allow_transcription:
-        where["jobType"] = {"not": TRANSCRIPTION}
+        held_back.append(TRANSCRIPTION)
+    if not transcript_insights.enabled():
+        # Switched off: leave queued insights jobs where they are rather than failing them.
+        held_back.append(TRANSCRIPT_INSIGHTS)
+    if len(held_back) == 1:
+        where["jobType"] = {"not": held_back[0]}
+    elif held_back:
+        where["jobType"] = {"not_in": held_back}
     jobs = await db.mediaprocessingjob.find_many(
         where=where,
         include={"mediaFile": True},
@@ -778,7 +790,10 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
                 job_data["requestedById"] = str(uploader_id)
             await db.mediaprocessingjob.create(data=job_data)
         return result
-    await db.mediafile.update(where={"id": media_id}, data=_transcript_write(result, status))
+    write = _transcript_write(result, status)
+    await db.mediafile.update(where={"id": media_id}, data=write)
+    if status == COMPLETED and write.get("transcriptText"):
+        await transcript_insights.enqueue_after_transcript(media_id)
     return result
 
 
@@ -939,6 +954,10 @@ async def _lock_job(job_id: str, worker_id: str) -> Any | None:
 
 async def _process_job(job: Any, settings: Settings) -> None:
     media = job.mediaFile
+    # Text only, and first: an insights job never reaches the S3 reads below.
+    if job.jobType == TRANSCRIPT_INSIGHTS:
+        await _process_insights_job(job, media)
+        return
     if job.jobType == TRANSCRIPTION:
         # RE-READ AT THE MOMENT OF SENDING, AND THIS IS THE CHECK THAT MAKES A WITHDRAWAL MEAN
         # SOMETHING. The enqueue gate is not sufficient on its own, and the module docstring of
@@ -1134,10 +1153,61 @@ async def _apply_transcription_result(job: Any, result: dict[str, Any]) -> None:
     await db.mediafile.update(where={"id": job.mediaFileId}, data=_transcript_write(result, status))
     if status in {COMPLETED, "EMPTY"}:
         await _complete_job(job.id, result)
+        if status == COMPLETED and (result.get("formattedTranscript") or result.get("text")):
+            await transcript_insights.enqueue_after_transcript(job.mediaFileId)
     elif status == UNAVAILABLE:
         await _finalize_unavailable_job(job.id, result, message)
     else:
         raise RuntimeError(message or "Transcription failed")
+
+
+async def _process_insights_job(job: Any, media: Any) -> None:
+    """Summary, quotes and translation for one transcript.
+
+    CONSENT IS RE-READ HERE, AT SEND TIME, for the reason the TRANSCRIPTION branch gives: a job
+    queued under a grant must not leave after the artisan withdrew it. A refusal is terminal and
+    sends nothing.
+
+    The requester's own key when a person asked (Regenerate), and only then is a run counted
+    against that person's daily AI allowance — once per attempt that reached a provider. Automatic
+    runs and the backfill carry no requester: the deployment's key, and nobody's allowance.
+    """
+    requested_by = getattr(job, "requestedById", None)
+    if requested_by is None:
+        # An automatic run never replaces a researcher's edits, even if they edited after it was
+        # queued.
+        current = await transcript_insights.current_insight(job.mediaFileId)
+        if current is not None and current.editedAt is not None:
+            await _complete_job(job.id, {"status": "SKIPPED", "reason": "edited"})
+            return
+    if not transcript_insights.select_sources(media)[0]:
+        await _complete_job(job.id, {"status": "EMPTY"})
+        return
+    verdict = await dictation_consent.transcription_verdict(
+        media, send=dictation_consent.INSIGHTS, resolve_from_stages=True
+    )
+    if not verdict.may_send:
+        # The transcript is non-empty here, so the clip note in _finalize_refused_job (written only
+        # onto a clip with no transcript) is a no-op and only the job is closed.
+        await _finalize_refused_job(job, verdict)
+        return
+    try:
+        outcome = await transcript_insights.generate(media, user_id=requested_by)
+    except transcript_insights.InsightsUnavailable as exc:
+        await _finalize_unavailable_job(job.id, {"status": UNAVAILABLE}, str(exc))
+        return
+    except transcript_insights.InsightsFailed as exc:
+        await _spend_insights_allowance(requested_by)
+        raise RuntimeError(str(exc)) from None
+    await _spend_insights_allowance(requested_by)
+    await _complete_job(job.id, outcome)
+
+
+async def _spend_insights_allowance(user_id: str | None) -> None:
+    """Count one Regenerate run against its requester. Automatic runs have no requester."""
+    if not user_id:
+        return
+    await ai_verb_cap.spend(user_id, ai_verb_cap.ist_day(), transcript_insights.CAP_VERB)
 
 
 async def _apply_measurement_result(job: Any, result: dict[str, Any]) -> None:
