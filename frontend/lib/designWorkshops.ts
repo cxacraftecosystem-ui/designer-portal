@@ -477,6 +477,8 @@ export type DwFieldStamp = {
   refModel?: string | null;
   refId?: string | null;
   refKey?: string | null;
+  /** C9: set while `source === "copied"` — the earlier workshop this text was copied from. */
+  copiedFrom?: { workshopId: string; title: string } | null;
 };
 
 /**
@@ -1211,6 +1213,12 @@ export type DwSaveBody = {
   emptiedEntities?: string[];
   /** True enforces the BASIC-tier required fields and 422s if any is missing. */
   submit?: boolean;
+  /**
+   * C9: singleton field key -> the designer's own earlier workshop the text was copied from. The
+   * server verifies it against the source; a copied field counts toward completeness once edited
+   * or kept. SENT ONLY WHEN NON-EMPTY, so a body without copies is the body every server accepts.
+   */
+  copiedFrom?: Record<string, string>;
 };
 
 export type DwSaveResult = {
@@ -3697,4 +3705,94 @@ export function overallPercent(completeness: Record<string, DwStageCompleteness>
 /** The plain text of a run sequence — for a heading's anchor text and an image's alt attribute. */
 export function runsText(runs: DwRun[] | undefined): string {
   return (runs ?? []).map((run) => run.text).join("");
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * C9 — start a stage from an earlier workshop
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The stages a designer may start from an earlier workshop — `workshop_copy.COPYABLE_STAGES`. */
+export const DW_COPYABLE_STAGES: readonly string[] = [
+  "INTRODUCTORY_ADMIN_DOCUMENTATION",
+  "CLUSTER_CRAFT_BACKGROUND",
+  "TRADITIONAL_PROCESS_BASELINE",
+  "SURVEY_PLANNING"
+];
+
+/** The provenance `source` of copied text the designer has not yet edited or kept. */
+export const DW_COPIED_SOURCE = "copied";
+
+export type DwCopySource = {
+  workshopId: string;
+  title: string;
+  craftName: string | null;
+  clusterName: string | null;
+  date: string | null;
+  /** Only the copyable fields this source has filled — keyed by field key. */
+  values: Record<string, DwValue>;
+  /** Present on a read-only reference block, never on the designer's own. */
+  designerName?: string | null;
+};
+
+export type DwCopySources = {
+  fields: { key: string; label: string; type: string }[];
+  /** The designer's own earlier text: copyable. */
+  own: DwCopySource[];
+  /** Other designers' text from the same cluster or craft: READ ONLY, never copied into a box. */
+  reference: DwCopySource[];
+};
+
+export function fetchStageCopySources(id: string, stageKey: string) {
+  return apiFetch<DwCopySources>(
+    `/design-workshops/${encodeURIComponent(id)}/stages/${encodeURIComponent(stageKey)}/copy-sources`
+  );
+}
+
+/** "Keep as is": copied fields the designer has checked now count as their answer. */
+export function confirmCopiedFields(id: string, stageKey: string, fields: string[]) {
+  return apiFetch<{ provenance: Record<string, DwFieldStamp>; confirmed: string[] }>(
+    `/design-workshops/${encodeURIComponent(id)}/stages/${encodeURIComponent(stageKey)}/confirm-copied`,
+    { method: "POST", body: JSON.stringify({ fields }) }
+  );
+}
+
+/** The singleton fields still marked copied-and-not-checked, from the server's provenance. */
+export function unconfirmedCopies(provenance: Record<string, DwFieldStamp> | null | undefined): string[] {
+  return Object.entries(provenance ?? {})
+    .filter(([, stamp]) => stamp?.source === DW_COPIED_SOURCE)
+    .map(([key]) => key);
+}
+
+/**
+ * C9: the boxes holding copied text that does not count yet — marked on this device and not yet
+ * sent, or stamped `copied` by the server and not edited since the stage opened.
+ */
+export function pendingCopyKeys(
+  copiedFrom: Record<string, string>,
+  stamps: Record<string, DwFieldStamp> | null | undefined,
+  editedKeys: ReadonlySet<string>
+): Set<string> {
+  const keys = new Set(Object.keys(copiedFrom));
+  for (const key of unconfirmedCopies(stamps)) if (!editedKeys.has(key)) keys.add(key);
+  return keys;
+}
+
+/** C9: the singleton as the completeness bar should score it — pending copies left out. */
+export function countedSingleton<T>(singleton: Record<string, T>, hidden: ReadonlySet<string>): Record<string, T> {
+  if (!hidden.size) return singleton;
+  return Object.fromEntries(Object.entries(singleton).filter(([key]) => !hidden.has(key)));
+}
+
+/**
+ * C9 "Keep as is": a copy still marked only on this device just loses its mark; every other key is
+ * confirmed on the server (where, once a push carrying it was accepted, its stamp now lives).
+ */
+export function splitKeptCopies(
+  keys: readonly string[],
+  copiedFrom: Record<string, string>
+): { local: string[]; remote: string[] } {
+  return {
+    local: keys.filter((key) => key in copiedFrom),
+    remote: keys.filter((key) => !(key in copiedFrom))
+  };
 }

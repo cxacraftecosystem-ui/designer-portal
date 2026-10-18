@@ -1366,6 +1366,38 @@ interface WorkshopRepositoryApi {
     // A whole stage in ONE write — see [StageSaveBody]. The response carries the field keys the
     // server DROPPED because this build's registry is ahead of its own, which is the only way a
     // client finds out it is running ahead rather than by having its sync rejected.
+    // C9: what the designer may start this stage from — their own earlier text, and read-only
+    // reference text from the same cluster.
+    @GET("design-workshops/{id}/stages/{stageKey}/copy-sources")
+    suspend fun stageCopySources(
+        @Path("id") id: String,
+        @Path("stageKey") stageKey: String
+    ): DwCopySourcesDto
+
+    // C11: the designer's own artisan-list import on stage 3 — the pro-forma naming this workshop,
+    // the upload (read once by the server, never stored) and the workshop's accepted uploads.
+    @Streaming
+    @GET("design-workshops/{id}/roster/pro-forma")
+    suspend fun rosterProForma(@Path("id") id: String): Response<ResponseBody>
+
+    @Multipart
+    @POST("design-workshops/{id}/roster/upload")
+    suspend fun uploadRoster(
+        @Path("id") id: String,
+        @Part file: okhttp3.MultipartBody.Part,
+    ): DwArtisanImportReportDto
+
+    @GET("design-workshops/{id}/roster/imports")
+    suspend fun rosterImports(@Path("id") id: String): DwArtisanImportListDto
+
+    // C9 "Keep as is": copied boxes the designer has checked now count as their answer.
+    @POST("design-workshops/{id}/stages/{stageKey}/confirm-copied")
+    suspend fun confirmCopiedFields(
+        @Path("id") id: String,
+        @Path("stageKey") stageKey: String,
+        @Body body: DwConfirmCopiedBody
+    ): DwConfirmCopiedDto
+
     @PUT("design-workshops/{id}/stages/{stageKey}")
     suspend fun saveDesignWorkshopStage(
         @Path("id") id: String,

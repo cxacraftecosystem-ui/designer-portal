@@ -371,6 +371,30 @@ MIRRORS: tuple[Mirror, ...] = (
             "nobody having thought about it, which is what this row exists to prevent."
         ),
     ),
+    # C14 (2026-10-17): who READS the cross-workshop analytics — the server's
+    # `app/api/routes/analytics.py::ANALYTICS_READ_ROLES`. An Assistant Director is out by the owner's
+    # naming ("Ministry Admin and Regional Directors"), and so is every tier below.
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="ANALYTICS_READ_ROLES",
+        kind="partial",
+        pattern=r"export const ANALYTICS_READ_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\n\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ASSISTANT_DIRECTOR",
+            }
+        ),
+        why=(
+            "Who may read the cross-workshop analytics. A new tier defaulting in reads adoption and "
+            "cost findings for the whole archive; defaulting out is a ministry post shown nothing."
+        ),
+    ),
     # WHO PROVISIONS PASSWORD ACCOUNTS ON /users, 2026-10-09. The twin of
     # `app/core/deps.py::ACCOUNT_PROVISIONER_ROLES`, and `partial` for the reason the rows above are:
     # a new tier must be DECIDED onto one side. The pattern accepts the literal on one line or on

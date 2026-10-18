@@ -2876,7 +2876,7 @@ object WorkshopSyncEngine {
         // that can decode them is the array itself. Re-deriving it on the screen would be a second
         // builder and a second ordering, and the first message after the first collection would land
         // on the wrong row — which is precisely the note `buildStageEntries` carries on the web.
-        return StagePush.Sent(result, built.body.entries)
+        return StagePush.Sent(result, built.body.entries, built.body.copiedFrom)
     }
 }
 
@@ -2901,6 +2901,8 @@ sealed interface StagePush {
     data class Sent(
         val result: StageSaveResultDto,
         val entries: List<StageEntryBody> = emptyList(),
+        /** C9: the copy marks the accepted payload carried — see [dwCopiesAfterPush]. */
+        val copiedFrom: Map<String, String> = emptyMap(),
     ) : StagePush
 
     /** Waiting on [files] attachments that are still only on this device. */
@@ -3215,6 +3217,7 @@ internal fun buildStageBody(
             // deletion while disclaiming the knowledge that justifies one.
             emptiedEntities = if (authoritative) emptied else emptyList(),
             submit = false,
+            copiedFrom = stored?.copiedFrom.orEmpty(),
         ),
         unresolved.toList(),
         // Only the keys this stage's bucket ACTUALLY held. A key named in a stale refusal but no
@@ -3653,9 +3656,14 @@ private suspend fun recordStageSent(
     val allNotes = listOfNotNull(notes, refusalNote, sweptNote)
         .takeIf { it.isNotEmpty() }?.joinToString(" ")
 
+    // C9: the copy marks leave the draft below once accepted, so the next build carries none. The
+    // signature recorded is that body's, or the very next pass would re-send an unchanged stage.
+    val sentCopies = built.body.copiedFrom
+    val settledSignature =
+        if (sentCopies.isEmpty()) signature else signatureOf(built.body.copy(copiedFrom = emptyMap()))
     noteStage(context, workshopId, stageKey) {
         it.copy(
-            signature = signature,
+            signature = settledSignature,
             syncedAt = Instant.now().toString(),
             failure = allNotes,
             failedAt = if (allNotes == null) null else Instant.now().toString(),
@@ -3764,16 +3772,18 @@ private suspend fun recordStageSent(
         } else {
             emptySet()
         }
-    if (acknowledgedDeletions.isEmpty() && sweptEntities.isEmpty()) return
+    if (acknowledgedDeletions.isEmpty() && sweptEntities.isEmpty() && sentCopies.isEmpty()) return
     WorkshopDraftStore.updateBookkeeping(context, workshopId) { draft ->
         val stage = draft.stages[stageKey] ?: return@updateBookkeeping draft
         val remaining = stage.emptiedEntities.filterNot { it in acknowledgedDeletions }
         val remainingRows = stage.deletedRowKeys.filterNot { key ->
             key.substringBefore(DW_ROW_KEY_SEPARATOR, "") in sweptEntities
         }
+        val copies = dwCopiesAfterPush(stage.copiedFrom, stage.provenance, sentCopies)
         if (
             remaining.size == stage.emptiedEntities.size &&
-            remainingRows.size == stage.deletedRowKeys.size
+            remainingRows.size == stage.deletedRowKeys.size &&
+            copies == null
         ) {
             return@updateBookkeeping draft
         }
@@ -3782,6 +3792,8 @@ private suspend fun recordStageSent(
                 stageKey to stage.copy(
                     emptiedEntities = remaining,
                     deletedRowKeys = remainingRows,
+                    copiedFrom = copies?.first ?: stage.copiedFrom,
+                    provenance = copies?.second ?: stage.provenance,
                 )
             )
         )

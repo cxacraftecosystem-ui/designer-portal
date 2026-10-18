@@ -108,7 +108,8 @@ import {
   type DwStageData,
   type DwSummary,
   type DwValue,
-  type DwStageProvenance
+  type DwStageProvenance,
+  DW_COPIED_SOURCE
 } from "@/lib/designWorkshops";
 import {
   CUSTOM_ENTITY_KEY,
@@ -348,6 +349,15 @@ export type DwDraftStage = {
    * accepted — a deletion made offline on Monday must still sweep when the signal returns on Friday.
    */
   removedFrom: string[];
+  /**
+   * C9: singleton field key -> the designer's own earlier workshop its text was copied from, sent
+   * with the next push as `copiedFrom` so the server can mark it. A key leaves as soon as the
+   * designer edits that box, or once a push carrying it is accepted (`copiesAfterPush`). The server
+   * marks only text that still equals the source's, and never re-marks text already kept.
+   *
+   * **OPTIONAL, AND EVERY READ MUST DEFAULT IT** — no migration rung, the rule `custom` states.
+   */
+  copiedFrom?: Record<string, string>;
   /**
    * Answers to this workshop's designer-defined questions for this stage. Mirrors the server's
    * `_custom` row one for one: flat, keyed by the designer's own field keys.
@@ -1853,6 +1863,8 @@ export async function putDraftStage(
      * draws between no `_custom` entry and an empty one.
      */
     custom?: DwEntryData;
+    /** C9: omitted means "unchanged"; `{}` clears every copy mark. */
+    copiedFrom?: Record<string, string>;
   }
 ): Promise<DwDraft | null> {
   // A REFERENCE THAT HAS SINCE BEEN CONFIRMED IS SUBSTITUTED ON THE WAY IN, and this is not
@@ -1898,6 +1910,7 @@ export async function putDraftStage(
             // has to reach the server, and the next autosave from a form that has forgotten about it
             // would otherwise disarm the sweep and leave the row alive for ever.
             removedFrom: Array.from(new Set([...previous.removedFrom, ...(data.removedFrom ?? [])])),
+            ...(data.copiedFrom !== undefined ? { copiedFrom: data.copiedFrom } : {}),
             // REPLACED WHEN THE CALLER SENT ONE, KEPT WHEN IT DID NOT — see the note on the parameter.
             // Not merged into the previous bucket, because a designer clearing one answer has to be
             // able to clear it: a merge would make every custom answer permanently un-erasable, which
@@ -2053,6 +2066,8 @@ export async function markStagePushed(
      * of this shape looks like from the outside.
      */
     mergedEntries?: boolean;
+    /** C9: the `copiedFrom` the pushed payload carried — see {@link copiesAfterPush}. */
+    sentCopiedFrom?: Record<string, string>;
   }
 ): Promise<DwDraft | null> {
   return mutate(id, (draft) => {
@@ -2066,6 +2081,7 @@ export async function markStagePushed(
         [stageKey]: {
           ...stage,
           ...unsentAfterPush(stage, { dirtyAt: options.sinceDirtyAt, removedFrom: options.sinceRemovedFrom }),
+          ...copiesAfterPush(stage, options.sentCopiedFrom),
           lastPushedAt: now,
           // Discharged by the save it warned about — the same rule and the same reason as the sync
           // pass's acknowledgement; see the note there.
@@ -5306,7 +5322,8 @@ async function runSync(): Promise<DwSyncResult> {
             // entries at all, so it names itself nowhere. `removedFrom` is exactly that list — minus
             // what this browser has not earned the right to say.
             emptiedEntities: sweep.emptiedEntities,
-            submit: false
+            submit: false,
+            ...copyMarksBody(stage)
           });
         } catch (error) {
           /*
@@ -5449,6 +5466,7 @@ async function runSync(): Promise<DwSyncResult> {
                 // any screen saying so — the exact failure `unsentAfterPush` was written for, arriving
                 // through a different door.
                 ...unsentAfterPush(target, { dirtyAt: stage.dirtyAt, removedFrom: sweep.emptiedEntities }),
+                ...copiesAfterPush(target, copyMarksBody(stage).copiedFrom),
                 lastPushedAt: now,
                 // THE FOLD'S WARNING IS DISCHARGED BY THE SAVE IT WARNED ABOUT. `foldNote` is written
                 // in the future tense — "the next save will delete N rows on the server" — so once
@@ -5697,4 +5715,43 @@ export async function retryDraft(id: string): Promise<void> {
   }).catch(() => {
     noteStoreFailure("write");
   });
+}
+
+/**
+ * C9: the `copiedFrom` part of a stage PUT, or nothing. Only a non-empty map is sent, so a stage
+ * with no copies sends the body every server has always accepted.
+ */
+export function copyMarksBody(stage: DwDraftStage | undefined): { copiedFrom?: Record<string, string> } {
+  const marks = stage?.copiedFrom ?? {};
+  return Object.keys(marks).length ? { copiedFrom: marks } : {};
+}
+
+/**
+ * C9: once the server has ACCEPTED a push that carried copy marks, the marks live in the server's
+ * stamp and leave the draft — otherwise the first "Keep as is" only dropped the local mark and left
+ * the server's `copied` stamp standing, and every later save re-sent the mark (which re-marked text
+ * the designer had already kept on another device).
+ *
+ * A key leaves only when the draft still holds the SAME source it sent: a box re-copied from a
+ * different workshop during the round trip keeps its newer mark for the next push. Each acknowledged
+ * key is mirrored into the local provenance as a `copied` stamp (unless it already carries one), so
+ * the box stays out of completeness and "Keep as is" confirms it on the server, until a server read
+ * replaces the provenance with the real stamps. Pure; answers only the two fields it settles.
+ */
+export function copiesAfterPush(
+  stage: DwDraftStage,
+  sent: Record<string, string> | undefined
+): { copiedFrom?: Record<string, string>; provenance?: DwStageProvenance } {
+  const marks = stage.copiedFrom ?? {};
+  const acknowledged = Object.entries(sent ?? {}).filter(([key, source]) => marks[key] === source);
+  if (!acknowledged.length) return {};
+  const remaining = { ...marks };
+  const singleton = { ...(stage.provenance?.singleton ?? {}) };
+  for (const [key, source] of acknowledged) {
+    delete remaining[key];
+    if (singleton[key]?.source !== DW_COPIED_SOURCE) {
+      singleton[key] = { source: DW_COPIED_SOURCE, copiedFrom: { workshopId: source, title: "" } };
+    }
+  }
+  return { copiedFrom: remaining, provenance: { ...(stage.provenance ?? {}), singleton } };
 }

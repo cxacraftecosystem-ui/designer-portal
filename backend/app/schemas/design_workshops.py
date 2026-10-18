@@ -393,6 +393,20 @@ class StageSaveIn(APIModel):
             "whole point of the app is that a stage can be left half-filled overnight."
         ),
     )
+    copiedFrom: dict[str, str] = Field(
+        default_factory=dict,
+        max_length=64,
+        description=(
+            "C9: singleton field key -> the id of the caller's own earlier workshop the text was "
+            "copied from. Verified against the source; a copied field counts toward completeness "
+            "only once it is edited or confirmed. Optional and additive."
+        ),
+    )
+    confirmCopied: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+        description="C9: copied fields the designer has checked and keeps as they are.",
+    )
 
     @model_validator(mode="after")
     def _bound_rows(self) -> StageSaveIn:

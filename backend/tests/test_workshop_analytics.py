@@ -953,7 +953,7 @@ def test_the_load_is_three_queries_and_never_one_per_workshop(monkeypatch: pytes
 
 
 @pytest.mark.parametrize("role", ["DESIGNER", "RESEARCHER", "PROFESSOR", "FIELD_CONTRIBUTOR",
-                                  "CROWDSOURCE_VOLUNTEER"])
+                                  "CROWDSOURCE_VOLUNTEER", "INSPECTOR", "ASSISTANT_DIRECTOR"])
 def test_everyone_below_admin_is_refused_by_the_ROUTE_and_not_only_by_the_menu(role):
     """A DESIGNER is refused here even though they run the workshops.
 
@@ -966,10 +966,14 @@ def test_everyone_below_admin_is_refused_by_the_ROUTE_and_not_only_by_the_menu(r
     reached, status_code, detail = _call_as(role)
     assert reached is False, f"{role} reached the handler body"
     assert status_code == 403, f"{role} got {status_code}: {detail}"
-    assert detail == "Admin access required"
+    from app.api.routes.analytics import ANALYTICS_REFUSAL
+
+    assert detail == ANALYTICS_REFUSAL
 
 
-@pytest.mark.parametrize("role", ["ADMIN", "MASTER_ADMIN"])
+# Owner decision C14 (2026-10-17): read-only analytics for the Ministry Admin and Regional
+# Directors as well. An Assistant Director stays refused above.
+@pytest.mark.parametrize("role", ["ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN", "REGIONAL_DIRECTOR"])
 def test_admins_get_past_the_gate(role):
     reached, status_code, detail = _call_as(role)
     assert reached is True, f"{role} was refused with {status_code}: {detail}"
@@ -990,7 +994,7 @@ def test_the_route_carries_the_admin_dependency_in_its_source():
         if not name.startswith("_") and callable(handler) and getattr(handler, "__module__", "") \
                 == module.__name__ and name.endswith("analytics"):
             source = inspect.getsource(handler)
-            assert "Depends(require_admin)" in source, (
+            assert "Depends(require_analytics_reader)" in source, (
                 f"{name} does not enforce admin access, so the browser is the only thing stopping "
                 f"a designer — and the API and the Android client ignore the browser"
             )
@@ -1010,3 +1014,33 @@ def test_the_web_mirrors_the_server_gate():
     )
     guard = text.split("/admin/analytics")[1][:400]
     assert "isAdmin" in guard, "the web guard does not mirror require_admin"
+
+
+def test_a_regional_director_reads_only_their_posted_workshops(monkeypatch: pytest.MonkeyPatch):
+    """C14: the director's analytics are narrowed by the same posting clause as their dashboard."""
+    from app.api.routes import analytics as module
+    from app.services.ministry_dashboard import scope_clause
+
+    director = SimpleNamespace(id="rd1", role="REGIONAL_DIRECTOR")
+    assert module.analytics_scope(director) == scope_clause(director)
+    assert module.analytics_scope(SimpleNamespace(id="ma", role="MINISTRY_ADMIN")) is None
+
+    entries = _FakeDelegate([])
+    workshops = _FakeDelegate([], count=0)
+    monkeypatch.setattr(module, "db", _FakeDb(workshops, entries))
+    asyncio.run(module._load(scope_clause(director)))
+    assert workshops.calls[0]["where"]["AND"][1] == scope_clause(director)
+    assert entries.calls[0]["where"]["designWorkshop"] == {"is": scope_clause(director)}
+
+
+def test_the_web_carries_the_same_reader_set():
+    from pathlib import Path
+
+    from app.api.routes.analytics import ANALYTICS_READ_ROLES
+
+    web = Path(__file__).resolve().parents[2] / "frontend/lib/permissions.ts"
+    if not web.is_file():
+        pytest.skip("the frontend is not present in this checkout")
+    text = web.read_text(encoding="utf-8")
+    block = text.split("export const ANALYTICS_READ_ROLES")[1].split(";")[0]
+    assert set(re.findall(r'"([A-Z_]+)"', block)) == set(ANALYTICS_READ_ROLES)

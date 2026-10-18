@@ -2555,6 +2555,13 @@ data class StageSaveBody(
      */
     val emptiedEntities: List<String> = emptyList(),
     val submit: Boolean = false,
+    /**
+     * C9: singleton field key -> the designer's own earlier workshop its text was copied from. The
+     * server verifies it and keeps the box out of completeness until edited or kept. OMITTED WHEN
+     * EMPTY — `Json` does not encode defaults — so a stage with no copies sends the body every
+     * server has always accepted.
+     */
+    val copiedFrom: Map<String, String> = emptyMap(),
 )
 
 @Serializable

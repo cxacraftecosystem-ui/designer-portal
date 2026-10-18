@@ -415,6 +415,13 @@ data class StageDraft(
      */
     val emptiedEntities: List<String> = emptyList(),
     /**
+     * C9: singleton field key -> the designer's own earlier workshop its text was copied from, sent
+     * as `copiedFrom` on the next push. A key leaves when the designer edits that box, or once a push
+     * carrying it is accepted ([dwCopiesAfterPush]); the server marks only text that still equals
+     * the source's, and never re-marks text already kept.
+     */
+    val copiedFrom: Map<String, String> = emptyMap(),
+    /**
      * Individual rows the designer has DELETED on this device and the server has not been told about
      * yet, as [DraftRow.id] — `entityKey#clientKey`.
      *

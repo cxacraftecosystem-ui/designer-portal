@@ -48,6 +48,7 @@ from app.core.db import connect_db, disconnect_db, ensure_db_connected
 from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
+from app.services.ministry_export import process_next_ministry_exports
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("app.worker")
@@ -92,6 +93,12 @@ async def _run() -> None:
                 logger.exception("E-mail outbox iteration failed; backing off")
             # Round snapshots of workshops deleted over a year ago (throttled; never raises).
             await purge_expired_snapshots()
+            # THE MINISTRY STAGE-DATA EXPORT (C15) rides the same loop, in its own try, one job per
+            # turn so a large export cannot hold the media queue or the outbox back for long.
+            try:
+                await process_next_ministry_exports(worker_id="queue-service")
+            except Exception:
+                logger.exception("Ministry export iteration failed; backing off")
             # Sleep for the interval but wake immediately on shutdown.
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval)

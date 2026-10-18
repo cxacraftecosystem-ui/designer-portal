@@ -1338,6 +1338,13 @@ async def test_the_sanction_register_takes_two_booleans_and_a_list_of_labels(mon
 
     monkeypatch.setattr(so, "entry_rows", _rows)
 
+    # C1 (2026-10-17): the payload also names the planned workshop the order opened, read through
+    # the annual plan's own module. No database here, so that read answers "none".
+    async def _no_planned_rows(_workshop_ids):
+        return {}
+
+    monkeypatch.setattr(so.annual_plan, "planned_rows_for_workshops", _no_planned_rows)
+
     order = SimpleNamespace(
         # `sanctionOrderKey` is the NORMALISED column the unique index bites on — upper-cased with
         # every non-alphanumeric character removed — which is what lets the drift check call the
@@ -1747,6 +1754,17 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         # copy the stage payload into a round's snapshot WITHOUT its provenance. No field value is
         # attributed to anybody; the readers that show the data resolve it, tested above.
         "app/services/design_workshop_review_aids.py",
+        # Classified 2026-10-17 (C9). EXEMPT: "start from an earlier workshop" serves the CALLER'S
+        # OWN text back to them and other designers' text as a read-only block named by the source
+        # workshop's header, and reads a stamp only to ask "did this caller write it" — no stamp and
+        # no author reaches the wire. FENCED by `tests/test_workshop_copy.py`, which pins what the
+        # sources answer and how a copy is stamped.
+        "app/services/workshop_copy.py",
+        "app/api/routes/design_workshop_copy.py",
+        # Classified 2026-10-17 (C15). EXEMPT on `data_browser`'s grounds: the ministry stage-data
+        # export flattens VALUES through `design_workshop_data.flatten` (identity numbers masked) and
+        # attributes nothing to anybody. FENCED by `tests/test_ministry_dashboard_attention_export.py`.
+        "app/services/ministry_export.py",
     }
     root = Path(__file__).resolve().parents[1] / "app"
     found = set()

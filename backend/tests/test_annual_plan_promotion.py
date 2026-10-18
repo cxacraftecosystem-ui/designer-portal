@@ -63,7 +63,9 @@ def _literal_keys(source: str, name: str) -> list[str]:
     Read with ``ast`` rather than with a regular expression, so that a comment mentioning a key, or
     a key spelled across two lines, cannot make this test agree with something the code does not do.
     """
-    tree = ast.parse(inspect.cleandoc(source))
+    # `textwrap.dedent`, not `inspect.cleandoc`: cleandoc strips the indent of every line after the
+    # first, which un-indents the BODY of a module-level function whose source starts at column 0.
+    tree = ast.parse(textwrap.dedent(source))
     found: list[str] = []
 
     def _collect(value: ast.expr) -> None:
@@ -100,7 +102,9 @@ def _workshop_setup_fields() -> dict[str, Any]:
     raise AssertionError("the registry has no workshopSetup entity")
 
 
-SEEDED_KEYS = _literal_keys(inspect.getsource(annual_plan.promote_entry), "seeded")
+# The seeded literal moved into `plan_stage_one_values` on 2026-10-17 (C1), so the sanction register's
+# door fills stage 1 by the same rule; `promote_entry` calls it.
+SEEDED_KEYS = _literal_keys(inspect.getsource(annual_plan.plan_stage_one_values), "seeded")
 COLUMN_KEYS = _literal_keys(inspect.getsource(annual_plan.promote_entry), "columns")
 
 

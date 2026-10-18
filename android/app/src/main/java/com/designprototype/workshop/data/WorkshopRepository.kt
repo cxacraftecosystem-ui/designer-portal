@@ -1188,6 +1188,43 @@ class WorkshopRepository(
             null
         }
 
+    /** C9: see [WorkshopRepositoryApi.stageCopySources]. */
+    suspend fun stageCopySources(id: String, stageKey: String): DwCopySourcesDto =
+        api.stageCopySources(id, stageKey)
+
+    /**
+     * C11: the stage-3 artisan-list pro-forma, already naming this workshop, saved to Downloads.
+     * Returns where it landed. Spooled to the cache first, as [downloadQuestionnaireArtefact] does.
+     */
+    suspend fun downloadRosterProForma(context: Context, id: String): String = withContext(Dispatchers.IO) {
+        val response = api.rosterProForma(id)
+        if (!response.isSuccessful) {
+            throw IllegalStateException(
+                errorBodyDetail(response.errorBody()?.string())
+                    ?: "Couldn't download the pro-forma. Try again."
+            )
+        }
+        val body = response.body() ?: throw IllegalStateException("Couldn't download the pro-forma. Try again.")
+        val name = filenameFromContentDisposition(response.headers()["Content-Disposition"])
+            ?: "artisan-list-pro-forma.xlsx"
+        val tmp = File(context.cacheDir, name)
+        body.byteStream().use { input -> FileOutputStream(tmp).use { out -> input.copyTo(out) } }
+        val location = persistFileToDownloads(context, tmp, name, XLSX_MIME)
+        tmp.delete()
+        location
+    }
+
+    /** C11: import the picked artisan list into this workshop. Shown, never queued. */
+    suspend fun uploadRoster(context: Context, id: String, uri: Uri): DwArtisanImportReportDto =
+        api.uploadRoster(id, workbookPart(context, uri))
+
+    /** C11: this workshop's accepted artisan-list uploads, newest first. */
+    suspend fun rosterImports(id: String): DwArtisanImportListDto = api.rosterImports(id)
+
+    /** C9: see [WorkshopRepositoryApi.confirmCopiedFields]. */
+    suspend fun confirmCopiedFields(id: String, stageKey: String, fields: List<String>): DwConfirmCopiedDto =
+        api.confirmCopiedFields(id, stageKey, DwConfirmCopiedBody(fields))
+
     /**
      * One workshop's custom definition, straight off the wire and NOT cached here.
      *

@@ -73,7 +73,7 @@ from app.schemas.sanction_orders import (
     SanctionOrderCreate,
     SanctionOrderUpdate,
 )
-from app.services import designers, sanction_import, sanction_orders
+from app.services import annual_plan, designers, sanction_import, sanction_orders
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import add_date_range, contains, with_id_tiebreak
@@ -524,6 +524,24 @@ async def list_sanction_designers(
         "users": designers.assignable_designers_payload(users),
         "truncated": len(users) >= designers.DIRECTORY_TAKE,
     }
+
+
+@router.get("/planned-workshops")
+async def find_planned_workshops(
+    workshopNo: str = Query(..., min_length=1, max_length=120),
+    officer: Any = Depends(require_sanction_recorder),
+) -> dict[str, Any]:
+    """The annual-plan rows whose number is EXACTLY ``workshopNo`` — the sanction form's picker.
+
+    Owner decision C1 (2026-10-17): one plan row is one workshop, and the officer may pick only an
+    exactly matching row. Matching folds only the differences nobody can see on screen (case,
+    full-width digits, runs of spaces); punctuation is kept. A row already opened or withdrawn comes
+    back with ``pickable: false`` and the reason, so the form says why rather than finding nothing.
+    Literal path, declared before ``/{sanction_id}``.
+    """
+    return await annual_plan.sanction_candidates(
+        workshopNo, scope=await annual_plan.sanction_pick_scope(officer)
+    )
 
 
 @router.get("/pro-forma.xlsx")

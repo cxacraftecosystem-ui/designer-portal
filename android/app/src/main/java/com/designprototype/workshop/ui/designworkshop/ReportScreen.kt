@@ -2758,13 +2758,18 @@ private fun renderCover(
     val setupEntity = schema.stages.firstOrNull { it.key == "WORKSHOP_SETUP" }?.singleton
     val setupValues = draft?.stages?.get("WORKSHOP_SETUP")?.values.orEmpty()
 
+    // A pinned row prints whatever the template's tier — `report_builder._render_cover`.
     val infoRows = setupEntity?.let { entity ->
-        visibleFields(entity, plan.template)
+        entity.liveFields
             .filter { it.reportRole == "COVER_FIELD" }
+            .filter {
+                DwTier.of(it.tier).ordinal <= plan.template.maxTier.ordinal ||
+                    it.key in COVER_PINNED_KEYS
+            }
             .mapNotNull { field ->
                 displayValue(field, setupValues[field.key], refs)
                     .takeIf { it.isNotBlank() }
-                    ?.let { field.label to it }
+                    ?.let { Triple(field.key, field.label, it) }
             }
     }.orEmpty()
 
@@ -2809,8 +2814,8 @@ private fun renderCover(
                 .filter { it.isNotEmpty() },
             logo = logo,
             heroImage = hero,
-            // A cover table longer than this stops being a cover.
-            infoRows = infoRows.take(10),
+            // A cover table longer than this stops being a cover; the sanctioned amount keeps its row.
+            infoRows = coverRows(infoRows),
             footerLines = listOf(submissionLine(plan.settings), generatedOn).filter { it.isNotEmpty() },
         )
     )
@@ -2930,6 +2935,33 @@ private fun mediaIdsOf(value: JsonElement?): List<String> = when (value) {
  * the cap was most of the reason the "Compact summary" template produced the same document as the
  * detailed technical one.
  */
+/** How many stage-1 rows the cover table holds — `report_builder.COVER_INFO_ROWS`. */
+internal const val COVER_INFO_ROWS = 10
+
+/**
+ * Cover fields that always keep a row inside [COVER_INFO_ROWS] when filled (owner decision C1: the
+ * sanctioned amount prints on the cover) — `report_builder.COVER_PINNED_KEYS`.
+ */
+internal val COVER_PINNED_KEYS: Set<String> = setOf("sanctionAmount")
+
+/**
+ * The filled `(key, label, text)` cover rows the cover prints — `report_builder.cover_rows`: the
+ * first rows in declared order, except that a pinned row is never the one dropped.
+ */
+internal fun coverRows(keyed: List<Triple<String, String, String>>): List<Pair<String, String>> {
+    var room = COVER_INFO_ROWS - keyed.count { it.first in COVER_PINNED_KEYS }
+    val printed = mutableListOf<Pair<String, String>>()
+    for ((key, label, text) in keyed) {
+        if (key in COVER_PINNED_KEYS) {
+            printed += label to text
+        } else if (room > 0) {
+            printed += label to text
+            room -= 1
+        }
+    }
+    return printed
+}
+
 private fun visibleFields(entity: EntityDto, template: ReportTemplate): List<FieldDto> =
     entity.liveFields.filter { DwTier.of(it.tier).ordinal <= template.maxTier.ordinal }
 

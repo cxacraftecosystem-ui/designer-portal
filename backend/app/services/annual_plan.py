@@ -93,6 +93,7 @@ that state the rule (this 403, the web route guard, the absent nav entry) cannot
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -104,6 +105,7 @@ from app.services.annual_plan_xlsx import (
     MAX_PLAN_ROWS,
     ParsedAnnualPlan,
     ParsedPlanRow,
+    fold_workshop_no,
     plan_year_label,
 )
 from app.services.design_workshops import named_designer_team, open_design_workshop
@@ -323,7 +325,7 @@ def _iso(value: Any) -> str | None:
     return value.isoformat()
 
 
-def entry_payload(row: Any) -> dict[str, Any]:
+def entry_payload(row: Any, *, sanction: dict[str, Any] | None = None) -> dict[str, Any]:
     """One directory row as the wire sees it.
 
     `workshopKindLabel` COMES FROM THE REGISTRY AND NOT FROM THE CLIENT. `stage_schema.enum_label`
@@ -359,6 +361,9 @@ def entry_payload(row: Any) -> dict[str, Any]:
         "designWorkshopId": row.designWorkshopId,
         "designWorkshopTitle": getattr(getattr(row, "designWorkshop", None), "title", None),
         "promotedAt": _iso(row.promotedAt),
+        # The sanction order that opened this row's workshop, or None (no order, or promoted by
+        # hand). Read by :func:`sanctions_for_rows`; additive, so older clients ignore it.
+        "sanction": sanction,
         "createdAt": _iso(row.createdAt),
         "updatedAt": _iso(row.updatedAt),
     }
@@ -796,6 +801,41 @@ def promotion_title(entry: Any) -> str:
     return title[:220]
 
 
+def plan_stage_one_values(entry: Any) -> dict[str, Any]:
+    """The stage-1 answers a plan row fills — THE PLAN'S OWN FILL RULES, written once.
+
+    Shared by the two doors that turn a plan row into a workshop: :func:`promote_entry` and the
+    sanction register (``services/sanction_orders.create_from_sanction``, through
+    :func:`plan_row_for_sanction`). Every key is a ``workshopSetup.*`` field and is seeded through
+    ``seed_designer_prefill``, which writes the stage entry and the promoted column together. A blank
+    plan cell is left out rather than seeded as a blank.
+
+    DATES GO IN AS ISO STRINGS, not datetimes: the registry's DATE type stores an ISO string.
+    """
+    start = _as_date(entry.plannedStartDate)
+    end = _as_date(entry.plannedEndDate)
+    # NAMED `seeded`, not returned bare: `tests/test_annual_plan_promotion.py` reads this literal's
+    # keys by that name to hold every one of them to a real, promoted workshopSetup field.
+    seeded = {
+        key: value
+        for key, value in (
+            ("workshopCode", entry.workshopNo),
+            ("workshopKind", entry.workshopKind),
+            ("craftName", entry.craftName),
+            ("clusterName", entry.clusterName),
+            ("state", entry.state),
+            ("district", entry.district),
+            ("venue", entry.venue),
+            ("implementingAgency", entry.implementingAgency),
+            ("sponsor", entry.sponsor),
+            ("startDate", start.isoformat() if start else None),
+            ("endDate", end.isoformat() if end else None),
+        )
+        if value
+    }
+    return seeded  # noqa: RET504 - the name is what the promotion test reads
+
+
 async def promote_entry(
     entry: Any,
     *,
@@ -872,9 +912,6 @@ async def promote_entry(
             ),
         )
 
-    start = _as_date(entry.plannedStartDate)
-    end = _as_date(entry.plannedEndDate)
-
     # ── THE SAME VALUES IN TWO PLACES, DELIBERATELY, AND NEITHER IS DERIVED FROM THE OTHER ───────
     #
     # Every key of `seeded` is declared in `stage_schema.PROMOTED_COLUMNS` under `workshopSetup.*`,
@@ -891,23 +928,7 @@ async def promote_entry(
     # the one promoted column `DesignWorkshop` declares NOT NULL and the one `_coerce_promoted`
     # refuses to blank, so it was never at risk — and seeding it would freeze the promoted title
     # into stage 1 where a later PATCH of the workshop title could not reach it.
-    seeded = {
-        key: value
-        for key, value in (
-            ("workshopCode", entry.workshopNo),
-            ("workshopKind", entry.workshopKind),
-            ("craftName", entry.craftName),
-            ("clusterName", entry.clusterName),
-            ("state", entry.state),
-            ("district", entry.district),
-            ("venue", entry.venue),
-            ("implementingAgency", entry.implementingAgency),
-            ("sponsor", entry.sponsor),
-            ("startDate", start.isoformat() if start else None),
-            ("endDate", end.isoformat() if end else None),
-        )
-        if value
-    }
+    seeded = plan_stage_one_values(entry)
 
     # ⚠ `venue`, `implementingAgency`, `sponsor` AND `workshopCode` ARE SEEDED AND ARE **NOT** PASSED
     # AS COLUMNS. They are not in `design_workshops._HEADER_TEXT_COLUMNS`; they belong to
@@ -984,3 +1005,198 @@ async def promote_entry(
             ),
         )
     return record
+
+
+# --------------------------------------------------------------------------------------
+# The sanction register's door (owner decision C1, 2026-10-17)
+# --------------------------------------------------------------------------------------
+#
+# ONE PLAN ROW IS ONE WORKSHOP, and the sanction form is now the second door that can say which.
+# An officer recording an order types the planned workshop's number; this module answers the rows
+# whose number matches EXACTLY (``fold_workshop_no`` folds only the invisible differences — case,
+# full-width digits, runs of spaces — never punctuation), and the order then opens the workshop
+# against the picked row: stage 1 seeded by :func:`plan_stage_one_values`, and the row stamped with
+# the workshop through the same compare-and-set promotion uses. The sanction module calls the
+# functions below and never names this table, which is what keeps
+# ``tests/test_annual_plan_is_not_a_workshop.py``'s census honest.
+
+#: Why a matched row cannot be picked. Server-written, shown verbatim on the officer's form.
+SANCTION_PICK_PROMOTED = (
+    "Already opened as a workshop. Each planned workshop takes one sanction order."
+)
+SANCTION_PICK_WITHDRAWN = "Withdrawn from the plan. Ask the Ministry Admin to reinstate it first."
+SANCTION_PICK_UNKNOWN = (
+    "That planned workshop is not in the annual plan. Look it up by its number again."
+)
+
+#: How many exact matches one lookup answers. A number is unique within a plan year, so this only
+#: bites if the same reference was reused across many years; the list says so when it does.
+SANCTION_CANDIDATE_TAKE = 20
+
+
+def _pick_refusal(row: Any) -> str | None:
+    standing = standing_of(row)
+    if standing == "PROMOTED":
+        return SANCTION_PICK_PROMOTED
+    if standing == "WITHDRAWN":
+        return SANCTION_PICK_WITHDRAWN
+    return None
+
+
+def sanction_candidate_payload(row: Any) -> dict[str, Any]:
+    """One plan row as the sanction form's picker sees it — the facts that identify it, no more."""
+    refusal = _pick_refusal(row)
+    return {
+        "id": row.id,
+        "planYear": row.planYear,
+        "planYearLabel": plan_year_label(row.planYear),
+        "workshopNo": row.workshopNo,
+        "plannedTitle": row.plannedTitle,
+        "workshopKindLabel": (
+            enum_label("WORKSHOP_KIND", row.workshopKind) if row.workshopKind else None
+        ),
+        "craftName": row.craftName,
+        "clusterName": row.clusterName,
+        "state": row.state,
+        "district": row.district,
+        "plannedStartDate": _iso(row.plannedStartDate),
+        "plannedEndDate": _iso(row.plannedEndDate),
+        "standing": standing_of(row),
+        "pickable": refusal is None,
+        "reason": refusal,
+    }
+
+
+async def sanction_pick_scope(user: Any) -> list[str] | None:
+    """The states whose plan rows this sanction recorder may find and claim; ``None`` is all.
+
+    A Regional Director answers for the states a Ministry Admin assigned them, and the plan's own
+    routes already narrow them to those rows (:func:`plan_scope`) — the sanction picker must not
+    be a second door onto the rest of the estate. Everybody else who may record an order (the
+    Assistant Director and the managers) finds by exact number across the whole plan: the picker
+    shows nothing to browse, only the row whose number the officer already holds on the order.
+    """
+    if role_value(user) == REGIONAL_PLAN_ROLE:
+        return await plan_scope(user)
+    return None
+
+
+async def sanction_candidates(
+    workshop_no: str, *, scope: list[str] | None = None
+) -> dict[str, Any]:
+    """Every plan row whose number is EXACTLY this one, newest plan year first.
+
+    ``scope`` narrows to those states (:func:`sanction_pick_scope`); a row outside it is simply not
+    found, so a director cannot learn that another state planned a workshop under that number.
+    """
+    key = fold_workshop_no(workshop_no)
+    if not key or scope == []:
+        return {"items": [], "truncated": False}
+    where: dict[str, Any] = {"workshopNoKey": key}
+    if scope is not None:
+        where["state"] = {"in": list(scope)}
+    rows = await db.annualplanentry.find_many(
+        where=where,
+        order=[{"planYear": "desc"}, {"id": "asc"}],
+        take=SANCTION_CANDIDATE_TAKE + 1,
+    )
+    return {
+        "items": [sanction_candidate_payload(row) for row in rows[:SANCTION_CANDIDATE_TAKE]],
+        "truncated": len(rows) > SANCTION_CANDIDATE_TAKE,
+    }
+
+
+async def plan_row_for_sanction(entry_id: str, *, scope: list[str] | None = None) -> Any:
+    """The picked row, or the refusal an officer can act on. Asked BEFORE the order's transaction.
+
+    A row outside ``scope`` answers exactly as a row that does not exist, as the plan routes do.
+    """
+    row = await db.annualplanentry.find_unique(where={"id": entry_id})
+    if row is None or not in_scope(row, scope):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=SANCTION_PICK_UNKNOWN
+        )
+    refusal = _pick_refusal(row)
+    if refusal is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"'{row.workshopNo}': {refusal}"
+        )
+    return row
+
+
+async def claim_for_sanction(
+    entry_id: str, workshop_id: str, *, actor_id: str | None, client: Any
+) -> None:
+    """Stamp the plan row with the workshop the order opened — INSIDE the order's transaction.
+
+    The same compare-and-set :func:`promote_entry` uses (``designWorkshopId: None`` and
+    ``withdrawnAt: None`` in the WHERE), so two officers racing for one row, or a promotion racing
+    an order, leave exactly one workshop: the loser's write counts zero rows, this raises 409, and
+    the whole order rolls back with it — no orphan workshop, no admitted account, no register row.
+    """
+    stamped = await client.annualplanentry.update_many(
+        where={"id": entry_id, "designWorkshopId": None, "withdrawnAt": None},
+        data={
+            "designWorkshopId": workshop_id,
+            "promotedAt": datetime.now(UTC),
+            "promotedById": actor_id,
+            "updatedById": actor_id,
+        },
+    )
+    if not stamped:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "That planned workshop was opened a moment ago by somebody else, so this order "
+                "was not recorded. Look the number up again."
+            ),
+        )
+
+
+async def planned_rows_for_workshops(workshop_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """``{workshopId: planned-row summary}`` for the sanction register's rows. One query."""
+    ids = sorted({wid for wid in workshop_ids if wid})
+    if not ids:
+        return {}
+    rows = await db.annualplanentry.find_many(where={"designWorkshopId": {"in": ids}})
+    return {
+        str(row.designWorkshopId): {
+            "id": row.id,
+            "workshopNo": row.workshopNo,
+            "planYear": row.planYear,
+            "planYearLabel": plan_year_label(row.planYear),
+            "plannedTitle": row.plannedTitle,
+        }
+        for row in rows
+    }
+
+
+async def sanctions_for_rows(rows: list[Any]) -> dict[str, dict[str, Any]]:
+    """``{planRowId: the sanction that opened its workshop}`` — the plan shows its order. One query.
+
+    Keyed through the promotion pointer: a row whose workshop was opened by a sanction order shows
+    that order; a row promoted by hand shows none. The amount is a decimal STRING, never a float.
+    """
+    by_workshop = {str(row.designWorkshopId): row.id for row in rows if row.designWorkshopId}
+    if not by_workshop:
+        return {}
+    orders = await db.sanctionorder.find_many(
+        where={"designWorkshopId": {"in": list(by_workshop)}}
+    )
+    out: dict[str, dict[str, Any]] = {}
+    for order in orders:
+        entry_id = by_workshop.get(str(order.designWorkshopId))
+        if entry_id is None:
+            continue
+        order_date = getattr(order, "sanctionOrderDate", None)
+        out[entry_id] = {
+            "id": order.id,
+            "sanctionOrderNo": order.sanctionOrderNo,
+            "sanctionOrderDate": (
+                order_date.date().isoformat() if isinstance(order_date, datetime) else None
+            ),
+            # Fixed to two places: the column is NUMERIC(14,2) and the driver may hand back
+            # `Decimal('450000')`, which would print as a different figure from the register's.
+            "sanctionAmount": f"{Decimal(str(order.sanctionAmount)):.2f}",
+        }
+    return out

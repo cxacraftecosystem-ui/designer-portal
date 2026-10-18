@@ -97,12 +97,14 @@ import {
   type PeopleKind,
   type RegisterKind,
   type RegisterPeoplePage,
+  type RegisterAttention,
   type RegisterPerson,
   type RegisterSummary
 } from "@/lib/ministryDashboard";
 import { isUnreachable } from "@/lib/offline";
-import { canApproveDesignWorkshops, canSeeMinistryDashboard, roleLabel } from "@/lib/permissions";
+import { canApproveDesignWorkshops, canReadWorkshopAnalytics, canSeeMinistryDashboard, roleLabel } from "@/lib/permissions";
 import { registerRowHref } from "@/lib/reviewAids";
+import { AttentionCards, MinistryAnalyticsPanel, StageDataExportPanel, StateBreakdown } from "./MinistryInsights";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 20;
@@ -156,6 +158,9 @@ export default function MinistryDashboardPage() {
 
   const [kind, setKind] = useState<RegisterKind>(DEFAULT_REGISTER_KIND);
   const [standing, setStanding] = useState("");
+  /** C14: the attention card and the state row the reader pressed, if any. Design register only. */
+  const [attention, setAttention] = useState<RegisterAttention | "">("");
+  const [stateFilter, setStateFilter] = useState("");
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
@@ -281,6 +286,20 @@ export default function MinistryDashboardPage() {
     // word the new list has never heard of. The server ignores an unrecognised narrowing rather than
     // refusing it, so carrying it would silently show "Everything" under a button reading "Ongoing".
     setStanding("");
+    setAttention("");
+    setStateFilter("");
+    setPage(1);
+  }, []);
+
+  const chooseAttention = useCallback((next: RegisterAttention | "") => {
+    setKind("design");
+    setAttention(next);
+    setPage(1);
+  }, []);
+
+  const chooseState = useCallback((next: string) => {
+    setKind("design");
+    setStateFilter(next);
     setPage(1);
   }, []);
 
@@ -300,7 +319,14 @@ export default function MinistryDashboardPage() {
     const requested = kind;
     const request =
       requested === "design"
-        ? listRegisterDesignWorkshops({ page, pageSize: PAGE_SIZE, search: applied || undefined, standing: standing || undefined })
+        ? listRegisterDesignWorkshops({
+            page,
+            pageSize: PAGE_SIZE,
+            search: applied || undefined,
+            standing: standing || undefined,
+            attention: attention || undefined,
+            state: stateFilter || undefined
+          })
         : listRegisterOtherWorkshops({ page, pageSize: PAGE_SIZE, search: applied || undefined, standing: standing || undefined });
 
     inFlight.current = true;
@@ -344,7 +370,7 @@ export default function MinistryDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [allowed, kind, page, applied, standing, loadToken]);
+  }, [allowed, kind, page, applied, standing, attention, stateFilter, loadToken]);
 
   /* ── The summary, re-read on the same token so the tiles and the table cannot disagree ─────── */
   useEffect(() => {
@@ -615,6 +641,15 @@ export default function MinistryDashboardPage() {
         </section>
       ) : null}
 
+      {/* ── C14: what needs the ministry's attention, where, and what was sanctioned ─────────── */}
+      {summary ? (
+        <>
+          <AttentionCards summary={summary.designWorkshops} selected={attention} onSelect={chooseAttention} />
+          <StateBreakdown rows={summary.designWorkshops.byState} selected={stateFilter} onSelect={chooseState} />
+        </>
+      ) : null}
+      {canReadWorkshopAnalytics(user) ? <MinistryAnalyticsPanel /> : null}
+
       {/* ── The two switches ────────────────────────────────────────────────────────────────── */}
       <section aria-labelledby="ministry-register-filters" className="mb-4 grid gap-4">
         <h2 id="ministry-register-filters" className="sr-only">
@@ -809,6 +844,18 @@ export default function MinistryDashboardPage() {
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
           {downloadError}
         </div>
+      ) : null}
+
+      {/* C15: stage data for the design workshops this list shows, built in the background. */}
+      {kind === "design" ? (
+        <StageDataExportPanel
+          filters={{
+            search: applied || undefined,
+            standing: standing || undefined,
+            attention: attention || undefined,
+            state: stateFilter || undefined
+          }}
+        />
       ) : null}
 
       {/* ── The register ────────────────────────────────────────────────────────────────────── */}

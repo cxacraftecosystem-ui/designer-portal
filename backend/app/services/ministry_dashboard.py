@@ -1216,3 +1216,106 @@ async def empanelled_designer_accounts() -> tuple[list[Any], bool]:
         search=None, include_suspended=False, include_admins=False
     )
     return list(users), len(users) >= designers.DIRECTORY_TAKE
+
+
+# --------------------------------------------------------------------------------------
+# What needs the ministry's attention (owner decision C14, 2026-10-17)
+# --------------------------------------------------------------------------------------
+#
+# FOUR CLICKABLE CARDS, each a server-side narrowing of the same list, counted over the caller's
+# whole scope and never over a page. A card's count and the list it opens are the same ``where``,
+# which is what keeps "3 overdue" from opening onto two rows.
+
+#: The attention words the list takes as ``attention=``, in the order the cards are drawn.
+ATTENTION_KEYS: tuple[str, ...] = ("awaitingApproval", "returned", "overdue", "setupIncomplete")
+
+#: The statuses a workshop is still being worked in — "registered" and "ongoing". Overdue and
+#: setup-incomplete only mean something for these: a completed workshop is neither.
+OPEN_STATUSES: tuple[str, ...] = (*STANDING_GROUPS["registered"], *STANDING_GROUPS["ongoing"])
+
+#: How many open workshops one request scores for "setup incomplete". Stage-1 completeness lives in
+#: stage JSON, so it is scored rather than queried; past the cap the count says it is a floor.
+SETUP_SCAN_CAP = 2000
+
+
+def _today_midnight() -> Any:
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    return datetime(now.year, now.month, now.day, tzinfo=UTC)
+
+
+def attention_clause(key: str | None) -> dict[str, Any] | None:
+    """The ``where`` narrowing for an attention word that a query can express, else ``None``.
+
+    ``setupIncomplete`` is not one of them — it is scored — and :func:`setup_incomplete_ids` answers
+    it. An unrecognised word is ignored, like every other narrowing on this router.
+    """
+    clean = (key or "").strip()
+    if clean == "awaitingApproval":
+        return {"status": "SUBMITTED"}
+    if clean == "returned":
+        return {"status": "NEEDS_REVISION"}
+    if clean == "overdue":
+        return {"endDate": {"lt": _today_midnight()}, "status": {"in": list(OPEN_STATUSES)}}
+    return None
+
+
+async def setup_incomplete_ids(base: dict[str, Any]) -> tuple[list[str], bool]:
+    """Open workshops in ``base`` whose stage 1 (Workshop setup) is not complete, and a cap flag.
+
+    Two queries whatever the size: the open workshops' ids, then their stage-1 rows. Scored by the
+    one scorer, so this agrees with the readiness screens and the sanction register's badge.
+    """
+    from app.services.stage_schema import stage, stage_completeness
+
+    where = {"AND": [base, {"status": {"in": list(OPEN_STATUSES)}}]}
+    records = await db.designworkshop.find_many(
+        where=where, order={"id": "asc"}, take=SETUP_SCAN_CAP + 1
+    )
+    capped = len(records) > SETUP_SCAN_CAP
+    ids = [str(record.id) for record in records[:SETUP_SCAN_CAP]]
+    if not ids:
+        return [], capped
+    rows = await db.dwstageentry.find_many(
+        where={"designWorkshopId": {"in": ids}, "stageKey": "WORKSHOP_SETUP", "deletedAt": None},
+        order={"ordinal": "asc"},
+    )
+    singletons: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if row.designWorkshopId in singletons or row.entityKey != "workshopSetup":
+            continue
+        singletons[row.designWorkshopId] = dict(row.data or {})
+    spec = stage("WORKSHOP_SETUP")
+    incomplete = [
+        workshop_id
+        for workshop_id in ids
+        if not stage_completeness(spec, singletons.get(workshop_id) or {}, {}).is_complete
+    ]
+    return incomplete, capped
+
+
+async def state_breakdown(base: dict[str, Any]) -> list[dict[str, Any]]:
+    """Workshops per state over the caller's scope, most first. ``state: None`` is "not recorded"."""
+    groups = await db.designworkshop.group_by(by=["state"], where=base, count=True)
+    out = [
+        {
+            "state": group.get("state") or None,
+            "count": _group_count(group),
+        }
+        for group in groups
+    ]
+    return sorted(out, key=lambda row: (-row["count"], row["state"] is None, row["state"] or ""))
+
+
+async def sanctioned_total(base: dict[str, Any]) -> dict[str, Any]:
+    """The sanctioned rupees on the orders that opened the workshops in scope.
+
+    Summed as ``Decimal`` and answered as a decimal STRING — never a float, the sanction register's
+    rule. Orders whose workshop was deleted are not counted, because the scope excludes it.
+    """
+    from decimal import Decimal
+
+    orders = await db.sanctionorder.find_many(where={"designWorkshop": {"is": base}})
+    total = sum((Decimal(str(order.sanctionAmount)) for order in orders), Decimal(0))
+    return {"orders": len(orders), "amount": f"{total:.2f}"}

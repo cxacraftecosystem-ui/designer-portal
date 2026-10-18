@@ -1026,11 +1026,22 @@ async def upload_artisan_list(
     **6. ``del content`` before returning.** The bytes carry Aadhaar numbers and nothing needs them
     after the parse. The workbook itself is never stored — ``DwArtisanImport`` keeps the filename.
     """
-    import asyncio
-
     workshop = await _workshop_for_assignment_or_404(workshop_id)
     await posts.refuse_a_holders_write(workshop_id, current_user)
+    return await run_artisan_import(workshop, file, request, current_user)
 
+
+async def run_artisan_import(
+    workshop: Any, file: UploadFile, request: Request | None, current_user: Any
+) -> dict[str, Any]:
+    """Steps 1-6 of :func:`upload_artisan_list`, for a workshop the caller has already been let
+    into. SHARED WITH THE DESIGNER'S DOOR (owner decision C11, 2026-10-17,
+    ``api/routes/design_workshop_roster.py``): one pipeline, so the venue check, the Details-sheet
+    guard, the delete-after-reading and the ``DwArtisanImport`` ledger cannot differ between who
+    uploads."""
+    import asyncio
+
+    workshop_id = str(workshop.id)
     venue_fix = await _venue_fix(workshop_id)
     if venue_fix is None:
         raise HTTPException(
@@ -1162,6 +1173,11 @@ async def list_artisan_imports(
     two places is a mask that can be forgotten in one.
     """
     await _workshop_for_assignment_or_404(workshop_id)
+    return await artisan_import_history(workshop_id)
+
+
+async def artisan_import_history(workshop_id: str) -> dict[str, Any]:
+    """The ledger read, shared with the designer's door. See :func:`list_artisan_imports`."""
     rows = await db.dwartisanimport.find_many(
         where={"designWorkshopId": workshop_id},
         include={"uploadedBy": True},

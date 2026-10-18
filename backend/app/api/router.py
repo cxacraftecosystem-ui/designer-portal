@@ -18,8 +18,10 @@ from app.api.routes import (
     design_ratings,
     design_workshop_access,
     design_workshop_approvals,
+    design_workshop_copy,
     design_workshop_inspections,
     design_workshop_oversight,
+    design_workshop_roster,
     design_workshop_viewers,
     design_workshops,
     designers,
@@ -29,6 +31,7 @@ from app.api.routes import (
     map_points,
     media,
     ministry_dashboard,
+    ministry_exports,
     notifications,
     preferences,
     processes,
@@ -114,6 +117,11 @@ api_router.include_router(questionnaire_forms.router)
 # FastAPI matches in registration order, so the literal path has to be mounted first.
 api_router.include_router(design_workshop_viewers.router)
 api_router.include_router(design_workshops.router)
+# The designer's own artisan-list import (C11), /design-workshops/{id}/roster/*. Every path is two
+# segments under the workshop id, so GET /{workshop_id} above cannot swallow it.
+api_router.include_router(design_workshop_roster.router)
+# C9: what a designer may start a stage from. Three segments under the workshop id.
+api_router.include_router(design_workshop_copy.router)
 # The peer/pool rating ledger, /api/design-ratings. ITS OWN PREFIX, and deliberately not nested
 # under /design-workshops, for two reasons that both point the same way. The prefix above is already
 # shared by two routers and carries GET /{workshop_id}, which swallows any literal path mounted
@@ -202,6 +210,9 @@ api_router.include_router(sanction_orders.router)
 # /design-workshop-oversight, and a second door onto one workshop would be a second place to keep
 # the read-only promise.
 api_router.include_router(ministry_dashboard.router)
+# The background stage-data export (C15). Its own module: the register above is read-only by
+# construction and its tests sweep for that.
+api_router.include_router(ministry_exports.router)
 api_router.include_router(dashboard.router)
 # The cross-workshop comparison, /api/analytics/design-workshops. On its own prefix rather than
 # under /design-workshops, which is already shared by two routers and carries a GET /{workshop_id}

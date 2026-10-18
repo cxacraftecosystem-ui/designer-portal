@@ -101,16 +101,19 @@ import {
   reminderSentence,
   revokeSanctionCredentialLink,
   sanctionMessageFor,
+  SANCTION_SEED_FAILED_NOTE,
   type SanctionImportPreview,
   type SanctionImportReport as ImportReport,
   type SanctionOrder,
   type SanctionOrderCredentialLink,
-  type SanctionOrderPage
+  type SanctionOrderPage,
+  type PlannedWorkshopCandidate
 } from "@/lib/sanctionOrders";
 
 import { SanctionImportReport } from "./SanctionImportReport";
 import { SanctionImportReview } from "./SanctionImportReview";
 import { UploadSanctionDialog } from "./UploadSanctionDialog";
+import { PlannedWorkshopPicker } from "./PlannedWorkshopPicker";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 const PAGE_SIZE = 25;
@@ -257,6 +260,8 @@ export default function SanctionOrdersPage() {
    * is why the page keeps its own copy rather than reading the control's.
    */
   const [seen, setSeen] = useState<Record<string, { name: string; email: string }>>({});
+  /** The annual-plan row this order is for, if the officer looked one up (owner decision C1). */
+  const [planned, setPlanned] = useState<PlannedWorkshopCandidate | null>(null);
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [preview, setPreview] = useState<SanctionImportPreview | null>(null);
@@ -413,11 +418,13 @@ export default function SanctionOrdersPage() {
         designerName: first!.name || first!.email,
         designerEmail: first!.email,
         coDesigners: rest.map((person) => ({ name: person.name || person.email, email: person.email })),
-        notes: String(form.get("notes") ?? "").trim() || null
+        notes: String(form.get("notes") ?? "").trim() || null,
+        ...(planned ? { annualPlanEntryId: planned.id } : {})
       });
       formRef.current?.reset();
       setChosen([]);
       setLead("");
+      setPlanned(null);
       /*
         ONE PANEL PER ACCOUNT THIS ORDER MINTED, AND NOT ONE PER ORDER.
 
@@ -444,15 +451,19 @@ export default function SanctionOrdersPage() {
         setCopied(null);
       }
       const problems = links.map((entry) => entry.problem).filter(Boolean) as string[];
+      // Said first: the plan row is spent either way, so the officer has to know now.
+      const seedNote = created.reportCopySeeded === false ? `${SANCTION_SEED_FAILED_NOTE} ` : "";
       if (problems.length > 0) {
-        setLinkNotice(problems.join(" "));
+        setLinkNotice(seedNote + problems.join(" "));
       } else if (emailed.length > 0) {
-        setLinkNotice(`Sign-in link e-mailed to ${emailed.map((entry) => entry.signInEmail).join(", ")}.`);
+        setLinkNotice(`${seedNote}Sign-in link e-mailed to ${emailed.map((entry) => entry.signInEmail).join(", ")}.`);
       } else if (issuedNow.length === 0) {
         const names = created.sanctionOrder.designers.map((designer) => designer.designerName);
         setLinkNotice(
-          `${names.join(", ") || "That designer"} already ${names.length === 1 ? "has an account" : "have accounts"}; the workshop is on their list.`
+          `${seedNote}${names.join(", ") || "That designer"} already ${names.length === 1 ? "has an account" : "have accounts"}; the workshop is on their list.`
         );
+      } else if (seedNote) {
+        setLinkNotice(seedNote.trim());
       }
       setPage(1);
       await refresh();
@@ -774,6 +785,9 @@ export default function SanctionOrdersPage() {
           argued at the call site in `submit`.
         */}
         <div className="md:col-span-6">
+          <PlannedWorkshopPicker picked={planned} onPick={setPlanned} disabled={saving} />
+        </div>
+        <div className="md:col-span-6">
           <WorkshopDesignerPicker
             values={chosen}
             onChange={setChosen}
@@ -1065,6 +1079,12 @@ export default function SanctionOrdersPage() {
                 ],
                 ["Name on the report", viewing.designers.length > 1 ? viewing.designers[0]!.designerName : null],
                 ["Workshop", `${viewing.workshopTitle} · ${viewing.workshopStatus}`],
+                [
+                  "Planned workshop",
+                  viewing.plannedWorkshop
+                    ? `${viewing.plannedWorkshop.workshopNo} · ${viewing.plannedWorkshop.planYearLabel}`
+                    : null
+                ],
                 ["Readiness", readinessSentence(viewing)],
                 [
                   "Still needed on Workshop Setup",

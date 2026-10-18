@@ -136,6 +136,8 @@ export type SanctionOrder = {
   sheetRow: number | null;
   /** When "Remind designers" last queued a reminder for this order, or absent/null for never. */
   lastRemindedAt?: string | null;
+  /** The annual-plan row this order opened, when the officer picked one (owner decision C1). */
+  plannedWorkshop?: PlannedWorkshopRef | null;
 };
 
 /** One outbox message as the register shows it (2026-10-18). QUEUED covers retries in progress. */
@@ -152,6 +154,42 @@ export function linkEmailWords(status: SanctionEmailStatus | null | undefined): 
   if (status.status === "SENT") return "Sign-in e-mail sent";
   if (status.status === "FAILED") return "Sign-in e-mail failed";
   return "Sign-in e-mail sending";
+}
+
+/** The planned row an order names — enough to say which line of the annual plan it was. */
+export type PlannedWorkshopRef = {
+  id: string;
+  workshopNo: string;
+  planYear: number;
+  planYearLabel: string;
+  plannedTitle: string | null;
+};
+
+/** One exact match from `GET /sanction-orders/planned-workshops`. */
+export type PlannedWorkshopCandidate = {
+  id: string;
+  planYear: number;
+  planYearLabel: string;
+  workshopNo: string;
+  plannedTitle: string | null;
+  workshopKindLabel: string | null;
+  craftName: string | null;
+  clusterName: string | null;
+  state: string | null;
+  district: string | null;
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
+  standing: "PLANNED" | "PROMOTED" | "WITHDRAWN" | string;
+  /** False for a row already opened or withdrawn; `reason` is the server's sentence. */
+  pickable: boolean;
+  reason: string | null;
+};
+
+/** The plan rows whose number is EXACTLY `workshopNo` — the server folds only invisible differences. */
+export async function findPlannedWorkshops(workshopNo: string) {
+  return apiFetch<{ items: PlannedWorkshopCandidate[]; truncated: boolean }>(
+    `/sanction-orders/planned-workshops${buildQuery({ workshopNo })}`
+  );
 }
 
 /**
@@ -235,7 +273,16 @@ export type SanctionOrderCreated = {
   credentialLinks: SanctionOrderCredential[];
   /** True when the links were e-mailed rather than handed to the officer (2026-10-18). */
   linksEmailed?: boolean;
+  /**
+   * False when Workshop Setup could not be filled from the order (and its plan row) after the
+   * commit. Absent on servers that predate it, which reads as filled.
+   */
+  reportCopySeeded?: boolean;
 };
+
+/** The sentence the register shows when stage 1 was not filled from the order. */
+export const SANCTION_SEED_FAILED_NOTE =
+  "Workshop Setup was not filled from this order. Ask the designer to enter the sanction details in stage 1.";
 
 export type SanctionOrderPage = {
   items: SanctionOrder[];
@@ -418,6 +465,8 @@ export async function recordSanctionOrder(body: {
    * a client that sends it twice is a client whose author believed something untrue about it.
    */
   coDesigners?: { name: string; email: string }[];
+  /** The picked planned workshop. Omitted when none was picked — the body every client sent before. */
+  annualPlanEntryId?: string;
 }) {
   return apiFetch<SanctionOrderCreated>("/sanction-orders", {
     method: "POST",
