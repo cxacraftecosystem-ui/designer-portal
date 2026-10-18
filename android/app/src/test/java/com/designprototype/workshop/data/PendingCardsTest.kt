@@ -67,4 +67,20 @@ class PendingCardsTest {
         val remote = resolvePendingCards(setOf(pending)) { CardResolution.Remote }
         assertTrue(remote is PendingCardOutcome.Held)
     }
+
+    @Test
+    fun `a queued workshop body links its pending card and keeps every other byte`() {
+        val body = """{"title":"Block printing","artisanIds":["cart0000000000000000001","$pending"],"place":"Bagru"}"""
+        assertEquals(setOf(pending), pendingCardsInPayload(body))
+        assertEquals(
+            """{"title":"Block printing","artisanIds":["cart0000000000000000001","cart0000000000000000042"],"place":"Bagru"}""",
+            substitutePendingCardsInPayload(body, mapOf(pending to "cart0000000000000000042")),
+        )
+    }
+
+    @Test
+    fun `a body with no pending card, or one that will not parse, has nothing to link`() {
+        assertEquals(emptySet<String>(), pendingCardsInPayload("""{"artisanIds":["cart0000000000000000001"]}"""))
+        assertEquals(emptySet<String>(), pendingCardsInPayload("not json"))
+    }
 }

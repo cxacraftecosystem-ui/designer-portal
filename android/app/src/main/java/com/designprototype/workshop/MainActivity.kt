@@ -73,6 +73,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.InputChip
 import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -121,6 +122,9 @@ import com.designprototype.workshop.ui.writeAdminView
 import com.designprototype.workshop.ui.bannerAlreadySays
 import com.designprototype.workshop.ui.bannerDrawn
 import com.designprototype.workshop.ui.AppMessageTone
+import com.designprototype.workshop.data.ArtisanCardCode
+import com.designprototype.workshop.data.PendingCardOutcome
+import com.designprototype.workshop.data.resolvePendingCards
 import com.designprototype.workshop.data.serverDidNotAnswer
 import com.designprototype.workshop.data.sessionExpired
 import com.designprototype.workshop.data.shouldReprobeServer
@@ -9524,6 +9528,8 @@ private fun ArtisanMultiSelectField(
     var scanning by remember { mutableStateOf(false) }
     var scanNote by remember { mutableStateOf<String?>(null) }
     val cardsOn = repository != null && artisans.any { it.card != null }
+    // Cards scanned with no signal, kept until the save links them (data/PendingCards.kt).
+    val pendingCards = selectedIds.filter { ArtisanCardCode.isPending(it) }
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("$label (${selectedIds.size} selected)", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
@@ -9541,7 +9547,22 @@ private fun ArtisanMultiSelectField(
                         artisanId in selectedIds -> "$name is already selected."
                         else -> { onToggle(artisanId); "$name selected." }
                     }
+                },
+                acceptPending = true,
+                onPending = { value ->
+                    scanning = false
+                    scanNote = null
+                    if (value !in selectedIds) onToggle(value)
                 }
+            )
+        }
+        pendingCards.forEach { value ->
+            InputChip(
+                selected = true,
+                onClick = { onToggle(value) },
+                label = { Text(ArtisanCardCode.pendingLabel(value), fontSize = 12.sp) },
+                trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "Remove this card") },
+                modifier = Modifier.heightIn(min = 48.dp)
             )
         }
         if (artisans.isEmpty()) {
@@ -12226,6 +12247,23 @@ private fun WorkshopForm(
             val originalArtisans = editing?.artisans?.map { it.artisanId }?.toSet() ?: emptySet()
             val originalCrafts = editing?.crafts?.map { it.craftId }?.toSet() ?: emptySet()
             // On edit, only send the relation when it changed (the backend replaces & re-checks it).
+            // A CARD SCANNED WITH NO SIGNAL (`card:<shortCode>`, data/PendingCards.kt) links now if the
+            // server answers. Still no signal: the workshop goes to the outbox with the card in it,
+            // and the outbox pass links it before sending. A card the server can't match stops here.
+            var queueForCards = false
+            val cardValues = selectedArtisans.filter { ArtisanCardCode.isPending(it) }.toSet()
+            if (retry == null && cardValues.isNotEmpty()) {
+                when (val linked = resolvePendingCards(cardValues) { input -> repository.resolveArtisanCard(input, emptyList()) }) {
+                    is PendingCardOutcome.Resolved -> selectedArtisans = selectedArtisans.map { linked.ids[it] ?: it }.toSet()
+                    PendingCardOutcome.Offline -> queueForCards = true
+                    is PendingCardOutcome.Held -> {
+                        onError(linked.message)
+                        saving = false
+                        return@launch
+                    }
+                }
+            }
+            val mustQueue = forceOffline || queueForCards
             val artisanIdsParam = if (!isEdit || selectedArtisans != originalArtisans) selectedArtisans.toList() else null
             val craftIdsParam = if (!isEdit || selectedCrafts != originalCrafts) selectedCrafts.toList() else null
             val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
@@ -12248,7 +12286,7 @@ private fun WorkshopForm(
                 trySaveOffline(repository, context, isEdit, "workshop", offlineFormJson.encodeToString(body),
                     title.trim(), media, title.trim(), "Field media for ${title.trim()}",
                     editingId = editing?.id,
-                    force = forceOffline,
+                    force = mustQueue,
                     idempotencyKey = createKey,
                     base = recordBaseJson(WorkshopDetailDto.serializer(), editing))
             }.getOrNull()
@@ -12259,7 +12297,7 @@ private fun WorkshopForm(
                 saving = false
                 return@launch
             }
-            if (forceOffline) {
+            if (mustQueue) {
                 onError("Couldn't save this workshop. It's still in the form.")
                 saving = false
                 return@launch

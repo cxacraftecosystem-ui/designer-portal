@@ -363,9 +363,10 @@ as a version 3 symbol (`DwQrLiveFrameTest` round-trips one through the reference
 Every reader tries a card first and DPW1 second, so old printed DPW1:A cards still open their artisan;
 nothing prints them now. A card is matched against the artisan register this phone cached (each
 artisan's own code, and the Field Repository code its link holds) before the server is asked, so it
-resolves with no signal. Offline and unmatched, a stage's artisan box keeps `card:<shortCode>` and the
-workshop sync resolves it before the stage is sent (`data/PendingCards.kt`); a card the server cannot
-match holds the stage with the server's sentence. The search header's QR button, the workshop form's
+resolves with no signal. Offline and unmatched, a stage's artisan box and the workshop form's
+linked-artisan picker keep `card:<shortCode>`, and the workshop sync or the outbox pass resolves it
+before the stage or the queued workshop is sent (`data/PendingCards.kt`); a card the server cannot
+match holds the stage, or the outbox entry in the tray, with the server's sentence. The search header's QR button, the workshop form's
 linked-artisan picker and the stage's artisan reference all open `ui/ArtisanCardScanSheet.kt`. A
 roster row whose artisan has no card yet prints "Sync this artisan first." instead of a code.
 

@@ -1,5 +1,6 @@
 package com.designprototype.workshop.data
 
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -8,9 +9,11 @@ import kotlinx.serialization.json.JsonPrimitive
 /**
  * "Links on sync": an artisan card scanned into a stage's artisan box with no signal and no match in
  * the cached register leaves `card:<shortCode>` in the row (`ArtisanCardCode.pendingValue`).
- * Before the stage is sent, `WorkshopSync.pushStages` resolves every such value with the server and
- * writes the artisan's id into the draft in its place. A card the server cannot match holds the
- * stage back with the server's sentence; nothing is dropped and nothing half-linked is sent.
+ * The workshop form's artisan picker keeps the same value in a queued entry's body. Before the
+ * stage or the entry is sent, `WorkshopSync.pushStages` and `WorkshopRepository`'s outbox pass
+ * resolve every such value with the server and write the artisan's id in its place. A card the
+ * server cannot match holds the stage or entry with the server's sentence; nothing is dropped and
+ * nothing half-linked is sent.
  *
  * Pure apart from [resolvePendingCards]'s injected lookup, so `PendingCardsTest` drives it directly.
  */
@@ -28,6 +31,14 @@ fun substitutePendingCards(element: JsonElement, ids: Map<String, String>): Json
     is JsonArray -> JsonArray(element.map { substitutePendingCards(it, ids) })
     is JsonObject -> JsonObject(element.mapValues { (_, value) -> substitutePendingCards(value, ids) })
 }
+
+/** Every pending card value in a queued entry's body (`PendingEntry.payloadJson`); none for a body that won't parse. */
+fun pendingCardsInPayload(payloadJson: String): Set<String> =
+    runCatching { pendingCardsIn(Json.parseToJsonElement(payloadJson)) }.getOrDefault(emptySet())
+
+/** [payloadJson] with each pending value in [ids] replaced by its artisan id; key order is kept. */
+fun substitutePendingCardsInPayload(payloadJson: String, ids: Map<String, String>): String =
+    substitutePendingCards(Json.parseToJsonElement(payloadJson), ids).toString()
 
 sealed interface PendingCardOutcome {
     /** Every card resolved: pending value → artisan id. */

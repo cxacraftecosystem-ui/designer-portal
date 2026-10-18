@@ -7854,7 +7854,8 @@ class WorkshopRepository(
             // one account and skip the rest. See [PendingEntry.ownerUserId].
             val signedIn = cachedUser()?.id
             var synced = 0
-            for (queued in queue) {
+            for (listed in queue) {
+                var queued = listed
                 /*
                   AN ENTRY ANOTHER ACCOUNT CAPTURED IS NOT THIS ACCOUNT'S TO SEND — see
                   [PendingEntry.ownerUserId], and `WorkshopSyncEngine.syncOneWorkshop` for the
@@ -7918,6 +7919,30 @@ class WorkshopRepository(
                 // (`frontend/lib/offline.ts`), because it is the identical defect: a record refused
                 // for a key the API had not learned yet stayed refused after the API learned it.
                 if (blocksRetry(queued.failure != null, queued.skewRun)) continue
+                // AN ARTISAN CARD SCANNED WITH NO SIGNAL (data/PendingCards.kt): the picker kept
+                // `card:<shortCode>`, and it links now. Every pending card in the body is resolved
+                // before anything is sent and the artisan ids are written into the entry; a card the
+                // server cannot match holds the entry with its sentence in the outbox tray, where
+                // Retry asks again. Never dropped, never sent half-linked.
+                if (queued.createdId == null) {
+                    val cards = pendingCardsInPayload(queued.payloadJson)
+                    if (cards.isNotEmpty()) {
+                        when (val linked = resolvePendingCards(cards) { input -> resolveArtisanCard(input, emptyList()) }) {
+                            PendingCardOutcome.Offline -> return@withLock synced
+                            is PendingCardOutcome.Held -> {
+                                if (queued.failure != linked.message) {
+                                    OfflineOutbox.markFailure(context, queued.id, linked.message)
+                                    notifyUser(context, "\"${queued.label}\" could not be uploaded. ${linked.message}")
+                                }
+                                continue
+                            }
+                            is PendingCardOutcome.Resolved -> {
+                                queued = queued.copy(payloadJson = substitutePendingCardsInPayload(queued.payloadJson, linked.ids))
+                                OfflineOutbox.update(context, queued)
+                            }
+                        }
+                    }
+                }
                 when (val outcome = replayEntry(context, queued)) {
                     ReplayOutcome.Synced -> {
                         OfflineOutbox.remove(context, queued)
