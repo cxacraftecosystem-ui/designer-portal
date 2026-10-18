@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import secrets
+from collections.abc import Callable
 from typing import Any
 
 import requests
@@ -98,9 +99,16 @@ async def peer_call(
     body: Any | None = None,
     params: dict[str, str] | None = None,
     requested_by: str | None = None,
+    gate: Callable[[Any], bool] | None = None,
 ) -> tuple[int, Any]:
-    """``(status, signed JSON body)`` from the documentation portal, or :class:`PeerUnavailable`."""
-    if not cross_portal.active(settings, needs_url=True):
+    """``(status, signed JSON body)`` from the documentation portal, or :class:`PeerUnavailable`.
+
+    ``gate`` is the switch this call is behind. The artisan lookup's (the default) needs the identity
+    flag and the Aadhaar key; the coverage counts pass their own, which needs neither, because no
+    artisan data crosses on that call.
+    """
+    allowed = gate(settings) if gate is not None else cross_portal.active(settings, needs_url=True)
+    if not allowed:
         raise PeerUnavailable(UNAVAILABLE)
     return await asyncio.to_thread(
         _call_sync, settings, method, path, body, params, requested_by

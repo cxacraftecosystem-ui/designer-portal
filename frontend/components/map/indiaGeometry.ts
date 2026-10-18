@@ -225,6 +225,52 @@ export type Polygon = Ring[];
 
 let decoded: Polygon[] | null = null;
 
+/** One record of the polyline scheme: its points, and whether the stream marked it a hole. */
+export type DecodedRecord = { hole: boolean; points: Ring };
+
+/**
+ * The polyline scheme every geometry string in the web client uses: zig-zag varints, five payload
+ * bits per character over {@link ALPHABET}, coordinates scaled by 1000 and delta-encoded across the
+ * whole stream. Each record is a point count, an optional hole flag, then the deltas.
+ *
+ * Exported so the coverage map's district shapes (``district-shapes.json``) decode with this exact
+ * function rather than a second copy of it. ``holeFlag`` is true for the national outline below and
+ * false for a district ring, which the build writes without one.
+ */
+export function decodePolylines(payload: string, holeFlag: boolean): DecodedRecord[] {
+  const records: DecodedRecord[] = [];
+  let index = 0;
+  let x = 0;
+  let y = 0;
+
+  const readInt = (): number => {
+    let shift = 0;
+    let result = 0;
+    for (;;) {
+      const value = VALUES.get(payload[index++]) ?? 0;
+      result |= (value & 0x1f) << shift;
+      shift += 5;
+      if (value < 0x20) break;
+    }
+    // Zig-zag: the low bit is the sign, so small negative deltas stay one character wide.
+    return result & 1 ? ~(result >> 1) : result >> 1;
+  };
+
+  while (index < payload.length) {
+    const count = readInt();
+    if (count <= 0) break;
+    const hole = holeFlag ? readInt() !== 0 : false;
+    const points: Ring = [];
+    for (let n = 0; n < count; n += 1) {
+      x += readInt();
+      y += readInt();
+      points.push([x / SCALE, y / SCALE]);
+    }
+    records.push({ hole, points });
+  }
+  return records;
+}
+
 /**
  * The outline as rings of [longitude, latitude], decoded on first use and then kept.
  *
@@ -235,37 +281,11 @@ let decoded: Polygon[] | null = null;
 export function indiaRings(): Polygon[] {
   if (decoded) return decoded;
   const polygons: Polygon[] = [];
-  let index = 0;
-  let x = 0;
-  let y = 0;
-
-  const readInt = (): number => {
-    let shift = 0;
-    let result = 0;
-    for (;;) {
-      const value = VALUES.get(PAYLOAD[index++]) ?? 0;
-      result |= (value & 0x1f) << shift;
-      shift += 5;
-      if (value < 0x20) break;
-    }
-    // Zig-zag: the low bit is the sign, so small negative deltas stay one character wide.
-    return result & 1 ? ~(result >> 1) : result >> 1;
-  };
-
-  while (index < PAYLOAD.length) {
-    const count = readInt();
-    const isHole = readInt() !== 0;
-    const ring: Ring = [];
-    for (let n = 0; n < count; n += 1) {
-      x += readInt();
-      y += readInt();
-      ring.push([x / SCALE, y / SCALE]);
-    }
-    ring.push(ring[0]);
-    if (isHole && polygons.length) polygons[polygons.length - 1].push(ring);
+  for (const { hole, points } of decodePolylines(PAYLOAD, true)) {
+    const ring: Ring = [...points, points[0]];
+    if (hole && polygons.length) polygons[polygons.length - 1].push(ring);
     else polygons.push([ring]);
   }
-
   decoded = polygons;
   return polygons;
 }

@@ -478,6 +478,21 @@ box `.env`; none is created by this repository.
 | `CROSS_PORTAL_AADHAAR_HMAC_KEY` | With the flag on | — | **Yes** | Shared by both servers. Turns an Aadhaar number into a comparable code. 32+ characters. Rotating it needs both servers changed together; nothing stored depends on it. |
 | `FIELD_REPOSITORY_API_URL` | With the flag on | — | No | The documentation portal's API base up to `/api`, e.g. `https://<docs-api-host>/api`. The designer portal calls it; it never calls back. |
 
+### Cross-portal coverage counts — shipped OFF
+
+The coverage map (`/map?view=coverage`, ministry readers) has no flag of its own. This one switches on
+its "Field Repository" toggle: the designer portal asks the documentation portal for its AGGREGATE
+counts per LGD district (`GET /api/cross-portal/peer/coverage` — no names, no ids, no record stubs),
+over the same bearer token, signature, nonce and access log as the artisan lookup, and draws them as a
+separate row that is never added to its own. It does not need the identity flag or the Aadhaar key.
+Unset or unreachable, the map draws this portal's figures and says the other could not be reached.
+Secrets go to the GitHub Actions secrets **and** the box `.env`.
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `CROSS_PORTAL_COVERAGE_ENABLED` | No | **`false`** | No | Set on BOTH servers. Also needs `CROSS_PORTAL_TOKEN` (above) on both and `FIELD_REPOSITORY_API_URL` here. |
+| `FIELD_REPOSITORY_WEB_URL` | No | — | No | The documentation portal's web address, e.g. `https://<docs-domain>`, for the district panel's "Open in Field Repository" link. Unset: no link. |
+
 ### AI-drafted interview answers (C28) — shipped OFF
 
 | Variable | Required | Default | Secret | Notes |

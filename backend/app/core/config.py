@@ -677,6 +677,18 @@ class Settings(BaseSettings):
     # https://api.<docs-domain>/api . The designer portal calls it; it never calls back.
     field_repository_api_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_API_URL")
 
+    # ── CROSS-PORTAL COVERAGE COUNTS (docs/ENVIRONMENT.md) ───────────────────────────────────────
+    # OFF BY DEFAULT. On, the coverage map's "Field Repository" toggle asks the documentation portal
+    # for its AGGREGATE counts per LGD district (no names, no ids) over the same signed channel as the
+    # artisan lookup. Needs CROSS_PORTAL_TOKEN and FIELD_REPOSITORY_API_URL above; it does not need
+    # the identity flag or the Aadhaar key. The coverage map itself has no flag.
+    cross_portal_coverage_enabled: bool = Field(
+        default=False, alias="CROSS_PORTAL_COVERAGE_ENABLED"
+    )
+    # The Field Repository's WEB address (https://<docs-domain>), for the coverage panel's "Open in
+    # Field Repository" link. Not a secret. Unset, the link is not offered.
+    field_repository_web_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_WEB_URL")
+
     # ABSOLUTE, NOT ".env". See rule 2 in this module's header: a relative env_file is resolved
     # against the working directory, so `python -m uvicorn app.main:app` from backend/ and the same
     # command from the repository root read DIFFERENT configuration — and from the root they read
