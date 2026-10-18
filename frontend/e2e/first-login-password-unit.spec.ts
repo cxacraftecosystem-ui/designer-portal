@@ -170,16 +170,14 @@ test("both screens print the same first clause and a different second", () => {
   expect(GATE).toContain("passwordRuleLine(PASSWORD_CHANGE_SESSIONS)");
 });
 
-test("the gate adopts the session its change answers with before the host re-reads the account", () => {
+test("the gate waits for the change (and its renewed cookie) before the host re-reads the account", () => {
   // `onDone` is the hosts' `markPasswordChanged`, whose re-read of `/me` must go out with the FRESH
-  // token: the change retired the one this form was sent with. An older server answers with none
-  // and retired none — nothing is adopted and `onDone` runs exactly as before.
-  const succeeded = GATE_SUBMIT.slice(GATE_SUBMIT.indexOf("const fresh = await changeOwnPassword(current, next);"));
-  expect(succeeded, "the success path was located").toContain("if (fresh) setToken(fresh);");
-  expect(succeeded.indexOf("if (fresh) setToken(fresh);"), "adopted before the host is told").toBeLessThan(
-    succeeded.indexOf("onDone();")
-  );
-  expect(GATE).toMatch(/import \{ setToken \} from "@\/lib\/api";/);
+  // session: the change retired the one this form was sent with. Since 2026-10-17 this site's
+  // change-password route puts the fresh token in the HttpOnly cookie before the answer arrives, so
+  // awaiting the change IS the adoption — and no script may hold the token.
+  const succeeded = GATE_SUBMIT.slice(GATE_SUBMIT.indexOf("await changeOwnPassword(current, next);"));
+  expect(succeeded, "the success path was located").toContain("onDone();");
+  expect(GATE, "no script touches the session token").not.toMatch(/setToken|getToken|localStorage/);
 });
 
 test("the Android handset carries the same floor and the same first clause", () => {

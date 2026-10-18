@@ -72,7 +72,7 @@ test("the session is dropped locally, never through a logout", () => {
   expect(SET_PASSWORD).not.toMatch(/\blogout\(\)\s*[.;]/);
   const clear = AUTH.slice(AUTH.indexOf("const clearSession = useCallback("));
   const body = clear.slice(0, clear.indexOf("}, [adopt]);"));
-  expect(body, "clearSession was located").toContain("setToken(null);");
+  expect(body, "clearSession was located").toContain("endSession();");
   expect(body).toContain("adopt(null);");
   expect(body, "and it asks the server nothing").not.toContain("apiFetch");
 });

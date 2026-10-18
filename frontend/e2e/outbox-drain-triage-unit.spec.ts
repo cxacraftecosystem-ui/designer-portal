@@ -29,6 +29,8 @@ import {
   type OutboxEntry
 } from "@/lib/offline";
 
+import { installSessionCookie, removeSessionCookie } from "./support/fakeSessionCookie";
+
 /**
  * THE FOUR WAYS THE RECORDS OUTBOX STOPPED DRAINING, PINNED AT THE DECISION.
  *
@@ -354,7 +356,8 @@ test("the outbox's own create never navigates the researcher away", async () => 
 function installFakeWindow(pathname: string, storedToken: string | null): { replace: string[] } {
   const replace: string[] = [];
   const store = new Map<string, string>();
-  if (storedToken) store.set("field_repo_token", storedToken);
+  // The session the page can see is its marker cookie (the token itself is HttpOnly).
+  installSessionCookie(storedToken);
   (globalThis as Record<string, unknown>).window = {
     localStorage: {
       getItem: (key: string) => store.get(key) ?? null,
@@ -382,6 +385,7 @@ function install401() {
 
 test.afterEach(() => {
   delete (globalThis as Record<string, unknown>).window;
+  removeSessionCookie();
 });
 
 /** One tiny attachment — enough to reach the presign, which is the request under test. */

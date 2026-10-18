@@ -3,7 +3,9 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { ApiError, apiFetch } from "../lib/api";
+import { ApiError, apiFetch, getSessionMarker } from "../lib/api";
+
+import { installSessionCookie, removeSessionCookie } from "./support/fakeSessionCookie";
 
 /**
  * THE EXPIRED TOKEN THAT THROWS A VISITOR OFF THE PUBLIC LANDING PAGE.
@@ -43,15 +45,10 @@ type Recorded = { assign: string[]; replace: string[] };
  */
 function installFakeWindow(pathname: string, storedToken: string | null): Recorded {
   const recorded: Recorded = { assign: [], replace: [] };
-  const store = new Map<string, string>();
-  if (storedToken) store.set("field_repo_token", storedToken);
+  // The session the page can see is its marker cookie (the token itself is HttpOnly).
+  installSessionCookie(storedToken);
 
   (globalThis as Record<string, unknown>).window = {
-    localStorage: {
-      getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => void store.set(key, value),
-      removeItem: (key: string) => void store.delete(key)
-    },
     location: {
       pathname,
       protocol: "http:",
@@ -71,12 +68,12 @@ function install401() {
     });
 }
 
-const tokenNow = () =>
-  ((globalThis as Record<string, unknown>).window as { localStorage: { getItem(k: string): string | null } })
-    .localStorage.getItem("field_repo_token");
+/** The session this page still believes in: null once `apiFetch` has ended it. */
+const tokenNow = () => getSessionMarker();
 
 test.afterEach(() => {
   delete (globalThis as Record<string, unknown>).window;
+  removeSessionCookie();
 });
 
 test("a 401 on the public landing page clears the token and navigates nowhere", async () => {

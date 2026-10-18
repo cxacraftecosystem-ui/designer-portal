@@ -29,7 +29,7 @@
  *    would compile perfectly and render an empty block.
  */
 
-import { API_BASE, ApiError, apiFetch, assertApiConfigured, buildQuery, describeApiDetail, getToken } from "@/lib/api";
+import { API_BASE, ApiError, apiFetch, assertApiConfigured, buildQuery, describeApiDetail } from "@/lib/api";
 import { prepareIdentityPhotograph } from "@/lib/identityCardImage";
 import { DW_PHOTO_RETENTION_DEFAULT, type DwPhotoRetention } from "@/lib/identityPhotoRetention";
 import type { CostFindingsPayload } from "@/lib/costIntegrity";
@@ -3424,9 +3424,8 @@ export async function downloadDesignWorkshopReport(
 ): Promise<DwReportFile> {
   assertApiConfigured();
 
+  // No Authorization header: the call is same-origin, so the session cookie goes with it.
   const headers = new Headers({ "Content-Type": "application/json" });
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const prefix = options?.via === "approvals" ? "design-workshop-approvals" : "design-workshops";
   const response = await fetch(`${API_BASE}/api/${prefix}/${id}/report`, {

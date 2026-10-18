@@ -26,8 +26,13 @@ export const CREDENTIALS_MISSING = !EMAIL || !PASSWORD
   ? "Set E2E_EMAIL and E2E_PASSWORD (see e2e/README.md) to run the signed-in specs."
   : "";
 
-/** localStorage key `lib/api.ts` reads the bearer token from. */
-const TOKEN_KEY = "field_repo_token";
+/**
+ * The session cookies this site's own server reads (`lib/sessionCookie.ts`). Since 2026-10-17 the
+ * web app keeps the token in an HttpOnly cookie, so a spec signs in by planting the cookie — as the
+ * sign-in route would have — rather than a localStorage key no code reads any more.
+ */
+const SESSION_COOKIE = "__Host-session";
+const SESSION_MARKER_COOKIE = "__Host-session-marker";
 
 /**
  * A bearer token, straight from the API.
@@ -74,12 +79,18 @@ export function bearer(token: string): Record<string, string> {
  * is where a test of the form belongs.
  */
 export async function signInWithToken(page: Page, token: string) {
-  await page.addInitScript(
-    ([key, value]) => {
-      window.localStorage.setItem(key, value);
-    },
-    [TOKEN_KEY, token] as const
-  );
+  const url = new URL(process.env.E2E_BASE_URL ?? "http://localhost:3000").origin;
+  const common = { url, secure: true, sameSite: "Lax" as const };
+  await page.context().addCookies([
+    { name: SESSION_COOKIE, value: token, httpOnly: true, ...common },
+    { name: SESSION_MARKER_COOKIE, value: `e2e-${Date.now().toString(36)}`, httpOnly: false, ...common }
+  ]);
+}
+
+/** The session token the browser holds (from the HttpOnly cookie, which only the test can read). */
+export async function sessionTokenOf(page: Page): Promise<string> {
+  const cookie = (await page.context().cookies()).find((entry) => entry.name === SESSION_COOKIE);
+  return cookie ? decodeURIComponent(cookie.value) : "";
 }
 
 /**

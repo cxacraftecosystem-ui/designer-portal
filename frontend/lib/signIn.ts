@@ -28,6 +28,7 @@
  */
 
 import { ApiError, apiFetch, apiFetchWithHeaders } from "@/lib/api";
+import { SESSION_ROTATED_HEADER } from "@/lib/sessionCookie";
 import type { User, UserRole } from "@/lib/types";
 
 /** Spelled once; see `auth.SIGN_IN_HINT_HEADER`. Lower-case because `Headers.get` is case-insensitive. */
@@ -219,30 +220,41 @@ export async function setPasswordWithLink(token: string, password: string): Prom
 export const SESSION_TOKEN_HEADER = "x-session-token";
 
 /**
+ * WHAT THE WEB PAGE ACTUALLY SEES SINCE THE COOKIE SESSION (2026-10-17): not the token. This site's
+ * change-password route handler (`lib/server/apiProxy.ts::handleChangePassword`) takes the fresh token
+ * out of {@link SESSION_TOKEN_HEADER}, puts it in the HttpOnly session cookie, and answers
+ * `X-Session-Rotated: 1` instead. So by the time the promise below resolves, the browser already
+ * holds the new session; the caller has nothing to adopt and only needs to know it happened.
+ */
+function sessionRotated(headers: Headers): boolean {
+  return (headers.get(SESSION_ROTATED_HEADER) ?? "").trim() === "1";
+}
+
+/**
  * The signed-in account replacing its own password — the route `mustChangePassword` sends you to, and
  * the Settings card's.
  *
- * RETURNS THE SESSION TO CARRY ON WITH, or null. Since 2026-10-09 every session token carries the
+ * RETURNS WHETHER THE SESSION WAS RENEWED (since 2026-10-17 the renewed session is already in the
+ * cookie when this resolves — see `sessionRotated`); what follows is why there is one. Since 2026-10-09 every session token carries the
  * fingerprint of the password it was opened with, and the server refuses one whose password has since
  * changed — so this change retires the very token that sent it, with every other session of the
  * account (which is the point: a session opened with a temporary password somebody else knew must not
  * outlive it). The answer carries a fresh token minted AFTER the write, in {@link SESSION_TOKEN_HEADER}
- * and never in the body. The caller adopts it with `setToken` BEFORE anything re-reads `/me`, or that
- * re-read is the first request refused and the person is signed out the moment they complied.
+ * and never in the body. This site's route handler puts it in the cookie before the answer reaches the
+ * page, so the `/me` re-read that follows already goes out with it.
  *
- * NULL HAS TWO CAUSES AND ONE ANSWER. A server older than the rule sends no header and has retired
+ * FALSE HAS TWO CAUSES AND ONE ANSWER. A server older than the rule sends no header and has retired
  * nothing, so "carry on with the token you have" is all a caller did before. A header the browser was
  * not allowed to read is the other, and that server HAS retired the token — the next request is a
  * plain 401 and the person signs in again with the new password. Neither is improved by guessing, and
  * a token is never dug out of the body, whatever a server puts there.
  */
-export async function changeOwnPassword(currentPassword: string, newPassword: string): Promise<string | null> {
+export async function changeOwnPassword(currentPassword: string, newPassword: string): Promise<boolean> {
   const { headers } = await apiFetchWithHeaders<unknown>("/auth/change-password", {
     method: "POST",
     body: JSON.stringify({ currentPassword, newPassword })
   });
-  const token = headers.get(SESSION_TOKEN_HEADER)?.trim();
-  return token ? token : null;
+  return sessionRotated(headers);
 }
 
 /**
@@ -285,15 +297,14 @@ export async function setFirstPassword(
   newPassword: string,
   proof: ProviderProof,
   twoFactorCode?: string
-): Promise<string | null> {
+): Promise<boolean> {
   const code = twoFactorCode?.trim();
   const { headers } = await apiFetchWithHeaders<unknown>("/auth/change-password", {
     method: "POST",
     // The code goes only when there is one: an account without two-step verification sends none.
     body: JSON.stringify(code ? { newPassword, ...proof, twoFactorCode: code } : { newPassword, ...proof })
   });
-  const token = headers.get(SESSION_TOKEN_HEADER)?.trim();
-  return token ? token : null;
+  return sessionRotated(headers);
 }
 
 /** `Retry-After` (seconds) in words, or null when the header is absent or unreadable. */

@@ -60,7 +60,8 @@ async function signIn(page: Page, who: { email: string; password: string }) {
  */
 async function signOut(page: Page) {
   await page.goto("/dashboard");
-  await page.evaluate(() => window.localStorage.removeItem("field_repo_token"));
+  // The session is an HttpOnly cookie since 2026-10-17; dropping it is what a lost session looks like.
+  await page.context().clearCookies();
   await page.goto("/login");
 }
 

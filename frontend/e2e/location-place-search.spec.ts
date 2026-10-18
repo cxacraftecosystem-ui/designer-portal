@@ -2,6 +2,8 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { serveAddressReference } from "./fixtures/location";
 
+import { sessionTokenOf } from "./support/session";
+
 /**
  * SEARCHING FOR A PLACE MOVES THE MAP. IT MUST NEVER SET THE RECORD'S VALUE.
  *
@@ -57,7 +59,7 @@ test.beforeAll(async ({ browser }) => {
   await page.getByPlaceholder("Enter your password").fill(PASSWORD);
   await page.getByRole("button", { name: /sign in/i }).click();
   await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 });
-  sessionToken = await page.evaluate(() => window.localStorage.getItem("field_repo_token") ?? "");
+  sessionToken = await sessionTokenOf(page);
   expect(sessionToken, "could not sign in against the API the dev server is pointed at").not.toBe("");
   await context.close();
 });

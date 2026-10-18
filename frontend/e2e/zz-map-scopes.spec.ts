@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
+import { sessionTokenOf } from "./support/session";
+
 /**
  * The map at its three scopes, at desktop and phone widths.
  *
@@ -64,7 +66,7 @@ test.beforeAll(async ({ browser }) => {
       await page.getByPlaceholder("Enter your password").fill(PASSWORD);
       await page.getByRole("button", { name: /sign in/i }).click();
       await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 });
-      sessionToken = await page.evaluate(() => window.localStorage.getItem("field_repo_token") ?? "");
+      sessionToken = await sessionTokenOf(page);
     } catch {
       // Retried rather than failed: a cold compile or a slow CDN hop is not a result about the map.
     }

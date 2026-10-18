@@ -70,13 +70,12 @@ function toolArtisanTrigger(page: Page) {
 
 /** Two real artisans of the same craft: one to carry, one to switch to. */
 async function twoArtisans(page: Page): Promise<[ArtisanRow, ArtisanRow]> {
-  // Read through the app's own origin and token rather than a second config: whatever API the
-  // running dev server talks to is the API whose artisans this spec should be using.
-  const rows = await page.evaluate(async (apiBase) => {
-    const token = window.localStorage.getItem("field_repo_token");
-    const response = await fetch(`${apiBase}/api/artisans?pageSize=100`, { headers: { Authorization: `Bearer ${token}` } });
+  // Read through the app's own origin and session rather than a second config: whatever API the
+  // running server proxies to is the API whose artisans this spec should be using.
+  const rows = await page.evaluate(async () => {
+    const response = await fetch("/api/artisans?pageSize=100");
     return (await response.json()).items as ArtisanRow[];
-  }, process.env.NEXT_PUBLIC_API_URL ?? "https://d3ekigkotd1xa2.cloudfront.net");
+  });
   const byCraft = new Map<string, ArtisanRow[]>();
   for (const row of rows) {
     if (!row.craftId) continue;
@@ -237,15 +236,13 @@ type ProductRow = { id: string; productName: string; artisanId?: string | null; 
 
 /** A real product whose artisan is linked to a craft, so the create form can be filled by picking. */
 async function aLinkedProduct(page: Page): Promise<{ product: ProductRow; artisan: ArtisanRow; craftName: string }> {
-  const { products, artisans } = await page.evaluate(async (apiBase) => {
-    const token = window.localStorage.getItem("field_repo_token");
-    const headers = { Authorization: `Bearer ${token}` };
+  const { products, artisans } = await page.evaluate(async () => {
     const [productResponse, artisanResponse] = await Promise.all([
-      fetch(`${apiBase}/api/products?pageSize=100`, { headers }),
-      fetch(`${apiBase}/api/artisans?pageSize=100`, { headers })
+      fetch("/api/products?pageSize=100"),
+      fetch("/api/artisans?pageSize=100")
     ]);
     return { products: (await productResponse.json()).items, artisans: (await artisanResponse.json()).items };
-  }, process.env.NEXT_PUBLIC_API_URL ?? "https://d3ekigkotd1xa2.cloudfront.net");
+  });
 
   for (const product of products as ProductRow[]) {
     const artisan = (artisans as ArtisanRow[]).find((row) => row.id === product.artisanId);

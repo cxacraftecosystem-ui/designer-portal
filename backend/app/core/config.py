@@ -367,6 +367,14 @@ class Settings(BaseSettings):
     # CloudFront's origin-facing ranges), so every request that reaches nginx came through an edge
     # and the 2nd-from-right entry is the viewer. A box serving without CloudFront in front must set 1.
     forwarded_client_hops: int = Field(default=2, ge=1, le=5, alias="FORWARDED_CLIENT_HOPS")
+    # THE WEB APP'S PROXY SECRET (2026-10-17). The browser now reaches this API through the web app's
+    # own server (`frontend/proxy.ts`, which keeps the session in an HttpOnly cookie), so every web
+    # request arrives from a Vercel address and CloudFront records THAT as the client. The proxy sends
+    # the visitor's real address in `X-Viewer-Address` beside this secret in `X-Web-Proxy-Secret`, and
+    # ``rate_limit.trusted_viewer_address`` believes the address only when the secret matches.
+    # `X-Origin-Verify` cannot serve: CloudFront sets it on every request it forwards, from anybody.
+    # Unset (a laptop, CI): the header is never believed and nothing changes.
+    web_proxy_secret: str | None = Field(default=None, alias="WEB_PROXY_SECRET")
 
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
     google_android_client_id: str | None = Field(default=None, alias="GOOGLE_ANDROID_CLIENT_ID")

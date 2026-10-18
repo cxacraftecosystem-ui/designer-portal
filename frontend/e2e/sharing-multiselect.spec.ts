@@ -1,5 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { sessionTokenOf } from "./support/session";
+
 /**
  * Multi-select people pickers on the Sharing page, and the partial failure they make possible.
  *
@@ -103,7 +105,7 @@ test.beforeAll(async ({ browser }) => {
   await page.getByPlaceholder("Enter your password").fill(PASSWORD);
   await page.getByRole("button", { name: /^sign in$/i }).click();
   await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 });
-  token = (await page.evaluate(() => window.localStorage.getItem("field_repo_token"))) ?? "";
+  token = await sessionTokenOf(page);
   await context.close();
   expect(token).not.toBe("");
 });

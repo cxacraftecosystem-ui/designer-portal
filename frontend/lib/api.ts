@@ -1,42 +1,26 @@
 import type { PageResult } from "@/lib/types";
 
+import { endSession, getSessionMarker } from "@/lib/session";
+
 /**
- * Next.js INLINES `process.env.NEXT_PUBLIC_API_URL` into the bundle at build time, so a build that
- * cannot see the variable does not fail — it substitutes `undefined` and ships a site that can
- * reach nothing while every signal stays green. That is not hypothetical: Vercel refuses to hand
- * env vars marked "sensitive" to `vercel pull`, a CI build inlined nothing, and a user discovered
- * the site could not log anyone in.
+ * WHERE THE BROWSER SENDS API CALLS: THIS SITE (2026-10-17).
  *
- * A variable that exists but is BLANK is the worse half of the same bug: `??` does not treat `""`
- * as absent, so the base would stay `""`, every request would resolve against the Vercel origin
- * itself, and the app would parse Vercel's own 404 HTML as an API answer. Missing, empty and
- * whitespace all mean one thing — nobody told this bundle where the backend is — so they collapse
- * into one case here.
+ * Every call goes to `/api/...` on the page's own origin. `proxy.ts` and the session route handlers
+ * under `app/api/` pass it on to the API and turn the HttpOnly session cookie into the bearer token
+ * the API expects — the page never holds the token (`lib/sessionCookie.ts`, docs/SECURITY.md). So
+ * this base is empty, and the API's real address (`NEXT_PUBLIC_API_URL`) is the server's business.
+ *
+ * A deployment that was never told the API's address now answers 503 from its own server, carrying
+ * the sentence {@link ApiUnconfiguredError} carries, rather than shipping a bundle that quietly calls
+ * the visitor's own machine.
  */
-const configuredBase = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
-
-/** A checkout with no env file at all is the normal state of a developer's laptop; keep it working. */
-const LOCAL_DEV_BASE = "http://localhost:8000";
-
-export const API_BASE = configuredBase || LOCAL_DEV_BASE;
-
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "[::1]"]);
+export const API_BASE = "";
 
 /**
- * Does the base we ended up with only exist on the machine running the browser — whether by falling
- * back above or because someone deployed with a localhost URL? Resolved once at module load, since
- * it cannot change without a rebuild, which keeps the per-request check to two comparisons. A base
- * that does not parse is deliberately left alone: inventing new failure modes in the hot path is
- * not what this guard is for.
+ * The API's own address, for the few PUBLIC links a browser follows without a session — the Android
+ * download, which is a large file and has no reason to cross this site. Never for a signed-in call.
  */
-const baseIsLoopback = ((): boolean => {
-  try {
-    const { hostname } = new URL(API_BASE);
-    return LOOPBACK_HOSTS.has(hostname) || hostname.endsWith(".localhost");
-  } catch {
-    return false;
-  }
-})();
+export const PUBLIC_API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL ?? "").trim().replace(/\/+$/, "") || "http://localhost:8000";
 
 /**
  * THE ONE 401 THAT IS NOT A DEAD SESSION.
@@ -123,37 +107,12 @@ export class ApiUnconfiguredError extends ApiError {
   }
 }
 
-let unconfiguredLogged = false;
-
 /**
- * Refuse the request when this build has no usable API address. Exported so the handful of call
- * sites that build their own `fetch` from {@link API_BASE} (downloads, media object fetches) can
- * fail the same way rather than with a bare "Failed to fetch".
- *
- * Two conditions keep it honest. It never runs outside a browser: this module is imported by
- * `next build` and by SSR, and throwing there would break the build instead of the request — the
- * silence we are trying to end. And it only fires on an https:// page, which can only be a real
- * deployment; a developer on http://localhost is looking at the correct address, and a laptop
- * serving the dev site over the LAN genuinely can reach its own localhost API.
+ * Kept for the call sites that build their own `fetch` (downloads, media object fetches): there is no
+ * longer anything to check in the browser, since the address the page calls is its own and only the
+ * server knows the API's. A server with no API address answers 503 with the sentence above.
  */
-export function assertApiConfigured(): void {
-  if (typeof window === "undefined") return;
-  if (!baseIsLoopback) return;
-  if (window.location.protocol !== "https:") return;
-
-  if (!unconfiguredLogged) {
-    unconfiguredLogged = true;
-    // The sentence above is for the researcher; this line is for whoever they forward the screenshot
-    // to, and names the variable and the fix that the user-facing wording deliberately does not.
-    console.error(
-      `[api] NEXT_PUBLIC_API_URL was missing or blank when this bundle was built, so requests would go to ${API_BASE}, ` +
-        "which no visitor can reach. Set it in the deployment's environment variables and redeploy — changing it in the " +
-        "dashboard alone does nothing, because the value is baked into the shipped JavaScript."
-    );
-  }
-
-  throw new ApiUnconfiguredError();
-}
+export function assertApiConfigured(): void {}
 
 /**
  * The sentence a failed response is actually carrying, dug out of whatever shape `detail` took.
@@ -198,16 +157,7 @@ export function describeApiDetail(detail: unknown, fallback: string): string {
   return fallback;
 }
 
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem("field_repo_token");
-}
-
-export function setToken(token: string | null) {
-  if (typeof window === "undefined") return;
-  if (token) window.localStorage.setItem("field_repo_token", token);
-  else window.localStorage.removeItem("field_repo_token");
-}
+export { endSession, getSessionMarker } from "@/lib/session";
 
 /**
  * Has the token a request LEFT with been replaced by a different one while it was in flight?
@@ -225,7 +175,7 @@ export function setToken(token: string | null) {
  */
 export function sessionReplacedSince(sent: string | null): boolean {
   if (!sent) return false;
-  const held = getToken();
+  const held = getSessionMarker();
   return held !== null && held !== sent;
 }
 
@@ -372,8 +322,8 @@ export async function apiFetchWithHeaders<T>(
   assertApiConfigured();
 
   const headers = new Headers(init.headers);
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  /** The session marker this request left with — see `sessionReplacedSince`. Not a credential. */
+  const token = getSessionMarker();
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -425,10 +375,9 @@ export async function apiFetchWithHeaders<T>(
         }
       }
     } else if (response.status === 401 && token && typeof window !== "undefined") {
-      // A previously-valid session expired: drop the stored token, always. The token is proven dead
-      // by the answer we are holding, and every screen — public or protected — is better off
-      // without it.
-      setToken(null);
+      // A previously-valid session expired: end it, always. The token is proven dead by the answer
+      // we are holding, and every screen — public or protected — is better off without it.
+      endSession();
 
       /*
         THE NAVIGATION IS A SEPARATE DECISION, AND IT IS THE CALLER'S.

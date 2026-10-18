@@ -2,7 +2,7 @@ import {
   API_BASE,
   ApiError,
   apiFetch,
-  getToken,
+  getSessionMarker,
   listResource,
   sessionOwesPasswordChange,
   type ApiFetchOptions
@@ -1508,13 +1508,11 @@ async function deleteStagedObject(objectKey: string) {
 
 /** Delete a staged object during page unload, where a normal fetch would be cancelled mid-flight. */
 function beaconDeleteStagedObject(objectKey: string) {
-  const token = getToken();
-  if (!token) return;
+  if (!getSessionMarker()) return;
   liveObjectKeys.delete(objectKey);
   try {
     void fetch(`${API_BASE}/api/media/object?objectKey=${encodeURIComponent(objectKey)}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
       keepalive: true
     }).catch(() => undefined);
   } catch {
@@ -1536,7 +1534,7 @@ export async function sweepStagedObjects(): Promise<number> {
   // Nor while the account owes a new password: the server refuses every DELETE until it is chosen,
   // and this runs on a timer that a gated tab would otherwise go on spending them on. The journal is
   // untouched either way (a 401 never forgets a key), so this costs nothing but the wait.
-  if (typeof window === "undefined" || !getToken() || sessionOwesPasswordChange()) return 0;
+  if (typeof window === "undefined" || !getSessionMarker() || sessionOwesPasswordChange()) return 0;
   const journal = readJournal();
   const now = Date.now();
   const stale = Object.keys(journal)
@@ -1552,7 +1550,7 @@ export async function sweepStagedObjects(): Promise<number> {
     // future edit to decide they were terminal. Stop; the journal is durable and the next sweep,
     // under a live session, still has every key. A gated 401 KEEPS the token, so the gate is asked
     // for separately — `apiFetch` raises it on that same refusal.
-    if (!getToken() || sessionOwesPasswordChange()) break;
+    if (!getSessionMarker() || sessionOwesPasswordChange()) break;
   }
   return attempted;
 }
@@ -1724,7 +1722,7 @@ function installLifecycleHooks() {
  * them so they can be cleaned up when it goes away.
  */
 export function stageFiles(files: File[], ownerId: string) {
-  if (typeof window === "undefined" || !getToken()) return;
+  if (typeof window === "undefined" || !getSessionMarker()) return;
   cancelStagedOwnerRelease(ownerId);
   installLifecycleHooks();
   scheduleStagedObjectSweep();

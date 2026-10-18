@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Download } from "lucide-react";
 
-import { API_BASE, getToken } from "@/lib/api";
+import { API_BASE } from "@/lib/api";
 
 export function DownloadCsvButton({
   path,
@@ -21,10 +21,7 @@ export function DownloadCsvButton({
     setError(null);
     setBusy(true);
     try {
-      const token = getToken();
-      const response = await fetch(`${API_BASE}/api${path}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
+      const response = await fetch(`${API_BASE}/api${path}`);
       if (!response.ok) throw new Error("The CSV export didn't finish. Please try again.");
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);

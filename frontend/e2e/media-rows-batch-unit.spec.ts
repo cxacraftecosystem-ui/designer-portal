@@ -18,7 +18,8 @@ function stub(handler: Handler) {
   const calls: URL[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: unknown) => {
-    const url = new URL(String(input));
+    // Relative since the cookie session: the page calls `/api/*` on its own origin.
+    const url = new URL(String(input), "https://designer-repository.vercel.app");
     calls.push(url);
     const reply = handler(url);
     if (reply.status === 0) throw new TypeError("Failed to fetch");

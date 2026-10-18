@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { signIn as signInAs } from "./support/session";
+import { signIn as signInAs, sessionTokenOf } from "./support/session";
 
 /**
  * WHO MAY OPEN A DESIGN & PROTOTYPE WORKSHOP, ADMINISTERED FROM /workshop-access/manage.
@@ -177,7 +177,7 @@ test.beforeAll(async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
   await signIn(page, ADMIN);
-  adminToken = (await page.evaluate(() => window.localStorage.getItem("field_repo_token"))) ?? "";
+  adminToken = await sessionTokenOf(page);
   await context.close();
   expect(adminToken, "the admin account must be able to sign in").not.toBe("");
 });

@@ -10,6 +10,10 @@ import { stageRefusalIsPassLevel } from "@/lib/designWorkshopStore";
 import { sweepStagedObjects } from "@/lib/media";
 import { acknowledgeOutboxTrouble, syncOutbox } from "@/lib/offline";
 
+import { getSessionMarker } from "@/lib/session";
+
+import { installSessionCookie, removeSessionCookie } from "./support/fakeSessionCookie";
+
 /**
  * A GATED TAB NEVER BOUNCES TO /login, AND NEVER PARKS QUEUED WORK.
  *
@@ -62,10 +66,9 @@ const JOURNAL = "field_repo_staged_objects";
  */
 function installFakeWindow(journal: Record<string, number>) {
   const replaced: string[] = [];
-  const store = new Map<string, string>([
-    ["field_repo_token", "a-perfectly-good-token"],
-    [JOURNAL, JSON.stringify(journal)]
-  ]);
+  // Signed in: the marker cookie the page can see (the token itself is HttpOnly).
+  installSessionCookie("a-perfectly-good-token");
+  const store = new Map<string, string>([[JOURNAL, JSON.stringify(journal)]]);
   (globalThis as Record<string, unknown>).window = {
     localStorage: {
       getItem: (key: string) => store.get(key) ?? null,
@@ -86,6 +89,7 @@ test.afterEach(() => {
   // Module state shared with every other spec this worker runs.
   setSessionOwesPasswordChange(false);
   delete (globalThis as Record<string, unknown>).window;
+  removeSessionCookie();
   (globalThis as Record<string, unknown>).fetch = realFetch;
 });
 
@@ -248,7 +252,7 @@ test("a gate met mid-sweep stops it, keeps every key, keeps the token, and moves
     "staged/b.jpg",
     "staged/c.jpg"
   ]);
-  expect(store.get("field_repo_token")).toBe("a-perfectly-good-token");
+  expect(getSessionMarker(), "the session is kept").toBe("a-perfectly-good-token");
   expect(replaced, "a timer must not take the screen away").toEqual([]);
 });
 

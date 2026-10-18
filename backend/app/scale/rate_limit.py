@@ -42,6 +42,8 @@ bcrypt; the real defence is still the password's own entropy and, above this box
 """
 
 import hashlib
+import hmac
+import ipaddress
 import logging
 import time
 from collections import OrderedDict
@@ -176,6 +178,47 @@ class _TokenBuckets:
         return len(self._buckets)
 
 
+#: The two headers the web app's server-side proxy adds (``frontend/lib/server/apiProxy.ts``).
+WEB_PROXY_SECRET_HEADER = b"x-web-proxy-secret"
+VIEWER_ADDRESS_HEADER = b"x-viewer-address"
+
+
+def trusted_viewer_address(scope: Scope) -> str | None:
+    """The visitor's address as the web app's proxy reported it — or None when it is not to be believed.
+
+    **WHY THERE IS SUCH A HEADER (2026-10-17).** The web app now keeps the sign-in session in an
+    HttpOnly cookie on its own domain and relays every API call through its own server, so the hop
+    CloudFront records as "the viewer" is a Vercel address shared by every web visitor. Counted from
+    the right as :func:`client_address` does, all of them would share one "Forgot your password?"
+    allowance. The proxy therefore names the visitor in ``X-Viewer-Address``.
+
+    **BELIEVED ONLY BESIDE THE SECRET.** Anybody can send CloudFront an ``X-Viewer-Address``. It counts
+    only when ``X-Web-Proxy-Secret`` equals ``WEB_PROXY_SECRET`` (compared in constant time), and only
+    when it parses as an IP address. No secret configured means never. ``X-Origin-Verify`` is no
+    substitute: CloudFront adds it to EVERY request it forwards, whoever sent it.
+    """
+    from app.core.config import get_settings
+
+    secret = (get_settings().web_proxy_secret or "").strip()
+    if not secret:
+        return None
+    sent = None
+    viewer = None
+    for name, value in scope.get("headers", []):
+        if name == WEB_PROXY_SECRET_HEADER and sent is None:
+            sent = value
+        elif name == VIEWER_ADDRESS_HEADER and viewer is None:
+            viewer = value
+    if sent is None or viewer is None:
+        return None
+    if not hmac.compare_digest(sent.strip(), secret.encode("utf-8")):
+        return None
+    try:
+        return str(ipaddress.ip_address(viewer.strip().decode("latin-1")))
+    except ValueError:
+        return None
+
+
 def _identity(scope: Scope, *, ignore_bearer: bool = False) -> str:
     """Who to charge this request to: the bearer token's digest, else the client address.
 
@@ -189,6 +232,7 @@ def _identity(scope: Scope, *, ignore_bearer: bool = False) -> str:
     would let one guess per randomly generated header sail through a fresh, full bucket.
     """
     forwarded = b""
+    viewer = trusted_viewer_address(scope)
     for name, value in scope.get("headers", []):
         if name == b"authorization" and not ignore_bearer:
             token = value.strip()
@@ -196,6 +240,8 @@ def _identity(scope: Scope, *, ignore_bearer: bool = False) -> str:
                 return "t:" + hashlib.sha256(token[7:]).hexdigest()[:16]
         elif name == b"x-forwarded-for" and not forwarded:
             forwarded = value
+    if viewer:
+        return "ip:" + viewer
     if forwarded:
         first = forwarded.split(b",")[0].strip()
         if first:
@@ -369,6 +415,10 @@ def client_address(scope: Scope) -> str:
     """
     from app.core.config import get_settings
 
+    # A call relayed by the web app's proxy names its visitor; see :func:`trusted_viewer_address`.
+    viewer = trusted_viewer_address(scope)
+    if viewer:
+        return "ip:" + viewer
     hops = max(1, int(get_settings().forwarded_client_hops or 1))
     entries = _forwarded_entries(scope)
     _note_hop_mismatch(scope, hops, entries)
