@@ -24,6 +24,7 @@ Every route answers 404 while the feature is not active here (``services/cross_p
 the documentation portal's URL), so nothing changes for anybody until both servers are configured.
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -57,6 +58,8 @@ from app.services.records import (
     resubmit_status,
 )
 
+logger = logging.getLogger("app.cross_portal")
+
 router = APIRouter(prefix="/cross-portal", tags=["cross-portal"])
 
 NO_MATCH = "No shared record in the Field Repository for this artisan."
@@ -77,6 +80,7 @@ ACTION_LOOKUP = "LOOKUP"
 ACTION_LINK = "LINK"
 ACTION_REFRESH = "REFRESH"
 ACTION_UNLINK = "UNLINK"
+ACTION_RELINK = "RELINK"
 
 
 def _settings_or_404() -> Any:
@@ -332,7 +336,28 @@ async def link_artisan(
     artisan_id: str, payload: LinkIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
     settings = _settings_or_404()
-    if not payload.consent:
+    return await link_artisan_record(
+        settings,
+        artisan_id,
+        consent=payload.consent,
+        expected_remote_id=payload.expectedRemoteArtisanId,
+        user=current_user,
+    )
+
+
+async def link_artisan_record(
+    settings: Any,
+    artisan_id: str,
+    *,
+    consent: bool,
+    expected_remote_id: str | None,
+    user: Any,
+) -> dict[str, Any]:
+    """The link itself, shared by the route above and the duplicate finder's Link action
+    (``routes/artisan_duplicates.link_pair``). Looks the artisan up again from what it stores, asks
+    the documentation portal first, then writes the local row. Raises the route's errors."""
+    current_user = user
+    if not consent:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CONSENT_NEEDED)
     artisan = await require_record(db.artisan, artisan_id)
     await _assert_may_edit(artisan, current_user)
@@ -343,7 +368,7 @@ async def link_artisan(
         await _log(current_user, ACTION_LINK, "NO_MATCH", artisan_id=artisan_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NO_MATCH)
     remote_id = match["artisanId"]
-    if payload.expectedRemoteArtisanId and payload.expectedRemoteArtisanId != remote_id:
+    if expected_remote_id and expected_remote_id != remote_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="The saved numbers match a different Field Repository record. Check them and try again.",
@@ -445,6 +470,24 @@ async def refresh_artisan(
             remote_artisan_id=link.remoteArtisanId,
         )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=NO_LONGER_SHARED)
+    # THE FIELD REPOSITORY MERGED (OR UN-MERGED) ITS RECORD. It answers with the id the link now
+    # lives on there; follow it, so a merge or undo on that side reaches this one without the
+    # documentation portal ever calling this server.
+    current_remote = match.get("artisanId")
+    if isinstance(current_remote, str) and current_remote and current_remote != link.remoteArtisanId:
+        previous_remote = link.remoteArtisanId
+        link = await db.crossportalartisanlink.update(
+            where={"artisanId": artisan_id}, data={"remoteArtisanId": current_remote}
+        )
+        await _log(
+            current_user,
+            ACTION_RELINK,
+            "RELINKED",
+            artisan_id=artisan_id,
+            remote_artisan_id=current_remote,
+            matched_by=link.matchedBy,
+        )
+        logger.info("cross-portal link followed a Field Repository merge (%s -> %s)", previous_remote, current_remote)
     fields = match.get("fields") if isinstance(match.get("fields"), dict) else {}
     data: dict[str, Any] = {}
     for key in cross_portal.IDENTITY_FIELDS:

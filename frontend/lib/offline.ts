@@ -123,6 +123,7 @@
  */
 
 import { ApiError, apiFetch, getToken, sessionOwesPasswordChange } from "@/lib/api";
+import { possibleDuplicateHold, type DuplicateCandidate } from "@/lib/duplicates";
 // `underlyingIsTransient` AND NOT `isTransient` FOR THE DRAIN. They are two readings of one table
 // and differ only in whether a wrapper is opened first; the drain needs the opened one, because
 // every media failure it meets arrives inside a `MediaBatchError` and a false here MARKS the item
@@ -315,6 +316,16 @@ export type OutboxEntry = {
    * certainty.
    */
   danglingField?: string | null;
+  /**
+   * THE SERVER HELD THIS CREATE AS A LIKELY DUPLICATE (409 `artisan_possible_duplicate`). Not a
+   * clash: nothing is wrong with the record, and only the person who was in the room can say whether
+   * it is somebody already recorded. "Same person" attaches the files to that record
+   * ({@link markSamePerson}); "Different person" sends it again with those ids acknowledged
+   * ({@link markDifferentPerson}).
+   */
+  possibleDuplicate?: { candidates: DuplicateCandidate[] } | null;
+  /** "Same person" was chosen: `createdId` is an existing record and nothing new was created. */
+  attachedToExisting?: boolean;
   /**
    * THE ACCOUNT THAT CAPTURED THIS ENTRY, so a shared browser profile never sends one designer's
    * fieldwork under another's token. Null = captured before this field existed, or before `GET /me`
@@ -1174,6 +1185,57 @@ export async function retryOutboxEntry(id: number): Promise<void> {
         // A stale marker would leave the banner offering a re-pick for a refusal nobody is holding.
         { ...row, failure: null, skewRun: null, danglingField: null }
   );
+  await refreshOutbox();
+}
+
+/** The row's sentence for a held create. */
+export function possibleDuplicateSentence(candidates: DuplicateCandidate[]): string {
+  const top = candidates[0]?.artisan;
+  if (!top) return "Not saved yet. This may already be recorded.";
+  return `Not saved yet. This looks like ${top.name}${top.place ? ` (${top.place})` : ""}.`;
+}
+
+/** The queued body with these ids added to `duplicateAcknowledged` (at most 20). Pure. */
+export function bodyWithAcknowledged(body: string, ids: string[]): string {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return body;
+  }
+  const before = Array.isArray(parsed.duplicateAcknowledged) ? (parsed.duplicateAcknowledged as string[]) : [];
+  parsed.duplicateAcknowledged = Array.from(new Set([...before, ...ids])).slice(0, 20);
+  return JSON.stringify(parsed);
+}
+
+/**
+ * "Same person": the entry becomes an upload to the existing record. Nothing new is created and no
+ * field of the queued record is copied onto the existing one; only its files go there. Pure.
+ */
+export function samePersonEntry(row: OutboxEntry, artisanId: string): OutboxEntry {
+  return {
+    ...row,
+    created: true,
+    createdId: artisanId,
+    attachedToExisting: true,
+    possibleDuplicate: null,
+    failure: null
+  };
+}
+
+/** "Different person": send it again, telling the server these were looked at. Pure. */
+export function differentPersonEntry(row: OutboxEntry): OutboxEntry {
+  const ids = (row.possibleDuplicate?.candidates ?? []).map((candidate) => candidate.artisan.id);
+  return { ...row, body: bodyWithAcknowledged(row.body, ids), possibleDuplicate: null, failure: null };
+}
+
+export async function markSamePerson(id: number, artisanId: string): Promise<void> {
+  await updateEntry(id, (row) => (row.possibleDuplicate ? samePersonEntry(row, artisanId) : null));
+  await refreshOutbox();
+}
+
+export async function markDifferentPerson(id: number): Promise<void> {
+  await updateEntry(id, (row) => (row.possibleDuplicate ? differentPersonEntry(row) : null));
   await refreshOutbox();
 }
 
@@ -2077,6 +2139,19 @@ async function runSync(): Promise<SyncResult> {
           // to throw away the queued record and its photographs and then report them as sent. The
           // researcher is the only one who can tell whether the existing record is theirs, so hand
           // it to them with everything intact.
+          // A LIKELY DUPLICATE IS ITS OWN ARM, NOT A CLASH: the record is fine and the question is
+          // only whether the person is already recorded. Both answers are one tap on the row.
+          const hold = possibleDuplicateHold(error);
+          if (hold) {
+            await updateEntry(progress.id!, (row) => ({
+              ...row,
+              attempts: row.attempts + 1,
+              failure: possibleDuplicateSentence(hold.candidates),
+              possibleDuplicate: { candidates: hold.candidates.slice(0, 5) }
+            }));
+            failed += 1;
+            continue;
+          }
           if (error instanceof ApiError && error.status === 409) {
             const files = pendingFileCount(progress);
             await markFailure(

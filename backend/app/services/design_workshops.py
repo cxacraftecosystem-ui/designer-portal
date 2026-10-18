@@ -5132,6 +5132,32 @@ STAGE_ROW_CONFLICT_KEY = "_row"
 #: writers inside one round trip is not this race.
 _STAGE_WRITE_ATTEMPTS = 3
 
+#: The entities whose ``artisanRef`` names an Artisan record (the others name a DwParticipant row).
+_ARTISAN_REF_ENTITIES = frozenset({"participant", "existingProduct"})
+
+
+async def _redirect_artisan_refs(payload: Any) -> None:
+    """Point every ``artisanRef`` that names a merged artisan at the survivor. Mutates ``payload``."""
+    from app.services.artisan_merge import merged_among, resolve
+
+    held: list[tuple[dict[str, Any], str]] = []
+    for entry in getattr(payload, "entries", None) or []:
+        if getattr(entry, "entityKey", None) not in _ARTISAN_REF_ENTITIES:
+            continue
+        data = getattr(entry, "data", None)
+        ref = data.get("artisanRef") if isinstance(data, dict) else None
+        if isinstance(ref, str) and ref:
+            held.append((data, ref))
+    if not held:
+        return
+    # One read for the whole save; a survivor is resolved only for a ref that was actually merged.
+    merged = await merged_among([ref for _, ref in held])
+    for data, ref in held:
+        if ref in merged:
+            survivor = await resolve(ref)
+            if survivor:
+                data["artisanRef"] = survivor
+
 
 async def save_stage(
     workshop_id: str,
@@ -5172,6 +5198,9 @@ async def save_stage(
     the wire, which is what this deletion ended. Do not reintroduce the variable without
     returning it.
     """
+    # A ROW STILL NAMING A MERGED ARTISAN (an offline save queued before the merge, a stale picker)
+    # is written against the survivor instead (services/artisan_merge.redirect_ids).
+    await _redirect_artisan_refs(payload)
     # THE DESIGNER'S OWN QUESTIONS, LOADED BEFORE ANYTHING IS VALIDATED, because the answers to them
     # arrive in the same payload as the registry ones and are validated in the same pass.
     #

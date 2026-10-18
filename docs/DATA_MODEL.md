@@ -938,3 +938,19 @@ object has read back from the archive bucket (`AADHAAR_LOG_ARCHIVE_BUCKET`, the 
 default); `deleteAfter` is when the current object is removed (its versions follow about 90 days
 later, [AADHAAR.md](AADHAAR.md) §3).
 **`AadhaarLegalHold`** suspends both for one record. [AADHAAR.md](AADHAAR.md) §3.
+
+## Duplicate artisans and merges — added 2026-10-18
+
+**`ArtisanDuplicateCandidate`** is one likely-duplicate pair. `kind` is `WITHIN` (two artisans here,
+`artisanAId < artisanBId`) or `CROSS_PORTAL` (one artisan here and a Field Repository id in
+`remoteArtisanId`; no Field Repository data is stored). A CHECK holds each kind to its own shape, and
+two partial unique indexes keep one row per pair. `score`, `band` and `reasons` (codes and short labels,
+never a value) are refreshed by every scan. `status` (`OPEN`, `NOT_DUPLICATE`, `LINKED`) is set only by
+an admin, and a scan never changes a decided row's status. `creatorSaidDifferent` records that the
+creator was shown the pair and saved anyway. Rows cascade away with either artisan.
+
+**`ArtisanMerge`** is the merge record, kept for ever. `mergedId` (unique) is the deleted record's id
+and the redirect key that `GET /api/artisans/{id}` follows to `survivorId`. `choices` holds the field
+keys and the side chosen, never values. `snapshot`, `moves` and `crossPortal` hold what undo needs, and
+the daily purge sets them to null after `undoUntil` (30 days), stamping `snapshotPurgedAt`.
+Migration `20261023090000_artisan_duplicates`, additive. See [ARTISAN_DUPLICATES.md](ARTISAN_DUPLICATES.md).

@@ -1,0 +1,434 @@
+{
+  "contract": "duplicate-score-vectors",
+  "version": 1,
+  "enforcedBy": "backend/tests/test_artisan_duplicates_scoring.py",
+  "whatThisIs": [
+    "The duplicate-artisan scorer, pinned pair by pair. Identical in the designer portal and the Field",
+    "Repository; only pytest reads it, because the server is the only scorer (no web or Android port).",
+    "Each side is a flat profile: name, localName, gender, dateOfBirth, phone, state, district, place,",
+    "village, craftId, craftCode, aadhaarFingerprint, pehchanCardNumber, remoteArtisanId.",
+    "expect.score is the score before the show threshold (null when the pair is not considered at all:",
+    "names under half alike and nothing definitive). It is rounded to two decimals after adding 1e-9.",
+    "expect.band is null below 0.60 (not stored). expect.reasons are the reason codes in order.",
+    "Trigrams are pg_trgm's: each word padded with two spaces in front and one behind; similarity is the",
+    "Jaccard of the two sets."
+  ],
+  "vectors": [
+    {
+      "name": "honorific dropped, same district",
+      "a": {
+        "name": "Shri Ramesh Kumar",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Ramesh Kumar",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.7,
+        "band": "POSSIBLE",
+        "reasons": [
+          "NAME",
+          "DISTRICT"
+        ]
+      }
+    },
+    {
+      "name": "honorific and phone",
+      "a": {
+        "name": "Smt. Sita Devi",
+        "phone": "+91 98290 12345",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Sita Devi",
+        "phone": "9829012345",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.85,
+        "band": "LIKELY",
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "PHONE"
+        ]
+      }
+    },
+    {
+      "name": "Lakshmi and Laxmi, same place and birth date",
+      "a": {
+        "name": "Lakshmi Devi",
+        "place": "Bagru",
+        "dateOfBirth": "1975-03-02",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Laxmi Devi",
+        "place": "Bagru",
+        "dateOfBirth": "1975-03-02",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.85,
+        "band": "LIKELY",
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "PLACE",
+          "DOB"
+        ]
+      }
+    },
+    {
+      "name": "Mohd and Mohammad",
+      "a": {
+        "name": "Mohd Yusuf",
+        "phone": "9829011111",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Mohammad Yusuf",
+        "phone": "09829011111",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.85,
+        "band": "LIKELY",
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "PHONE"
+        ]
+      }
+    },
+    {
+      "name": "initial R. against Ramesh",
+      "a": {
+        "name": "R. Kumar",
+        "place": "Sanganer",
+        "craftId": "craft-2",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Ramesh Kumar",
+        "place": "Sanganer",
+        "craftId": "craft-2",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.8,
+        "band": "LIKELY",
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "PLACE",
+          "CRAFT"
+        ]
+      }
+    },
+    {
+      "name": "identical names, different districts",
+      "a": {
+        "name": "Sita Devi",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Sita Devi",
+        "state": "Gujarat",
+        "district": "Kachchh"
+      },
+      "expect": {
+        "score": 0.55,
+        "band": null,
+        "reasons": [
+          "NAME"
+        ]
+      }
+    },
+    {
+      "name": "different Aadhaar caps at 0.30",
+      "a": {
+        "name": "Gopal Lal",
+        "phone": "9829022222",
+        "aadhaarFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Gopal Lal",
+        "phone": "9829022222",
+        "aadhaarFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.3,
+        "band": null,
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "PHONE",
+          "DIFFERENT_AADHAAR"
+        ]
+      }
+    },
+    {
+      "name": "different Pehchan caps at 0.30",
+      "a": {
+        "name": "Gopal Lal",
+        "phone": "9829022222",
+        "pehchanCardNumber": "RJ1001",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Gopal Lal",
+        "phone": "9829022222",
+        "pehchanCardNumber": "RJ1002",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.3,
+        "band": null,
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "PHONE",
+          "DIFFERENT_PEHCHAN"
+        ]
+      }
+    },
+    {
+      "name": "different gender caps at 0.40",
+      "a": {
+        "name": "Kamal Prajapat",
+        "gender": "Male",
+        "phone": "9829033333",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Kamal Prajapat",
+        "gender": "Female",
+        "phone": "9829033333",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.4,
+        "band": null,
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "PHONE",
+          "DIFFERENT_GENDER"
+        ]
+      }
+    },
+    {
+      "name": "birth years far apart lose 0.25",
+      "a": {
+        "name": "Hari Om",
+        "phone": "9829044444",
+        "dateOfBirth": "1960-01-01",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Hari Om",
+        "phone": "9829044444",
+        "dateOfBirth": "1990-01-01",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.6,
+        "band": "POSSIBLE",
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "PHONE",
+          "DOB_FAR_APART"
+        ]
+      }
+    },
+    {
+      "name": "band edge: exactly 0.90",
+      "a": {
+        "name": "Bhanwar Lal",
+        "place": "Bagru",
+        "dateOfBirth": "1970-05-05",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Bhanwar Lal",
+        "place": "Bagru",
+        "dateOfBirth": "1970-05-05",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.9,
+        "band": "VERY_LIKELY",
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "PLACE",
+          "DOB"
+        ]
+      }
+    },
+    {
+      "name": "band edge: exactly 0.75",
+      "a": {
+        "name": "Bhanwar Lal",
+        "craftId": "craft-1",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Bhanwar Lal",
+        "craftId": "craft-1",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.75,
+        "band": "LIKELY",
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "CRAFT"
+        ]
+      }
+    },
+    {
+      "name": "band edge: exactly 0.60",
+      "a": {
+        "name": "Bhanwar Lal",
+        "craftCode": "block-printing"
+      },
+      "b": {
+        "name": "Bhanwar Lal",
+        "craftCode": "Block Printing"
+      },
+      "expect": {
+        "score": 0.6,
+        "band": "POSSIBLE",
+        "reasons": [
+          "NAME",
+          "CRAFT"
+        ]
+      }
+    },
+    {
+      "name": "band edge: 0.55 is not stored",
+      "a": {
+        "name": "Bhanwar Lal"
+      },
+      "b": {
+        "name": "Bhanwar Lal"
+      },
+      "expect": {
+        "score": 0.55,
+        "band": null,
+        "reasons": [
+          "NAME"
+        ]
+      }
+    },
+    {
+      "name": "local name counts",
+      "a": {
+        "name": "Bhanwar Lal",
+        "localName": "भँवर लाल",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Bhanwar Lal",
+        "localName": "भँवरलाल",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": 0.75,
+        "band": "LIKELY",
+        "reasons": [
+          "NAME",
+          "DISTRICT",
+          "LOCAL_NAME"
+        ]
+      }
+    },
+    {
+      "name": "same Aadhaar is definitive",
+      "a": {
+        "name": "Giriraj Prasad",
+        "aadhaarFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "b": {
+        "name": "G. Sharma",
+        "aadhaarFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "score": 1.0,
+        "band": "VERY_LIKELY",
+        "reasons": [
+          "AADHAAR",
+          "NAME"
+        ]
+      }
+    },
+    {
+      "name": "same Pehchan is definitive",
+      "a": {
+        "name": "Giriraj Prasad",
+        "pehchanCardNumber": "RJ2001"
+      },
+      "b": {
+        "name": "Unrelated Name",
+        "pehchanCardNumber": "RJ2001"
+      },
+      "expect": {
+        "score": 1.0,
+        "band": "VERY_LIKELY",
+        "reasons": [
+          "PEHCHAN"
+        ]
+      }
+    },
+    {
+      "name": "names under half alike are not considered",
+      "a": {
+        "name": "Giriraj Prasad",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "b": {
+        "name": "Meena Bai",
+        "state": "Rajasthan",
+        "district": "Jaipur"
+      },
+      "expect": {
+        "score": null,
+        "band": null,
+        "reasons": []
+      }
+    }
+  ]
+}

@@ -849,6 +849,42 @@ def test_every_declared_difference_is_still_a_difference():
                     )
 
 
+def test_every_artisan_create_says_which_likely_duplicates_it_was_shown():
+    """The duplicate finder's key, on the one artisan form each client has, and on no edit.
+
+    A create that sends a list is one the server may hold as a likely duplicate; a create that sends
+    nothing is an older build. Both doors mount the same form, so the form carrying the key is both
+    doors carrying it, and the queued body is the same object the online save sends.
+    """
+    spec = contract()["artisanCreateKeys"]
+    key = spec["key"]
+
+    web = read(spec["web"]["form"])
+    assert spec["web"]["shape"] in web, (
+        f"{spec['web']['form']} does not send `{key}` as `{spec['web']['shape']}`. Every create says "
+        "what it was shown (`[]` when nothing was), and an edit never sends it."
+    )
+
+    android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
+    body, _ = kotlin_fun_body(android, spec["android"]["form"])
+    assert spec["android"]["shape"] in body, (
+        f"the handset's `{spec['android']['form']}` does not send `{key}` as "
+        f"`{spec['android']['shape']}`."
+    )
+
+    schemas = read(spec["schemaFile"])
+    create_at = schemas.index(f"class {spec['createSchema']}(")
+    update_at = schemas.index(f"class {spec['updateSchema']}(")
+    create_block = schemas[create_at:update_at] if create_at < update_at else schemas[create_at:]
+    assert f"{key}:" in create_block, f"{spec['createSchema']} does not declare `{key}`."
+    after_update = schemas[update_at:]
+    next_class = after_update.find("\nclass ", 1)
+    update_block = after_update if next_class == -1 else after_update[:next_class]
+    assert f"{key}:" not in update_block, (
+        f"{spec['updateSchema']} declares `{key}`. Only a create is ever held as a likely duplicate."
+    )
+
+
 def test_the_contract_is_internally_consistent():
     """The declaration held to itself, because every assertion above trusts it completely."""
     spec = contract()

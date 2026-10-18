@@ -587,6 +587,11 @@ model User {
   /// authorship) and SetNull on the second. See RegionalDirectorState.
   regionalDirectorStates        RegionalDirectorState[] @relation("RegionalDirectorStateUser")
   regionalDirectorStatesAssigned RegionalDirectorState[] @relation("RegionalDirectorStateAssignedBy")
+  /// Duplicate-artisan decisions and merges this admin made. SetNull on the models: the decision
+  /// and the merge record outlive the account (services/artisan_merge.py).
+  artisanDuplicatesDecided ArtisanDuplicateCandidate[] @relation("DupDecidedBy")
+  artisanMergesMade        ArtisanMerge[]              @relation("ArtisanMergedBy")
+  artisanMergesUndone      ArtisanMerge[]              @relation("ArtisanMergeUndoneBy")
 
   @@index([role])
 }
@@ -1279,6 +1284,10 @@ model Artisan {
   questionnaireInterviews QuestionnaireInterviewArtisan[]
   sectionStatuses QuestionnaireSectionStatus[]
   crossPortalLink CrossPortalArtisanLink?
+  /// Likely-duplicate pairs this artisan is either side of. Cascade: a deleted (or merged-away)
+  /// artisan's pairs go with it (services/artisan_duplicates.py).
+  duplicatePairsA ArtisanDuplicateCandidate[] @relation("DupA")
+  duplicatePairsB ArtisanDuplicateCandidate[] @relation("DupB")
 
   // `name` earns its index by being the sort key of the artisan pickers, not by the search box:
   // every text search in this app is a case-insensitive `contains`, which Postgres runs as ILIKE
@@ -7081,4 +7090,112 @@ model AadhaarLegalHold {
   releasedById String?
 
   @@index([recordType, recordId])
+}
+
+// ─── Duplicate artisans: likely pairs, and reversible merges ───────────────────────────────────
+//
+// services/artisan_duplicates.py scores pairs on the server (exact Aadhaar fingerprint or Pehchan
+// number, else name + district + phone + birth date) and stores those at or above 0.60 here. An
+// admin reviews them on the web (/admin/duplicates): merge two records of one person
+// (services/artisan_merge.py), mark them as different people, or — for a Field Repository match —
+// link the two portals' records. Nothing is merged automatically.
+//
+// RAW SQL IN THE MIGRATION (20261023090000_artisan_duplicates), which Prisma cannot express:
+//   * a CHECK that a WITHIN pair names two local artisans in id order and no remote id, and a
+//     CROSS_PORTAL pair names one local artisan and the Field Repository id;
+//   * a partial unique index on ("artisanAId","artisanBId") WHERE kind='WITHIN', and one on
+//     ("artisanAId","remoteArtisanId") WHERE kind='CROSS_PORTAL'. Writes upsert against them with
+//     INSERT ... ON CONFLICT (...) WHERE ... DO UPDATE, and a decided pair (NOT_DUPLICATE, LINKED)
+//     only ever has its score, reasons and scannedAt refreshed.
+// `reasons` carries codes and short labels ("Same district"), never an identifier value.
+
+enum DuplicateKind {
+  WITHIN
+  // A local artisan whose fingerprint or Pehchan number matches a consenting Field Repository
+  // artisan. Only the remote id is stored; details are fetched live, through the logged lookup.
+  CROSS_PORTAL
+}
+
+enum DuplicateStatus {
+  OPEN
+  NOT_DUPLICATE
+  LINKED
+}
+
+enum DuplicateSource {
+  SCAN
+  CREATE
+  IMPORT
+}
+
+model ArtisanDuplicateCandidate {
+  id                   String          @id @default(cuid())
+  kind                 DuplicateKind
+  /// WITHIN: artisanAId < artisanBId in string order, so one pair is one row.
+  artisanAId           String
+  artisanBId           String?
+  /// CROSS_PORTAL only: the Field Repository artisan id. No Field Repository personal data.
+  remoteArtisanId      String?
+  /// PEHCHAN | AADHAAR
+  remoteMatchedBy      String?
+  score                Float
+  /// VERY_LIKELY | LIKELY | POSSIBLE
+  band                 String
+  /// [{code, label}]. Never a value.
+  reasons              Json
+  status               DuplicateStatus @default(OPEN)
+  source               DuplicateSource
+  /// The person creating the record was shown this pair and said "Different person".
+  creatorSaidDifferent Boolean         @default(false)
+  decidedById          String?
+  decidedAt            DateTime?
+  decisionNote         String?
+  scannedAt            DateTime        @default(now())
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  artisanA  Artisan  @relation("DupA", fields: [artisanAId], references: [id], onDelete: Cascade)
+  artisanB  Artisan? @relation("DupB", fields: [artisanBId], references: [id], onDelete: Cascade)
+  decidedBy User?    @relation("DupDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([status, score])
+  @@index([artisanAId])
+  @@index([artisanBId])
+  @@index([decidedById])
+}
+
+/// One merge of two artisan records. Kept forever: `mergedId` is the redirect key that sends a
+/// stale id (an offline queue, a printed code, a dataset consumer) to the surviving record. The
+/// snapshot, the moved-row log and the cross-portal note are what undo needs, and the worker
+/// clears them 30 days on (`snapshotPurgedAt`), after which the merge can no longer be undone.
+model ArtisanMerge {
+  id               String    @id @default(cuid())
+  /// No foreign key: the survivor may itself be merged later.
+  survivorId       String
+  /// The deleted record's id.
+  mergedId         String    @unique
+  mergedById       String?
+  reason           String?
+  /// {field: "A" | "B" | "BOTH"}. Keys only, never values.
+  choices          Json
+  /// The deleted row (never `aadhaarNumber`), the survivor's pre-merge values, and what the merge
+  /// wrote. Holds identity data, so it is purged at 30 days (docs/SECURITY.md).
+  snapshot         Json?
+  /// {table: [{pk..., column, from, to}]}, deleted collision rows, design-workshop entry refs.
+  moves            Json?
+  /// The Field Repository link moved by the merge: {from, to, remoteArtisanId, matchedBy}.
+  crossPortal      Json?
+  undoUntil        DateTime
+  undoneAt         DateTime?
+  undoneById       String?
+  snapshotPurgedAt DateTime?
+  createdAt        DateTime  @default(now())
+
+  mergedBy User? @relation("ArtisanMergedBy", fields: [mergedById], references: [id], onDelete: SetNull)
+  undoneBy User? @relation("ArtisanMergeUndoneBy", fields: [undoneById], references: [id], onDelete: SetNull)
+
+  @@index([survivorId])
+  @@index([createdAt])
+  @@index([mergedById])
+  @@index([undoneById])
 }

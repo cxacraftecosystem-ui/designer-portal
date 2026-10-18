@@ -1609,6 +1609,20 @@ shell on this box. Verify with `aws ec2 describe-instances --instance-ids i-0e09
 
 ---
 
+### Duplicate merges keep a 30-day snapshot (2026-10-18)
+
+Merging two artisan records ([ARTISAN_DUPLICATES.md](ARTISAN_DUPLICATES.md)) keeps the deleted
+record's row in `ArtisanMerge.snapshot` so the merge can be undone. The snapshot never holds
+`aadhaarNumber` (a merge is refused while that legacy column is set). It does hold the fingerprint, the
+last four digits and the `aadhaarVerify*` columns (the name, date of birth, gender and transaction
+recorded at verification). The daily purge clears it 30 days after the merge, and the merge row and
+its redirect stay. **A database backup taken during those 30 days keeps the snapshot until that backup
+expires**, so the provider's backup retention is the true outer limit. Every merge records the admin,
+the reason and the field choices. Nothing merges automatically. The duplicate check (`POST
+/api/artisan-duplicates/check`) answers at most five candidates, filtered by list visibility, with a
+birth year in place of the date of birth and no identifier values. It is rate-limited to 30 a minute
+per user.
+
 ## 6. Configuration reference (security-relevant environment variables)
 
 | Variable | Default | Effect |

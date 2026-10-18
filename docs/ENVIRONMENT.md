@@ -488,6 +488,12 @@ box `.env`; none is created by this repository.
 | `AADHAAR_FINGERPRINT_KEY` | Yes (see above) | — | **Yes** | Also what the link compares Aadhaar by: the code is the stored fingerprint. Must be the same on both servers. It cannot be rotated: every stored fingerprint depends on it. |
 | `FIELD_REPOSITORY_API_URL` | With the flag on | — | No | The documentation portal's API base up to `/api`, e.g. `https://<docs-api-host>/api`. The designer portal calls it; it never calls back. |
 
+### Duplicate artisans — on by default
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `ARTISAN_DUPLICATE_HOLD` | No | `true` | No | The hold at save time (`app/services/artisan_duplicates.py`): a create that sends `duplicateAcknowledged` is answered 409 `artisan_possible_duplicate` while a likely duplicate (score 0.75 or more) was not shown to the person saving it. `false` is a kill switch for the hold only; scoring, `POST /api/artisan-duplicates/check` and the admin review screen stay on. The nightly scan and the 30-day merge-snapshot purge run from the queue worker; the Field Repository half of the scan rides the cross-portal settings above and needs nothing new. |
+
 ### AI-drafted interview answers (C28) — shipped OFF
 
 | Variable | Required | Default | Secret | Notes |

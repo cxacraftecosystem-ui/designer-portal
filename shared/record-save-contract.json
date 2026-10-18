@@ -369,6 +369,33 @@
       ]
     }
   },
+  "artisanCreateKeys": {
+    "why": [
+      "WHAT A NEW ARTISAN WAS SHOWN BEFORE IT WAS SAVED (2026-10-18, the duplicate finder).",
+      "",
+      "Every create from the artisan form sends `duplicateAcknowledged`: the ids of the likely",
+      "duplicates the creator called \"Different person\", or `[]` when nothing was shown. A list is",
+      "what lets the server hold a likely duplicate (409 `artisan_possible_duplicate`); a create with",
+      "no key at all is an older build and is never held. An edit never sends it: the update schema",
+      "does not declare it and is `extra=\"forbid\"`.",
+      "",
+      "BOTH DOORS TAKE THE ONE PATH BY CONSTRUCTION. The integrated hosts mount the real form (see",
+      "`theTwoDoors`), so asserting the key on the form is asserting it on both doors, and a queued",
+      "create carries it in its body so the server asks when the entry syncs."
+    ],
+    "key": "duplicateAcknowledged",
+    "createSchema": "ArtisanCreate",
+    "updateSchema": "ArtisanUpdate",
+    "schemaFile": "backend/app/schemas/records.py",
+    "web": {
+      "form": "frontend/components/forms/ArtisanForm.tsx",
+      "shape": "...(initial ? {} : { duplicateAcknowledged: acknowledgedIds(duplicateDismissed) })"
+    },
+    "android": {
+      "form": "ArtisanForm",
+      "shape": "duplicateAcknowledged = if (isEdit) null else PossibleDuplicates.acknowledged(duplicateAcked)"
+    }
+  },
   "destinationRule": {
     "why": [
       "R3, DECLARED ONCE PER CLIENT AND NOWHERE ELSE. The type box chooses which of the record's two",

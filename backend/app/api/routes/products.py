@@ -7,6 +7,7 @@ from app.core.db import db
 from app.core.deps import assert_can_delete, get_current_user, require_record_creator
 from app.schemas.records import ProductCreate, ProductUpdate
 from app.services.access import guard_record_edit
+from app.services.artisan_merge import redirect_payload
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (
@@ -358,6 +359,9 @@ async def create_product(
     if replayed is not None:
         return public_encode(replayed, current_user)
     data = decimal_to_string(clean_data(payload.model_dump()))
+    # A queued or stale write that still names a merged artisan lands on the survivor
+    # (services/artisan_merge.redirect_payload) instead of a dangling-reference 422.
+    await redirect_payload(data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
@@ -430,6 +434,7 @@ async def update_product(
     data = decimal_to_string(
         clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     )
+    await redirect_payload(data)
     # THE PRECONDITION IS A QUESTION, NOT A COLUMN — taken out of the body here, asked inside the
     # transaction below. ``take_expected_updated_at`` says why it has to leave ``data`` this early:
     # everything between this line and the write reads the dict, and a stray key would become an

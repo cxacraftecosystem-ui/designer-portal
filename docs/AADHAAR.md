@@ -166,6 +166,14 @@ no off-site copy at all.
 is refused at the upload, deletes nothing and logs the failure. Optionally add a lifecycle rule on
 that prefix that expires noncurrent versions sooner, to shorten the tail above.
 
+**Duplicates and merges** ([ARTISAN_DUPLICATES.md](ARTISAN_DUPLICATES.md)). The same fingerprint
+is a definitive duplicate, and different fingerprints rule a pair out. The duplicate check takes a typed
+number in the request body only, fingerprints it, and names an Aadhaar reason only to the caller who
+typed it. A merge is refused while either record still holds the legacy `aadhaarNumber`
+(`aadhaar_backfill_pending`) or is named by an `AadhaarLegalHold` (`aadhaar_legal_hold`). The 30-day
+merge snapshot holds the fingerprint and last four only. Moved revision rows keep their `createdAt`,
+so log retention is unaffected.
+
 ---
 
 ## 4. The certificates

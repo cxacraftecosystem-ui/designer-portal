@@ -4,16 +4,17 @@ from app.api.routes import (
     aadhaar,
     access,
     ai_keys,
-    answer_drafts,
     analytics,
     annual_plan,
+    answer_drafts,
     app_release,
+    artisan_duplicates,
     artisans,
     asr_models,
     auth,
     craft_codes,
-    cross_portal,
     crafts,
+    cross_portal,
     dashboard,
     data_access,
     data_browser,
@@ -80,6 +81,10 @@ api_router.include_router(access.router)
 # on — and tests/test_annual_plan_is_not_a_workshop.py, which asserts it surface by surface.
 api_router.include_router(annual_plan.router)
 api_router.include_router(artisans.router)
+# Likely-duplicate artisans and their merges — /api/artisan-duplicates, /api/artisan-merges. Their own
+# prefixes, so nothing is shadowed by /artisans/{artisan_id}.
+api_router.include_router(artisan_duplicates.router)
+api_router.include_router(artisan_duplicates.merges_router)
 api_router.include_router(crafts.router)
 api_router.include_router(craft_codes.router)
 api_router.include_router(cross_portal.router)

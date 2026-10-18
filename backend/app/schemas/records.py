@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import Field, field_validator, model_validator
 
@@ -198,6 +198,13 @@ class ArtisanCreate(APIModel):
     # required (a 422 naming the missing ones); absent is the old shape and is accepted unchanged, so
     # an outbox entry queued before the contract still replays. See services/artisan_form_contract.
     formContract: int | None = Field(default=None, ge=1, le=2)
+    # THE LIKELY DUPLICATES THE CREATOR WAS SHOWN AND CALLED DIFFERENT PEOPLE — not a column.
+    # ``None`` (every build before the duplicate finder) is never held; a list, ``[]`` when nothing
+    # was shown, is held with 409 ``artisan_possible_duplicate`` while a pair at 0.75 or more is not
+    # in it. See routes/artisans.create_artisan and services/artisan_duplicates.
+    duplicateAcknowledged: list[Annotated[str, Field(max_length=64)]] | None = Field(
+        default=None, max_length=20
+    )
 
     # Mandatory on create. See services/common.require_location for what that does and does not
     # mean — and note it is the ONLY half of the pair the clients cannot omit, because create is

@@ -33,6 +33,7 @@ from app.services.ai import (
     refine_transcript_text,
     transcribe_audio,
 )
+from app.services.artisan_merge import redirect_payload
 from app.services.concurrency import gather_reads
 from app.services.dictation_consent import SendRefused
 
@@ -1118,6 +1119,8 @@ async def complete_media_upload(
     # public base URL configured, which the download path already handles by streaming the bytes.
     data["url"] = public_url_for_key(data["objectKey"])
     data["uploadedById"] = current_user.id
+    # A file queued against an artisan that has since been merged lands on the survivor.
+    await redirect_payload(data)
     relation_data = media_relation_data(data.get("linkedRecordType"), data.get("linkedRecordId"))
     parent: Any = None
     if relation_data:

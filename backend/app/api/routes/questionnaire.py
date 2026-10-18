@@ -38,6 +38,7 @@ from app.schemas.questionnaire import (
 )
 from app.services import answer_drafts, cross_portal_codes
 from app.services.access import guard_record_edit, owner_download_scope
+from app.services.artisan_merge import redirect_ids
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.questionnaire_consolidation import (
@@ -1207,6 +1208,8 @@ async def create_interview(
     payload: QuestionnaireInterviewCreate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
+    # An artisan merged since the client last looked is named by its survivor.
+    payload.artisanIds = await redirect_ids(payload.artisanIds) or []
     # Workshop entries: enforce assignment BEFORE the dedupe short-circuit, so folding into an
     # existing interview can never be used to slip past a workshop the user is not assigned to.
     check = await enforce_workshop_submission(current_user, payload.workshopId)
@@ -1707,6 +1710,8 @@ async def update_interview(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     interview = await require_record(db.questionnaireinterview, interview_id)
+    if payload.artisanIds is not None:
+        payload.artisanIds = await redirect_ids(payload.artisanIds) or []
     data = clean_data(
         payload.model_dump(exclude_unset=True, exclude={"artisanIds", "responses"}),
         # ``QuestionnaireInterview``'s own nullable scalars, so an explicit null actually CLEARS
@@ -1910,11 +1915,33 @@ def _answer_disagreements(source_row: Any, target_row: Any) -> list[str]:
     return differing
 
 
+async def _duplicate_pair_aliases(pair_id: str | None, user: Any) -> dict[str, str]:
+    """The two artisans of a likely-duplicate pair, each standing for the other. Admins only."""
+    if not pair_id:
+        return {}
+    if not is_admin(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    pair = await db.artisanduplicatecandidate.find_unique(where={"id": pair_id})
+    if pair is None or str(getattr(pair.kind, "value", pair.kind)) != "WITHIN" or not pair.artisanBId:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="That duplicate pair no longer exists.",
+        )
+    return {pair.artisanAId: pair.artisanBId, pair.artisanBId: pair.artisanAId}
+
+
 @router.post("/interviews/{interview_id}/merge-into/{target_id}")
 async def merge_interview_into(
     interview_id: str,
     target_id: str,
     current_user: Any = Depends(get_current_user),
+    # THE DUPLICATE-ARTISAN MERGE'S DOOR IN (services/artisan_merge.blockers_for). Two interviews that
+    # would cover the same artisans once two records of one person are merged can never pass refusal
+    # 3 below, because each covers one of the two records and the other does not. Naming an open
+    # likely-duplicate pair (admins only) lets the two records stand for each other in that check
+    # and nowhere else; the answers then sit on the target, which the artisan merge points at the
+    # surviving record a moment later.
+    duplicatePairId: str | None = Query(default=None, max_length=64),
 ) -> dict[str, Any]:
     """Move this interview's answers, recordings and section coverage onto ``target_id``; remove it.
 
@@ -2116,7 +2143,12 @@ async def merge_interview_into(
         )
 
     covered = {link.artisanId for link in target_links}
-    uncovered = [link for link in source_links if link.artisanId not in covered]
+    aliases = await _duplicate_pair_aliases(duplicatePairId, current_user)
+    uncovered = [
+        link
+        for link in source_links
+        if link.artisanId not in covered and aliases.get(link.artisanId) not in covered
+    ]
     if uncovered:
         names = ", ".join(get_value(link.artisan, "name") or link.artisanId for link in uncovered)
         raise HTTPException(

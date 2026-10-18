@@ -129,7 +129,7 @@ from pydantic import ValidationError
 
 from app.schemas.common import LocationInput
 from app.schemas.records import ArtisanCreate
-from app.services import aadhaar_fingerprint, design_workshops, records
+from app.services import aadhaar_fingerprint, artisan_duplicates, design_workshops, records
 from app.services.artisan_identity import mask_aadhaar
 from app.services.artisan_xlsx import MAX_ARTISANS, ParsedArtisan, ParsedArtisanList
 from app.services.xlsx_table import ParseProblem
@@ -269,6 +269,8 @@ async def import_artisans(
         if outcome == ImportOutcome.CREATED:
             created += 1
             ordered_ids.append(artisan_id or "")
+            if artisan_id:
+                await _flag_possible_duplicate(artisan_id, artisan, warn)
         elif outcome == ImportOutcome.LINKED:
             linked += 1
             ordered_ids.append(artisan_id or "")
@@ -627,6 +629,29 @@ async def _create_one(
 #: ``_IDENTITY_CONSTRAINTS``. A service reaching into a ROUTE module for a private name is the
 #: dependency direction this codebase refuses, and the alternative — promoting that constant —
 #: would move a message table this module has no use for. Two column names, one line.
+async def _flag_possible_duplicate(artisan_id: str, artisan: ParsedArtisan, warn: Any) -> None:
+    """A row created as new that looks like someone already recorded (score 0.75+) is reported as a
+    warning and stored for review (services/artisan_duplicates.py). Never refuses the row: a
+    spreadsheet is not the place to decide two people are one."""
+    try:
+        profile = await artisan_duplicates.load_profile(artisan_id)
+        if profile is None:
+            return
+        found = await artisan_duplicates.candidates_for_profile(profile, exclude_id=artisan_id)
+        await artisan_duplicates.store_candidates(artisan_id, found, source="IMPORT")
+    except Exception:
+        logger.exception("duplicate scoring failed on an imported artisan")
+        return
+    likely = [(o, r) for o, r in found if r.score >= artisan_duplicates.HOLD_THRESHOLD]
+    if likely:
+        other = likely[0][0]
+        warn(
+            artisan.row,
+            f"{artisan.name} ({artisan.place}) may be {other.display.get('name')} "
+            f"({other.display.get('place')}), already recorded. Review it under Duplicates.",
+        )
+
+
 _IDENTITY_COLUMNS = (aadhaar_fingerprint.FINGERPRINT_FIELD, "aadhaarNumber", "pehchanCardNumber")
 
 

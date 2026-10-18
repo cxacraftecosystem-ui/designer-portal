@@ -17,6 +17,7 @@ import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState }
 import { HeldPostNotice, useRecordFilingHold } from "@/components/designworkshop/HeldPostNotice";
 import { DosDontsField } from "@/components/forms/DosDontsField";
 import { DuplicateArtisanDialog } from "@/components/forms/DuplicateArtisanDialog";
+import { PossibleDuplicateDialog, PossibleDuplicates } from "@/components/duplicates/PossibleDuplicates";
 import type { InlineHostSeed, InlineRecordSurfaceProps, UseExistingArtisan } from "@/components/forms/inlineRecordHost";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
@@ -39,6 +40,17 @@ import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, require
 import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import {
+  acknowledgedIds,
+  checkDuplicates,
+  checkKey,
+  checkReady,
+  possibleDuplicateHold,
+  visibleCandidates,
+  type DuplicateCandidate,
+  type DuplicateCheckRequest,
+  type PossibleDuplicateHold
+} from "@/lib/duplicates";
 import { hasRank } from "@/lib/permissions";
 import {
   ARTISAN_FORM_CONTRACT,
@@ -163,6 +175,31 @@ async function findArtisanByAadhaar(digits: string | null, excludeArtisanId: str
   } catch {
     return null;
   }
+}
+
+/** What the duplicate check needs from the form as it stands (create only). */
+function duplicateCheckRequest(form: FormData): DuplicateCheckRequest {
+  const aadhaar = textValue(form, "aadhaarNumber");
+  return {
+    name: textValue(form, "name") ?? "",
+    localName: textValue(form, "localName"),
+    gender: textValue(form, "gender"),
+    dateOfBirth: textValue(form, "dateOfBirth"),
+    phone: textValue(form, "phone"),
+    place: textValue(form, "place"),
+    state: textValue(form, "state"),
+    district: textValue(form, "district"),
+    village: textValue(form, "village"),
+    craftId: textValue(form, "craftId"),
+    craftName: textValue(form, "craftId") ? null : textValue(form, "newCraftName"),
+    aadhaar: aadhaar && !isMaskedIdentityNumber(aadhaar) && !aadhaarValidationError(aadhaar) ? aadhaar : null,
+    pehchanCardNumber: textValue(form, "pehchanCardNumber")
+  };
+}
+
+/** True when the browser says there is no connection: the check is skipped and the save queues. */
+function browserOffline(): boolean {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
 }
 
 /**
@@ -472,6 +509,19 @@ export function ArtisanForm({
   // moment of saving. Separate flags so dismissing the question does not erase the reminder.
   const [duplicatePromptOpen, setDuplicatePromptOpen] = useState(false);
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
+  /*
+   * LIKELY DUPLICATES (create only). The server scores; the form shows what it says on blur of the
+   * form (600 ms after the last field left, and only when the fields it reads changed) and again
+   * before saving. "Different person" sets the shown rows aside, and every create sends the set
+   * aside ids as `duplicateAcknowledged` ([] when nothing was shown). A save the server holds anyway
+   * (409 `artisan_possible_duplicate`) asks the same question in a dialog.
+   */
+  const [duplicateCandidates, setDuplicateCandidates] = useState<DuplicateCandidate[]>([]);
+  const [duplicateDismissed, setDuplicateDismissed] = useState<Set<string>>(() => new Set());
+  const [duplicateHold, setDuplicateHold] = useState<PossibleDuplicateHold | null>(null);
+  const lastCheckKey = useRef<string | null>(null);
+  const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const checkGeneration = useRef(0);
   const [saving, setSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);
   const [savedRecord, setSavedRecord] = useState<Artisan | null>(null);
@@ -847,6 +897,53 @@ export function ArtisanForm({
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  async function runDuplicateCheck(request: DuplicateCheckRequest): Promise<DuplicateCandidate[]> {
+    if (initial || !checkReady(request) || browserOffline()) return [];
+    const key = checkKey(request);
+    if (key === lastCheckKey.current) return duplicateCandidates;
+    lastCheckKey.current = key;
+    const generation = ++checkGeneration.current;
+    try {
+      const found = await checkDuplicates(request);
+      if (generation === checkGeneration.current) setDuplicateCandidates(found);
+      return found;
+    } catch {
+      // Advisory: a failed check never stops a save, and the server holds on its own if it must.
+      lastCheckKey.current = null;
+      return [];
+    }
+  }
+
+  function scheduleDuplicateCheck() {
+    if (initial) return;
+    if (checkTimer.current) clearTimeout(checkTimer.current);
+    checkTimer.current = setTimeout(() => {
+      const node = formRef.current;
+      if (node) void runDuplicateCheck(duplicateCheckRequest(new FormData(node)));
+    }, 600);
+  }
+
+  useEffect(
+    () => () => {
+      if (checkTimer.current) clearTimeout(checkTimer.current);
+    },
+    []
+  );
+
+  function openCandidate(candidate: DuplicateCandidate) {
+    if (onUseExisting) {
+      resetDirty();
+      onUseExisting({ id: candidate.artisan.id, name: candidate.artisan.name, place: candidate.artisan.place ?? "" });
+      return;
+    }
+    // A new tab, so the form being filled is still here when they come back.
+    window.open(`/artisans/${candidate.artisan.id}`, "_blank", "noopener");
+  }
+
+  function setAside(ids: string[]) {
+    setDuplicateDismissed((current) => new Set([...current, ...ids]));
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // Read the form synchronously: React nulls event.currentTarget across the await below.
@@ -871,6 +968,9 @@ export function ArtisanForm({
       setDuplicatePromptOpen(true);
       return;
     }
+    // The duplicate check again, when the fields it reads changed since the last one. Shown, not
+    // blocking: the server decides whether to hold.
+    if (!initial) await runDuplicateCheck(duplicateCheckRequest(form));
     // A workshop that has already ended makes this a late submission needing admin approval — say so
     // before anything is written. Resolves true immediately when there is nothing to warn about.
     if (!(await workshop.confirmSubmission())) return;
@@ -983,7 +1083,10 @@ export function ArtisanForm({
         extraMetadata: exifItems.length ? { mediaExif: exifItems } : {},
         // The artisan form contract this save was made under: the server holds it to both dates.
         // In the BODY, so the outbox stores it with the entry — see `lib/artisanFormContract`.
-        formContract: ARTISAN_FORM_CONTRACT
+        formContract: ARTISAN_FORM_CONTRACT,
+        // Creates only: the likely duplicates set aside as "Different person" ([] when none were
+        // shown). Its presence is what lets the server hold; an edit never sends it.
+        ...(initial ? {} : { duplicateAcknowledged: acknowledgedIds(duplicateDismissed) })
       };
       // With no connection this queues to the offline outbox instead of failing at the Save button;
       // the media goes with it, because the artisan will have gone home by the time signal returns.
@@ -1090,8 +1193,11 @@ export function ArtisanForm({
     } catch (err) {
       // A duplicate Aadhaar/Pehchan number is the deduplication working, not a breakage: show the
       // server's sentence and a way to reach the artisan who already holds the number.
-      const duplicate = identityConflict(err);
-      if (duplicate) {
+      const hold = possibleDuplicateHold(err);
+      const duplicate = hold ? null : identityConflict(err);
+      if (hold) {
+        setDuplicateHold(hold);
+      } else if (duplicate) {
         setConflict(duplicate);
         // Same dialog as the pre-flight catch, so a duplicate reads identically whether it was found
         // before the request or by the unique index behind it.
@@ -1200,11 +1306,19 @@ export function ArtisanForm({
         ref={formRef}
         onSubmit={submit}
         onInput={markDirty}
+        onBlur={scheduleDuplicateCheck}
         onKeyDown={handleFormEnter}
         className="panel grid gap-4 p-4"
       >
         {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
         <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
+        {initial ? null : (
+          <PossibleDuplicates
+            candidates={visibleCandidates(duplicateCandidates, duplicateDismissed)}
+            onOpen={openCandidate}
+            onDifferent={() => setAside(visibleCandidates(duplicateCandidates, duplicateDismissed).map((c) => c.artisan.id))}
+          />
+        )}
         {conflict ? (
           <div role="alert" className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm text-amber-800">
             <p className="font-medium">{conflict.message}</p>
@@ -1699,6 +1813,24 @@ export function ArtisanForm({
           </button>
         </ActionGroup>
       </form>
+      <PossibleDuplicateDialog
+        open={duplicateHold !== null}
+        message={duplicateHold?.message ?? null}
+        candidates={duplicateHold?.candidates ?? []}
+        saving={saving}
+        onOpen={(candidate) => {
+          setDuplicateHold(null);
+          openCandidate(candidate);
+        }}
+        onKeepEditing={() => setDuplicateHold(null)}
+        onDifferent={() => {
+          const ids = (duplicateHold?.candidates ?? []).map((candidate) => candidate.artisan.id);
+          setDuplicateHold(null);
+          setAside(ids);
+          // After the set lands, so the re-sent body carries the ids.
+          setTimeout(() => formRef.current?.requestSubmit(), 0);
+        }}
+      />
       <DuplicateArtisanDialog
         open={duplicatePromptOpen}
         artisan={conflict?.existingArtisan}

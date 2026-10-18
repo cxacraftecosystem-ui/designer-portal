@@ -45,6 +45,7 @@ from contextlib import suppress
 
 from app.core.config import get_settings
 from app.core.db import connect_db, disconnect_db, ensure_db_connected
+from app.services import artisan_duplicates, artisan_merge
 from app.services.aadhaar import log_retention as aadhaar_log_retention
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
@@ -95,6 +96,14 @@ async def _run() -> None:
                 await aadhaar_log_retention.maybe_run(settings)
             except Exception:
                 logger.exception("Aadhaar log retention pass failed; it runs again tomorrow")
+            try:
+                await artisan_duplicates.maybe_run(settings)
+            except Exception:
+                logger.exception("Duplicate-artisan scan failed; it runs again tomorrow")
+            try:
+                await artisan_merge.maybe_purge(settings)
+            except Exception:
+                logger.exception("Artisan merge snapshot purge failed; it runs again tomorrow")
             # Sleep for the interval but wake immediately on shutdown.
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval)
