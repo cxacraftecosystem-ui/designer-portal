@@ -46,9 +46,10 @@ version: 2
 # `gradle` entry below reads the plugin versions in `android/build.gradle.kts` and the string
 # coordinates in every module's `build.gradle.kts`, and it bumps the Gradle wrapper too (its
 # pull requests are titled "Bump gradle-wrapper from …" and regenerate `gradle/wrapper/` and both
-# scripts). What it cannot read is the vendored sherpa-onnx AAR (a file named in four places — see
+# scripts). What it cannot read is the vendored sherpa-onnx AAR (a file named in five places — see
 # `android/app/build.gradle.kts`), the JDK in the three Android workflows' `setup-java`, and the
-# SDK platform and build-tools those workflows install; those still move by hand, together.
+# SDK platform and build-tools those workflows install; those still move by hand, together, and
+# `codeql.yml`'s Kotlin job repeats all three, so it moves with them.
 
 updates:
   # ── GitHub Actions: the pins added on 2026-09-03 ────────────────────────────────────────
