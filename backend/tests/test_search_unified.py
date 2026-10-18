@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from conftest import needs_db
 from fastapi import HTTPException
 from search_support import index_world, new_stamp, seed, user_ns
@@ -20,15 +21,11 @@ from app.api.routes import search as routes
 from app.core.db import db
 from app.services import cross_portal, search_query
 
-pytestmark = [needs_db, pytest.mark.anyio]
+# One event loop for the module: `world` connects `db` once and every test awaits it.
+pytestmark = [needs_db, pytest.mark.asyncio(loop_scope="module")]
 
 
-@pytest.fixture(scope="module")
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def world():
     await db.connect()
     try:

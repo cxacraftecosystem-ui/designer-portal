@@ -140,6 +140,13 @@ ALLOWED_MENTION_MODULES = ALLOWED_CLIENT_MODULES | {
     "services/annual_plan_xlsx.py",
     "schemas/annual_plan.py",
     "api/routes/workshop_types.py",
+    # Added 2026-10-18 with the unified search index. A cluster is a name, and a planned cluster is
+    # one people search for before any workshop runs there, so the index reads FOUR text columns
+    # off live plan rows (`clusterName`, `craftName`, `state`, `district`) to list the cluster and
+    # its places. It never treats a plan row as a workshop: no workshop document is built from one,
+    # and it skips withdrawn rows because a search result should point at a plan still in force.
+    "services/search_index.py",
+    "services/search_indexer.py",
 }
 
 

@@ -76,6 +76,12 @@ async def seed(stamp: str) -> SimpleNamespace:
         }
     )
     common = {"place": "Bagru", "createdById": owner}
+    # aadhaarNumber and pehchanCardNumber are unique and every module seeds its own world into one
+    # database, so an earlier world gives both numbers up before this one takes them.
+    await db.artisan.update_many(where={"aadhaarNumber": AADHAAR}, data={"aadhaarNumber": None})
+    await db.artisan.update_many(
+        where={"pehchanCardNumber": PEHCHAN}, data={"pehchanCardNumber": None}
+    )
     w.unlinked = await db.artisan.create(
         data={
             "name": f"Ramesh Kumar {stamp}",
@@ -296,7 +302,11 @@ async def index_world(w: SimpleNamespace) -> None:
 
 async def document(entity_type: str, entity_id: str) -> dict[str, Any] | None:
     rows = await db.query_raw(
-        'SELECT * FROM "SearchDocument" WHERE "entityType" = $1 AND "entityId" = $2',
+        # Named columns: Prisma cannot deserialize the tsvector (or a pgvector) column.
+        'SELECT "id", "entityType", "entityId", "title", "subtitle", "body", "place", "craftIds",'
+        ' "craftCodes", "workshopIds", "artisanIds", "designWorkshopId", "audience", "shareable",'
+        ' "openPath", "recordDate", "contentHash", "embeddedHash", "updatedAt"'
+        ' FROM "SearchDocument" WHERE "entityType" = $1 AND "entityId" = $2',
         entity_type,
         entity_id,
     )

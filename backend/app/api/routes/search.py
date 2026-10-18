@@ -555,7 +555,7 @@ def _clean_query(q: str) -> str:
     cleaned = " ".join(plain(q).split())
     if not UNIFIED_Q_MIN <= len(cleaned) <= UNIFIED_Q_MAX:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Search for {UNIFIED_Q_MIN} to {UNIFIED_Q_MAX} characters.",
         )
     return cleaned
@@ -591,7 +591,7 @@ async def unified_search(
         asked = us.parse_types([type] if type else types)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown search type: {exc}.",
         ) from None
     local_scope, refused = await us.account_scope(current_user, asked)

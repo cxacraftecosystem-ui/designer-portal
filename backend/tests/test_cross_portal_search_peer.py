@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from conftest import needs_db
 from fastapi import HTTPException
 from search_support import SECRETS, document, index_world, new_stamp, seed
@@ -21,7 +22,8 @@ from app.api.routes import cross_portal_search as routes
 from app.core.db import db
 from app.services import cross_portal, cross_portal_peer
 
-pytestmark = [needs_db, pytest.mark.anyio]
+# One event loop for the module: `world` connects `db` once and every test awaits it.
+pytestmark = [needs_db, pytest.mark.asyncio(loop_scope="module")]
 
 TOKEN = "p" * 40
 KEY = "k" * 40
@@ -30,12 +32,7 @@ SEARCH_PATH = "/api/cross-portal/peer/search"
 RECORD_PATH = "/api/cross-portal/peer/search/record"
 
 
-@pytest.fixture(scope="module")
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def world():
     await db.connect()
     try:

@@ -8,21 +8,18 @@ reach no title, subtitle or body.
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 from conftest import needs_db
 from search_support import SECRETS, every_record, new_stamp, seed
 
 from app.core.db import db
 from app.services import search_index
 
-pytestmark = [needs_db, pytest.mark.anyio]
+# One event loop for the module: `world` connects `db` once and every test awaits it.
+pytestmark = [needs_db, pytest.mark.asyncio(loop_scope="module")]
 
 
-@pytest.fixture(scope="module")
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def world():
     await db.connect()
     try:
