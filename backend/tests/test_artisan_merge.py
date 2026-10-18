@@ -88,7 +88,12 @@ def test_merge_moves_every_row_and_undo_puts_the_world_back():
         assert sorted(len(x.artisanIds) for x in tasks) == [1, 2]
         i_gone = await db.questionnaireinterview.find_unique(where={"id": w["i_gone"].id})
         assert keep.id in i_gone.artisanSetKey and gone.id not in i_gone.artisanSetKey
-        revision = await db.recordrevision.find_first(where={"recordId": keep.id, "changes": {"path": ["merge", "mergedId"], "equals": gone.id}})
+        # prisma-client-py has no JSON-path filter, so the merge revision is picked out here.
+        revisions = await db.recordrevision.find_many(where={"recordId": keep.id})
+        revision = next(
+            (r for r in revisions if isinstance(r.changes, dict) and (r.changes.get("merge") or {}).get("mergedId") == gone.id),
+            None,
+        )
         assert revision is not None and revision.changes["merge"]["fields"]["name"] == gone_side
 
         # A merged id still leads somewhere.

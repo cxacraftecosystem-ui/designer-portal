@@ -61,6 +61,9 @@ async def artisan(user: Any, name: str, **extra: Any) -> Any:
     if meta is not None:
         data["extraMetadata"] = Json(meta)
     data.update(extra)
+    # The fingerprint and its last four are "both or neither" (Artisan_aadhaarFingerprint_pair).
+    if data.get("aadhaarFingerprint") and not data.get("aadhaarLast4"):
+        data["aadhaarLast4"] = "9012"
     return await db.artisan.create(data=data)
 
 
@@ -131,8 +134,10 @@ async def rich_world(user: Any, t: str) -> dict[str, Any]:
     })
     for iid, aid in ((i_gone.id, gone.id), (i_both.id, keep.id), (i_both.id, gone.id), (i_both.id, other.id)):
         await db.questionnaireinterviewartisan.create(data={"interviewId": iid, "artisanId": aid})
-    s1 = await db.questionnairesection.create(data={"code": f"Z{t}1", "title": "S1", "sortOrder": 1})
-    s2 = await db.questionnairesection.create(data={"code": f"Z{t}2", "title": "S2", "sortOrder": 2})
+    # `sortOrder` is unique across the register, so each run takes its own pair of slots.
+    slot = 1_000_000 + int(t[:6], 16) * 2
+    s1 = await db.questionnairesection.create(data={"code": f"Z{t}1", "title": "S1", "sortOrder": slot})
+    s2 = await db.questionnairesection.create(data={"code": f"Z{t}2", "title": "S2", "sortOrder": slot + 1})
     await db.questionnairesectionstatus.create(data={"artisanId": keep.id, "sectionId": s1.id, "status": "DONE", "setById": user.id})
     await db.questionnairesectionstatus.create(data={"artisanId": gone.id, "sectionId": s1.id, "status": "SKIPPED", "setById": user.id})
     await db.questionnairesectionstatus.create(data={"artisanId": gone.id, "sectionId": s2.id, "status": "DONE", "setById": user.id})
