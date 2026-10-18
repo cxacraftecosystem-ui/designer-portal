@@ -393,6 +393,24 @@ def test_peer_list_version_mismatch_drops_unknown_units(monkeypatch: pytest.Monk
     assert _unit(payload, BARMER)["peer"]["artisans"] == 9
 
 
+def test_peer_crafts_count_only_inside_the_fold_scope():
+    answer = _peer_answer(craftCodesDocumented=["ajrakh", "bagru"],
+                          craftCodesByState={str(RAJASTHAN): ["bagru"], str(GUJARAT): ["ajrakh"]})
+
+    def documented(**kwargs: Any) -> set[str]:
+        filters = coverage.Filters(peer=True, **kwargs.pop("filters", {}))
+        fold = coverage.Fold(filters=filters, **kwargs)
+        coverage.fold_peer(fold, answer)
+        return fold.documented
+
+    assert documented() == {"ajrakh", "bagru"}
+    assert documented(allowed_states=frozenset({GUJARAT})) == {"ajrakh"}
+    assert documented(filters={"state_lgd": RAJASTHAN}) == {"bagru"}
+    assert documented(filters={"schemes": ("DPD",)}) == set()
+    del answer["craftCodesByState"]
+    assert documented(allowed_states=frozenset({GUJARAT})) == set()
+
+
 def test_peer_is_off_without_the_flag_token_or_address():
     assert coverage.coverage_peer_active(_settings())
     assert not coverage.coverage_peer_active(_settings(cross_portal_coverage_enabled=False))
@@ -464,7 +482,7 @@ ROLES = {
 def doors():
     from fastapi.testclient import TestClient
 
-    from app.core.db import db
+    from app.core.db import connect_db, db
     from app.core.security import hash_password
     from app.main import app
 
@@ -472,8 +490,11 @@ def doors():
     raw_state = f"Marwar {stamp}"
     facts: dict[str, Any] = {"users": {}}
 
+    # ``connect_db``, not a bare ``db.connect()``: on a loaded machine the query engine's first
+    # reach for the database can time out (P1001) once earlier modules have run, and the app's own
+    # retry with backoff is what every other caller already relies on.
     async def seed() -> None:
-        await db.connect()
+        await connect_db()
         try:
             for key, role in ROLES.items():
                 email = f"coverage-{key}-{stamp}@example.org"
@@ -528,7 +549,7 @@ def doors():
         answers["delete-ok"] = call("DELETE", f"/coverage/aliases/{alias_id}", "master")
 
     async def read_back() -> None:
-        await db.connect()
+        await connect_db()
         try:
             facts["revisions"] = await db.recordrevision.find_many(
                 where={"recordType": "geoalias", "recordId": alias_id or "-"}

@@ -137,7 +137,7 @@ export function CoverageUnitPanel({ query, stateLgd, districtLgd, title, note, o
                 {entry.nextCursor ? (
                   <button
                     type="button"
-                    className="field-button-secondary w-fit"
+                    className="field-button-secondary mx-auto w-fit"
                     disabled={more === bucket}
                     onClick={() => loadMore(bucket)}
                   >
@@ -149,7 +149,7 @@ export function CoverageUnitPanel({ query, stateLgd, districtLgd, title, note, o
           })}
 
           {data.peerHref ? (
-            <a href={data.peerHref} target="_blank" rel="noreferrer" className="field-button-secondary w-fit">
+            <a href={data.peerHref} target="_blank" rel="noreferrer" className="field-button-secondary mx-auto w-fit">
               Open in Field Repository
               <ExternalLink className="h-4 w-4" aria-hidden />
             </a>

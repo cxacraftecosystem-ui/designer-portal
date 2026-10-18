@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { decodePolylines, indiaRings } from "@/components/map/indiaGeometry";
+import { decodePolyline, indiaRings } from "@/components/map/indiaGeometry";
 import { decodeRing, decodeShapes } from "@/components/map/shapeGeometry";
 import { clusterMarkers, shadeShapes } from "@/components/map/coverage/coverageShade";
 import {
@@ -63,8 +63,8 @@ test("a district ring round-trips through the outline's decoder", () => {
   ];
   const decoded = decodeRing(encode(ring));
   expect(decoded).toEqual([...ring, ring[0]]);
-  expect(decodePolylines(encode(ring), false)).toHaveLength(1);
-  const shapes = decodeShapes({ version: "x", scale: 1000, districts: [{ lgd: 90, stateLgd: 8, rings: [encode(ring)], centroid: [71.6, 25.9] }] });
+  expect(decodePolyline(encode(ring), false)).toHaveLength(1);
+  const shapes = decodeShapes({ version: "x", source: "test", asOf: "2026-10-18", scale: 1000, districts: [{ lgd: 90, stateLgd: 8, rings: [encode(ring)], centroid: [71.6, 25.9] }] });
   expect(shapes[0].rings[0]).toHaveLength(5);
 });
 

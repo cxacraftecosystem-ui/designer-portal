@@ -32,7 +32,7 @@ import {
   type CoverageResponse,
   type CoverageUnit
 } from "@/components/map/coverage/coverageTypes";
-import { loadDistrictShapes, type DistrictShape } from "@/components/map/shapeGeometry";
+import { loadShapes, type DistrictShape } from "@/components/map/shapeGeometry";
 
 export const COVERAGE_CAPTION =
   "External boundaries of India as depicted by Survey of India. District boundaries are indicative.";
@@ -78,7 +78,7 @@ export function CoverageView() {
 
   useEffect(() => {
     let cancelled = false;
-    loadDistrictShapes()
+    loadShapes()
       .then((loaded) => {
         if (!cancelled) setShapes(loaded);
       })

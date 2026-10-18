@@ -75,7 +75,7 @@ export function CoverageMap({ shaded, markers, metric, focusState, selected, onS
   }, []);
 
   const paths = useMemo(
-    () => shaded.map((entry) => ({ entry, d: shapePath(entry.shape.rings) })),
+    () => shaded.map((entry) => ({ entry, d: shapePath(entry.shape) })),
     [shaded]
   );
 

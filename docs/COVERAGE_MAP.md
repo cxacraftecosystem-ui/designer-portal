@@ -16,7 +16,9 @@ are. Coverage shades every district by how much of the programme has reached it 
 - **Field Repository** (behind `CROSS_PORTAL_COVERAGE_ENABLED`, see [ENVIRONMENT.md](ENVIRONMENT.md)):
   its aggregate counts per district as a separate row, never summed into this portal's, because one
   artisan can exist in both without a consented link. A district counts as reached when either portal
-  has a workshop there. When the other server cannot be reached the map draws this portal only.
+  has a workshop there. Its documented crafts close a craft gap only within the reader's states (per-state
+  codes), and not at all under a scheme filter. When the other server cannot be reached the map draws
+  this portal only.
 - **Filters**, all in the URL: craft (shared codes), scheme (`workshopKind` — field records carry none
   and drop out under a scheme filter), financial year (1 April to 31 March, IST; a plan row's
   `planYear` is its financial year), state, group by district or state, and what to shade by

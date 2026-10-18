@@ -225,20 +225,19 @@ export type Polygon = Ring[];
 
 let decoded: Polygon[] | null = null;
 
-/** One record of the polyline scheme: its points, and whether the stream marked it a hole. */
-export type DecodedRecord = { hole: boolean; points: Ring };
+/** One record of a polyline payload: its points, and whether the record is flagged as a hole. */
+export type PolylineRecord = { hole: boolean; points: Ring };
 
 /**
- * The polyline scheme every geometry string in the web client uses: zig-zag varints, five payload
- * bits per character over {@link ALPHABET}, coordinates scaled by 1000 and delta-encoded across the
- * whole stream. Each record is a point count, an optional hole flag, then the deltas.
+ * The polyline scheme every boundary asset in this app is written in, decoded.
  *
- * Exported so the coverage map's district shapes (``district-shapes.json``) decode with this exact
- * function rather than a second copy of it. ``holeFlag`` is true for the national outline below and
- * false for a district ring, which the build writes without one.
+ * Exported so the coverage map's district shapes (`shapeGeometry.ts`) read their rings with this
+ * decoder rather than a third copy. `holeFlag` says whether each record carries the outline's hole
+ * flag after its count; the border and shape files do not. Records are returned OPEN (the closing
+ * point is implied), and a zero or negative count ends the stream rather than looping on it.
  */
-export function decodePolylines(payload: string, holeFlag: boolean): DecodedRecord[] {
-  const records: DecodedRecord[] = [];
+export function decodePolyline(payload: string, holeFlag: boolean): PolylineRecord[] {
+  const records: PolylineRecord[] = [];
   let index = 0;
   let x = 0;
   let y = 0;
@@ -281,7 +280,7 @@ export function decodePolylines(payload: string, holeFlag: boolean): DecodedReco
 export function indiaRings(): Polygon[] {
   if (decoded) return decoded;
   const polygons: Polygon[] = [];
-  for (const { hole, points } of decodePolylines(PAYLOAD, true)) {
+  for (const { hole, points } of decodePolyline(PAYLOAD, true)) {
     const ring: Ring = [...points, points[0]];
     if (hole && polygons.length) polygons[polygons.length - 1].push(ring);
     else polygons.push([ring]);

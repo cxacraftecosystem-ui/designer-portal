@@ -588,9 +588,35 @@ def fold_peer(fold: Fold, answer: dict[str, Any]) -> None:
                 unit.peer[bucket] += int(counts.get(bucket) or 0)
             except (TypeError, ValueError):
                 continue
-    for code in answer.get("craftCodesDocumented") or []:
+    for code in _peer_documented_codes(fold, answer):
         if isinstance(code, str) and (not fold.filters.craft_codes or code in fold.filters.craft_codes):
             fold.documented.add(code)
+
+
+def _peer_documented_codes(fold: Fold, answer: dict[str, Any]) -> list[Any]:
+    """The Field Repository's documented crafts that may count against THIS fold's gap list.
+
+    The peer cannot filter by scheme, so under a scheme filter none of its crafts count. A fold
+    limited to some states (a Regional Director, or a state picked in the filters) takes only those
+    states' codes from ``craftCodesByState``; a peer that does not send it contributes nothing
+    rather than its national list.
+    """
+    if fold.filters.schemes:
+        return []
+    if fold.allowed_states is None and fold.filters.state_lgd is None:
+        return list(answer.get("craftCodesDocumented") or [])
+    by_state = answer.get("craftCodesByState")
+    if not isinstance(by_state, dict):
+        return []
+    codes: list[Any] = []
+    for state, state_codes in by_state.items():
+        try:
+            state_code = int(state)
+        except (TypeError, ValueError):
+            continue
+        if fold.in_scope(state_code) and isinstance(state_codes, list):
+            codes.extend(state_codes)
+    return codes
 
 
 def add_cluster_markers(fold: Fold) -> None:
