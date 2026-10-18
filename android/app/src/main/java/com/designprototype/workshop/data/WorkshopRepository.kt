@@ -5786,6 +5786,65 @@ class WorkshopRepository(
 
     suspend fun artisan(id: String): ArtisanDetailDto = api.artisan(id)
 
+    suspend fun artisanCard(id: String): ArtisanCardDto = api.artisanCard(id)
+
+    /**
+     * Whether artisan cards are on, asked once per launch and remembered for offline launches. A
+     * failure that is not "no signal" reads as off; no signal reads the last answer.
+     */
+    suspend fun artisanCardsEnabled(context: Context): Boolean {
+        val prefs = context.getSharedPreferences("artisan_cards", Context.MODE_PRIVATE)
+        return try {
+            val enabled = api.artisanCardStatus().enabled
+            prefs.edit().putBoolean("enabled", enabled).apply()
+            enabled
+        } catch (error: IOException) {
+            prefs.getBoolean("enabled", false)
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            if (error is HttpException && error.code() == 401) prefs.getBoolean("enabled", false) else false
+        }
+    }
+
+    suspend fun reissueArtisanCard(id: String, reason: String): ArtisanCardDto =
+        api.reissueArtisanCard(id, ArtisanCardReissueRequest(reason))
+
+    /**
+     * A scanned or typed artisan card, to the artisan it names.
+     *
+     * THE CACHED REGISTER ANSWERS FIRST AND ANSWERS OFFLINE ([register], the rows `loadArtisanRegister`
+     * cached with their card codes): a `D` card by the artisan's own code, an `F` card by the Field
+     * Repository code its link holds. Anything else goes to the server. With no answer from the
+     * server because there is no signal, the scan is [CardResolution.Pending]: a picker keeps
+     * `card:<shortCode>` and the sync resolves it before the entry is sent.
+     */
+    suspend fun resolveArtisanCard(input: String, register: List<ArtisanDto>): CardResolution {
+        val parsed = when (val result = ArtisanCardCode.parse(input)) {
+            is ArtisanCardCode.Result.Ok -> result.card
+            is ArtisanCardCode.Result.Refused -> return CardResolution.Refused(ArtisanCardCode.CHECK_MESSAGE)
+        }
+        matchCardInRegister(parsed, register)?.let { row ->
+            return CardResolution.Found(row.id, row.name, row.place.ifBlank { null })
+        }
+        return try {
+            val answer = api.resolveArtisanCard(ResolveCardRequest(input.trim()))
+            when (answer.status) {
+                "FOUND" -> answer.artisan?.let {
+                    CardResolution.Found(it.id, it.name, listOfNotNull(it.craft, it.cluster ?: it.place).joinToString(" · ").ifBlank { null })
+                } ?: CardResolution.Refused(CARD_NO_MATCH)
+                "REPLACED" -> CardResolution.Replaced(answer.artisanId.orEmpty())
+                "REMOTE" -> CardResolution.Remote
+                else -> CardResolution.Refused(CARD_NO_MATCH)
+            }
+        } catch (error: HttpException) {
+            // 401: the session expired. Kept pending so the outbox resumes after sign-in, not held.
+            if ((isTransient(error) && error.code() != 429) || error.code() == 401) CardResolution.Pending(parsed)
+            else CardResolution.Refused(error.serverDetail() ?: CARD_NO_MATCH)
+        } catch (error: IOException) {
+            CardResolution.Pending(parsed)
+        }
+    }
+
     /**
      * Is this Aadhaar number already on an artisan? The form's pre-flight duplicate check, run while
      * the researcher is still typing so a duplicate surfaces before the whole form is filled in rather
@@ -7906,7 +7965,8 @@ class WorkshopRepository(
             // one account and skip the rest. See [PendingEntry.ownerUserId].
             val signedIn = cachedUser()?.id
             var synced = 0
-            for (queued in queue) {
+            for (listed in queue) {
+                var queued = listed
                 /*
                   AN ENTRY ANOTHER ACCOUNT CAPTURED IS NOT THIS ACCOUNT'S TO SEND — see
                   [PendingEntry.ownerUserId], and `WorkshopSyncEngine.syncOneWorkshop` for the
@@ -7970,6 +8030,30 @@ class WorkshopRepository(
                 // (`frontend/lib/offline.ts`), because it is the identical defect: a record refused
                 // for a key the API had not learned yet stayed refused after the API learned it.
                 if (blocksRetry(queued.failure != null, queued.skewRun)) continue
+                // AN ARTISAN CARD SCANNED WITH NO SIGNAL (data/PendingCards.kt): the picker kept
+                // `card:<shortCode>`, and it links now. Every pending card in the body is resolved
+                // before anything is sent and the artisan ids are written into the entry; a card the
+                // server cannot match holds the entry with its sentence in the outbox tray, where
+                // Retry asks again. Never dropped, never sent half-linked.
+                if (queued.createdId == null) {
+                    val cards = pendingCardsInPayload(queued.payloadJson)
+                    if (cards.isNotEmpty()) {
+                        when (val linked = resolvePendingCards(cards) { input -> resolveArtisanCard(input, emptyList()) }) {
+                            PendingCardOutcome.Offline -> return@withLock synced
+                            is PendingCardOutcome.Held -> {
+                                if (queued.failure != linked.message) {
+                                    OfflineOutbox.markFailure(context, queued.id, linked.message)
+                                    notifyUser(context, "\"${queued.label}\" could not be uploaded. ${linked.message}")
+                                }
+                                continue
+                            }
+                            is PendingCardOutcome.Resolved -> {
+                                queued = queued.copy(payloadJson = substitutePendingCardsInPayload(queued.payloadJson, linked.ids))
+                                OfflineOutbox.update(context, queued)
+                            }
+                        }
+                    }
+                }
                 when (val outcome = replayEntry(context, queued)) {
                     ReplayOutcome.Synced -> {
                         OfflineOutbox.remove(context, queued)

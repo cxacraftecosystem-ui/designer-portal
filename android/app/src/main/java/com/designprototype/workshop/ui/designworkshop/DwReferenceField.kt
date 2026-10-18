@@ -53,6 +53,13 @@ import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.decodeWorkshopCode
+import com.designprototype.workshop.data.ArtisanCardCode
+import com.designprototype.workshop.data.CARD_REMOTE
+import com.designprototype.workshop.data.CARD_REPLACED
+import com.designprototype.workshop.data.CardResolution
+import com.designprototype.workshop.data.DwEncodeResult
+import com.designprototype.workshop.data.encodeWorkshopCode
+import com.designprototype.workshop.ui.resolveScannedCard
 import com.designprototype.workshop.data.dwRefId
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.ui.DwQrLiveScanControl
@@ -1638,6 +1645,36 @@ private fun DwReferenceScanPanel(
 
     fun resolve(input: String) {
         if (input.isBlank() || busy) return
+        /*
+         * AN ARTISAN QR CARD, in an artisan box. The card names the artisan through the register
+         * this phone cached (offline) or the server; the artisan's id then goes through the very
+         * same DPW1 path below, so scope, cascade and hydration are judged exactly as for any card.
+         * Offline and unmatched, the row keeps `card:<shortCode>` and the sync links it.
+         */
+        if (wanted == DwWorkshopRecordType.ARTISAN && ArtisanCardCode.looksLikeCard(input)) {
+            refusal = null
+            confirmed = null
+            busy = true
+            scope.launch {
+                val answer = resolveScannedCard(context, bridge.repository, input)
+                busy = false
+                when (answer) {
+                    is CardResolution.Found -> when (val code = encodeWorkshopCode(DwWorkshopRecordType.ARTISAN, answer.artisanId)) {
+                        is DwEncodeResult.Ok -> resolve(code.code)
+                        is DwEncodeResult.Refused -> refusal = code.message
+                    }
+                    is CardResolution.Pending -> {
+                        val value = ArtisanCardCode.pendingValue(answer.card)
+                        confirmed = ArtisanCardCode.pendingLabel(value)
+                        pick.value(DwReferenceOption(id = value, label = answer.card.shortCode))
+                    }
+                    is CardResolution.Replaced -> refusal = CARD_REPLACED
+                    CardResolution.Remote -> refusal = CARD_REMOTE
+                    is CardResolution.Refused -> refusal = answer.message
+                }
+            }
+            return
+        }
         // Cleared BEFORE the work and not after it. The seconds a lookup takes are exactly when the
         // previous code's confirmation would otherwise still be sitting under this one's spinner,
         // reading as though it described the card now in the designer's hand.
@@ -1805,7 +1842,9 @@ private fun DwReferenceScanPanel(
                 label = { Text("Record code") },
                 // The letter this field's own kind of record is printed with, so the shape on screen
                 // is the shape on the card in the designer's hand rather than a generic example.
-                placeholder = { Text("DPW1 :${wanted.letter}: …") },
+                placeholder = {
+                    Text(if (wanted == DwWorkshopRecordType.ARTISAN) ArtisanCardCode.PLACEHOLDER else "DPW1 :${wanted.letter}: …")
+                },
                 singleLine = true,
                 enabled = enabled && !busy,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),

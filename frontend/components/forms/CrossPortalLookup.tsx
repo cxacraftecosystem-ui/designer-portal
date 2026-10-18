@@ -10,11 +10,13 @@
  * The consent tick is an AGREEMENT, not a setting, so it is a checkbox (§11.11), and it names every
  * item the lookup shares, from the server's list (`consentLabel`). Unlink asks first.
  */
+import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { ApiError } from "@/lib/api";
+import { cardShortCode, parseArtisanCard } from "@/lib/artisanCard";
 import type { Artisan } from "@/lib/types";
 import {
   consentLabel,
@@ -22,6 +24,7 @@ import {
   SHARED_FIELDS_FALLBACK,
   getCrossPortalLink,
   linkToFieldRepository,
+  lookupByCard,
   lookupInFieldRepository,
   matchSummary,
   refreshFromFieldRepository,
@@ -36,6 +39,12 @@ function message(error: unknown, fallback: string): string {
     if (typeof detail === "string" && detail.trim()) return detail;
   }
   return fallback;
+}
+
+/** "F-01234-56789-S5" for a scanned payload or a typed code. */
+function cardLabel(input: string): string {
+  const parsed = parseArtisanCard(input);
+  return parsed.ok ? cardShortCode(parsed.card.issuer, parsed.card.code) : input.trim().toUpperCase();
 }
 
 /** Whether the server has the feature on, and the consent tick's words. */
@@ -68,8 +77,11 @@ export const UNLINK_CONFIRM = {
 export function CrossPortalFind({
   readNumbers,
   onFill,
-  filled
+  filled,
+  cardInput = null
 }: {
+  /** A Field Repository card scanned or typed elsewhere: the lookup asks by the card, not the numbers. */
+  cardInput?: string | null;
   /** The Aadhaar digits and Pehchan number as typed on the form right now. */
   readNumbers: () => { aadhaarNumber: string | null; pehchanCardNumber: string | null };
   onFill: (match: CrossPortalMatch) => void;
@@ -82,6 +94,7 @@ export function CrossPortalFind({
   const [busy, setBusy] = useState(false);
   const [match, setMatch] = useState<CrossPortalMatch | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [existingId, setExistingId] = useState<string | null>(null);
 
   if (!enabled) return null;
 
@@ -96,6 +109,23 @@ export function CrossPortalFind({
   async function find() {
     setNote(null);
     setMatch(null);
+    setExistingId(null);
+    if (cardInput) {
+      setBusy(true);
+      try {
+        const answer = await lookupByCard(cardInput);
+        if (answer.existingArtisanId) {
+          setExistingId(answer.existingArtisanId);
+          setNote("This artisan is already here.");
+        } else if (answer.match) setMatch(answer.match);
+        else setNote("Not found in the Field Repository, or not shared by the artisan.");
+      } catch (error) {
+        setNote(message(error, "The Field Repository can't be reached. Fill the form yourself."));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const numbers = readNumbers();
     if (!numbers.aadhaarNumber && !numbers.pehchanCardNumber) {
       setNote("Enter the Aadhaar or Pehchan number first.");
@@ -115,7 +145,9 @@ export function CrossPortalFind({
 
   return (
     <div className="md:col-span-3 grid gap-2 rounded-md border border-line-200 bg-card p-3">
-      <p className="text-sm font-medium text-ink-900">Find in the Field Repository</p>
+      <p className="text-sm font-medium text-ink-900">
+        {cardInput ? `Field Repository card ${cardLabel(cardInput)}` : "Find in the Field Repository"}
+      </p>
       <label htmlFor={consentId} className="flex items-start gap-2 text-sm text-ink-700">
         <input
           id={consentId}
@@ -153,6 +185,14 @@ export function CrossPortalFind({
       {note ? (
         <p role="status" className="text-xs text-ink-muted">
           {note}
+          {existingId ? (
+            <>
+              {" "}
+              <Link href={`/artisans/${encodeURIComponent(existingId)}`} className="font-medium underline">
+                Open the artisan
+              </Link>
+            </>
+          ) : null}
         </p>
       ) : null}
     </div>

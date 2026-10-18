@@ -8,6 +8,7 @@ from app.api.routes import (
     annual_plan,
     answer_drafts,
     app_release,
+    artisan_cards,
     artisans,
     asr_models,
     auth,
@@ -86,6 +87,8 @@ api_router.include_router(access.router)
 # on — and tests/test_annual_plan_is_not_a_workshop.py, which asserts it surface by surface.
 api_router.include_router(annual_plan.router)
 api_router.include_router(artisans.router)
+# Artisan QR cards: /artisans/{id}/card*, /artisan-cards/* (services/artisan_card.py).
+api_router.include_router(artisan_cards.router)
 api_router.include_router(crafts.router)
 api_router.include_router(craft_codes.router)
 api_router.include_router(cross_portal.router)

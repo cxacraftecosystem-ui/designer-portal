@@ -83,7 +83,10 @@ import {
   looksLikeJoinCard,
   redeemJoinCard
 } from "@/lib/joinCards";
-import { decodeWorkshopCode, type WorkshopCodeRef } from "@/lib/workshopCodes";
+import { type WorkshopCodeRef } from "@/lib/workshopCodes";
+import { CARD_PLACEHOLDER } from "@/lib/artisanCard";
+import { resolveCardForScan, type CardScanOutcome } from "@/lib/artisanCardScan";
+import { classifyScanInput } from "@/lib/scanInput";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
@@ -134,8 +137,14 @@ export function WorkshopCodeScanner({
   resolve,
   onResolved,
   onJoined,
+  resolveCard = resolveCardForScan,
+  onCardResolved,
   description
 }: {
+  /** An artisan QR card (CXA1 or a typed short code). Defaults to `POST /artisan-cards/resolve`. */
+  resolveCard?: (raw: string) => Promise<CardScanOutcome>;
+  /** Fired with the artisan a card opened, so a picker can take it. */
+  onCardResolved?: (outcome: CardScanOutcome) => void;
   /** Fired when a join card put this account on a workshop (not for a provisional foothold). */
   onJoined?: (workshopId: string) => void;
   /** Turn a decoded reference into an answer. Called for every route, camera and keyboard alike. */
@@ -275,14 +284,31 @@ export function WorkshopCodeScanner({
         await handleJoinCard(raw);
         return;
       }
-      const decoded = decodeWorkshopCode(raw);
-      if (!decoded.ok) {
-        setOutcome({ tone: "refused", text: decoded.message });
+      // An artisan QR card first, then a DPW1 code (`lib/scanInput`).
+      const scan = classifyScanInput(raw);
+      if (scan.kind === "refused") {
+        setOutcome({ tone: "refused", text: scan.message });
         return;
       }
-      await handleReference(decoded.ref);
+      if (scan.kind === "card") {
+        setBusy(true);
+        try {
+          const answer = await resolveCard(scan.raw);
+          setTyped("");
+          setOutcome(
+            answer.ok
+              ? { tone: "found", text: answer.label, detail: answer.detail, href: answer.href, hrefLabel: answer.hrefLabel }
+              : { tone: "refused", text: answer.message, href: answer.href, hrefLabel: answer.hrefLabel }
+          );
+          onCardResolved?.(answer);
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+      await handleReference(scan.ref);
     },
-    [handleReference, handleJoinCard]
+    [handleReference, handleJoinCard, resolveCard, onCardResolved]
   );
 
   /**
@@ -602,7 +628,7 @@ export function WorkshopCodeScanner({
           <input
             id="workshop-code-manual"
             className="field-input min-w-0 flex-1 font-mono uppercase"
-            placeholder="DPW1 :A: …"
+            placeholder={CARD_PLACEHOLDER}
             autoComplete="off"
             autoCapitalize="characters"
             spellCheck={false}

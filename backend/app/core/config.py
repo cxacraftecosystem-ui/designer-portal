@@ -701,12 +701,14 @@ class Settings(BaseSettings):
     # ── CROSS-PORTAL ARTISAN IDENTITY (C27; docs/ENVIRONMENT.md) ────────────────────────────────
     #
     # OFF BY DEFAULT, AND OFF UNTIL BOTH PORTALS HAVE IT. The lookup works only when the flag is on
-    # AND both secrets are set (32 characters or more) on BOTH servers, and, here, FIELD_REPOSITORY_API_URL names the documentation portal's API. Anything missing and
-    # the routes answer 404 and neither client draws a single element. The token authenticates each
-    # server to the other (a bearer on the request, an HMAC of the body on the answer). Aadhaar codes
-    # are made under AADHAAR_FINGERPRINT_KEY (above), the register's own fingerprint key, so the
-    # number itself never leaves either system and a stored fingerprint IS the code. Both values are
-    # the SAME on the two servers. Never commit either.
+    # AND CROSS_PORTAL_TOKEN and AADHAAR_FINGERPRINT_KEY are set (32 characters or more) on BOTH
+    # servers, and, here, FIELD_REPOSITORY_API_URL names the documentation portal's API. Anything
+    # missing and the routes answer 404 and neither client draws a single element. The token
+    # authenticates each server to the other (a bearer on the request, an HMAC of the body on the
+    # answer). The Aadhaar code a lookup carries is the artisan's stored fingerprint, under the
+    # fingerprint key both registers already share (services/aadhaar_fingerprint.py), so the number
+    # itself never leaves either system and there is no separate Aadhaar key. Both values are the
+    # SAME on the two servers. Never commit either.
     cross_portal_identity_enabled: bool = Field(
         default=False, alias="CROSS_PORTAL_IDENTITY_ENABLED"
     )
@@ -714,6 +716,25 @@ class Settings(BaseSettings):
     # The documentation portal's API base, up to and including ``/api`` — e.g.
     # https://api.<docs-domain>/api . The designer portal calls it; it never calls back.
     field_repository_api_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_API_URL")
+
+    # ── ARTISAN QR CARDS (services/artisan_card.py; docs/ENVIRONMENT.md) ────────────────────────
+    #
+    # On by default, but nothing is drawn or served until ARTISAN_CARD_KEY is set (32 characters or
+    # more): without it every card route answers 404 and /artisan-cards/status says enabled:false.
+    # The key signs the QR's tag. 32 random bytes, base64, A DIFFERENT VALUE ON EACH PORTAL — the
+    # other portal never verifies this portal's cards. Kept in GitHub Actions secrets, the box .env
+    # and SSM. Rotation: bump ARTISAN_CARD_KEY_VERSION and put the old key in
+    # ARTISAN_CARD_KEY_PREVIOUS; typed codes resolve whatever the key, because lookup is by code.
+    artisan_cards_enabled: bool = Field(default=True, alias="ARTISAN_CARDS_ENABLED")
+    artisan_card_key: str | None = Field(default=None, alias="ARTISAN_CARD_KEY")
+    artisan_card_key_version: int = Field(default=1, ge=1, le=9, alias="ARTISAN_CARD_KEY_VERSION")
+    artisan_card_key_previous: str | None = Field(default=None, alias="ARTISAN_CARD_KEY_PREVIOUS")
+    # Card lookups that found nothing, per account per 10 minutes, before the next one is a 429.
+    artisan_card_resolve_miss_limit: int = Field(
+        default=20, ge=1, alias="ARTISAN_CARD_RESOLVE_MISS_LIMIT"
+    )
+    # The letter this portal's cards carry: D here, F on the Field Repository. Never change it.
+    artisan_card_issuer: str = Field(default="D", alias="ARTISAN_CARD_ISSUER")
 
     # ABSOLUTE, NOT ".env". See rule 2 in this module's header: a relative env_file is resolved
     # against the working directory, so `python -m uvicorn app.main:app` from backend/ and the same

@@ -469,16 +469,18 @@ One artisan across the two portals. A designer types the Aadhaar or Pehchan numb
 artisan agreed, and the designer portal's server asks the documentation portal's server for the
 artisan; the form is filled and the records linked. The documentation portal is the source of truth
 for name, local name, gender, date of birth and the Pehchan pair; a linked record is refreshed from
-it. The raw Aadhaar number never leaves either server: the designer portal sends
-`HMAC-SHA256(AADHAAR_FINGERPRINT_KEY, digits)`, which is exactly the `aadhaarFingerprint` the artisan register stores, so each side compares stored fingerprints and needs no number. Each server proves itself to the other with
+it. The raw Aadhaar number never leaves either server: the designer portal sends the artisan's
+Aadhaar fingerprint, `HMAC-SHA256(AADHAAR_FINGERPRINT_KEY, digits)` — the value both registers store
+in `Artisan.aadhaarFingerprint` — and the documentation portal compares it with its own column. There
+is no separate Aadhaar key for this link. Each server proves itself to the other with
 `CROSS_PORTAL_TOKEN` (a bearer on the request, an HMAC of the body on the answer). The documentation
 portal answers only for an artisan whose "Share with the Designer Portal" consent is recorded.
 Every answer is signed over the request it answers (method, path and a fresh nonce), every lookup,
 link, refresh and unlink is written to `CrossPortalAccessLog` on both servers (who asked and which
 record, never a number), and one account may make 60 lookups an hour.
 
-**Nothing works until all of it is set on BOTH servers** — the flag, both secrets (32 characters or
-more, the same values on the two servers), and `FIELD_REPOSITORY_API_URL` on the designer portal. Anything missing and every `/api/cross-portal/*`
+**Nothing works until all of it is set on BOTH servers** — the flag, `CROSS_PORTAL_TOKEN` and
+`AADHAAR_FINGERPRINT_KEY` (32 characters or more, the same values on the two servers), and `FIELD_REPOSITORY_API_URL` on the designer portal. Anything missing and every `/api/cross-portal/*`
 route answers 404 and no client draws anything. Secrets go to the GitHub Actions secrets **and** the
 box `.env`; none is created by this repository.
 
@@ -488,6 +490,27 @@ box `.env`; none is created by this repository.
 | `CROSS_PORTAL_TOKEN` | With the flag on | — | **Yes** | Shared by both servers. Authenticates requests and signs answers. 32+ characters. |
 | `AADHAAR_FINGERPRINT_KEY` | With the flag on | — | **Yes** | Not a cross-portal variable: the artisan register's Aadhaar fingerprint key (SSM `/iit/shared/aadhaar-fingerprint-key`, the same value on both servers), which the lookup reuses. Without it the feature stays off. Never rotate it: every stored fingerprint, and so every cross-portal match, depends on it. There is no `CROSS_PORTAL_AADHAAR_HMAC_KEY`. |
 | `FIELD_REPOSITORY_API_URL` | With the flag on | — | No | The documentation portal's API base up to `/api`, e.g. `https://<docs-api-host>/api`. The designer portal calls it; it never calls back. |
+
+### Artisan QR cards
+
+A printable card per artisan (ID-1 or A6 PDF, or a sheet for a workshop) with a QR that holds a signed,
+opaque token and a short code a person can type. On by default, but **nothing is drawn or served
+until `ARTISAN_CARD_KEY` is set**: without it every card route answers 404 and
+`/api/artisan-cards/status` says `enabled:false`, which hides every card control on both clients.
+Until then an artisan keeps its DPW1 code: the edit page, the Android record view and both clients'
+Cards & tags roster sheet print it as before.
+Resolving a Field Repository card also needs the cross-portal settings above. Secrets go to the GitHub
+Actions secrets, the box `.env` and an SSM SecureString backup. After the release is live, issue
+cards for existing artisans with `python -m scripts.backfill_artisan_cards --apply` from `backend/`.
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `ARTISAN_CARDS_ENABLED` | No | `true` | No | The switch. Off, or no key: every card route answers 404. |
+| `ARTISAN_CARD_KEY` | To turn cards on | — | **Yes** | 32 random bytes, base64 (32+ characters). Signs the QR's tag. **A different value on each portal**; the other portal never checks this portal's cards. Losing it stops QR tags verifying; typed codes still resolve. |
+| `ARTISAN_CARD_KEY_VERSION` | No | `1` | No | 1–9. Bump on rotation; new cards are signed under the new key. |
+| `ARTISAN_CARD_KEY_PREVIOUS` | No | — | **Yes** | The key before a rotation, so cards signed under `ARTISAN_CARD_KEY_VERSION - 1` still verify. |
+| `ARTISAN_CARD_RESOLVE_MISS_LIMIT` | No | `20` | No | Card lookups that matched nobody, per account per 10 minutes, before the next is a 429. |
+| `ARTISAN_CARD_ISSUER` | No | `D` | No | The letter this portal's cards carry (`F` on the Field Repository). Never change it. |
 
 ### AI-drafted interview answers (C28) — shipped OFF
 

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, Users } from "lucide-react";
 
 import { CollabDialog } from "@/components/CollabDialog";
+import { ArtisanCardSheetActions, useArtisanCardsEnabled } from "@/components/artisans/ArtisanCardSheetActions";
 import { OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -40,6 +41,9 @@ export default function ArtisansPage() {
   const [completeness, setCompleteness] = useState<CompletenessValue>("");
   const [collabId, setCollabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Artisans ticked for a card print. Kept across pages so a sheet can gather rows from several. */
+  const [ticked, setTicked] = useState<string[]>([]);
+  const cardsEnabled = useArtisanCardsEnabled();
   const skipFirstDebounce = useRef(true);
   /**
    * Which fetch is the current one. Search is debounced and the funnel and pager fire the same
@@ -205,6 +209,18 @@ export default function ArtisansPage() {
         />
       </div>
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
+      {cardsEnabled && ticked.length ? (
+        <section className="panel mb-3 grid gap-3 p-4" aria-label="Print artisan cards">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-ink-900">{ticked.length === 1 ? "1 artisan chosen" : `${ticked.length} artisans chosen`}</p>
+            {/* a single text control beside the count, not an action row */}
+            <button type="button" className="text-sm font-medium text-purple-700 underline dark:text-purple-300" onClick={() => setTicked([])}>
+              Clear
+            </button>
+          </div>
+          <ArtisanCardSheetActions source={{ artisanIds: ticked }} count={ticked.length} />
+        </section>
+      ) : null}
       <section className="panel overflow-hidden">
         {!data ? (
           <div className="p-4 text-sm text-ink-700">Loading...</div>
@@ -217,6 +233,24 @@ export default function ArtisansPage() {
             <table className="w-full min-w-[1000px] text-left text-sm">
               <thead className="bg-surface-50 text-xs uppercase text-ink-500">
                 <tr>
+                  {cardsEnabled ? (
+                    <th className="w-10 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-purple-700"
+                        aria-label="Choose every artisan on this page for a card print"
+                        checked={rows.length > 0 && rows.every((row) => ticked.includes(row.id))}
+                        onChange={(event) => {
+                          const ids = rows.map((row) => row.id);
+                          setTicked((current) =>
+                            event.target.checked
+                              ? [...current, ...ids.filter((rowId) => !current.includes(rowId))]
+                              : current.filter((rowId) => !ids.includes(rowId))
+                          );
+                        }}
+                      />
+                    </th>
+                  ) : null}
                   <ResizableTh>Name</ResizableTh>
                   <ResizableTh>Craft</ResizableTh>
                   <ResizableTh>Place</ResizableTh>
@@ -233,6 +267,21 @@ export default function ArtisansPage() {
                   // `OpenableRow`. The launch cards that a row click used to reveal above this table
                   // now sit on the artisan's own page.
                   <OpenableRow key={artisan.id} href={RECORD_VIEW_HREF.artisan(artisan.id)}>
+                    {cardsEnabled ? (
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-purple-700"
+                          aria-label={`Choose ${artisan.name} for a card print`}
+                          checked={ticked.includes(artisan.id)}
+                          onChange={(event) =>
+                            setTicked((current) =>
+                              event.target.checked ? [...current, artisan.id] : current.filter((rowId) => rowId !== artisan.id)
+                            )
+                          }
+                        />
+                      </td>
+                    ) : null}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <RowCompletenessRing block={artisan.completeness} />

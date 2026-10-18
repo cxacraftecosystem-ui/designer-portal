@@ -73,6 +73,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.InputChip
 import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -121,6 +122,9 @@ import com.designprototype.workshop.ui.writeAdminView
 import com.designprototype.workshop.ui.bannerAlreadySays
 import com.designprototype.workshop.ui.bannerDrawn
 import com.designprototype.workshop.ui.AppMessageTone
+import com.designprototype.workshop.data.ArtisanCardCode
+import com.designprototype.workshop.data.PendingCardOutcome
+import com.designprototype.workshop.data.resolvePendingCards
 import com.designprototype.workshop.data.serverDidNotAnswer
 import com.designprototype.workshop.data.sessionExpired
 import com.designprototype.workshop.data.shouldReprobeServer
@@ -653,6 +657,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import com.designprototype.workshop.data.ArtisanDto
+import com.designprototype.workshop.data.artisanCardData
+import com.designprototype.workshop.data.withCardData
+import com.designprototype.workshop.ui.ArtisanCardScanButton
+import com.designprototype.workshop.ui.ArtisanCardScanSheet
 import com.designprototype.workshop.data.ArtisanAnswerDto
 import com.designprototype.workshop.data.ArtisanDetailDto
 import com.designprototype.workshop.data.ArtisanQuestionnaireDto
@@ -3004,11 +3012,17 @@ internal fun optionToCraft(o: DwReferenceOption): CraftDto? =
  * picker offers).
  */
 internal fun artisanToOption(a: ArtisanDto): DwReferenceOption =
-    DwReferenceOption(id = a.id, label = a.name, hint = a.place, filterValue = a.craftId.orEmpty())
+    // The QR card rides in `data` (`artisanCardData`), so a scanned card matches this cache offline.
+    DwReferenceOption(id = a.id, label = a.name, hint = a.place, filterValue = a.craftId.orEmpty(), data = artisanCardData(a))
 
 internal fun optionToArtisan(o: DwReferenceOption): ArtisanDto? =
     o.id.takeIf { it.isNotBlank() }
-        ?.let { ArtisanDto(id = it, name = o.label, place = o.hint, status = "", craftId = o.filterValue.ifBlank { null }) }
+        ?.let {
+            withCardData(
+                ArtisanDto(id = it, name = o.label, place = o.hint, status = "", craftId = o.filterValue.ifBlank { null }),
+                o.data,
+            )
+        }
 
 /**
  * A [ProductDetailDto] reduced the same way. `filterValue` carries `artisanId` — the parent
@@ -3351,6 +3365,12 @@ private fun HomeScreen(
     val reducedMotion = preferences.reducedMotion
     // The search panel the page header opens. See AppSearch.kt.
     var searchOpen by remember { mutableStateOf(false) }
+    // The artisan QR card scanner the header's QR button opens (ui/ArtisanCardScanSheet.kt). The
+    // button is drawn only while the server says cards are on (remembered for offline launches).
+    var cardScanOpen by remember { mutableStateOf(false) }
+    var artisanCardsOn by remember { mutableStateOf(false) }
+    val cardStatusContext = LocalContext.current
+    LaunchedEffect(Unit) { artisanCardsOn = repository.artisanCardsEnabled(cardStatusContext) }
     // Written as a string (success); errors go through showError. See ui/AppMessage.kt.
     val messageState = remember { AppMessageState() }
     var message by messageState
@@ -5313,7 +5333,22 @@ private fun HomeScreen(
                         appName = APP_SEARCH_NAME,
                         logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 10.dp) },
                         onOpenSearch = { searchOpen = true },
-                        elevated = elevated
+                        elevated = elevated,
+                        onScanCard = if (artisanCardsOn) ({ cardScanOpen = true }) else null
+                    )
+                }
+                if (cardScanOpen) {
+                    ArtisanCardScanSheet(
+                        repository = repository,
+                        onDismiss = { cardScanOpen = false },
+                        onResolved = { artisanId, _ ->
+                            cardScanOpen = false
+                            openSearchRecord(SearchRecordTypes.ARTISAN, artisanId)
+                        },
+                        onOpenReplaced = { artisanId ->
+                            cardScanOpen = false
+                            openSearchRecord(SearchRecordTypes.ARTISAN, artisanId)
+                        }
                     )
                 }
                 // Over the page, under nothing: the page keeps its scroll and any half-filled form.
@@ -9559,10 +9594,53 @@ private fun ArtisanMultiSelectField(
     label: String,
     artisans: List<ArtisanDto>,
     selectedIds: Set<String>,
+    /**
+     * Scan an artisan QR card to tick its artisan. Drawn only when given and when the register
+     * carries cards (it does only while cards are on). The register is matched first, offline.
+     */
+    repository: WorkshopRepository? = null,
     onToggle: (String) -> Unit
 ) {
+    var scanning by remember { mutableStateOf(false) }
+    var scanNote by remember { mutableStateOf<String?>(null) }
+    val cardsOn = repository != null && artisans.any { it.card != null }
+    // Cards scanned with no signal, kept until the save links them (data/PendingCards.kt).
+    val pendingCards = selectedIds.filter { ArtisanCardCode.isPending(it) }
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("$label (${selectedIds.size} selected)", color = Muted, style = MaterialTheme.typography.bodySmall)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("$label (${selectedIds.size} selected)", color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            if (cardsOn) ArtisanCardScanButton(onClick = { scanNote = null; scanning = true })
+        }
+        scanNote?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
+        if (scanning && repository != null) {
+            ArtisanCardScanSheet(
+                repository = repository,
+                onDismiss = { scanning = false },
+                onResolved = { artisanId, name ->
+                    scanning = false
+                    scanNote = when {
+                        artisans.none { it.id == artisanId } -> "$name isn't in this list."
+                        artisanId in selectedIds -> "$name is already selected."
+                        else -> { onToggle(artisanId); "$name selected." }
+                    }
+                },
+                acceptPending = true,
+                onPending = { value ->
+                    scanning = false
+                    scanNote = null
+                    if (value !in selectedIds) onToggle(value)
+                }
+            )
+        }
+        pendingCards.forEach { value ->
+            InputChip(
+                selected = true,
+                onClick = { onToggle(value) },
+                label = { Text(ArtisanCardCode.pendingLabel(value), style = MaterialTheme.typography.bodySmall) },
+                trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "Remove this card") },
+                modifier = Modifier.heightIn(min = 48.dp)
+            )
+        }
         if (artisans.isEmpty()) {
             Text("No artisans yet. Create one first.", color = Muted, style = MaterialTheme.typography.bodySmall)
         } else {
@@ -12313,6 +12391,23 @@ private fun WorkshopForm(
             val originalArtisans = editing?.artisans?.map { it.artisanId }?.toSet() ?: emptySet()
             val originalCrafts = editing?.crafts?.map { it.craftId }?.toSet() ?: emptySet()
             // On edit, only send the relation when it changed (the backend replaces & re-checks it).
+            // A CARD SCANNED WITH NO SIGNAL (`card:<shortCode>`, data/PendingCards.kt) links now if the
+            // server answers. Still no signal: the workshop goes to the outbox with the card in it,
+            // and the outbox pass links it before sending. A card the server can't match stops here.
+            var queueForCards = false
+            val cardValues = selectedArtisans.filter { ArtisanCardCode.isPending(it) }.toSet()
+            if (retry == null && cardValues.isNotEmpty()) {
+                when (val linked = resolvePendingCards(cardValues) { input -> repository.resolveArtisanCard(input, emptyList()) }) {
+                    is PendingCardOutcome.Resolved -> selectedArtisans = selectedArtisans.map { linked.ids[it] ?: it }.toSet()
+                    PendingCardOutcome.Offline -> queueForCards = true
+                    is PendingCardOutcome.Held -> {
+                        onError(linked.message)
+                        saving = false
+                        return@launch
+                    }
+                }
+            }
+            val mustQueue = forceOffline || queueForCards
             val artisanIdsParam = if (!isEdit || selectedArtisans != originalArtisans) selectedArtisans.toList() else null
             val craftIdsParam = if (!isEdit || selectedCrafts != originalCrafts) selectedCrafts.toList() else null
             val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
@@ -12335,7 +12430,7 @@ private fun WorkshopForm(
                 trySaveOffline(repository, context, isEdit, "workshop", offlineFormJson.encodeToString(body),
                     title.trim(), media, title.trim(), "Field media for ${title.trim()}",
                     editingId = editing?.id,
-                    force = forceOffline,
+                    force = mustQueue,
                     idempotencyKey = createKey,
                     base = recordBaseJson(WorkshopDetailDto.serializer(), editing))
             }.getOrNull()
@@ -12346,7 +12441,7 @@ private fun WorkshopForm(
                 saving = false
                 return@launch
             }
-            if (forceOffline) {
+            if (mustQueue) {
                 onError("Couldn't save this workshop. It's still in the form.")
                 saving = false
                 return@launch
@@ -12456,10 +12551,10 @@ private fun WorkshopForm(
             ArtisanMultiSelectField(
                 label = "Linked artisans",
                 artisans = artisans,
-                selectedIds = selectedArtisans
+                selectedIds = selectedArtisans,
+                repository = repository
             ) { id ->
                 selectedArtisans = if (selectedArtisans.contains(id)) selectedArtisans - id else selectedArtisans + id
-            }
         }
         CompletenessAnchor("crafts") {
             CheckboxMultiSelectField(

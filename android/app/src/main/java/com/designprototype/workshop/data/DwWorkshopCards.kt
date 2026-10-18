@@ -207,7 +207,26 @@ data class DwCardSpec(
     val title: String,
     /** At most two supporting lines — a serial number, a village, a prototype code. Never an id. */
     val lines: List<String>,
+    /**
+     * An artisan's QR card token (`CXA1:…`, opaque and signed; no record id) and the short code
+     * printed under it, from the register. Null for an artisan the server has not issued a card for
+     * yet — one created offline — which prints a refusal card instead of a DPW1 code.
+     */
+    val cardToken: String? = null,
+    val cardShortCode: String? = null,
+    /**
+     * True when this artisan card is the server's signed QR card. False while cards are off here
+     * (no card key yet), and the sheet prints the DPW1 artisan card it always has.
+     */
+    val signedCard: Boolean = false,
 )
+
+/** The refusal an artisan row with no card prints, rather than being skipped. */
+const val DW_ARTISAN_CARD_UNSYNCED = "Sync this artisan first."
+
+/** "Aadhaar XXXX XXXX 9012" — the last four digits and never more, or null when unknown. */
+fun dwAadhaarCardLine(last4: String?): String? =
+    last4?.takeIf { it.length == 4 && it.all(Char::isDigit) }?.let { "Aadhaar XXXX XXXX $it" }
 
 /** One card, drawn or refused. */
 sealed interface DwCardRender {
@@ -270,6 +289,10 @@ fun workshopCardSpecs(
     recordType: DwWorkshopRecordType,
     source: DwCardSource,
     rows: List<DwDataRow>,
+    /** The artisan register by id, cards included — where an artisan card's token comes from. */
+    register: Map<String, ArtisanDto> = emptyMap(),
+    /** Whether the server prints signed QR cards (`GET /artisan-cards/status`). Off keeps the DPW1 card. */
+    artisanCardsOn: Boolean = true,
 ): List<DwCardSpec> = rows.mapIndexed { index, row ->
     val key = (row["_entryId"] as? JsonPrimitive)?.content?.takeIf { it.isNotEmpty() }
         ?: (row["_clientKey"] as? JsonPrimitive)?.content?.takeIf { it.isNotEmpty() }
@@ -292,21 +315,41 @@ fun workshopCardSpecs(
             ).filter { it.isNotBlank() },
         )
 
-        DwWorkshopRecordType.ARTISAN -> DwCardSpec(
-            key = key,
-            recordType = recordType,
+        DwWorkshopRecordType.ARTISAN -> {
             // The ARTISAN's repository id, not the roster row's. A card is scanned to open a person's
             // record, and the roster row is this workshop's copy of them; a hand-typed participant has
             // no artisan behind them and gets a refusal saying so.
-            id = artisanRefKey(source.entity)?.let { DwValues.text(row[it]) },
-            title = dwCardRowTitle(source.entity, row, index),
-            // Serial and village, and nothing else. Not the artisan card number, not the phone — see
-            // the header on [DwCardSpec].
-            lines = listOf(
-                DwValues.text(row["serialNo"]).let { if (it.isBlank()) "" else "S. No. $it" },
-                DwValues.text(row["village"]),
-            ).filter { it.isNotBlank() },
-        )
+            val artisanId = artisanRefKey(source.entity)?.let { DwValues.text(row[it]) }?.takeIf { it.isNotBlank() }
+            val artisan = artisanId?.let { register[it] }
+            if (!artisanCardsOn) {
+                // Cards off: the DPW1 card, serial and village and nothing else.
+                return@mapIndexed DwCardSpec(
+                    key = key,
+                    recordType = recordType,
+                    id = artisanId,
+                    title = dwCardRowTitle(source.entity, row, index),
+                    lines = listOf(
+                        DwValues.text(row["serialNo"]).let { if (it.isBlank()) "" else "S. No. $it" },
+                        DwValues.text(row["village"]),
+                    ).filter { it.isNotBlank() },
+                )
+            }
+            DwCardSpec(
+                key = key,
+                recordType = recordType,
+                id = artisanId,
+                title = artisan?.name?.takeIf { it.isNotBlank() } ?: dwCardRowTitle(source.entity, row, index),
+                // The village (the cluster) and the last four Aadhaar digits, and nothing else: not a
+                // phone, not an address, not a Pehchan number. See the header on [DwCardSpec].
+                lines = listOfNotNull(
+                    DwValues.text(row["village"]).ifBlank { artisan?.place.orEmpty() }.ifBlank { null },
+                    dwAadhaarCardLine(artisan?.aadhaarLast4),
+                ),
+                cardToken = artisan?.card?.token,
+                cardShortCode = artisan?.card?.shortCode,
+                signedCard = true,
+            )
+        }
 
         // No other record type has rows inside a design workshop, so this is unreachable from the
         // Cards & tags screen — [workshopCardSource] answers null for them first. It is written
@@ -336,6 +379,7 @@ fun workshopCardSpecs(
  * is the normal condition of a tag by day ten, not the exceptional one.
  */
 fun renderWorkshopCard(spec: DwCardSpec): DwCardRender {
+    if (spec.recordType == DwWorkshopRecordType.ARTISAN && spec.signedCard) return renderArtisanCard(spec)
     val encoded = encodeWorkshopCode(spec.recordType, spec.id)
     if (encoded is DwEncodeResult.Refused) return DwCardRender.Refused(spec, encoded.message)
     val ok = encoded as DwEncodeResult.Ok
@@ -349,6 +393,22 @@ fun renderWorkshopCard(spec: DwCardSpec): DwCardRender {
     } catch (e: DwQrEncodeException) {
         // The encoder's own sentence, which is the web's word for word. Two spellings of one refusal
         // read as two different faults to a designer holding both sheets.
+        DwCardRender.Refused(spec, e.userMessage("This code could not be drawn."))
+    }
+}
+
+/**
+ * An artisan's card: the QR is the server-signed token, never the record id. A row whose artisan has
+ * no card yet (made offline, not synced) is a refusal card, so the sheet says who is missing instead
+ * of quietly printing nine of ten. Old DPW1:A cards still scan; nothing prints them now.
+ */
+fun renderArtisanCard(spec: DwCardSpec): DwCardRender {
+    val token = spec.cardToken
+    val short = spec.cardShortCode
+    if (token.isNullOrBlank() || short.isNullOrBlank()) return DwCardRender.Refused(spec, DW_ARTISAN_CARD_UNSYNCED)
+    return try {
+        DwCardRender.Ok(spec = spec, code = token, printed = short, symbol = DwQrEncode.encode(token, DW_CARD_ECC_LEVEL))
+    } catch (e: DwQrEncodeException) {
         DwCardRender.Refused(spec, e.userMessage("This code could not be drawn."))
     }
 }

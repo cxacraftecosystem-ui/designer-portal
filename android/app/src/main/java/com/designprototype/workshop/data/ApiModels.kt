@@ -249,7 +249,82 @@ data class ArtisanDto(
     val createdById: String? = null,
     val createdAt: String? = null,
     /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
-    val completeness: CompletenessDto? = null
+    val completeness: CompletenessDto? = null,
+    /**
+     * The artisan's live QR card (`{code, shortCode, token}`), sent while cards are on. The token
+     * is opaque and signed; it holds no record id. Cached with the register so a scanned card
+     * matches offline (`matchCardInRegister`).
+     */
+    val card: ArtisanCardWireDto? = null,
+    /** The last four Aadhaar digits, never more: all a printed card shows. */
+    val aadhaarLast4: String? = null,
+    /** The Field Repository card codes this artisan's link holds, so an `F` card matches offline. */
+    val linkedCardCodes: List<String> = emptyList(),
+)
+
+/** One artisan card as the register carries it. */
+@Serializable
+data class ArtisanCardWireDto(
+    val code: String,
+    val shortCode: String,
+    val token: String,
+)
+
+/** What a printed card face shows (`GET /artisans/{id}/card` → `face`). */
+@Serializable
+data class ArtisanCardFaceDto(
+    val name: String = "",
+    val localName: String? = null,
+    val craft: String? = null,
+    val cluster: String? = null,
+    val aadhaarLast4: String? = null,
+    val photoMediaId: String? = null,
+)
+
+/** `GET /artisans/{id}/card` and the reissue answer. `qrSvg` is ignored: the phone draws its own QR. */
+@Serializable
+data class ArtisanCardDto(
+    val artisanId: String,
+    val code: String,
+    val shortCode: String,
+    val token: String,
+    val issuedAt: String? = null,
+    val replacedCards: Int = 0,
+    val face: ArtisanCardFaceDto = ArtisanCardFaceDto(),
+)
+
+@Serializable
+data class ArtisanCardStatusDto(val enabled: Boolean = false, val issuer: String = "D")
+
+@Serializable
+data class ArtisanCardReissueRequest(val reason: String, val source: String = "ANDROID")
+
+@Serializable
+data class ResolveCardRequest(val input: String, val source: String = "ANDROID", val consent: Boolean = false)
+
+/** The artisan a resolved card names: enough to show and to pick, nothing more. */
+@Serializable
+data class CardArtisanDto(
+    val id: String,
+    val name: String,
+    val craft: String? = null,
+    val cluster: String? = null,
+    val place: String? = null,
+    val aadhaarLast4: String? = null,
+)
+
+/**
+ * `POST /artisan-cards/resolve`: FOUND (`via` LOCAL or LINK) with [artisan]; REPLACED with
+ * [artisanId]; REMOTE with [issuer] and [needsConsent] (a Field Repository artisan not linked here).
+ */
+@Serializable
+data class ResolveCardDto(
+    val status: String,
+    val via: String? = null,
+    val artisan: CardArtisanDto? = null,
+    val artisanId: String? = null,
+    val issuer: String? = null,
+    val needsConsent: Boolean = false,
 )
 
 @Serializable

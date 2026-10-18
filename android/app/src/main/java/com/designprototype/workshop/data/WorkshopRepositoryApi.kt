@@ -311,10 +311,12 @@ interface WorkshopRepositoryApi {
         // spells the parameter `uploadedBy`. The query key follows the column on both sides of the
         // wire. Rationale on the server: backend/app/api/routes/artisans.py.
         @Query("createdBy") createdBy: String? = null,
-        // The route's own text filter, used by the update-existing picker's search box (DA-08).
         /** `incomplete` | `required` | `complete` — the record-completeness filter; null for every record. */
         @Query("completeness") completeness: String? = null,
-        @Query("search") search: String? = null
+        // The route's own text filter, used by the update-existing picker's search box (DA-08).
+        @Query("search") search: String? = null,
+        // Labels the card events this list issues as the app's (`x-client-app`, services/usage.py).
+        @Header("X-Client-App") clientApp: String = "android",
     ): PageResponse<ArtisanDto>
 
     @GET("crafts")
@@ -328,7 +330,11 @@ interface WorkshopRepositoryApi {
     ): PageResponse<CraftDto>
 
     @POST("artisans")
-    suspend fun createArtisan(@Body body: ArtisanCreateRequest, @Header("Idempotency-Key") idempotencyKey: String? = null): ArtisanDto
+    suspend fun createArtisan(
+        @Body body: ArtisanCreateRequest,
+        @Header("Idempotency-Key") idempotencyKey: String? = null,
+        @Header("X-Client-App") clientApp: String = "android",
+    ): ArtisanDto
 
     // Pre-flight duplicate check for the artisan form's Aadhaar field. Declared BEFORE `artisan(id)`
     // only for readability — Retrofit matches on the literal path, so "lookup/aadhaar" can never be
@@ -341,6 +347,21 @@ interface WorkshopRepositoryApi {
 
     @GET("artisans/{id}")
     suspend fun artisan(@Path("id") id: String): ArtisanDetailDto
+
+    /** The artisan's QR card, issued on first read (`routes/artisan_cards.py`). 404 while cards are off. */
+    @GET("artisans/{id}/card")
+    suspend fun artisanCard(@Path("id") id: String, @Query("source") source: String = "ANDROID"): ArtisanCardDto
+
+    @POST("artisans/{id}/card/reissue")
+    suspend fun reissueArtisanCard(@Path("id") id: String, @Body body: ArtisanCardReissueRequest): ArtisanCardDto
+
+    /** Whether cards are on here (`{"enabled":true,"issuer":"D"}`); off hides every card control. */
+    @GET("artisan-cards/status")
+    suspend fun artisanCardStatus(): ArtisanCardStatusDto
+
+    /** A scanned QR payload or a typed short code → the artisan it names (FOUND, REPLACED or REMOTE). */
+    @POST("artisan-cards/resolve")
+    suspend fun resolveArtisanCard(@Body body: ResolveCardRequest): ResolveCardDto
 
     /**
      * A JSON BODY AND NOT [ArtisanCreateRequest], SO THAT A CLEARED BOX CAN BE SENT AS `null`.

@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.add
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -267,18 +268,30 @@ class DwWorkshopCardsTest {
         assertEquals(prototypeClientKey, specs[0].id)
     }
 
+    /** The artisan register as the phone caches it: the artisan, its QR card and its last four digits. */
+    private val cardToken = "CXA1:D1:7K3QM9XA2F:QQPZR8FHGZPJXHBM"
+    private val register by lazy {
+        mapOf(
+            artisanId to ArtisanDto(
+                id = artisanId, name = "Sita Devi", place = "Bagru", status = "APPROVED",
+                card = ArtisanCardWireDto("7K3QM9XA2F", "D-7K3QM-9XA2F-HQ", cardToken),
+                aadhaarLast4 = "9012",
+            )
+        )
+    }
+
     @Test
-    fun `an artisan card carries the serial number and the village and nothing else`() {
+    fun `an artisan card prints the signed token, the village and the last four digits, and nothing else`() {
         val source = findRosterSource(registry)!!
         val rows = workshopCardRows(
             source,
             draftWith("PARTICIPANTS", listOf(participantRow("a1b2c3d4-0000-4000-8000-000000000001", artisanId))),
             emptyMap(),
         )
-        val specs = workshopCardSpecs(DwWorkshopRecordType.ARTISAN, source, rows)
+        val specs = workshopCardSpecs(DwWorkshopRecordType.ARTISAN, source, rows, register)
         assertEquals(1, specs.size)
         assertEquals("Sita Devi", specs[0].title)
-        assertEquals(listOf("S. No. 4", "Bagru"), specs[0].lines)
+        assertEquals(listOf("Bagru", "Aadhaar XXXX XXXX 9012"), specs[0].lines)
         // The artisan's repository id, not the roster row's — a card is scanned to open a person.
         assertEquals(artisanId, specs[0].id)
         // The card number is on the row and must reach neither the face nor the payload. A card is a
@@ -286,8 +299,14 @@ class DwWorkshopCardsTest {
         assertTrue(specs[0].lines.none { it.contains("RJ/BAG") })
         val rendered = renderWorkshopCard(specs[0])
         assertTrue(rendered is DwCardRender.Ok)
-        assertTrue((rendered as DwCardRender.Ok).code.none { it == '/' })
-        assertTrue(!rendered.code.contains("0148"))
+        val ok = rendered as DwCardRender.Ok
+        // THE QR HOLDS THE OPAQUE TOKEN, NEVER THE RECORD ID — the reason the artisan card changed.
+        assertEquals(cardToken, ok.code)
+        assertFalse(ok.code.contains(artisanId, ignoreCase = true))
+        assertEquals("D-7K3QM-9XA2F-HQ", ok.printed)
+        assertTrue(ok.code.none { it == '/' })
+        assertTrue(!ok.code.contains("0148"))
+        assertTrue("version ${ok.symbol.version}", ok.symbol.version <= 4)
     }
 
     // ----------------------------------------------------------------------------------
@@ -359,11 +378,42 @@ class DwWorkshopCardsTest {
             ),
             emptyMap(),
         )
-        val cards = workshopCardSpecs(DwWorkshopRecordType.ARTISAN, source, rows).map { renderWorkshopCard(it) }
+        val cards = workshopCardSpecs(DwWorkshopRecordType.ARTISAN, source, rows, register).map { renderWorkshopCard(it) }
         assertEquals("one card per row, always", 2, cards.size)
         assertTrue(cards[0] is DwCardRender.Ok)
         assertTrue(cards[1] is DwCardRender.Refused)
-        assertTrue((cards[1] as DwCardRender.Refused).message.contains("no identifier yet"))
+        assertEquals(DW_ARTISAN_CARD_UNSYNCED, (cards[1] as DwCardRender.Refused).message)
+    }
+
+    @Test
+    fun `while cards are off here an artisan still prints the DPW1 card, serial and village`() {
+        val source = findRosterSource(registry)!!
+        val rows = workshopCardRows(
+            source,
+            draftWith("PARTICIPANTS", listOf(participantRow("a1b2c3d4-0000-4000-8000-000000000001", artisanId))),
+            emptyMap(),
+        )
+        val unsynced = mapOf(artisanId to register.getValue(artisanId).copy(card = null))
+        val spec = workshopCardSpecs(DwWorkshopRecordType.ARTISAN, source, rows, unsynced, artisanCardsOn = false)[0]
+        assertEquals(listOf("S. No. 4", "Bagru"), spec.lines)
+        val card = renderWorkshopCard(spec)
+        assertTrue(card is DwCardRender.Ok)
+        assertTrue((card as DwCardRender.Ok).code.startsWith("DPW1"))
+    }
+
+    @Test
+    fun `an artisan the server has not issued a card for yet prints the refusal card, not a DPW1 code`() {
+        val source = findRosterSource(registry)!!
+        val rows = workshopCardRows(
+            source,
+            draftWith("PARTICIPANTS", listOf(participantRow("a1b2c3d4-0000-4000-8000-000000000001", artisanId))),
+            emptyMap(),
+        )
+        // Created offline: in the register, no card yet.
+        val unsynced = mapOf(artisanId to register.getValue(artisanId).copy(card = null))
+        val card = renderWorkshopCard(workshopCardSpecs(DwWorkshopRecordType.ARTISAN, source, rows, unsynced)[0])
+        assertTrue(card is DwCardRender.Refused)
+        assertEquals("Sync this artisan first.", (card as DwCardRender.Refused).message)
     }
 
     @Test
@@ -371,8 +421,10 @@ class DwWorkshopCardsTest {
         // The refusal lives in `encodeWorkshopCode`, but the assertion that matters is that a card
         // BUILDER cannot route around it — this is the one surface that turns a stored field into a
         // physical object somebody carries home.
+        // A PROTOTYPE spec, because an artisan card no longer encodes an id at all (it prints the
+        // server's token); the gate still guards every DPW1 code this sheet draws.
         val aadhaarShaped = DwCardSpec(
-            key = "k", recordType = DwWorkshopRecordType.ARTISAN,
+            key = "k", recordType = DwWorkshopRecordType.PROTOTYPE,
             id = "2345 6789 0123", title = "Sita Devi", lines = emptyList(),
         )
         val card = renderWorkshopCard(aadhaarShaped)

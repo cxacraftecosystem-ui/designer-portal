@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
+import { ArtisanCardPanel } from "@/components/artisans/ArtisanCardPanel";
+import { useArtisanCardsStatus } from "@/components/artisans/ArtisanCardSheetActions";
 import { AadhaarVerifyPanel } from "@/components/aadhaar/AadhaarVerifyPanel";
 import { ArtisanForm } from "@/components/forms/ArtisanForm";
 import { ArtisanQuestionnairePanel } from "@/components/ArtisanQuestionnairePanel";
@@ -16,6 +18,7 @@ export default function EditArtisanPage() {
   const params = useParams<{ id: string }>();
   const [record, setRecord] = useState<Artisan | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const cardsStatus = useArtisanCardsStatus();
 
   useEffect(() => {
     apiFetch<Artisan>(`/artisans/${params.id}`)
@@ -30,9 +33,13 @@ export default function EditArtisanPage() {
       {record ? (
         <div className="grid gap-6">
           <ArtisanForm initial={record} />
-          {/* The artisan's own card code, drawn live. Same payload the printed roster card carries,
-              so a card cut off a sheet in January and this screen in June are one code. */}
-          <RecordCodeCard recordType="artisan" id={record.id} title={record.name} />
+          {/* The artisan's QR card: an opaque signed token, never the record id (services/artisan_card.py).
+              Until the card key is set here, the DPW1 card code as before. */}
+          {cardsStatus === false ? (
+            <RecordCodeCard recordType="artisan" id={record.id} title={record.name} />
+          ) : (
+            <ArtisanCardPanel artisanId={record.id} />
+          )}
           {/* Draws nothing unless the server has switched an Aadhaar method on. */}
           <AadhaarVerifyPanel subject={{ kind: "artisan", id: record.id }} recordName={record.name} />
           <ArtisanQuestionnairePanel artisanId={record.id} />

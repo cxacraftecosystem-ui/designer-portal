@@ -1,17 +1,19 @@
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import (
     assert_can_delete,
     get_current_user,
+    get_value,
     require_record_creator,
 )
 from app.schemas.records import ArtisanCreate, ArtisanUpdate, drop_masked_identity_numbers
-from app.services import aadhaar_fingerprint
+from app.services import aadhaar_fingerprint, artisan_card
 from app.services.access import guard_record_edit
 from app.services.artisan_form_contract import assert_required_dates, take_form_contract
 from app.services.artisan_identity import aadhaar_error, mask_aadhaar, normalize_aadhaar
@@ -59,6 +61,51 @@ from app.services.workshop_access import (
 )
 
 logger = logging.getLogger("app.artisans")
+
+
+def _card_source(request: Request | None) -> str:
+    """ANDROID when the app labels itself (``x-client-app: android``), else WEB: for card events."""
+    from app.services import artisan_card_store as card_store
+    from app.services.usage import CLIENT_APP_HEADER, normalise_client_app
+
+    raw = request.headers.get(CLIENT_APP_HEADER) if request is not None else None
+    return card_store.SOURCE_ANDROID if normalise_client_app(raw) == "android" else card_store.SOURCE_WEB
+
+
+async def _attach_cards(items: list[dict[str, Any]], user: Any, source: str = "WEB") -> None:
+    """The register's card fields, while cards are on here (services/artisan_card.py).
+
+    Each item gains ``card`` (``{code, shortCode, token}``, issued now for an artisan that has none)
+    and ``linkedCardCodes`` (the Field Repository card code its link holds). This is what lets the
+    phone match a scanned card against the register it caches, offline. ``aadhaarLast4`` is already
+    on every item. A failure here leaves the page as it was rather than failing the list.
+    """
+    settings = get_settings()
+    if not items or not artisan_card.active(settings):
+        return
+    from app.services import artisan_card_store as card_store
+
+    ids = [item["id"] for item in items if isinstance(item, dict) and item.get("id")]
+    try:
+        cards = await card_store.ensure_cards(
+            ids, user_id=get_value(user, "id"), source=source, settings=settings
+        )
+        links = await db.crossportalartisanlink.find_many(
+            where={"artisanId": {"in": ids}, "remoteCardCode": {"not": None}}
+        )
+    except Exception:
+        logger.warning("artisan list: card fields left off this page", exc_info=True)
+        return
+    linked: dict[str, list[str]] = {}
+    for link in links:
+        linked.setdefault(link.artisanId, []).append(link.remoteCardCode)
+    for item in items:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        card = cards.get(item["id"])
+        item["card"] = card_store.card_wire(card, settings) if card is not None else None
+        item.setdefault("aadhaarLast4", None)
+        item["linkedCardCodes"] = linked.get(item["id"], [])
 
 router = APIRouter(prefix="/artisans", tags=["artisans"])
 
@@ -429,6 +476,7 @@ async def list_artisans(
     completeness: str | None = None,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
+    request: Request = None,  # type: ignore[assignment]  # FastAPI injects it; direct calls may omit it
 ) -> dict[str, Any]:
     page, page_size, skip = normalize_pagination(page, pageSize)
     where: dict[str, Any] = {}
@@ -508,15 +556,16 @@ async def list_artisans(
     # The encoder masks per node against this viewer, so a list of a hundred artisans is one
     # decision per artisan rather than one blanket decision for the page: the two the caller
     # recorded come back raw, the rest masked.
-    return page_payload(
-        await attach_completeness("artisan", public_encode(items, current_user)), total, page, page_size
-    )
+    encoded = await attach_completeness("artisan", public_encode(items, current_user))
+    await _attach_cards(encoded, current_user, _card_source(request))
+    return page_payload(encoded, total, page, page_size)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_artisan(
     payload: ArtisanCreate,
     current_user: Any = Depends(require_record_creator),
+    request: Request = None,  # type: ignore[assignment]  # FastAPI injects it; direct calls may omit it
 ) -> dict[str, Any]:
     data = clean_data(payload.model_dump())
     # The typed Aadhaar becomes its fingerprint and last four here, before anything else reads the
@@ -563,6 +612,16 @@ async def create_artisan(
         raise await _identity_conflict(field, value) from exc
     # The explicit column ADDS to the WorkshopArtisan join every existing query still reads through.
     await link_workshop_artisan(created.workshopId, created.id)
+    # Its QR card, so the first print needs no second request. Lazily issued on first read anyway.
+    if artisan_card.active(get_settings()):
+        from app.services import artisan_card_store as card_store
+
+        try:
+            await card_store.ensure_card(
+                created.id, user_id=get_value(current_user, "id"), source=_card_source(request)
+            )
+        except Exception:
+            logger.warning("artisan create: card not issued yet", exc_info=True)
     # The creator is by definition entitled, but pass the viewer anyway rather than relying on
     # that: a future change to who may create an artisan would otherwise silently leak.
     return await attach_completeness("artisan", public_encode(created, current_user))

@@ -25,7 +25,7 @@ import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
-import { RecordCodeCard } from "@/components/RecordCode";
+import { ArtisanCardPanel } from "@/components/artisans/ArtisanCardPanel";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
@@ -411,9 +411,12 @@ export function ArtisanForm({
   onCancel,
   onDiscardAndLeave,
   onQueued,
-  onUseExisting
+  onUseExisting,
+  fromCard
 }: {
   initial?: Artisan;
+  /** A Field Repository artisan card (`/artisans/new?card=…`): the lookup asks by it, and Save links from it. */
+  fromCard?: string | null;
   /**
    * What the picker that opened this form already knows — see {@link InlineHostSeed}. Only the
    * workshop applies to an artisan: an artisan has no artisan of their own, and their craft is the
@@ -1041,7 +1044,7 @@ export function ArtisanForm({
       // numbers it just stored; a failure leaves the artisan saved and simply unlinked.
       if (!initial && crossMatch) {
         try {
-          await linkToFieldRepository(saved.id, crossMatch.remoteArtisanId);
+          await linkToFieldRepository(saved.id, crossMatch.remoteArtisanId, fromCard || null);
         } catch {
           /* Linking can be done later from the artisan's page. */
         }
@@ -1172,13 +1175,14 @@ export function ArtisanForm({
           tag for the artisan sitting in front of them had to save, find the record in a list and
           re-open it — three navigations to reach a symbol that is a pure function of the id they
           were just handed. Nothing is fetched and nothing is stored: `RecordCodeCard` draws it from
-          the type and the id (see its header).
+          the type and the id (see its header). Since the artisan QR card it is `ArtisanCardPanel`,
+          the server-signed card (the old DPW1:A code printed the record id in clear).
 
           THIS PANEL IS THE HOST-FREE PATH BY CONSTRUCTION. `savedRecord` is only ever set in the
           `else` of `if (onCreated) … else if (initial) …`, so a dialog host — which closes on
           create and never renders this — cannot reach it.
         */}
-        <RecordCodeCard recordType="artisan" id={savedRecord.id} title={savedRecord.name} />
+        <ArtisanCardPanel artisanId={savedRecord.id} />
         <CarryForwardCards
           context={{
             artisanId: savedRecord.id,
@@ -1646,6 +1650,7 @@ export function ArtisanForm({
                 readNumbers={typedIdentityNumbers}
                 onFill={fillFromFieldRepository}
                 filled={crossMatch}
+                cardInput={fromCard || null}
               />
             )}
           </div>

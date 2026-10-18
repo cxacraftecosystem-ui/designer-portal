@@ -35,6 +35,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -59,6 +60,9 @@ import com.designprototype.workshop.data.DwQrSymbol
 import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.encodeWorkshopCode
+import com.designprototype.workshop.data.DW_ARTISAN_CARD_UNSYNCED
+import kotlinx.coroutines.CancellationException
+import retrofit2.HttpException
 import com.designprototype.workshop.data.formatWorkshopCodeForPrint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -149,6 +153,11 @@ private fun renderRecordCode(recordType: DwWorkshopRecordType, id: String?): Cod
             CodeRender.Ok(encoded.code, formatWorkshopCodeForPrint(encoded.code), DwQrEncode.encode(encoded.code, CODE_ECC))
         }.getOrElse { CodeRender.Refused(it.userMessage("This code could not be drawn.")) }
     }
+
+/** An artisan's QR card: the server-signed token (no record id) and the short code under it. */
+private fun renderCardToken(token: String, shortCode: String): CodeRender =
+    runCatching { CodeRender.Ok(token, shortCode, DwQrEncode.encode(token, CODE_ECC)) as CodeRender }
+        .getOrElse { CodeRender.Refused(it.userMessage("This code could not be drawn.")) }
 
 /** Where a shared code landed on this device. */
 private data class SavedCode(val displayLocation: String, val shareUri: android.net.Uri?, val fileName: String)
@@ -286,7 +295,38 @@ fun RecordCodeSection(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val render = remember(recordType, recordId) { renderRecordCode(recordType, recordId) }
+    /*
+     * AN ARTISAN SHOWS ITS QR CARD, not a DPW1 code: the card's token is signed by the server and
+     * holds no record id, so it is fetched (`GET /artisans/{id}/card`) rather than derived. While
+     * cards are off that route answers 404 and the artisan keeps its DPW1 code, as before. An artisan
+     * not yet on the server shows the refusal the printed sheet shows.
+     */
+    val isArtisan = recordType == DwWorkshopRecordType.ARTISAN
+    var artisanRender by remember(recordType, recordId) { mutableStateOf<CodeRender?>(null) }
+    if (isArtisan) {
+        LaunchedEffect(recordId) {
+            artisanRender = if (recordId.isNullOrBlank()) {
+                CodeRender.Refused(DW_ARTISAN_CARD_UNSYNCED)
+            } else {
+                try {
+                    val card = repository.artisanCard(recordId)
+                    renderCardToken(card.token, card.shortCode)
+                } catch (e: HttpException) {
+                    if (e.code() == 404) renderRecordCode(recordType, recordId)
+                    else CodeRender.Refused("The card couldn't be loaded. Try again.")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    CodeRender.Refused("Offline. The card shows once you're online.")
+                }
+            }
+        }
+    }
+    val render = if (isArtisan) {
+        artisanRender ?: CodeRender.Refused("Loading…")
+    } else {
+        remember(recordType, recordId) { renderRecordCode(recordType, recordId) }
+    }
     var expanded by remember(recordType, recordId) { mutableStateOf(false) }
     var sharing by remember(recordType, recordId) { mutableStateOf(false) }
     var saved by remember(recordType, recordId) { mutableStateOf<SavedCode?>(null) }
@@ -322,7 +362,7 @@ fun RecordCodeSection(
                     modifier = Modifier.size(18.dp),
                 )
                 Text(
-                    "${recordType.label} code",
+                    if (isArtisan) "Artisan card" else "${recordType.label} code",
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,

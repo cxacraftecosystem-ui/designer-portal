@@ -2689,7 +2689,7 @@ object WorkshopSyncEngine {
             // The server's final answer; waiting on a person — unless it is waiting on an update.
             if (record.blocksRetry()) continue
 
-            val stored = draft.stages[spec.key]
+            var stored = draft.stages[spec.key]
             // THE SAME FUNCTION `statusOf` ASKS, and it is shared rather than copied because the two
             // used to be copies and the copies were wrong together: an empty stage holding a deletion
             // it was entitled to send was skipped here for ever, while `statusOf` — reading the
@@ -2697,6 +2697,48 @@ object WorkshopSyncEngine {
             // server". `workshopIsRemote = true` is not a guess: this function is only ever called
             // with the id the server issued. See [dwStageSaysNothing].
             if (dwStageSaysNothing(spec, stored, record, workshopIsRemote = true)) continue
+
+            /*
+             * AN ARTISAN CARD SCANNED OFFLINE LINKS NOW (data/PendingCards.kt). Every `card:` value
+             * in the stage is resolved before anything is built; the artisan ids are written into
+             * the draft, so the row shows the artisan from here on. A card the server cannot match
+             * holds the stage with its sentence, exactly as a file still on the phone does.
+             */
+            val pendingCards = stored?.let { pendingCardsIn(JsonObject(it.values)) + pendingCardsIn(JsonObject(it.custom)) }.orEmpty()
+            if (pendingCards.isNotEmpty()) {
+                when (val outcome = resolvePendingCards(pendingCards) { input -> repository.resolveArtisanCard(input, emptyList()) }) {
+                    PendingCardOutcome.Offline -> continue
+                    is PendingCardOutcome.Held -> {
+                        if (record?.failure != outcome.message) {
+                            noteStage(context, draft.workshopId, spec.key) {
+                                it.copy(
+                                    failure = outcome.message,
+                                    failedAt = Instant.now().toString(),
+                                    permanent = false,
+                                    waitingOnFiles = false,
+                                    skewRun = null,
+                                    attempts = it.attempts + 1,
+                                )
+                            }
+                        }
+                        continue
+                    }
+                    is PendingCardOutcome.Resolved -> {
+                        val updated = WorkshopDraftStore.update(context, draft.workshopId) { current ->
+                            val stage = current.stages[spec.key] ?: return@update current
+                            current.copy(
+                                stages = current.stages + (
+                                    spec.key to stage.copy(
+                                        values = (substitutePendingCards(JsonObject(stage.values), outcome.ids) as JsonObject).toMap(),
+                                        custom = (substitutePendingCards(JsonObject(stage.custom), outcome.ids) as JsonObject).toMap(),
+                                    )
+                                )
+                            )
+                        }
+                        stored = updated.stages[spec.key]
+                    }
+                }
+            }
 
             val built = buildStageBody(
                 spec, stored, mediaById, isAuthoritative(stored, record),
