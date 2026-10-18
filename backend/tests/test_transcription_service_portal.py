@@ -291,6 +291,9 @@ def test_the_consent_backfill_grants_once_and_then_finds_nothing(monkeypatch) ->
         "m-2": SimpleNamespace(
             id="m-2", transcriptStatus="QUEUED", transcriptError=None, transcriptText=None
         ),
+        "m-3": SimpleNamespace(
+            id="m-3", transcriptStatus="QUEUED", transcriptError=None, transcriptText=None
+        ),
     }
     writes: list[Any] = []
 
@@ -321,8 +324,14 @@ def test_the_consent_backfill_grants_once_and_then_finds_nothing(monkeypatch) ->
     monkeypatch.setattr(consent, "apply_decision", _apply)
     monkeypatch.setattr(requests, "post", _never)
 
-    plan = asyncio.run(backfill.build_plan(include_refused=False))
-    assert [w[0] for w in plan.workshops] == ["w-open"]
+    # --keep-refused leaves an explicit refusal alone and lists it.
+    kept = asyncio.run(backfill.build_plan(keep_refused=True))
+    assert [w[0] for w in kept.workshops] == ["w-open"]
+    assert [w[0] for w in kept.refused] == ["w-no"]
+
+    # The default follows the owner's attestation: every workshop with recordings, refusals included.
+    plan = asyncio.run(backfill.build_plan())
+    assert [w[0] for w in plan.workshops] == ["w-open", "w-no"]
     assert [w[0] for w in plan.refused] == ["w-no"]
     assert plan.refusal_notes == ["m-1"]
     asyncio.run(backfill.apply(plan, "owner-1"))
@@ -330,7 +339,7 @@ def test_the_consent_backfill_grants_once_and_then_finds_nothing(monkeypatch) ->
     assert decision.decision.data["source"] == "owner attestation"
     assert decision.workshop.data["dictationConsent"] == "GRANTED"
     assert decision.workshop.data["dictationConsentById"] == "owner-1"
-    assert writes[1][1]["data"] == {"transcriptStatus": None, "transcriptError": None}
+    assert writes[2][1]["data"] == {"transcriptStatus": None, "transcriptError": None}
 
-    again = asyncio.run(backfill.build_plan(include_refused=False))
+    again = asyncio.run(backfill.build_plan())
     assert again.workshops == [] and again.refusal_notes == []

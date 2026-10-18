@@ -4,7 +4,7 @@ THE OWNER'S WORDS, 18 OCT 2026: consent exists for all existing recordings, incl
 waiting to be transcribed; backfill consent records for them, attested by the owner on 18 Oct 2026,
 source 'owner attestation', and do not flag them.
 
-WHAT IT WRITES, PER WORKSHOP WHOSE ANSWER IS NOT_RECORDED AND THAT HOLDS AT LEAST ONE RECORDING:
+WHAT IT WRITES, PER WORKSHOP WHOSE ANSWER IS NOT GRANTED AND THAT HOLDS AT LEAST ONE RECORDING:
 
 * ``DesignWorkshop.dictationConsent = GRANTED``, ``dictationConsentAt = 2026-10-18``,
   ``dictationConsentById = <the owner's account>``;
@@ -14,9 +14,12 @@ WHAT IT WRITES, PER WORKSHOP WHOSE ANSWER IS NOT_RECORDED AND THAT HOLDS AT LEAS
 * on that workshop's recordings, the consent-refusal note the gate wrote (``transcriptStatus``
   FAILED with the refusal sentence and no transcript) is cleared, so nothing reads as flagged.
 
-WHAT IT NEVER DOES: create a transcription job, call a provider, or touch a workshop whose answer is
-REFUSED (an explicit refusal recorded by a person is listed for the owner, and changed only with
-``--include-refused``). Recordings stay exactly as they are; the queue is paused anyway.
+EXPLICIT REFUSALS ARE INCLUDED BY DEFAULT: the owner attests consent for ALL existing recordings, so a
+workshop whose answer is REFUSED is granted too, and the dry run lists each one separately so the owner
+sees exactly which recorded refusals the attestation replaces. ``--keep-refused`` leaves them alone.
+
+WHAT IT NEVER DOES: create a transcription job or call a provider. Recordings stay exactly as they
+are; the queue is paused anyway.
 
 IDEMPOTENT: a second run finds nothing to do, because every workshop it wrote is now GRANTED.
 
@@ -53,6 +56,7 @@ ATTESTED_AT = datetime(2026, 10, 18, 6, 30, tzinfo=UTC)
 class Plan:
     workshops: list[tuple[str, str, int]] = field(default_factory=list)  # (id, title, recordings)
     refused: list[tuple[str, str, int]] = field(default_factory=list)
+    kept_refused: bool = False  # True when --keep-refused left the REFUSED ones out
     refusal_notes: list[str] = field(
         default_factory=list
     )  # media ids whose consent note is cleared
@@ -78,8 +82,8 @@ def is_consent_note(media: Any, sentences: set[str]) -> bool:
     )
 
 
-async def build_plan(*, include_refused: bool) -> Plan:
-    plan = Plan()
+async def build_plan(*, keep_refused: bool = False) -> Plan:
+    plan = Plan(kept_refused=keep_refused)
     sentences = _refusal_sentences()
     for workshop in await db.designworkshop.find_many(order={"createdAt": "asc"}):
         consent = dictation_consent.consent_of(workshop)
@@ -93,9 +97,10 @@ async def build_plan(*, include_refused: bool) -> Plan:
         if not media_ids:
             continue
         entry = (workshop.id, str(getattr(workshop, "title", "") or workshop.id), len(media_ids))
-        if consent is dictation_consent.DictationConsent.REFUSED and not include_refused:
+        if consent is dictation_consent.DictationConsent.REFUSED:
             plan.refused.append(entry)
-            continue
+            if keep_refused:
+                continue
         plan.workshops.append(entry)
         for media in await db.mediafile.find_many(where={"id": {"in": sorted(media_ids)}}):
             if is_consent_note(media, sentences):
@@ -134,7 +139,9 @@ def report(plan: Plan, *, fix: bool) -> None:
     )
     if plan.refused:
         print(
-            f"Left alone: {len(plan.refused)} workshop(s) whose answer is REFUSED (use --include-refused):"
+            f"Left alone: {len(plan.refused)} workshop(s) whose answer is REFUSED (--keep-refused):"
+            if plan.kept_refused
+            else f"Of these, {len(plan.refused)} replace a recorded REFUSED answer:"
         )
         for workshop_id, title, count in plan.refused:
             print(f"  {workshop_id}  {title}  ({count} recording(s))")
@@ -148,7 +155,7 @@ async def main() -> int:
         "--owner-email", help="the owner's account, recorded as the attesting person"
     )
     parser.add_argument(
-        "--include-refused", action="store_true", help="also override explicit REFUSED answers"
+        "--keep-refused", action="store_true", help="leave explicit REFUSED answers alone"
     )
     args = parser.parse_args()
     for stream in (sys.stdout, sys.stderr):
@@ -166,7 +173,7 @@ async def main() -> int:
                 print(f"No account for {args.owner_email}.", file=sys.stderr)
                 return 2
             owner_id = owner.id
-        plan = await build_plan(include_refused=args.include_refused)
+        plan = await build_plan(keep_refused=args.keep_refused)
         if args.fix and owner_id:
             await apply(plan, owner_id)
         report(plan, fix=args.fix)

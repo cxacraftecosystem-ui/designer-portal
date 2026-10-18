@@ -25,7 +25,7 @@ from app.schemas.media import (
     TranscriptRefineRequest,
     TranscriptUpdateRequest,
 )
-from app.services import design_workshop_posts, dictation_consent, transcription_jobs
+from app.services import app_settings, design_workshop_posts, dictation_consent, transcription_jobs
 from app.services.ai import (
     UnknownDimension,
     analyze_measurement_image_bytes,
@@ -691,6 +691,10 @@ async def transcribe_media_audio(
     and no Android declaration for this path exists — the app's only transcription call is
     ``media/{id}/transcribe-now``.
     """
+    # The owner's hold (18 Oct 2026): while paused, nothing leaves for a provider. Same answer as
+    # documentation-portal's twin: UNAVAILABLE, which both clients already show calmly.
+    if await app_settings.load_transcription_paused():
+        return transcription_jobs.paused_result()
     return await transcribe_audio(file, get_settings())
 
 

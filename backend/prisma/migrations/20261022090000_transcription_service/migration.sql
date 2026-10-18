@@ -137,4 +137,3 @@ CREATE UNIQUE INDEX "MediaProcessingJob_openKey_key" ON "MediaProcessingJob"("op
 
 -- AddForeignKey
 ALTER TABLE "TranscriptionChunk" ADD CONSTRAINT "TranscriptionChunk_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "MediaProcessingJob"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
