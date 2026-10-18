@@ -14,6 +14,7 @@ the TestClient starts, and the tests then drive the client only.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import math
 import os
@@ -40,6 +41,11 @@ pytestmark = [
 KEY = "test-only-artisan-card-key-not-a-secret-0123456789"
 MM = 72 / 25.4
 SHEET_COUNT = 12
+
+
+def _fingerprint(seed: str) -> str:
+    """A stand-in Aadhaar fingerprint: the schema stores one beside every last four, never alone."""
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
 def _card_settings(**over: Any) -> dict[str, Any]:
@@ -109,6 +115,7 @@ def world():
                     "craftId": craft.id,
                     "locationId": location.id,
                     "aadhaarLast4": "9012",
+                    "aadhaarFingerprint": _fingerprint(f"main-{tag}"),
                     "phone": "9999988888",
                     "createdById": admin.id,
                 }
@@ -123,6 +130,7 @@ def world():
                         "name": f"Sheet Artisan {index} {tag}",
                         "place": "Sanganer",
                         "aadhaarLast4": f"{1000 + index}",
+                        "aadhaarFingerprint": _fingerprint(f"sheet-{index}-{tag}"),
                         "createdById": admin.id,
                     }
                 )
