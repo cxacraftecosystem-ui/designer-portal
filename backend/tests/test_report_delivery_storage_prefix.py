@@ -18,7 +18,7 @@ TERRAFORM = Path(__file__).resolve().parents[2] / "infra" / "terraform" / "main.
 
 
 def _statement(text: str, sid: str) -> str:
-    match = re.search(r'Sid\s*=\s*"' + sid + r'"(.*?)\n\s*\}', text, re.S)
+    match = re.search(r'Sid\s*=\s*"' + sid + r'"(.*?)\n\s*\}', text, re.DOTALL)
     assert match, f"no {sid} statement in {TERRAFORM}"
     return match.group(1)
 

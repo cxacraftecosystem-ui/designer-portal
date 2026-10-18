@@ -377,6 +377,11 @@ combine-as-imports = true
 
 # (a) in flight; both blocks are unsorted at HEAD as well.
 "app/services/design_workshops.py" = ["I001"]
+
+# SHARED BYTE FOR BYTE with the Field Repository's copy (tests/test_cross_portal_identity.py,
+# `test_the_shared_module_is_the_same_bytes_in_both_portals`), so a style rewrite of one copy breaks
+# the pair. SIM103's suggested `return not (...)` is equivalent; take it in both repositories at once.
+"app/services/cross_portal.py" = ["SIM103"]
 "app/services/questionnaire_forms.py" = ["I001"]
 
 # (a) in flight, and (b): FURB162 is right that `fromisoformat(s.replace("Z", "+00:00"))` is
