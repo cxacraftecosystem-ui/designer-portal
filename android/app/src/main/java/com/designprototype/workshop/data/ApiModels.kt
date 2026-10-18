@@ -3769,6 +3769,14 @@ data class PendingAccessCountDto(
 )
 
 /**
+ * How many of this inspector's workshops are handed in and waiting for their review
+ * (`GET /design-workshop-inspections/awaiting-count`, 2026-10-18) — the drawer badge on
+ * "Workshops to inspect", the web nav's and the desk's number.
+ */
+@Serializable
+data class AwaitingInspectionCountDto(val awaiting: Int = 0)
+
+/**
  * `POST /access/roster` — admit an address by hand, before it has an account.
  *
  * ACTIVE IMMEDIATELY, not pending: an admin typing an address into the box IS the approval, and

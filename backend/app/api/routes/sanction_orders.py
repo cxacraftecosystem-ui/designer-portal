@@ -245,9 +245,13 @@ async def update_sanction_order(
 async def reissue_credential_link(
     sanction_id: str,
     designer_user_id: str | None = Query(default=None, alias="designerUserId", max_length=64),
+    deliver_by: str = Query(default="COPY_LINK", alias="deliverBy", pattern="^(COPY_LINK|EMAIL)$"),
     officer: Any = Depends(require_sanction_recorder),
 ) -> dict[str, Any]:
     """Mint another first-password link for a designer this order names.
+
+    ``deliverBy=EMAIL`` ("Resend", 2026-10-18) e-mails it to the designer and hands the officer no
+    link; the default, ``COPY_LINK``, is "Copy link instead" and what every client sent before.
 
     ``designerUserId`` names which of them — any designer on the order, co-designers included; left
     out, it is the lead, which is what this route answered before the team could be named. Every
@@ -273,8 +277,21 @@ async def reissue_credential_link(
     """
     row = await _load(sanction_id)
     return await sanction_orders.reissue_credential_link(
-        row, officer, designer_user_id=designer_user_id
+        row, officer, designer_user_id=designer_user_id, deliver_by=deliver_by
     )
+
+
+@router.post("/{sanction_id}/remind")
+async def remind_designers(
+    sanction_id: str, officer: Any = Depends(require_sanction_recorder)
+) -> dict[str, Any]:
+    """"Remind designers" (2026-10-18): e-mail every designer this order names what Workshop Setup
+    still needs, with a link to it. Each person's e-mail choice is respected, and a designer reminded
+    about this order in the last hour is skipped. Answers
+    ``{queued, recent, optedOut, noAddress, lastRemindedAt, missing}``; 409 when e-mail is off or the
+    setup is already complete."""
+    row = await _load(sanction_id)
+    return await sanction_orders.remind_designers(row, officer)
 
 
 @router.post("/{sanction_id}/credential-link/revoke")

@@ -548,6 +548,13 @@ async def replace_viewers(
             # outcome of this call anyway.
             skip_duplicates=True,
         )
+        # Each newly added designer is told they have a workshop (2026-10-18). Never raises.
+        from app.services import email_outbox
+
+        workshop = await db.designworkshop.find_unique(where={"id": workshop_id})
+        granter = await db.user.find_unique(where={"id": granted_by_id}) if granted_by_id else None
+        if workshop is not None:
+            await email_outbox.notify_workshop_assigned(workshop, added, actor=granter)
     return await viewer_rows(workshop_id)
 
 

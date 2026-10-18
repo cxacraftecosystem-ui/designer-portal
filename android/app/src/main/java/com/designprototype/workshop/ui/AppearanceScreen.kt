@@ -606,6 +606,9 @@ fun AppearanceScreen(
             SaveStatusLine(saving = saving, error = error)
         }
 
+        // This account's e-mail choices — the web Settings card. Draws nothing while mail is off.
+        EmailNotificationsCard(repository)
+
         /*
          * ---- ONE ROW INTO SPEECH & AI -----------------------------------------------------------
          *

@@ -19,6 +19,7 @@ from app.schemas.access import (
     DataAccessRequestIn,
     DataAccessUpdateIn,
 )
+from app.services import email_outbox
 from app.services.access import (
     TIER_DESCRIPTIONS,
     effective_tier_for_record,
@@ -259,6 +260,13 @@ async def request_access(
         requested_by=uid,
         decided_by=None,
     )
+    # The owner hears of a NEW or reopened request (2026-10-18), never of a repeat while one is
+    # already pending — so re-posting cannot flood the owner's inbox. Never raises; a no-op when
+    # mail is off.
+    if existing is None or _status_str(existing.status) != "PENDING":
+        await email_outbox.notify_data_access_requested(
+            payload.ownerId, current_user, tier=payload.tier, note=request_note
+        )
     return public_encode(grant)
 
 
@@ -332,6 +340,15 @@ async def decide_request(
         decision_note=payload.decisionNote,
         requested_by=None,
         decided_by=get_value(current_user, "id"),
+    )
+    # The requester hears the decision (2026-10-18). Never raises; a no-op when mail is off.
+    await email_outbox.notify_access_decided(
+        get_value(grant, "granteeId"),
+        scope="data",
+        decision=payload.status,
+        actor=current_user,
+        tier=_tier_str(get_value(grant, "tier")),
+        note=payload.decisionNote,
     )
     return public_encode(grant)
 
@@ -435,7 +452,30 @@ async def add_comment(
         },
         include={"author": True},
     )
+    # The record's creator hears of the comment (2026-10-18), unless they wrote it. Never raises.
+    await email_outbox.notify_record_comment(
+        owner_id,
+        current_user,
+        record_type=payload.recordType.lower(),
+        record_id=payload.recordId,
+        record_label=COMMENT_LABELS.get(payload.recordType.lower(), "your record"),
+        body=payload.body,
+    )
     return public_encode(created)
+
+
+#: How a comment notice names the record, by type.
+COMMENT_LABELS: dict[str, str] = {
+    "artisan": "your artisan record",
+    "craft": "your craft record",
+    "workshop": "your workshop record",
+    "product": "your product record",
+    "tool": "your tool record",
+    "process": "your process record",
+    "questionnaire": "your interview",
+    "questionnaireinterview": "your interview",
+    "media": "your media file",
+}
 
 
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)

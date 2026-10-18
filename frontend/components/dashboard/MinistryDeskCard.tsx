@@ -10,6 +10,8 @@ import {
   AWAITING_SANCTION_BADGE_CLASS,
   AWAITING_SANCTION_BADGE_HREF,
   awaitingApprovalSentence,
+  AWAITING_INSPECTION_BADGE_HREF,
+  awaitingInspectionSentence,
   awaitingSanctionSentence,
   ministryDeskFor,
   ministryDeskSummary,
@@ -21,6 +23,7 @@ import { riseItem, staggerParent } from "@/components/guide/guideMotion";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { useAwaitingApprovalCount } from "@/components/hooks/useAwaitingApprovalCount";
+import { useAwaitingInspectionCount } from "@/components/hooks/useAwaitingInspectionCount";
 import { useAwaitingSanctionCount } from "@/components/hooks/useAwaitingSanctionCount";
 import { canSeeMinistryDesk } from "@/lib/permissions";
 
@@ -137,6 +140,11 @@ export function MinistryDeskCard() {
   );
   const awaitingCount = awaitingSanction ?? 0;
   const awaitingApprovalCount = awaitingApproval ?? 0;
+  /* The reader's own handed-in inspections, on "Workshops to inspect" — gated the same way. */
+  const awaitingInspection = useAwaitingInspectionCount(
+    open.some((destination) => destination.href === AWAITING_INSPECTION_BADGE_HREF)
+  );
+  const awaitingInspectionCount = awaitingInspection ?? 0;
 
   /*
     BELOW `sm` THE DESK FOLDS to its title, the counts that need acting on, and "Show all" — the
@@ -197,7 +205,7 @@ export function MinistryDeskCard() {
   */
   if (open.length === 0) return null;
 
-  const summary = ministryDeskSummary(open, { awaitingSanction, awaitingApproval });
+  const summary = ministryDeskSummary(open, { awaitingSanction, awaitingApproval, awaitingInspection });
   const folded = !expanded;
 
   return (
@@ -348,6 +356,18 @@ export function MinistryDeskCard() {
                         waiting
                       </span>
                       <span className="sr-only">{awaitingApprovalSentence(awaitingApprovalCount)}</span>
+                    </span>
+                  ) : null}
+                  {destination.href === AWAITING_INSPECTION_BADGE_HREF && awaitingInspectionCount > 0 ? (
+                    <span
+                      title={awaitingInspectionSentence(awaitingInspectionCount)}
+                      className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}
+                    >
+                      <span aria-hidden>{awaitingInspectionCount}</span>
+                      <span aria-hidden className="font-medium">
+                        to review
+                      </span>
+                      <span className="sr-only">{awaitingInspectionSentence(awaitingInspectionCount)}</span>
                     </span>
                   ) : null}
                 </span>

@@ -2,6 +2,7 @@ import {
   Binoculars,
   CalendarRange,
   DraftingCompass,
+  FileSearch,
   FileSignature,
   LayoutDashboard,
   Stamp,
@@ -404,6 +405,27 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     ]
   },
   {
+    // The inspection, for a Ministry Admin or an admin named to one (2026-10-18). `MINISTRY_DESK`
+    // carries the matching row at this index. An Assistant or Regional Director cannot hold an
+    // inspection, and the card says so rather than leaving them to find the lock panel.
+    id: "ministry-inspection",
+    label: "Workshops to inspect",
+    action: "Review a report handed in to you",
+    icon: FileSearch,
+    href: "/design-workshop-inspections",
+    summary: "Reports you were named to inspect. The count beside it is how many wait for you.",
+    why: "Inspectors ask for corrections before the report is signed off.",
+    fields: [
+      "Waiting for you · With the designers · Not handed in yet — the three lists",
+      "Suggest a correction — on a stage or a field",
+      "Send back — when the report needs corrections before approval"
+    ],
+    watch: [
+      "Only Ministry Admins and admins named as inspectors see workshops here. Directors can't inspect.",
+      "You're e-mailed when a report is handed in or resubmitted. Choose once a day or never in Settings."
+    ]
+  },
+  {
     // LAST, because it is the end of the sequence: the report has been filled in, inspected and read
     // back, and the Ministry Admin signs it off. `MINISTRY_DESK` carries the matching row at this
     // same index and `e2e/ministry-desk-unit.spec.ts` holds the two lists to each other.
@@ -427,13 +449,14 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "What the officers asked for, round by round, and every decision taken on the report",
       "Approve — with a note, if you want one on the record",
       "What needs correcting (required) — when you send a report back, withdraw an approval or return one from the office",
-      "Hand on to the office — the office, a note, and the exported report file that went"
+      "Hand on to the office — the office, a note, and the exported report file that went",
+      "Approve and hand on — approves, makes the report file and e-mails the office a link that lasts 7 days"
     ],
     watch: [
       "YOU CAN'T DECIDE ON A REPORT YOU WORKED ON OR INSPECT. The decisions are switched off with the reason.",
       "APPROVED REPORTS ARE LOCKED. To correct one, withdraw the approval with a reason.",
       "IF A REPORT CHANGES WHILE YOU READ IT, approval is refused — reload and read it again.",
-      "HANDING ON IS RECORDED, NOT SENT. Download the report and send it to the office yourself.",
+      "APPROVE AND HAND ON E-MAILS THE OFFICE once an administrator has set its addresses. Until then, hand the report on yourself.",
       "A REPORT HANDED ON CAN STILL BE RETURNED, with a reason, if the office sends it back. The approval and the hand-on before it stay on the record."
     ]
   }

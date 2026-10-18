@@ -2876,6 +2876,9 @@ class WorkshopRepository(
      */
     suspend fun pendingAccessCount(): PendingAccessCountDto = api.pendingAccessCount()
 
+    /** The inspector's waiting count — the drawer badge on "Workshops to inspect". Same loop, no timer. */
+    suspend fun awaitingInspectionCount(): AwaitingInspectionCountDto = api.awaitingInspectionCount()
+
     /**
      * Admit an address by hand. No account is required and none is created.
      *
@@ -4451,6 +4454,17 @@ class WorkshopRepository(
     private val recoveryApi: AccountRecoveryApi by lazy {
         ApiClient.retrofit(tokenStore).create(AccountRecoveryApi::class.java)
     }
+
+    private val notificationApi: NotificationPreferencesApi by lazy {
+        ApiClient.retrofit(tokenStore).create(NotificationPreferencesApi::class.java)
+    }
+
+    /** This account's e-mail choices (2026-10-18). Throws; never queued — a choice is saved live. */
+    suspend fun notificationPreferences(): NotificationPreferencesDto = notificationApi.read()
+
+    /** Save only the choice that changed, and answer with all of them as the server now holds them. */
+    suspend fun saveNotificationPreferences(change: NotificationPreferencesUpdate): NotificationPreferencesDto =
+        notificationApi.save(change)
 
     /** "Forgot your password?" — the server's one answer, printed as it is. Works signed out. */
     suspend fun forgotPassword(email: String): String =

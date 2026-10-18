@@ -174,7 +174,21 @@ export type DesignRegisterRow = {
   approvedAt?: string | null;
   handedOnAt?: string | null;
   handedOnTo?: string | null;
+  /** The newest e-mailed hand-on to the office (2026-10-18): when it went and when it was first
+   *  opened. Absent for a report handed on by hand, and on older servers. */
+  received?: { sentAt: string | null; firstOpenedAt: string | null; officeName: string } | null;
 };
+
+/** "Received" on the register: the report was e-mailed to the office, and whether it was opened. */
+export function receivedWords(
+  received: DesignRegisterRow["received"],
+  format: (iso: string) => string
+): string | null {
+  if (!received?.sentAt) return null;
+  return received.firstOpenedAt
+    ? `Received by ${received.officeName} · opened ${format(received.firstOpenedAt)}`
+    : `Received by ${received.officeName} · not opened yet`;
+}
 
 /** One recorded-workshop row. Deliberately a different shape: it has no stages to be far through. */
 export type OtherRegisterRow = {

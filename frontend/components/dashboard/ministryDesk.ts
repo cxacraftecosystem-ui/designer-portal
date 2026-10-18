@@ -2,6 +2,7 @@ import {
   Binoculars,
   CalendarRange,
   DraftingCompass,
+  FileSearch,
   FileSignature,
   LayoutDashboard,
   Stamp,
@@ -12,6 +13,7 @@ import {
 import {
   canApproveDesignWorkshops,
   canAssignWorkshopOversight,
+  canInspectDesignWorkshops,
   canReadAnnualPlan,
   canReadWorkshopOversight,
   canRunDesignWorkshops,
@@ -134,6 +136,18 @@ export const MINISTRY_DESK: readonly MinistryDestination[] = [
     icon: Binoculars,
     note: "Workshops you supervise",
     can: canReadWorkshopOversight
+  },
+  {
+    /*
+      THE INSPECTION A MINISTRY ADMIN OR AN ADMIN MAY BE NAMED TO (2026-10-18), before the sign-off it
+      feeds. Its badge counts the reader's own handed-in inspections. An Assistant or Regional
+      Director cannot hold an inspection, so `canInspectDesignWorkshops` keeps the row off their desk.
+    */
+    label: "Workshops to inspect",
+    href: "/design-workshop-inspections",
+    icon: FileSearch,
+    note: "Reports handed in for your review",
+    can: canInspectDesignWorkshops
   },
   {
     /*
@@ -265,6 +279,18 @@ export function awaitingApprovalSentence(count: number): string {
   return count === 1 ? "1 report is waiting for approval" : `${count} reports are waiting for approval`;
 }
 
+/* THE THIRD BADGE (2026-10-18) — how many of the reader's own inspections are handed in and waiting
+ * for them. The same pill and the same sentence shape; the number is
+ * `components/hooks/useAwaitingInspectionCount.ts`, scoped by the reader's inspection rows. */
+
+/** The destination the inspection count rides on — the nav entry "Workshops to inspect". */
+export const AWAITING_INSPECTION_BADGE_HREF = "/design-workshop-inspections";
+
+/** The whole sentence the inspection badge is given, in both plurals. */
+export function awaitingInspectionSentence(count: number): string {
+  return count === 1 ? "1 report is waiting for your review" : `${count} reports are waiting for your review`;
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * THE PHONE SUMMARY — what the desk says while it is folded below `sm`.
  *
@@ -298,11 +324,19 @@ export type MinistryDeskSummary =
   | { kind: "unknown" };
 
 /** Counts as the two stores report them: `null` is "not known", never zero. */
-export type MinistryDeskCountValues = { awaitingSanction: number | null; awaitingApproval: number | null };
+export type MinistryDeskCountValues = {
+  awaitingSanction: number | null;
+  awaitingApproval: number | null;
+  /** Carried only by a desk that draws the inspection badge; absent leaves it out of the summary. */
+  awaitingInspection?: number | null;
+};
 
 export function ministryDeskCountLabel(href: string, count: number): string {
   if (href === AWAITING_APPROVAL_BADGE_HREF) {
     return count === 1 ? "report waiting for approval" : "reports waiting for approval";
+  }
+  if (href === AWAITING_INSPECTION_BADGE_HREF) {
+    return count === 1 ? "report waiting for your review" : "reports waiting for your review";
   }
   return count === 1 ? "sanction order awaiting details" : "sanction orders awaiting details";
 }
@@ -315,6 +349,13 @@ export function ministryDeskSummary(
     { href: AWAITING_SANCTION_BADGE_HREF, value: values.awaitingSanction, sentence: awaitingSanctionSentence },
     { href: AWAITING_APPROVAL_BADGE_HREF, value: values.awaitingApproval, sentence: awaitingApprovalSentence }
   ];
+  if (values.awaitingInspection !== undefined) {
+    sources.push({
+      href: AWAITING_INSPECTION_BADGE_HREF,
+      value: values.awaitingInspection,
+      sentence: awaitingInspectionSentence
+    });
+  }
   const order = open.map((destination) => destination.href);
   const carried = sources
     .filter((source) => order.includes(source.href))

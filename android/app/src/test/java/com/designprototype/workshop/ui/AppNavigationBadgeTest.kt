@@ -55,4 +55,20 @@ class AppNavigationBadgeTest {
         assertNull("nor may a sentinel", navBadge(roster, pendingAccessCount = -1))
         assertEquals("but one pending request is a badge", "1", navBadge(roster, pendingAccessCount = 1))
     }
+
+    /** The inspector's waiting count lands on "Workshops to inspect" and nowhere else (2026-10-18). */
+    @Test
+    fun `only workshops to inspect wears the inspection count`() {
+        NavDestination.entries.forEach { destination ->
+            val entry = FIELD_NAV_ITEMS.firstOrNull { it.destination == destination } ?: return@forEach
+            val badge = navBadge(entry, pendingAccessCount = 0, awaitingInspectionCount = 4)
+            if (destination == NavDestination.DESIGN_WORKSHOP_INSPECTIONS) {
+                assertEquals("4", badge)
+            } else {
+                assertNull("“${entry.label}” must not wear the inspection count", badge)
+            }
+        }
+        val inspections = FIELD_NAV_ITEMS.first { it.destination == NavDestination.DESIGN_WORKSHOP_INSPECTIONS }
+        assertNull(navBadge(inspections, pendingAccessCount = 0, awaitingInspectionCount = 0))
+    }
 }

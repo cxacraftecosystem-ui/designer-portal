@@ -30,6 +30,7 @@
 
 import { Toggle } from "@/components/ui/Toggle";
 import { use, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Download, Loader2, Send, Stamp, Undo2 } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -41,8 +42,11 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { ApiError } from "@/lib/api";
 import {
   approvalActions,
+  approveAndHandOn,
   approveReport,
   decisionKindLabel,
+  deliveryLines,
+  deliveryOffer,
   DEFAULT_HANDED_ON_TO,
   downloadReportForApproval,
   getReportForApproval,
@@ -53,6 +57,7 @@ import {
   pinnableExport,
   REVISE_COPY,
   reviseKindOf,
+  resendReportDelivery,
   reviseReport,
   signOffLines,
   type DwApprovalDetail,
@@ -79,7 +84,7 @@ import {
 } from "@/lib/designWorkshops";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
-import { canApproveDesignWorkshops } from "@/lib/permissions";
+import { canApproveDesignWorkshops, isAdmin } from "@/lib/permissions";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
@@ -277,12 +282,15 @@ function DecisionPanel({
   onReload: () => void;
 }) {
   const confirm = useConfirm();
+  const { user } = useAuth();
   const actions = approvalActions(detail);
+  const offer = deliveryOffer(detail);
+  const delivered = deliveryLines(detail.delivery, formatDateTime);
   const reviseKind = reviseKindOf(detail);
   const pinnable = pinnableExport(detail);
 
   const [open, setOpen] = useState<OpenForm>(null);
-  const [busy, setBusy] = useState<DwApprovalVerb | "download" | null>(null);
+  const [busy, setBusy] = useState<DwApprovalVerb | "download" | "deliver" | "resend" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   /** True when the refusal means the report moved since it was read — the reload is offered. */
   const [stale, setStale] = useState(false);
@@ -295,6 +303,7 @@ function DecisionPanel({
   const [handOnNote, setHandOnNote] = useState("");
   const [pinExport, setPinExport] = useState(true);
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [deliveryFailed, setDeliveryFailed] = useState(false);
 
   function fail(err: unknown, what: string) {
     if (isUnreachable(err)) {
@@ -423,6 +432,66 @@ function DecisionPanel({
     }
   }
 
+  async function deliver() {
+    const office = detail.delivery?.officeName || DEFAULT_HANDED_ON_TO;
+    const approving = String(detail.status ?? "").toUpperCase() === "PRE_SUBMISSION";
+    const agreed = await confirm({
+      title: approving ? "Approve and hand on this report?" : "Hand on this report by e-mail?",
+      tone: "warning",
+      confirmLabel: offer.label,
+      body: (
+        <span className="block">
+          {approving ? `Approves round ${detail.submissionRound ?? 0} as you read it, makes the PDF and ` : "Makes the PDF and "}
+          e-mails {office} a link that lasts {detail.delivery?.linkDays ?? 7} days.
+        </span>
+      ),
+      note: "Recorded under your name."
+    });
+    if (!agreed) return;
+    setBusy("deliver");
+    setProblem(null);
+    setStale(false);
+    setOutcome(null);
+    try {
+      const answer = await approveAndHandOn(detail.id, {
+        note: approveNote.trim() || null,
+        round: detail.submissionRound ?? 0,
+        readAt: detail.updatedAt ?? "",
+        format: "PDF"
+      });
+      onAnswer(answer);
+      setApproveNote("");
+      setOpen(null);
+      setDeliveryFailed(answer.deliveryFailed === true);
+      setOutcome(
+        answer.deliveryFailed
+          ? `Handed on to ${office}. The e-mail did not go — send the link.`
+          : `Handed on and e-mailed to ${answer.delivery?.latest?.officeName ?? office}.`
+      );
+      void refreshAwaitingApprovalCount();
+    } catch (err) {
+      fail(err, "handed on");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function resend() {
+    setBusy("resend");
+    setProblem(null);
+    setOutcome(null);
+    try {
+      const answer = await resendReportDelivery(detail.id);
+      onAnswer(answer);
+      setOutcome(deliveryFailed ? `E-mailed to ${answer.delivery?.latest?.officeName ?? "the office"}.` : "A new link was e-mailed. The old one no longer works.");
+      setDeliveryFailed(false);
+    } catch (err) {
+      fail(err, "sent");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function download(format: "DOCX" | "PDF") {
     setBusy("download");
     setProblem(null);
@@ -519,6 +588,75 @@ function DecisionPanel({
             ))}
         </div>
       )}
+
+      {offer.kind === "send" ? (
+        <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
+          <ActionGroup>
+            <button className="field-button" disabled={busy !== null} onClick={() => void deliver()} type="button">
+              {busy === "deliver" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
+              {offer.label}
+            </button>
+          </ActionGroup>
+          <p className="text-xs leading-5 text-ink-500">
+            E-mails {detail.delivery?.officeName} a download link that lasts {detail.delivery?.linkDays ?? 7} days.
+          </p>
+        </div>
+      ) : null}
+      {offer.kind === "setup" ? (
+        <p className="text-xs leading-5 text-ink-500">
+          To e-mail reports to the office from here, {isAdmin(user) ? "" : "ask an administrator to "}set its addresses
+          {isAdmin(user) ? (
+            <>
+              {" "}
+              in{" "}
+              <Link className="font-medium text-purple-700 underline underline-offset-2" href="/settings#report-delivery">
+                Settings
+              </Link>
+            </>
+          ) : null}
+          .
+        </p>
+      ) : null}
+      {delivered.length ? (
+        <div className="grid gap-2 rounded-md border border-line-200 bg-card p-3">
+          <p className="text-sm leading-6 text-ink-700">{delivered.join(" ")}</p>
+          {detail.delivery?.latest?.emails.length ? (
+            <ul className="flex flex-wrap gap-2 text-xs">
+              {detail.delivery.latest.emails.map((email) => (
+                <li
+                  key={email.address}
+                  title={email.error ?? undefined}
+                  className={
+                    email.status === "FAILED"
+                      ? "rounded-full bg-error-100 px-2 py-0.5 font-medium text-error-600"
+                      : email.status === "SENT"
+                        ? "rounded-full bg-success-100 px-2 py-0.5 font-medium text-success-600"
+                        : "rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800"
+                  }
+                >
+                  {email.address} · {email.status === "SENT" ? "sent" : email.status === "FAILED" ? "failed" : "sending"}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {detail.delivery?.configured && !detail.decisionRefusal ? (
+            <ActionGroup>
+              <button className="field-button-secondary" disabled={busy !== null} onClick={() => void resend()} type="button">
+                {busy === "resend" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+                Send a new link
+              </button>
+            </ActionGroup>
+          ) : null}
+        </div>
+      ) : null}
+      {deliveryFailed && !delivered.length && !detail.decisionRefusal ? (
+        <ActionGroup>
+          <button className="field-button" disabled={busy !== null} onClick={() => void resend()} type="button">
+            {busy === "resend" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
+            Send the link
+          </button>
+        </ActionGroup>
+      ) : null}
 
       {open === "approve" ? (
         <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">

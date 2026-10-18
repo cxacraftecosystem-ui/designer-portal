@@ -196,6 +196,33 @@ async def _workshop_or_404(workshop_id: str) -> Any:
 # --------------------------------------------------------------------------------------
 
 
+@router.get("/awaiting-count")
+async def awaiting_inspection_count(current_user: Any = Depends(require_inspector)) -> dict[str, int]:
+    """``{awaiting}``: how many of the workshops assigned to this inspector are handed in and waiting
+    for review (Pre-submission) — the badge on the nav entry, the desk row and the handset's queue
+    (2026-10-18). Scoped by the caller's own inspection rows, like the list.
+
+    A workshop this inspector has already acted on IN ITS CURRENT ROUND (any suggestion of theirs
+    filed for that round) is no longer "to review" and is left out, so the badge drops once they
+    have reviewed. Two reads: the waiting workshops, then this inspector's rows for them."""
+    waiting = await db.designworkshop.find_many(
+        where={
+            "deletedAt": None,
+            "submissionRound": {"gt": 0},
+            "status": "PRE_SUBMISSION",
+            "AND": [inspectable_by_clause(current_user.id)],
+        },
+    )
+    if not waiting:
+        return {"awaiting": 0}
+    rounds = {row.id: int(row.submissionRound or 0) for row in waiting}
+    mine = await db.dwinspectionfeedback.find_many(
+        where={"actorId": current_user.id, "designWorkshopId": {"in": list(rounds)}},
+    )
+    reviewed = {row.designWorkshopId for row in mine if int(row.round) == rounds.get(row.designWorkshopId)}
+    return {"awaiting": sum(1 for workshop_id in rounds if workshop_id not in reviewed)}
+
+
 @router.get("/eligible-inspectors")
 async def list_eligible_inspectors(
     search: str | None = Query(None, max_length=120),

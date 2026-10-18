@@ -73,16 +73,18 @@ def test_preferences_a_mailed_link_and_the_drain(monkeypatch: pytest.MonkeyPatch
     with TestClient(app) as client:
         first = client.get("/api/preferences/notifications", headers=headers)
         assert first.status_code == 200, first.text
-        assert first.json() == {"available": True, "emailReviewNotes": True}
+        # 2026-10-18 added three more choices beside it; the original pair keeps its meaning.
+        assert {k: first.json()[k] for k in ("available", "emailReviewNotes")} == {
+            "available": True,
+            "emailReviewNotes": True,
+        }
 
         saved = client.put(
             "/api/preferences/notifications", json={"emailReviewNotes": False}, headers=headers
         )
         assert saved.status_code == 200, saved.text
-        assert client.get("/api/preferences/notifications", headers=headers).json() == {
-            "available": True,
-            "emailReviewNotes": False,
-        }
+        again = client.get("/api/preferences/notifications", headers=headers).json()
+        assert (again["available"], again["emailReviewNotes"]) == (True, False)
         # The appearance body does not carry the opt-out, so saving a theme leaves it alone.
         assert client.put("/api/preferences/me", json={"theme": "dark"}, headers=headers).status_code == 200
         assert client.get("/api/preferences/notifications", headers=headers).json()["emailReviewNotes"] is False

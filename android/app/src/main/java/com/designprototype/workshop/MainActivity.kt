@@ -1964,6 +1964,8 @@ private fun RepositoryApp(
      * numbers on two surfaces of one app.
      */
     var pendingAccessRequests by remember { mutableIntStateOf(0) }
+    /** The inspector's waiting count, on the same loop (2026-10-18). A failure keeps the last number. */
+    var awaitingInspections by remember { mutableIntStateOf(0) }
     /*
      * ── NONE OF THIS RUNS WHILE THE ACCOUNT OWES A NEW PASSWORD ─────────────────────────────────
      *
@@ -1998,6 +2000,10 @@ private fun RepositoryApp(
             if (user?.let { FieldPermissions.canManageAccessRoster(it) } == true) {
                 runCatching { repository.pendingAccessCount() }
                     .onSuccess { pendingAccessRequests = it.pending }
+            }
+            if (user?.let { FieldPermissions.canInspectDesignWorkshops(it) } == true) {
+                runCatching { repository.awaitingInspectionCount() }
+                    .onSuccess { awaitingInspections = it.awaiting }
             }
             // RE-PROBE A SERVER THAT STOPPED ANSWERING. An empty queue sends nothing, so without
             // this the "can't reach the server" line would wait for the designer to tap something.
@@ -2396,6 +2402,7 @@ private fun RepositoryApp(
                 // number in the app and one place that asks for it.
                 pendingAccessRequests = pendingAccessRequests,
                 onPendingAccessRequests = { pendingAccessRequests = it },
+                awaitingInspections = awaitingInspections,
                 incomingQuestionnaire = incomingQuestionnaire,
                 onIncomingQuestionnaireConsumed = onIncomingQuestionnaireConsumed,
                 onLogout = {
@@ -3197,6 +3204,8 @@ private fun HomeScreen(
     pendingAccessRequests: Int = 0,
     /** The allow-list screen correcting the number the moment it has read the queue itself. */
     onPendingAccessRequests: (Int) -> Unit = {},
+    /** How many of this inspector's workshops wait for their review — the drawer badge. */
+    awaitingInspections: Int = 0,
     /**
      * A questionnaire file another phone handed this app, or null. See `MainActivity`.
      *
@@ -4114,6 +4123,7 @@ private fun HomeScreen(
                         currentDestination = currentDestination,
                         onNavigate = ::navigate,
                         pendingAccessCount = pendingAccessRequests,
+                        awaitingInspectionCount = awaitingInspections,
                         pushingUpdate = pushingUpdate,
                         onToggleAdminView = { requestAdminView(!adminView) },
                         onPushUpdate = {

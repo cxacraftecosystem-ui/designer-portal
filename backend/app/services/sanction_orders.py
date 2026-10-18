@@ -158,7 +158,7 @@ from app.core.deps import (
     role_value,
 )
 from app.core.security import hash_password
-from app.services import access_roster, credential_links, designers
+from app.services import access_roster, credential_links, designers, email_outbox, mailer
 from app.services.account_provisioning import is_master_email
 from app.services.design_workshops import (
     attach_the_named_designer,
@@ -1641,9 +1641,27 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
     )
 
     credential_links_out: list[dict[str, Any]] = []
+    # 2026-10-18 (owner decision C3): the sign-in link is E-MAILED by default, in the officer's name,
+    # whenever mail is on; the officer can still copy a fresh one ("Copy link instead"). A designer
+    # whose account already existed is told by e-mail that the order names them (A4).
+    by_email = mailer.mail_configured()
+    already_had_accounts = [designer.userId for designer in team if not designer.accountCreated]
+    if already_had_accounts:
+        await email_outbox.notify_workshop_assigned(
+            workshop, already_had_accounts, actor=officer, sanction_order_no=stored_no
+        )
     for designer in team:
         link, problem = await _issue_first_credential(
-            user=designer.user, officer=officer, account_created=designer.accountCreated
+            user=designer.user,
+            officer=officer,
+            account_created=designer.accountCreated,
+            deliver_by=credential_links.EMAIL if by_email else credential_links.COPY_LINK,
+            order_id=row.id,
+            email_params={
+                "context": "SANCTION",
+                "sanctionOrderNo": stored_no,
+                "workshopTitle": getattr(workshop, "title", None),
+            },
         )
         if link is None and problem is None:
             # Nothing to say about this designer: their account already existed, or they sign in
@@ -1674,6 +1692,7 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
         "sanctionOrder": await sanction_payload(
             row, workshop=workshop, designer=lead.user, officer=officer, team=team
         ),
+        "linksEmailed": by_email,
         # ── THE LEAD'S LINK, UNDER THE TWO KEYS THIS ROUTE HAS ALWAYS ANSWERED WITH ──────────────
         # Redundant with the first entry of ``credentialLinks`` below, and kept deliberately rather
         # than out of timidity: ``tests/test_sanction_orders.py`` asserts both of these by name on
@@ -1721,16 +1740,21 @@ async def _seed_the_report_copy(
 
 
 async def _issue_first_credential(
-    *, user: Any, officer: Any, account_created: bool
+    *,
+    user: Any,
+    officer: Any,
+    account_created: bool,
+    deliver_by: str = credential_links.COPY_LINK,
+    order_id: str | None = None,
+    email_params: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The designer's first sign-in link — and the three cases where there is honestly nothing.
 
-    THE TRANSPORT IS THE OFFICER'S CLIPBOARD AND THE SCREEN SAYS SO. ``issue_link`` is called with
-    the default delivery, ``CopyLinkDelivery``, which logs one line WITHOUT the link and answers
-    ``"COPY_LINK"``. The product's e-mail (``credential_links.EmailDelivery``, 2026-10-10) is offered
-    on Users, by a provisioner; the sanction register does not use it. The officer's screen therefore
-    offers the link to copy and a prewritten message to paste, and says in words that nothing has
-    been emailed.
+    E-MAILED BY DEFAULT SINCE 2026-10-18 (owner decision C3, reversing the 30 Aug "copy link"
+    default). With mail on, ``deliver_by`` is ``EMAIL``: the link goes to the account's own address
+    in the officer's name (``context: SANCTION`` words the message) and the officer is handed no
+    link; the register shows each e-mail's status and offers "Resend" and "Copy link instead". With
+    mail off it is ``COPY_LINK`` and the screen offers the link and a prewritten message, as before.
 
     NO LINK IS MINTED, AND THE SCREEN SAYS WHICH:
       * the account already existed — they sign in as they always do, and minting a RESET here would
@@ -1743,6 +1767,8 @@ async def _issue_first_credential(
         return None, None
     if str(getattr(user, "authProvider", "") or "").upper() == "GOOGLE":
         return None, None
+    if deliver_by == credential_links.EMAIL and not getattr(user, "email", None):
+        deliver_by = credential_links.COPY_LINK
     try:
         delivered = await credential_links.issue_link(
             user=user,
@@ -1754,9 +1780,17 @@ async def _issue_first_credential(
             # credential by definition, whatever that default comes to say.
             purpose=credential_links.INVITE,
             issued_by_id=getattr(officer, "id", None),
+            deliver_by=deliver_by,
+            email_params=email_params,
+            topic=f"sanction:{order_id}" if order_id else None,
         )
     except credential_links.IssueThrottled:
         return None, SANCTION_LINK_PROBLEM_THROTTLED
+    except credential_links.DeliveryUnavailable:
+        # Mail went off between the check and the send: fall back to a link to copy.
+        return await _issue_first_credential(
+            user=user, officer=officer, account_created=account_created, order_id=order_id
+        )
     return _link_payload(delivered), None
 
 
@@ -1771,7 +1805,10 @@ def _link_payload(delivered: Any) -> dict[str, Any]:
 
 
 async def reissue_credential_link(
-    row: Any, officer: Any, designer_user_id: str | None = None
+    row: Any,
+    officer: Any,
+    designer_user_id: str | None = None,
+    deliver_by: str = credential_links.COPY_LINK,
 ) -> dict[str, Any]:
     """Mint another sign-in link for a designer this order names — the lead by default.
 
@@ -1895,9 +1932,22 @@ async def reissue_credential_link(
                 "there is no sign-in link to issue."
             ),
         )
+    if deliver_by == credential_links.EMAIL and not (mailer.mail_configured() and user.email):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="E-mail isn't available here. Copy the link instead.",
+        )
     try:
         delivered = await credential_links.issue_link(
-            user=user, issued_by_id=getattr(officer, "id", None)
+            user=user,
+            issued_by_id=getattr(officer, "id", None),
+            deliver_by=deliver_by,
+            email_params={
+                "context": "SANCTION",
+                "sanctionOrderNo": getattr(row, "sanctionOrderNo", None),
+                "workshopTitle": getattr(getattr(row, "designWorkshop", None), "title", None),
+            },
+            topic=f"sanction:{row.id}",
         )
     except credential_links.IssueThrottled as exc:
         raise HTTPException(
@@ -2041,6 +2091,7 @@ async def sanction_payload(
     officer: Any | None = None,
     team: Sequence[Any] | None = None,
     stage_one: Mapping[str, dict[str, Any]] | None = None,
+    mail: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The wire form of one sanction order. HAND-BUILT, and never ``jsonable_encoder(row)``.
 
@@ -2063,6 +2114,8 @@ async def sanction_payload(
         singleton = stage_one.get(workshop_id) if workshop_id else None
         score = stage_completeness(stage(STAGE_ONE_KEY), singleton or {}, {})
 
+    if mail is None:
+        mail = await order_mail_state([row.id])
     order_date = getattr(row, "sanctionOrderDate", None)
     return {
         "id": row.id,
@@ -2097,7 +2150,9 @@ async def sanction_payload(
         # appears twice on the wire is deliberate: the scalars are what every deployed client and
         # every stored report reads, and a list whose first element silently meant something
         # different from the rest is worse than one redundant name.
-        "designers": _named_designer_rows(row, team),
+        "designers": _with_email_status(_named_designer_rows(row, team), mail.get(f"sanction:{row.id}", {})),
+        # "Remind designers" (2026-10-18): when the last reminder about this order was queued.
+        "lastRemindedAt": (mail.get("__reminded__", {}) or {}).get(row.id),
         # ── WHICH SHEET RECORDED THIS, IF ANY ────────────────────────────────────────────────
         # NULL means "typed on the officer's form", permanently — not "a value waiting to be
         # backfilled". Both are ``SanctionOrder``'s OWN columns and not a pointer at a row of the
@@ -2121,6 +2176,40 @@ async def sanction_payload(
     }
 
 
+def _with_email_status(
+    designers: list[dict[str, Any]], statuses: Mapping[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Each designer row with ``linkEmail``: the newest sign-in-link e-mail about this order to
+    them, as ``{id, status, at, error}`` (QUEUED, SENT or FAILED), or ``None`` when none was sent."""
+    for entry in designers:
+        entry["linkEmail"] = statuses.get(entry["designerUserId"])
+    return designers
+
+
+async def order_mail_state(order_ids: Sequence[str]) -> dict[str, Any]:
+    """The e-mail state of a page of orders in two queries: ``{"sanction:<id>": {user id: status}}``
+    plus ``"__reminded__": {order id: when the last reminder was queued}``. Empty when mail is off,
+    and empty (never an error) when the outbox cannot be read — a status line is not worth a 500."""
+    if not order_ids or not mailer.mail_configured():
+        return {}
+    try:
+        state: dict[str, Any] = await email_outbox.latest_by_topics([f"sanction:{oid}" for oid in order_ids])
+        reminders = await db.emailmessage.find_many(
+            where={"topic": {"in": [f"remind:{oid}" for oid in order_ids]}},
+            order={"createdAt": "desc"},
+            take=500,
+        )
+        reminded: dict[str, str] = {}
+        for message in reminders:
+            order_id = str(message.topic).split(":", 1)[1]
+            if order_id not in reminded and message.createdAt is not None:
+                reminded[order_id] = message.createdAt.isoformat()
+        state["__reminded__"] = reminded
+        return state
+    except Exception:
+        log.exception("sanction orders: the e-mail state could not be read")
+        return {}
+
 async def sanction_payloads(rows: Sequence[Any]) -> list[dict[str, Any]]:
     """:func:`sanction_payload` for a page of orders, reading stage 1 ONCE for the whole page.
 
@@ -2128,7 +2217,33 @@ async def sanction_payloads(rows: Sequence[Any]) -> list[dict[str, Any]]:
     same N+1 the badge had (``awaiting_count``). Same rows, same pick, same scorer.
     """
     stage_one = await _stage_one_singletons([getattr(row, "designWorkshopId", None) for row in rows])
-    return [await sanction_payload(row, stage_one=stage_one) for row in rows]
+    mail = await order_mail_state([row.id for row in rows])
+    return [await sanction_payload(row, stage_one=stage_one, mail=mail) for row in rows]
+
+
+async def remind_designers(row: Any, officer: Any) -> dict[str, Any]:
+    """"Remind designers" (A20): e-mail every designer the order names what Workshop Setup still
+    needs, with a link to the stage. 409 when mail is off or nothing is missing."""
+    if not mailer.mail_configured():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="E-mail isn't set up here, so reminders can't be sent.",
+        )
+    workshop_id = getattr(row, "designWorkshopId", None)
+    _, score = await _stage_one_state(workshop_id)
+    missing = list(score.missing)
+    if score.is_complete or not missing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Workshop Setup is complete. Nothing to remind."
+        )
+    workshop = getattr(row, "designWorkshop", None) or await db.designworkshop.find_unique(
+        where={"id": workshop_id}
+    )
+    ids = [entry["designerUserId"] for entry in _named_designer_rows(row, None)] or [row.designerUserId]
+    people = {person.id: person for person in await db.user.find_many(where={"id": {"in": ids}})}
+    designers = [people[uid] for uid in ids if uid in people]
+    tally = await email_outbox.send_setup_reminders(row, workshop, designers, missing, actor=officer)
+    return {**tally, "missing": missing}
 
 
 def _iso(value: Any) -> str | None:

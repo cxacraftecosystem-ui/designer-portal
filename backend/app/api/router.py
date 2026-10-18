@@ -36,6 +36,7 @@ from app.api.routes import (
     questionnaire,
     questionnaire_forms,
     reference,
+    report_deliveries,
     review,
     sanction_orders,
     search,
@@ -242,3 +243,6 @@ api_router.include_router(reference.router)
 # Last, and on its own line with this note, because it is the only unauthenticated router here:
 # everything above is scoped to the caller, this one is scoped to nobody. See app/api/routes/public.py.
 api_router.include_router(public.router)
+# The second unauthenticated router (2026-10-18): the office opening an approved report it was
+# e-mailed. The link's secret, in the request body, is the credential. See its module.
+api_router.include_router(report_deliveries.router)

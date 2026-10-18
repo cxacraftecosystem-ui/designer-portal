@@ -394,6 +394,22 @@ def inspector_payload(row: Any) -> dict[str, Any]:
     }
 
 
+async def inspector_accounts(workshop_id: str) -> list[Any]:
+    """The ACCOUNTS assigned to inspect this workshop (2026-10-18) — who is e-mailed when its report is
+    handed in. A READ of the assignment table, kept here so the scope is still named in one module:
+    it decides who hears of a hand-in, never who may open a workshop."""
+    rows = await db.designworkshopinspector.find_many(
+        where={"designWorkshopId": workshop_id}, include={"user": True}, order={"createdAt": "asc"}
+    )
+    return [row.user for row in rows if getattr(row, "user", None) is not None]
+
+
+async def holds_any_inspection(user_id: str) -> bool:
+    """Whether this account is assigned to inspect any workshop — whether Settings offers it the
+    hand-in e-mail choice (2026-10-18). A read; it grants nothing."""
+    return await db.designworkshopinspector.count(where={"userId": user_id}) > 0
+
+
 async def inspector_rows(workshop_id: str) -> list[dict[str, Any]]:
     """Every account assigned to inspect this workshop, oldest assignment first.
 

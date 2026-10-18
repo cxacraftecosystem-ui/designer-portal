@@ -43,6 +43,10 @@ QUEUED = "QUEUED"
 SENDING = "SENDING"
 SENT = "SENT"
 FAILED = "FAILED"
+#: A hand-in notice for somebody who chose the daily digest: kept, never sent on its own, and folded
+#: into one HAND_IN_DIGEST message by :func:`flush_digests` (which marks it DIGESTED).
+HELD = "HELD"
+DIGESTED = "DIGESTED"
 
 STALE_SENDING_AFTER = timedelta(minutes=15)
 MAX_BACKOFF_MINUTES = 60
@@ -64,6 +68,38 @@ async def wants_review_notes(user_id: str) -> bool:
     return bool(getattr(row, "emailReviewNotes", True))
 
 
+#: Each preference column and the kinds it governs. Opt-out: a missing row or column reads as yes.
+PREFERENCE_FOR_KIND: dict[str, str] = {
+    **dict.fromkeys(mailer.WORKSHOP_UPDATES, "emailWorkshopUpdates"),
+    **dict.fromkeys(mailer.ACCESS_NOTICES, "emailAccessNotices"),
+    mailer.REVIEW_SUGGESTION: "emailReviewNotes",
+    mailer.REVIEW_SENT_BACK: "emailReviewNotes",
+}
+
+#: How an official hears of a hand-in.
+HAND_IN_EACH = "EACH"
+HAND_IN_DAILY = "DAILY"
+HAND_IN_OFF = "OFF"
+HAND_IN_MODES = (HAND_IN_EACH, HAND_IN_DAILY, HAND_IN_OFF)
+
+
+async def wants(user_id: str, kind: str) -> bool:
+    """Whether this person's preferences let a notice of ``kind`` be queued for them."""
+    column = PREFERENCE_FOR_KIND.get(kind)
+    if column is None:
+        return True
+    row = await db.userpreference.find_unique(where={"userId": user_id})
+    if row is None:
+        return True
+    return bool(getattr(row, column, True) is not False)
+
+
+def hand_in_mode(row: Any) -> str:
+    """EACH, DAILY or OFF off a preference row; anything unrecognised (or no row) is EACH."""
+    value = str(getattr(row, "emailHandInNotices", "") or "").strip().upper() if row is not None else ""
+    return value if value in HAND_IN_MODES else HAND_IN_EACH
+
+
 async def enqueue(
     kind: str,
     *,
@@ -72,8 +108,14 @@ async def enqueue(
     params: dict[str, Any],
     secret: str | None = None,
     settings: Settings | None = None,
+    topic: str | None = None,
+    hold: bool = False,
 ) -> Any | None:
-    """Queue one message. Returns the row, or ``None`` when mail is not configured."""
+    """Queue one message. Returns the row, or ``None`` when mail is not configured.
+
+    ``topic`` names what the message is about for the screens that show whether it went
+    (``sanction:<id>``, ``remind:<id>``, ``delivery:<id>``). ``hold`` keeps it for the daily digest.
+    """
     settings = settings or get_settings()
     if not mailer.mail_configured(settings):
         return None
@@ -90,8 +132,9 @@ async def enqueue(
             "subject": mailer.subject_for(kind, params),
             "params": Json(params),
             "sealed": managed_secrets.encrypt(secret) if secret else None,
-            "status": QUEUED,
+            "status": HELD if hold else QUEUED,
             "maxAttempts": max(int(settings.mail_max_attempts or 1), 1),
+            "topic": topic,
         }
     )
     logger.info("mail: queued %s message %s for account %s", kind, row.id, recipient_id or "-")
@@ -183,7 +226,7 @@ async def _send_one(row: Any, settings: Settings) -> str:
         if secret is None:
             await _finish(row.id, FAILED, error="The sealed link could not be opened (the key changed).")
             return FAILED
-    if row.kind == mailer.PASSWORD_LINK and _expired(params):
+    if row.kind in mailer.EXPIRING_LINK_KINDS and _expired(params):
         await _finish(row.id, FAILED, error="The link expired before it could be sent.")
         return FAILED
     try:
@@ -233,6 +276,10 @@ async def process_next_email_jobs(
         return tally
     if recover:
         await recover_stale()
+    try:
+        await flush_digests(settings=settings)
+    except Exception:  # a digest that cannot be gathered must not stop the drain
+        logger.exception("mail: could not gather the daily digests")
     rows = await db.emailmessage.find_many(
         where={"status": QUEUED, "runAfter": {"lte": datetime.now(UTC)}},
         order={"createdAt": "asc"},
@@ -367,3 +414,516 @@ async def notify_password_event(
         logger.exception("mail: could not queue a password notice for %s", _value(user, "id"))
         return False
     return row is not None
+
+
+# --------------------------------------------------------------------------------------
+# The notices of 2026-10-18: designers, access, officials, and the daily digest
+#
+# EVERY FUNCTION BELOW NEVER RAISES (except send_setup_reminders, whose caller answers with its
+# tally) and is a no-op when mail is off. Each is called AFTER the act it reports has been written;
+# failing to queue a notice must not turn that act into an error. Each respects the recipient's own
+# preference (``wants`` / ``hand_in_mode``) and never e-mails the person who did the act.
+# --------------------------------------------------------------------------------------
+
+#: The most people one notice fans out to. A larger audience is a configuration problem, and the
+#: queue must not be flooded by one click.
+MAX_FANOUT = 25
+
+
+async def _queue_for(
+    people: list[Any],
+    kind: str,
+    params: dict[str, Any],
+    *,
+    actor_id: str | None,
+    settings: Settings,
+    topic: str | None = None,
+) -> int:
+    queued = 0
+    seen: set[str] = set()
+    for person in people[:MAX_FANOUT]:
+        person_id = _value(person, "id")
+        address = _value(person, "email")
+        if not person_id or not address or person_id == actor_id or person_id in seen:
+            continue
+        seen.add(person_id)
+        if not await wants(person_id, kind):
+            continue
+        if await enqueue(
+            kind,
+            to_address=address,
+            recipient_id=person_id,
+            params={"recipientName": _value(person, "name"), **params},
+            settings=settings,
+            topic=topic,
+        ):
+            queued += 1
+    return queued
+
+
+async def notify_workshop_designers(
+    record: Any,
+    kind: str,
+    *,
+    actor: Any,
+    extra: dict[str, Any] | None = None,
+    settings: Settings | None = None,
+) -> int:
+    """REPORT_APPROVED / REPORT_HANDED_ON to the workshop's designers. Returns how many were queued."""
+    settings = settings or get_settings()
+    if not mailer.mail_configured(settings):
+        return 0
+    try:
+        params = {
+            "workshopId": str(_value(record, "id")),
+            "workshopTitle": _value(record, "title"),
+            "actorName": _value(actor, "name"),
+            **(extra or {}),
+        }
+        return await _queue_for(
+            await workshop_designers(record), kind, params, actor_id=_value(actor, "id"), settings=settings
+        )
+    except Exception:
+        logger.exception("mail: could not queue %s for workshop %s", kind, _value(record, "id"))
+        return 0
+
+
+async def notify_workshop_assigned(
+    workshop: Any,
+    user_ids: list[str],
+    *,
+    actor: Any,
+    sanction_order_no: str | None = None,
+    settings: Settings | None = None,
+) -> int:
+    """WORKSHOP_ASSIGNED to accounts newly given a workshop: an existing account named on a sanction
+    order, or one added to its designer team."""
+    settings = settings or get_settings()
+    if not mailer.mail_configured(settings) or not user_ids:
+        return 0
+    try:
+        people = await db.user.find_many(where={"id": {"in": sorted(set(user_ids))}})
+        params = {
+            "workshopId": str(_value(workshop, "id")),
+            "workshopTitle": _value(workshop, "title"),
+            "actorName": _value(actor, "name"),
+            "sanctionOrderNo": sanction_order_no,
+        }
+        return await _queue_for(
+            list(people), mailer.WORKSHOP_ASSIGNED, params, actor_id=_value(actor, "id"), settings=settings
+        )
+    except Exception:
+        logger.exception("mail: could not queue assignment notices for %s", _value(workshop, "id"))
+        return 0
+
+
+#: How soon one designer may be reminded again about the same order.
+REMINDER_COOLDOWN = timedelta(hours=1)
+
+
+async def send_setup_reminders(
+    order: Any,
+    workshop: Any,
+    designers: list[Any],
+    missing: list[str],
+    *,
+    actor: Any,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """"Remind designers": one SETUP_REMINDER to each designer the order names.
+
+    Returns ``{queued, recent, optedOut, noAddress, lastRemindedAt}``. A designer reminded about this
+    order within :data:`REMINDER_COOLDOWN` is skipped (``recent``), so a second press is harmless.
+    """
+    settings = settings or get_settings()
+    topic = f"remind:{_value(order, 'id')}"
+    tally: dict[str, Any] = {"queued": 0, "recent": 0, "optedOut": 0, "noAddress": 0}
+    if not mailer.mail_configured(settings):
+        tally["lastRemindedAt"] = None
+        return tally
+    since = datetime.now(UTC) - REMINDER_COOLDOWN
+    recent_rows = await db.emailmessage.find_many(where={"topic": topic, "createdAt": {"gte": since}})
+    recently = {row.recipientId for row in recent_rows}
+    for person in designers[:MAX_FANOUT]:
+        person_id = _value(person, "id")
+        address = _value(person, "email")
+        if not person_id or not address:
+            tally["noAddress"] += 1
+            continue
+        if person_id in recently:
+            tally["recent"] += 1
+            continue
+        if not await wants(person_id, mailer.SETUP_REMINDER):
+            tally["optedOut"] += 1
+            continue
+        row = await enqueue(
+            mailer.SETUP_REMINDER,
+            to_address=address,
+            recipient_id=person_id,
+            params={
+                "recipientName": _value(person, "name"),
+                "workshopId": str(_value(workshop, "id")),
+                "workshopTitle": _value(workshop, "title"),
+                "actorName": _value(actor, "name"),
+                "missing": list(missing),
+                "stageKey": "WORKSHOP_SETUP",
+            },
+            settings=settings,
+            topic=topic,
+        )
+        if row is not None:
+            tally["queued"] += 1
+    tally["lastRemindedAt"] = await last_topic_moment(topic)
+    return tally
+
+
+async def last_topic_moment(topic: str) -> str | None:
+    """When the newest message about ``topic`` was queued, as ISO text, or ``None``."""
+    row = await db.emailmessage.find_first(where={"topic": topic}, order={"createdAt": "desc"})
+    moment = getattr(row, "createdAt", None) if row is not None else None
+    return moment.isoformat() if moment else None
+
+
+def delivery_status(row: Any) -> dict[str, Any] | None:
+    """What a screen says about one outbox row: ``{id, status, at, error}``. ``status`` is QUEUED
+    (still going out, retries included), SENT or FAILED. ``None`` for no row."""
+    if row is None:
+        return None
+    state = str(_value(row, "status") or "")
+    if state in (SENDING, HELD, DIGESTED):
+        state = QUEUED if state != DIGESTED else SENT
+    moment = _value(row, "sentAt") if state == SENT else _value(row, "createdAt")
+    return {
+        "id": _value(row, "id"),
+        "status": state,
+        "at": moment.isoformat() if hasattr(moment, "isoformat") else None,
+        "error": _value(row, "error") if state == FAILED else None,
+    }
+
+
+async def latest_by_recipient(topic: str, recipient_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """``{recipient id: delivery_status}`` for the newest message about ``topic`` to each person."""
+    if not recipient_ids:
+        return {}
+    rows = await db.emailmessage.find_many(
+        where={"topic": topic, "recipientId": {"in": sorted(set(recipient_ids))}},
+        order={"createdAt": "desc"},
+        take=200,
+    )
+    found: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if row.recipientId and row.recipientId not in found:
+            answer = delivery_status(row)
+            if answer is not None:
+                found[row.recipientId] = answer
+    return found
+
+
+async def latest_by_topics(topics: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
+    """``{topic: {recipient id: delivery_status}}`` for a page of topics, in one query."""
+    if not topics:
+        return {}
+    rows = await db.emailmessage.find_many(
+        where={"topic": {"in": sorted(set(topics))}}, order={"createdAt": "desc"}, take=1000
+    )
+    found: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        per_topic = found.setdefault(str(row.topic), {})
+        if row.recipientId and row.recipientId not in per_topic:
+            answer = delivery_status(row)
+            if answer is not None:
+                per_topic[row.recipientId] = answer
+    return found
+
+
+async def _admin_accounts() -> list[Any]:
+    return list(
+        await db.user.find_many(
+            where={"role": {"in": ["ADMIN", "MASTER_ADMIN"]}}, order={"createdAt": "desc"}, take=MAX_FANOUT
+        )
+    )
+
+
+async def notify_workshop_access_requested(
+    workshop: Any, requester: Any, note: str | None, *, settings: Settings | None = None
+) -> int:
+    """ACCESS_REQUESTED to the administrators who decide workshop access requests."""
+    settings = settings or get_settings()
+    if not mailer.mail_configured(settings):
+        return 0
+    try:
+        params = {
+            "scope": "workshop",
+            "workshopId": str(_value(workshop, "id")),
+            "workshopTitle": _value(workshop, "title"),
+            "requesterName": _value(requester, "name") or _value(requester, "email"),
+            "note": (note or "").strip(),
+        }
+        return await _queue_for(
+            await _admin_accounts(),
+            mailer.ACCESS_REQUESTED,
+            params,
+            actor_id=_value(requester, "id"),
+            settings=settings,
+        )
+    except Exception:
+        logger.exception("mail: could not queue access-request notices for %s", _value(workshop, "id"))
+        return 0
+
+
+async def notify_access_decided(
+    requester_id: str,
+    *,
+    scope: str,
+    decision: str,
+    actor: Any,
+    workshop: Any = None,
+    tier: str | None = None,
+    note: str | None = None,
+    settings: Settings | None = None,
+) -> int:
+    """ACCESS_DECIDED to the person who asked. ``scope`` is ``workshop`` or ``data``."""
+    settings = settings or get_settings()
+    if not mailer.mail_configured(settings) or decision not in ("GRANTED", "DENIED"):
+        return 0
+    try:
+        person = await db.user.find_unique(where={"id": requester_id})
+        if person is None:
+            return 0
+        params = {
+            "scope": scope,
+            "decision": decision,
+            "actorName": _value(actor, "name"),
+            "workshopId": str(_value(workshop, "id")) if workshop is not None else None,
+            "workshopTitle": _value(workshop, "title") if workshop is not None else None,
+            "tier": tier,
+            "note": (note or "").strip(),
+        }
+        return await _queue_for(
+            [person], mailer.ACCESS_DECIDED, params, actor_id=_value(actor, "id"), settings=settings
+        )
+    except Exception:
+        logger.exception("mail: could not queue an access decision for %s", requester_id)
+        return 0
+
+
+async def notify_data_access_requested(
+    owner_id: str, requester: Any, *, tier: str | None, note: str | None, settings: Settings | None = None
+) -> int:
+    """ACCESS_REQUESTED to the owner of the data a researcher asked to see."""
+    settings = settings or get_settings()
+    if not mailer.mail_configured(settings):
+        return 0
+    try:
+        owner = await db.user.find_unique(where={"id": owner_id})
+        if owner is None:
+            return 0
+        params = {
+            "scope": "data",
+            "requesterName": _value(requester, "name") or _value(requester, "email"),
+            "tier": tier,
+            "note": (note or "").strip(),
+        }
+        return await _queue_for(
+            [owner], mailer.ACCESS_REQUESTED, params, actor_id=_value(requester, "id"), settings=settings
+        )
+    except Exception:
+        logger.exception("mail: could not queue a data-access request notice for %s", owner_id)
+        return 0
+
+
+async def notify_record_comment(
+    owner_id: str | None,
+    author: Any,
+    *,
+    record_type: str,
+    record_id: str,
+    record_label: str | None,
+    body: str,
+    settings: Settings | None = None,
+) -> int:
+    """RECORD_COMMENT to a record's creator when somebody else comments on it."""
+    settings = settings or get_settings()
+    if not mailer.mail_configured(settings) or not owner_id:
+        return 0
+    try:
+        owner = await db.user.find_unique(where={"id": owner_id})
+        if owner is None:
+            return 0
+        params = {
+            "authorName": _value(author, "name"),
+            "recordType": record_type,
+            "recordId": record_id,
+            "recordLabel": record_label,
+            "body": (body or "").strip()[:1000],
+        }
+        return await _queue_for(
+            [owner], mailer.RECORD_COMMENT, params, actor_id=_value(author, "id"), settings=settings
+        )
+    except Exception:
+        logger.exception("mail: could not queue a comment notice for %s %s", record_type, record_id)
+        return 0
+
+
+async def hand_in_audience(workshop_id: str) -> list[tuple[Any, bool]]:
+    """``[(account, is_approver)]``: the workshop's assigned inspectors, then the approving authority
+    (every Ministry Admin and master admin whom rule 7 does not bar from deciding THIS workshop).
+    An account in both is listed once, as an inspector."""
+    from app.services import design_workshop_posts as posts
+    from app.services.concurrency import gather_reads
+    from app.services.design_workshop_inspectors import inspector_accounts
+
+    inspectors = await inspector_accounts(workshop_id)
+    approvers = await db.user.find_many(
+        where={"role": {"in": ["MINISTRY_ADMIN", "MASTER_ADMIN"]}}, order={"createdAt": "desc"}, take=MAX_FANOUT
+    )
+    people: dict[str, tuple[Any, bool]] = {}
+    for person in inspectors:
+        people.setdefault(person.id, (person, False))
+    candidates = [person for person in approvers if person.id not in people]
+    if candidates:
+        # Rule 7, batched: the same predicate as ``posts.decision_refusal``, two reads for everyone.
+        ids = [person.id for person in candidates]
+        held, authored = await gather_reads(
+            posts.supervisory_posts_among(workshop_id, ids),
+            posts.authorship_among(workshop_id, ids),
+        )
+        for person in candidates:
+            if posts.approval_refusals(
+                posts=held.get(person.id, frozenset()), authored=authored.get(person.id, frozenset())
+            ):
+                continue
+            people.setdefault(person.id, (person, True))
+    return list(people.values())
+
+
+async def notify_handed_in(
+    record: Any, *, actor: Any, resubmission: bool, settings: Settings | None = None
+) -> int:
+    """REPORT_HANDED_IN to the assigned inspectors and the approving authority, each by their own
+    choice: one e-mail now (EACH), held for the daily digest (DAILY), or nothing (OFF)."""
+    settings = settings or get_settings()
+    if not mailer.mail_configured(settings):
+        return 0
+    queued = 0
+    try:
+        workshop_id = str(_value(record, "id"))
+        actor_id = _value(actor, "id")
+        for person, approver in (await hand_in_audience(workshop_id))[: MAX_FANOUT * 2]:
+            if not person.email or person.id == actor_id:
+                continue
+            preference = await db.userpreference.find_unique(where={"userId": person.id})
+            mode = hand_in_mode(preference)
+            if mode == HAND_IN_OFF:
+                continue
+            params = {
+                "recipientName": person.name,
+                "workshopId": workshop_id,
+                "workshopTitle": _value(record, "title"),
+                "designerName": _value(record, "designerName") or _value(actor, "name"),
+                "round": int(_value(record, "submissionRound") or 0),
+                "resubmission": resubmission,
+                "approver": approver,
+            }
+            if await enqueue(
+                mailer.REPORT_HANDED_IN,
+                to_address=person.email,
+                recipient_id=person.id,
+                params=params,
+                settings=settings,
+                topic=f"handin:{workshop_id}",
+                hold=mode == HAND_IN_DAILY,
+            ):
+                queued += 1
+    except Exception:
+        logger.exception("mail: could not queue hand-in notices for workshop %s", _value(record, "id"))
+    return queued
+
+
+#: The daily digest goes out at this India-time hour, gathering what was held before it.
+DIGEST_HOUR_IST = 9
+#: The drain asks at most this often whether a digest is due.
+DIGEST_CHECK_EVERY = timedelta(minutes=10)
+_last_digest_check: datetime | None = None
+
+
+def digest_cutoff(now: datetime) -> datetime:
+    """The most recent DIGEST_HOUR_IST boundary at or before ``now``, in UTC."""
+    local = now.astimezone(mailer.IST)
+    boundary = local.replace(hour=DIGEST_HOUR_IST, minute=0, second=0, microsecond=0)
+    if boundary > local:
+        boundary -= timedelta(days=1)
+    return boundary.astimezone(UTC)
+
+
+async def flush_digests(
+    *, now: datetime | None = None, settings: Settings | None = None, force: bool = False
+) -> int:
+    """Fold each person's HELD hand-in notices from before the last 09:00 IST into one digest.
+
+    Idempotent: a held row is claimed (HELD -> DIGESTED) with a compare-and-set before its digest is
+    queued, so two workers cannot send one digest twice. Returns how many digests were queued.
+    """
+    global _last_digest_check
+    settings = settings or get_settings()
+    if not mailer.mail_configured(settings):
+        return 0
+    moment = now or datetime.now(UTC)
+    if not force and _last_digest_check is not None and moment - _last_digest_check < DIGEST_CHECK_EVERY:
+        return 0
+    _last_digest_check = moment
+    cutoff = digest_cutoff(moment)
+    held = await db.emailmessage.find_many(where={"status": HELD}, take=1000)
+    due: dict[str, list[Any]] = {}
+    for row in held:
+        created = getattr(row, "createdAt", None)
+        if created is not None and created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        if created is not None and created >= cutoff:
+            continue
+        due.setdefault(str(row.toAddress), []).append(row)
+    # A person who switched to OFF since a row was held is not sent it: the row is set aside
+    # (DIGESTED) with no digest. One read for every recipient's current choice.
+    recipient_ids = {str(row.recipientId) for rows in due.values() for row in rows if row.recipientId}
+    modes: dict[str, str] = {}
+    if recipient_ids:
+        preferences = await db.userpreference.find_many(where={"userId": {"in": list(recipient_ids)}})
+        modes = {str(pref.userId): hand_in_mode(pref) for pref in preferences}
+    queued = 0
+    for address, rows in due.items():
+        silenced = [row for row in rows if row.recipientId and modes.get(str(row.recipientId)) == HAND_IN_OFF]
+        for row in silenced:
+            await db.emailmessage.update_many(where={"id": row.id, "status": HELD}, data={"status": DIGESTED})
+        silenced_ids = {row.id for row in silenced}
+        claimed = []
+        for row in (row for row in rows if row.id not in silenced_ids):
+            if await db.emailmessage.update_many(
+                where={"id": row.id, "status": HELD}, data={"status": DIGESTED}
+            ):
+                claimed.append(row)
+        if not claimed:
+            continue
+        items = []
+        approver = False
+        for row in claimed:
+            params = dict(row.params or {}) if isinstance(row.params, dict) else {}
+            approver = approver or bool(params.get("approver"))
+            items.append(
+                {
+                    "workshopId": params.get("workshopId"),
+                    "workshopTitle": params.get("workshopTitle"),
+                    "round": params.get("round"),
+                    "resubmission": bool(params.get("resubmission")),
+                }
+            )
+        first = claimed[0]
+        first_params = dict(first.params or {}) if isinstance(first.params, dict) else {}
+        if await enqueue(
+            mailer.HAND_IN_DIGEST,
+            to_address=address,
+            recipient_id=first.recipientId,
+            params={"recipientName": first_params.get("recipientName"), "items": items, "approver": approver},
+            settings=settings,
+        ):
+            queued += 1
+    return queued

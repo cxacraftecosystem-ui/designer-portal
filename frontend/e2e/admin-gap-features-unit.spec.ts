@@ -75,7 +75,8 @@ test("the screens no longer say these features are missing", () => {
   expect(report).toContain("sign-in links issued");
 
   const register = read("app/(protected)/sanction-orders/page.tsx");
-  expect(register).toContain("issueSanctionCredentialLink(order.id, designer.designerUserId)");
+  // The re-issue names its designer; since 2026-10-18 it also says how the link travels.
+  expect(register).toContain("issueSanctionCredentialLink(order.id, designer.designerUserId, deliverBy)");
 });
 
 test("a Regional Director's annual plan hides the national acts", () => {
