@@ -460,7 +460,8 @@ resource "aws_iam_user" "media" {
 # old write-only grant still let it OVERWRITE a dump. The backup job now runs as
 # `aws_iam_user.backup_writer` (backups.tf), the bucket policy denies this user `backups/*` and
 # `tfstate/*` outright, and statements 2 and 3 described below were removed. Statement 1 is the
-# app's media surface; statement 4 (2026-10-18) is the Aadhaar log archive, described below.
+# app's media surface; statement 4 (2026-10-18) is the Aadhaar log archive and statement 5
+# (2026-10-19) the office's report file, both described below.
 #
 # STATEMENT 1 IS THE APP'S ACTUAL SURFACE, MEASURED RATHER THAN ASSUMED.
 # `backend/app/services/s3.py:make_object_key` is the ONLY thing in the product that mints an object
@@ -474,7 +475,7 @@ resource "aws_iam_user" "media" {
 # THE ONE PRE-APPLY CHECK WORTH A MINUTE, because the code above describes the code and not the
 # bucket: an object put there BY HAND, before the convention or by somebody debugging, would stop
 # being readable the moment this lands. With operator credentials —
-#   aws s3 ls s3://designrepo-media-626159998512/ --recursive | grep -Ev '^\S+ +\S+ +[0-9]+ (media|backups|tfstate|aadhaar-log-archive)/'
+#   aws s3 ls s3://designrepo-media-626159998512/ --recursive | grep -Ev '^\S+ +\S+ +[0-9]+ (media|backups|tfstate|aadhaar-log-archive|report-deliveries)/'
 # — anything that prints is a key no policy statement below covers. Expect no output.
 #
 # `s3:AbortMultipartUpload` IS NEW HERE AND CLOSES AN EXISTING BUG rather than widening anything.
@@ -503,6 +504,15 @@ resource "aws_iam_user" "media" {
 # leaves a noncurrent version for 90 days (35 days locked off-site); docs/AADHAAR.md says so.
 # With `AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` set, this user also needs kms:GenerateDataKey and
 # kms:Decrypt on that key; that is not granted here because the archive runs SSE-S3.
+#
+# STATEMENT 5 IS THE OFFICE'S REPORT FILE (2026-10-19), PREFIX-SCOPED FOR THE SAME REASON.
+# "Approve and hand on" renders the approved report and stores it under
+# `report-deliveries/<workshop>/<stamp>-<random>/<file>` (`backend/app/services/report_delivery.py`,
+# `storage_key_for`); the office opens it through a five-minute presigned GET. So `PutObject` and
+# `GetObject` and nothing else: no delete (the file is the record of what was sent) and no list.
+# It is deliberately NOT under `media/`, because `PublicReadMedia` makes everything there
+# world-readable, and an approved report names the artisans in it. Without this statement every
+# hand-on answered 503 ("storage refused") in production, where this key may write `media/*` only.
 #
 # NOTHING HERE NAMES `tfstate/`, AND NOTHING MAY. Terraform runs under a human operator's own
 # credentials, never under this user. The state holds `aws_iam_access_key.media`'s secret in
@@ -537,6 +547,15 @@ resource "aws_iam_user_policy" "media" {
           "s3:DeleteObject"
         ]
         Resource = "${aws_s3_bucket.media.arn}/aadhaar-log-archive/*"
+      },
+      {
+        Sid    = "ReportDeliveries"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject"
+        ]
+        Resource = "${aws_s3_bucket.media.arn}/report-deliveries/*"
       }
     ]
   })
