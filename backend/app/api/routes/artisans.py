@@ -390,7 +390,7 @@ async def _guard_identity_conflicts(
 
 
 async def _likely_duplicates(
-    payload: ArtisanCreate, data: dict[str, Any]
+    payload: ArtisanCreate, data: dict[str, Any], viewer: Any = None
 ) -> list[tuple[artisan_duplicates.Profile, artisan_duplicates.Score]]:
     """Stored artisans scoring 0.60 or more against this create. Advisory: a failure is logged and
     reads as "none", so the duplicate finder can never stop a record being saved."""
@@ -413,7 +413,7 @@ async def _likely_duplicates(
             fingerprint=data.get(aadhaar_fingerprint.FINGERPRINT_FIELD),
             pehchanCardNumber=data.get("pehchanCardNumber"),
         )
-        return await artisan_duplicates.candidates_for_profile(profile)
+        return await artisan_duplicates.candidates_for_profile(profile, viewer=viewer)
     except Exception:
         logger.exception("duplicate scoring failed on an artisan create")
         return []
@@ -623,7 +623,7 @@ async def create_artisan(
     await _guard_identity_conflicts(data, aadhaar=aadhaar)
     # LIKELY DUPLICATES (services/artisan_duplicates.py). Scored on every create; held only when the
     # client sends the list (``[]`` when it showed nothing) and a pair at 0.75 or more is not in it.
-    likely = await _likely_duplicates(payload, data)
+    likely = await _likely_duplicates(payload, data, current_user)
     _hold_if_duplicate(likely, acknowledged)
     data = await resolve_craft_id(data, current_user)
     data = await attach_location(data)

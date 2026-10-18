@@ -29,7 +29,8 @@ The server is the only scorer. Neither client ports it, and an offline create is
 
 Names are normalised the way `cross_portal_codes.normalise()` does, with honorifics dropped (Shri, Smt,
 Dr, …) and Mohd/Md read as Mohammad. The phonetic skeleton reads Lakshmi and Laxmi alike. No Postgres
-extension is used. Every vector the scorer is held to is in `shared/duplicate-score-vectors.json`.
+extension is used. Every vector the scorer is held to is in `shared/duplicate-score-vectors.json`,
+which is byte-identical in the Field Repository; both portals' pytest read every section of it.
 
 **Reasons are codes with short labels** ("Names 92% alike", "Same district"). No reason, label or
 stored row ever carries an identifier value.
@@ -91,17 +92,21 @@ so a table added later cannot be missed. Access logs are not moved, because they
 survivor. The web record page and the handset both open the survivor.
 
 **Undo** (Merged tab, 30 days) recreates the record with its id and moves back the rows that still point
-at the survivor. A survivor field edited since the merge keeps its new value and is reported. An undo
-is refused when it is past 30 days, when the survivor was merged again since, or when the restored
+at the survivor. A field goes back whole or not at all: if any column of a field (the fingerprint and
+its last four, say) was edited since the merge, the whole field keeps its current value and is named
+in `keptSurvivorEdits`. An undone pair can be merged again: only a live merge holds the deleted id (a
+partial unique index on `undoneAt IS NULL`). An undo is refused when it is past 30 days, when the survivor was merged again since, or when the restored
 fingerprint or Pehchan is now held by someone else.
 
 ## 4. Across the two portals
 
 Records are never merged across databases. Cross-portal pairs offer **Link** and **Not the same**.
 
-The daily scan sends the Field Repository the fingerprint and Pehchan number of every unlinked artisan
-here. The endpoint is `POST /api/cross-portal/peer/artisans/match`, signed like every peer call, and
-capped at 50 calls a day. It answers ids only, for consenting artisans only, and logs every match on its
+The daily scan sends the Field Repository the fingerprint and Pehchan number of unlinked artisans
+here, least recently asked first (`ArtisanPeerScan`), at most 50 calls of 100 a run, so every artisan
+is reached in turn. An artisan whose cross-portal pair was decided "Not the same" is not asked again,
+and a restarted worker that finds a run within the day waits. The endpoint is
+`POST /api/cross-portal/peer/artisans/match`, signed like every peer call, and capped at 50 calls a day. It answers ids only, for consenting artisans only, and logs every match on its
 side. This portal stores only the remote id. Details are fetched live, through the logged lookup, when
 an admin opens the pair. No name, district or other fuzzy signal ever crosses. Merging a linked record
 moves its link at the peer first, and undoes that move if the local transaction fails.
@@ -111,6 +116,7 @@ moves its link at the peer first, and undoes that move if the local transaction 
 - The merge snapshot holds the deleted record's row without `aadhaarNumber`: fingerprint and last
   four only, plus the `aadhaarVerify*` columns. It is purged after 30 days. [SECURITY.md](SECURITY.md)
   covers backups.
+- The three tables have row-level security on and the hosted data-API roles revoked in their migration.
 - Nothing merges automatically, at any score. Every merge records who did it, the reason and the field
   choices (keys only).
 

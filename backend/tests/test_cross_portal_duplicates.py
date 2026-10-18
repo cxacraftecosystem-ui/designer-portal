@@ -90,6 +90,44 @@ def test_the_scan_stores_only_the_remote_id_and_pairs_two_locals_on_one_remote(m
     run(scenario)
 
 
+def test_the_scan_skips_a_decided_artisan_and_a_restart_does_not_ask_again(monkeypatch):
+    async def scenario():
+        t = ds.tag()
+        user = await ds.admin(t)
+        a = await ds.artisan(user, f"Skip A {t}", aadhaarFingerprint=ds.fp("ka" + t))
+
+        def match(body):
+            refs = {item["ref"] for item in body["items"]}
+            return 200, {"matches": [{"ref": a.id, "artisanId": f"fk-{t}", "matchedBy": "AADHAAR"}] if a.id in refs else []}
+
+        peer = Peer({("POST", "/artisans/match"): match})
+        monkeypatch.setattr(cross_portal_client, "peer_call", peer)
+        await artisan_duplicates.run_peer_scan(SETTINGS)
+        assert len(peer.calls) <= artisan_duplicates.PEER_SCAN_MAX_CALLS
+        asked = await db.query_raw('SELECT "askedAt" FROM "ArtisanPeerScan" WHERE "artisanId" = $1', a.id)
+        assert len(asked) == 1
+        pair = await db.artisanduplicatecandidate.find_first(where={"kind": "CROSS_PORTAL", "artisanAId": a.id})
+        await db.artisanduplicatecandidate.update(where={"id": pair.id}, data={"status": "NOT_DUPLICATE"})
+        peer.calls.clear()
+        await artisan_duplicates.run_peer_scan(SETTINGS)
+        sent = {item["ref"] for _, _, body, _ in peer.calls for item in body["items"]}
+        assert a.id not in sent
+
+        # A restarted worker sees today's ask and waits a day.
+        ran: list[Any] = []
+
+        async def fake_scan(settings):
+            ran.append(settings)
+            return {"within": 0, "crossPortal": 0}
+
+        monkeypatch.setattr(artisan_duplicates, "_next_run", None)
+        monkeypatch.setattr(artisan_duplicates, "run_scan", fake_scan)
+        assert await artisan_duplicates.maybe_run(SETTINGS) is None
+        assert ran == []
+
+    run(scenario)
+
+
 def test_link_marks_the_pair_linked_through_the_link_service(monkeypatch):
     async def scenario():
         from app.api.routes import artisan_duplicates as routes

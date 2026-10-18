@@ -7164,6 +7164,17 @@ model ArtisanDuplicateCandidate {
   @@index([decidedById])
 }
 
+/// When the nightly duplicate scan last asked the Field Repository about one artisan (exact keys
+/// only). The scan asks the least recently asked first, and the newest `askedAt` tells a restarted
+/// worker that today's peer budget is already spent. No foreign key: a deleted artisan's row is
+/// never read.
+model ArtisanPeerScan {
+  artisanId String   @id
+  askedAt   DateTime
+
+  @@index([askedAt])
+}
+
 /// One merge of two artisan records. Kept forever: `mergedId` is the redirect key that sends a
 /// stale id (an offline queue, a printed code, a dataset consumer) to the surviving record. The
 /// snapshot, the moved-row log and the cross-portal note are what undo needs, and the worker
@@ -7173,7 +7184,8 @@ model ArtisanMerge {
   /// No foreign key: the survivor may itself be merged later.
   survivorId       String
   /// The deleted record's id.
-  mergedId         String    @unique
+  /// Unique among live merges only: a partial index in the migration (`undoneAt` IS NULL).
+  mergedId         String
   mergedById       String?
   reason           String?
   /// {field: "A" | "B" | "BOTH"}. Keys only, never values.
@@ -7195,6 +7207,7 @@ model ArtisanMerge {
   undoneBy User? @relation("ArtisanMergeUndoneBy", fields: [undoneById], references: [id], onDelete: SetNull)
 
   @@index([survivorId])
+  @@index([mergedId])
   @@index([createdAt])
   @@index([mergedById])
   @@index([undoneById])

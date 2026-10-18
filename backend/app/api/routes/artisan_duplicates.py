@@ -138,6 +138,7 @@ async def check_duplicates(
         profile,
         exclude_id=payload.excludeArtisanId,
         limit=artisan_duplicates.CHECK_MAX_CANDIDATES,
+        viewer=current_user,
     )
     return {
         "candidates": [

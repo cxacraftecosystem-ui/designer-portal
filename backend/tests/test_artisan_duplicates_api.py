@@ -155,6 +155,24 @@ def test_check_caps_at_five_and_carries_no_identifier(world):
     assert "9829022222" not in res.text and "pehchan" not in res.text.lower()
 
 
+def test_check_reads_through_the_record_read_rule(world, monkeypatch):
+    from app.services import records
+
+    # The shared test database holds other runs' look-alikes too, so the rule here lets one row through.
+    visible = world["crowd"][6]
+
+    async def narrowed(user, owner_field="createdById"):
+        return {"id": {"in": [visible]}}
+
+    monkeypatch.setattr(records, "viewable_where", narrowed)
+    res = world["client"].post("/api/artisan-duplicates/check", headers=world["headers"]["designer"], json={
+        "name": f"Kishan Lal {world['tag']}", "phone": "98290 22222", "state": "Rajasthan", "district": "Jaipur",
+    })
+    assert res.status_code == 200, res.text
+    ids = [c["artisan"]["id"] for c in res.json()["candidates"]]
+    assert ids == [visible]
+
+
 def test_check_takes_the_aadhaar_in_the_body_and_names_it_only_then(world):
     client, h = world["client"], world["headers"]["designer"]
     typed = client.post("/api/artisan-duplicates/check", headers=h, json={

@@ -52,6 +52,8 @@ VERY_LIKELY_THRESHOLD = 0.90
 UNDO_DAYS = 30
 CHECK_MAX_CANDIDATES = 5
 PEER_MATCH_BATCH = 100
+#: The Field Repository answers 50 match calls a day (MATCH_CALLS_PER_DAY there).
+PEER_SCAN_MAX_CALLS = 50
 PREFILTER_LIMIT = 500
 #: A block in the nightly scan larger than this is split by the name's first letter, so one big
 #: district cannot turn the scan quadratic.
@@ -537,8 +539,13 @@ async def candidates_for_profile(
     exclude_id: str | None = None,
     limit: int | None = None,
     client: Any = None,
+    viewer: Any = None,
 ) -> list[tuple[Profile, Score]]:
-    """Every stored artisan scoring at least 0.60 against ``profile``, best first."""
+    """Every stored artisan scoring at least 0.60 against ``profile``, best first.
+
+    ``viewer`` is the signed-in person a list is shown to (/check, the create hold): the candidates
+    are narrowed by ``records.viewable_where`` exactly as ``list_artisans`` is. The worker's scan
+    passes none, since its pairs are only ever shown to admins."""
     found: list[tuple[Profile, Score]] = []
     for other in await prefilter(profile, exclude_id=exclude_id, client=client):
         if other.id == profile.id:
@@ -546,6 +553,16 @@ async def candidates_for_profile(
         result = score_pair(profile, other)
         if result is not None:
             found.append((other, result))
+    if viewer is not None and found:
+        from app.services.records import viewable_where
+
+        vis = await viewable_where(viewer)
+        if vis:
+            rows = await _client(client).artisan.find_many(
+                where={"AND": [vis, {"id": {"in": [other.id for other, _ in found]}}]}
+            )
+            seen = {row.id for row in rows}
+            found = [pair for pair in found if pair[0].id in seen]
     found.sort(key=lambda pair: (-pair[1].score, str(pair[0].display.get("createdAt") or "")))
     return found[:limit] if limit else found
 
@@ -774,7 +791,12 @@ async def run_within_scan(client: Any = None) -> int:
 
 async def run_peer_scan(settings: Any, client: Any = None) -> int:
     """Ask the Field Repository which unlinked artisans it holds, by exact key only. Ids come back;
-    no personal data is stored. Two local artisans answered with one remote id become a pair."""
+    no personal data is stored. Two local artisans answered with one remote id become a pair.
+
+    The peer answers PEER_SCAN_MAX_CALLS calls a day, so one run asks at most that many batches,
+    least recently asked first (``ArtisanPeerScan``): every artisan is reached in turn, however
+    large the register. An artisan whose cross-portal pair was decided "Not a duplicate" is not
+    asked again."""
     from app.services import cross_portal
     from app.services.cross_portal_client import PeerUnavailable, peer_call
 
@@ -782,9 +804,16 @@ async def run_peer_scan(settings: Any, client: Any = None) -> int:
         return 0
     rows = await _client(client).query_raw(
         """SELECT a."id", a."aadhaarFingerprint", a."pehchanCardNumber" FROM "Artisan" a
+           LEFT JOIN "ArtisanPeerScan" s ON s."artisanId" = a."id"
            WHERE (a."aadhaarFingerprint" IS NOT NULL OR a."pehchanCardNumber" IS NOT NULL)
              AND NOT EXISTS (SELECT 1 FROM "CrossPortalArtisanLink" k WHERE k."artisanId" = a."id")
-           ORDER BY a."id" ASC"""
+             AND NOT EXISTS (
+               SELECT 1 FROM "ArtisanDuplicateCandidate" d
+               WHERE d."kind" = 'CROSS_PORTAL' AND d."artisanAId" = a."id" AND d."status" = 'NOT_DUPLICATE'
+             )
+           ORDER BY s."askedAt" ASC NULLS FIRST, a."id" ASC
+           LIMIT $1""",
+        PEER_MATCH_BATCH * PEER_SCAN_MAX_CALLS,
     )
     stored = 0
     by_remote: dict[str, list[str]] = defaultdict(list)
@@ -815,6 +844,13 @@ async def run_peer_scan(settings: Any, client: Any = None) -> int:
         if code != 200 or not isinstance(payload, dict):
             logger.warning("duplicate peer scan: unexpected answer %s", code)
             break
+        await _client(client).execute_raw(
+            """INSERT INTO "ArtisanPeerScan" ("artisanId", "askedAt")
+               SELECT unnest($1::text[]), (now() AT TIME ZONE 'utc')
+               ON CONFLICT ("artisanId") DO UPDATE SET "askedAt" = EXCLUDED."askedAt"
+            """,
+            [item["ref"] for item in items],
+        )
         refs = {item["ref"] for item in items}
         for match in payload.get("matches") or []:
             if not isinstance(match, dict):
@@ -847,6 +883,16 @@ _DAY = timedelta(days=1)
 _next_run: datetime | None = None
 
 
+async def _last_peer_ask() -> datetime | None:
+    rows = await _client(None).query_raw('SELECT max("askedAt") AS "last" FROM "ArtisanPeerScan"')
+    last = rows[0].get("last") if rows else None
+    if isinstance(last, str):
+        last = datetime.fromisoformat(last)
+    if isinstance(last, datetime) and last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return last if isinstance(last, datetime) else None
+
+
 async def run_scan(settings: Any) -> dict[str, int]:
     within = await run_within_scan()
     remote = 0
@@ -861,6 +907,11 @@ async def maybe_run(settings: Any, *, now: datetime | None = None) -> dict[str, 
     """At most once a day per process. The worker calls this every loop; cheap when not due."""
     global _next_run
     now = now or datetime.now(UTC)
+    if _next_run is None:
+        # A restarted worker: if the peer was asked within the day, today's run has happened.
+        last = await _last_peer_ask()
+        if last is not None and now < last + _DAY:
+            _next_run = last + _DAY
     if _next_run is not None and now < _next_run:
         return None
     _next_run = now.replace(microsecond=0) + _DAY

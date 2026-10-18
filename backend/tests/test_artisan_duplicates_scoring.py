@@ -44,6 +44,53 @@ def test_vectors_cover_the_cases_the_contract_names():
         assert needle in names, needle
 
 
+# The sections the Field Repository wrote first. The file is one file in both portals, so both
+# scorers answer every section.
+
+
+def test_thresholds_match_the_vector_file():
+    assert VECTORS["thresholds"] == {
+        "show": d.SHOW_THRESHOLD,
+        "hold": d.HOLD_THRESHOLD,
+        "veryLikely": d.VERY_LIKELY_THRESHOLD,
+    }
+
+
+@pytest.mark.parametrize(("token", "expected"), VECTORS["skeletons"])
+def test_shared_skeletons(token, expected):
+    assert d.skeleton(token) == expected
+
+
+@pytest.mark.parametrize("vector", VECTORS["names"], ids=lambda v: v["label"])
+def test_shared_name_similarity(vector):
+    sim = d.name_sim(vector["a"], vector["b"])
+    if "nameSim" in vector:
+        assert sim == pytest.approx(vector["nameSim"], abs=1e-6)
+    else:
+        assert sim < vector["nameSimBelow"]
+
+
+@pytest.mark.parametrize(
+    "vector",
+    [v for v in VECTORS["pairs"] if v.get("portal") in (None, "designer")],
+    ids=lambda v: v["label"],
+)
+def test_shared_pairs(vector):
+    a, b = d.profile_from_dict(vector["a"]), d.profile_from_dict(vector["b"])
+    for left, right in ((a, b), (b, a)):
+        result = d.score_pair(left, right)
+        if vector["score"] is None:
+            assert result is None
+            continue
+        assert result is not None
+        assert result.score == pytest.approx(vector["score"], abs=1e-9)
+        assert result.band == vector["band"]
+        for code in vector.get("reasons", []):
+            assert code in result.codes
+        for code in vector.get("absentReasons", []):
+            assert code not in result.codes
+
+
 def test_skeletons():
     assert d.skeleton("lakshmi") == d.skeleton("laxmi") == "lksm"
     assert d.skeleton("ramesh") == "rms"

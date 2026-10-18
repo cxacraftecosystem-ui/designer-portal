@@ -569,6 +569,8 @@ this table is that "grep `deps.py`" is no longer a complete way to check a row.
 | **Create** a password account; set a temporary password; require a new password; issue a password link; correct a name or an address (§1.2) | `require_account_provisioner`, then `assert_can_manage_target` on the account | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁵** | ✅ | ✅ |
 | **Delete** a user account; **grant** a capability flag (§1.1) | `require_admin` · `assert_may_grant` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
 | **Delete** any record¹⁷ | `assert_can_delete` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| Ask whether an artisan is **already recorded** (`POST /api/artisan-duplicates/check`, 30 a minute) | `require_record_creator` | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Review **duplicate pairs**: list, preview, merge, dismiss, reopen, link a Field Repository match; list and **undo merges** (`/api/artisan-duplicates`, `/api/artisan-merges`) | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
 | Delete **media you uploaded**¹⁷ | route-local | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Grant / decide **workshop access** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
 | **Run a design & prototype workshop** | `can_run_design_workshops` | ⬜ | ⬜ | ⬜ | **✅** | **⬜²** | **⬜²** | **✅¹²** | **✅¹²** | **✅¹²** | ✅ | ✅ |

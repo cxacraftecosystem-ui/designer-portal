@@ -130,6 +130,7 @@ NOT_REPOINTED = {
     "AadhaarLegalHold": "a hold on either record blocks the merge (aadhaar_legal_hold)",
     "ArtisanDuplicateCandidate": "the merged record's pairs cascade away with it",
     "ArtisanMerge": "the merge record itself",
+    "ArtisanPeerScan": "a scan timestamp; the survivor is asked on its own next turn",
 }
 
 
@@ -1024,9 +1025,11 @@ async def _merge_tx(
 
         # 3. Free the unique keys, then write the survivor. The last four go with the fingerprint:
         # the pair CHECK holds them to "both or neither" (migration 20261022090000).
+        legacy = '"aadhaarNumber" = NULL, ' if aadhaar_fingerprint.LEGACY_COLUMN_PRESENT else ""
         await tx.execute_raw(
             'UPDATE "Artisan" SET "aadhaarFingerprint" = NULL, "aadhaarLast4" = NULL, '
-            '"aadhaarNumber" = NULL, "pehchanCardNumber" = NULL WHERE "id" = $1',
+            + legacy
+            + '"pehchanCardNumber" = NULL WHERE "id" = $1',
             gone_id,
         )
         await _write_survivor(tx, keep_id, writes)

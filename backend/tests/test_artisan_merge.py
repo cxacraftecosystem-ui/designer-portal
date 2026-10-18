@@ -127,6 +127,25 @@ def test_undo_keeps_an_edit_made_to_the_survivor_after_the_merge():
     run(scenario)
 
 
+def test_a_pair_merges_again_after_an_undo():
+    async def scenario():
+        t = ds.tag()
+        user = await ds.admin(t)
+        keep = await ds.artisan(user, f"Ravi Das {t}")
+        gone = await ds.artisan(user, f"Ravi Das {t}")
+        pair = await ds.make_pair(keep.id, gone.id)
+        first = await _merge(pair, ds.sides(pair, keep.id), user=user)
+        await artisan_merge.undo(first["merge"]["id"], user=user, settings=ds.NO_PEER)
+        again = await ds.make_pair(keep.id, gone.id)
+        second = await _merge(again, ds.sides(again, keep.id), user=user)
+        assert second["merge"]["id"] != first["merge"]["id"]
+        assert await artisan_merge.resolve(gone.id) == keep.id
+        rows = await db.artisanmerge.find_many(where={"mergedId": gone.id})
+        assert sorted(r.undoneAt is None for r in rows) == [False, True]
+
+    run(scenario)
+
+
 def _code(exc: HTTPException) -> str:
     detail = exc.detail
     return detail.get("code") if isinstance(detail, dict) else str(detail)
