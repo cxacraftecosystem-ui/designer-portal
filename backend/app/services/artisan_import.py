@@ -720,7 +720,11 @@ async def _write_roster(workshop: Any, artisan_ids: list[str], *, actor: Any, wa
             ),
             actor,
         )
-        written += int(result.get("created", 0) or 0)
+        # THE PARTICIPANT ROWS, NOT EVERY ROW THE SAVE CREATED: since the stage's computed counts
+        # (stage_computed, C7/C8) a first save also creates the stage's singleton to hold them.
+        by_entity = result.get("createdByEntity")
+        created = by_entity.get(ENTITY_PARTICIPANT, 0) if isinstance(by_entity, dict) else result.get("created", 0)
+        written += int(created or 0)
         if result.get("errors"):
             # REPORTED, NOT RAISED. The artisans are already created; a 500 here would leave the
             # officer with N records and a stack trace, which is the exact failure the

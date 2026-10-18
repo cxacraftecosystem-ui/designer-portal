@@ -31,6 +31,7 @@ are one feature and neither works alone — see the long note above ``REFERENCE_
 
 import logging
 import re
+from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field as dataclass_field, replace
 from datetime import UTC, datetime
@@ -6329,6 +6330,9 @@ async def save_stage(
         "stageKey": spec.key,
         "saved": len(creates) + len(updates),
         "created": len(creates),
+        # The same count by entity, so a caller that wrote one kind of row (the artisan-list import)
+        # can tell its rows from the singleton the computed counts may create beside them. Additive.
+        "createdByEntity": dict(Counter(str(row.get("entityKey")) for row in creates)),
         "updated": len(updates),
         "removed": len(removed),
         "errors": errors,

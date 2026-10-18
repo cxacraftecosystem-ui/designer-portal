@@ -836,7 +836,7 @@ async def test_the_save_response_carries_no_stored_echo_block(client, workshop):
     saved = _sketches(client, workshop, [A]).json()
     assert "stored" not in saved
     assert set(saved) == {
-        "stageKey", "saved", "created", "updated", "removed", "errors", "refusedAnswers",
+        "stageKey", "saved", "created", "createdByEntity", "updated", "removed", "errors", "refusedAnswers",
         "droppedKeys", "droppedCustomKeys", "completeness", "transcriptionsQueued",
         "transcriptionConsentRefusal", "schemaVersion", "customSchemaVersion",
     }
