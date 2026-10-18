@@ -21,6 +21,11 @@ holding an inspection post. Designers, researchers and the rest of the people wh
 not. Every count is read through the same scope the person's own screens use, so a summary never
 reveals a workshop outside it.
 
+For an inspection-post holder that scope is ``inspectable_by_clause``, read here and nowhere else
+outside the inspection feature. It is a READ: it counts and lists, it writes nothing to a workshop,
+and the links it builds open the inspection screens, which check the scope again
+(``tests/test_dw_inspector_scope_gate.py`` lists this file in ``THE_FEATURE`` for that reason).
+
 ── WHAT IS KEPT, AND WHAT NEVER IS ──────────────────────────────────────────────────────────────
 
 The payload holds counts, workshop titles and app paths: what the e-mail shows, nothing more. Never

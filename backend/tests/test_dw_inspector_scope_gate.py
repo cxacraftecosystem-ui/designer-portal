@@ -796,12 +796,16 @@ def test_the_tier_stays_out_of_the_designer_set_and_the_holders_overlap_it_by_ru
 BACKEND = Path(__file__).resolve().parents[1]
 APP = BACKEND / "app"
 
-#: The three files this feature owns. Everything else in ``app/`` must be able to run without
+#: The files this feature owns, and the one reader that consults it. Everything else in ``app/`` must be able to run without
 #: knowing the scope exists — that is what "a stranger to every write gate" means in practice.
 THE_FEATURE = {
     APP / "services" / "design_workshop_inspectors.py",
     APP / "api" / "routes" / "design_workshop_inspections.py",
     APP / "schemas" / "design_workshop_inspections.py",
+    # A READ, added 2026-10-18: the Monday summary counts and lists an inspector's workshops
+    # through this same clause, so it never shows one their inspection list would not. It writes
+    # nothing to a workshop and reaches no stage content; its module header says so.
+    APP / "services" / "weekly_digest.py",
 }
 
 #: FILES THAT MAY SPEAK SOME OF THE NAMES BELOW, AND EXACTLY WHICH ONES.
