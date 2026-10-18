@@ -51,6 +51,7 @@ from app.api.routes import (
     settings,
     tasks,
     tools,
+    transcription_admin,
     two_factor,
     usage,
     users,
@@ -255,6 +256,8 @@ api_router.include_router(idempotency_keys.router)
 api_router.include_router(notifications.router)
 api_router.include_router(preferences.router)
 api_router.include_router(settings.router)
+# The shared transcription service's admin panel: pause, providers, budgets (18 Oct 2026).
+api_router.include_router(transcription_admin.router)
 api_router.include_router(ai_keys.router)
 api_router.include_router(secrets.router)
 api_router.include_router(data_access.router)

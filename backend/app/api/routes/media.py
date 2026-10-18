@@ -25,7 +25,7 @@ from app.schemas.media import (
     TranscriptRefineRequest,
     TranscriptUpdateRequest,
 )
-from app.services import design_workshop_posts, dictation_consent
+from app.services import design_workshop_posts, dictation_consent, transcription_jobs
 from app.services.ai import (
     UnknownDimension,
     analyze_measurement_image_bytes,
@@ -1675,6 +1675,9 @@ async def transcribe_media_now_route(
         )
     try:
         await transcribe_media_now(media, get_settings())
+    except transcription_jobs.TranscriptionPaused as exc:
+        # The owner's hold (18 Oct 2026): "Transcribe now" bypasses the queue, never the pause.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SendRefused as exc:
         # A 409 AND NOT A 403, the same choice `POST /design-workshops/{id}/dictate` makes and for its
         # reason: a 403 is about the CALLER, and this admin is entitled to press the button. What is not
