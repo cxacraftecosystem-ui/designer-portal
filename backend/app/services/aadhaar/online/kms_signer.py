@@ -57,16 +57,22 @@ class KmsRsaSigner:
     def __init__(self, key_id: str, client: Any) -> None:
         self.key_id = key_id
         self._client = client
+        # The public half never changes for a KMS key id, so it is fetched once (by the boot check)
+        # and kept: no GetPublicKey round trip on each signature or each ``key_size`` read.
+        self._public: rsa.RSAPublicKey | None = None
 
     @property
     def key_size(self) -> int:
         return self.public_key().key_size
 
     def public_key(self) -> rsa.RSAPublicKey:
+        if self._public is not None:
+            return self._public
         der = self._client.get_public_key(KeyId=self.key_id)["PublicKey"]
         key = serialization.load_der_public_key(der)
         if not isinstance(key, rsa.RSAPublicKey):
             raise KmsSigningError("the KMS signing key is not an RSA key")
+        self._public = key
         return key
 
     def sign(self, data: bytes, pad: Any, algorithm: hashes.HashAlgorithm) -> bytes:

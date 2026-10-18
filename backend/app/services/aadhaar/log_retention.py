@@ -74,8 +74,8 @@ class ArchiveStore(Protocol):
 
 
 class S3ArchiveStore:
-    """The archive bucket (the media bucket by default). The API's key needs Put/Get/Delete on the
-    prefix, which it does not have yet (docs/AADHAAR.md §3)."""
+    """The archive bucket (the media bucket by default). The API's key holds Put/Get/Delete on the
+    prefix and nothing else there (docs/AADHAAR.md §3, "The grant")."""
 
     def __init__(self, settings: Any) -> None:
         self.settings = settings

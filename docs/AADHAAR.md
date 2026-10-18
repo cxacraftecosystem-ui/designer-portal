@@ -160,11 +160,15 @@ to 125 if the object was rewritten in its last 35 days). With `AADHAAR_LOG_ARCHI
 the objects are SSE-KMS, and the replication rule does not copy SSE-KMS objects, so they then have
 no off-site copy at all.
 
-*Open, before October 2028* (when the first entries turn two): the API's IAM user
-(`designrepo-media`) may Put/Get/Delete only under `media/*`. Until a statement for
-`aadhaar-log-archive/*` (`s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`) is added, each daily run
-is refused at the upload, deletes nothing and logs the failure. Optionally add a lifecycle rule on
-that prefix that expires noncurrent versions sooner, to shorten the tail above.
+*The grant* (applied 2026-10-18): the API's IAM user (`designrepo-media`) holds `s3:PutObject`,
+`s3:GetObject` (the read-back is a `head_object`) and `s3:DeleteObject` on `aadhaar-log-archive/*`
+and nothing else there: no `s3:ListBucket`, nothing on `backups/` or `tfstate/` (the bucket policy
+denies those to this user outright). It is statement `AadhaarLogArchive` of
+`aws_iam_user_policy.media` in `infra/terraform/main.tf`, which arrives with the backup-hardening
+change. If the grant is ever missing, each daily run is refused at the upload, deletes nothing and
+logs the failure. With `AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` set, the same user also needs
+`kms:GenerateDataKey` and `kms:Decrypt` on that key. Optionally add a lifecycle rule on that prefix
+that expires noncurrent versions sooner, to shorten the tail above.
 
 ---
 

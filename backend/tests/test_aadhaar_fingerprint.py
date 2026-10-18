@@ -73,6 +73,21 @@ def test_the_formula_is_the_cross_portal_code_byte_for_byte() -> None:
     assert fp.fingerprint(number, f"  {KEY}\n") == cross_portal_code
 
 
+def test_the_cross_portal_module_uses_this_key_and_this_column() -> None:
+    """Once feature/s-cross-portal is merged, its code IS the fingerprint and it reads the column.
+
+    Imports the real module, so the two cannot drift apart unnoticed. Skipped on a branch that does
+    not carry the cross-portal link yet.
+    """
+    cross_portal = pytest.importorskip("app.services.cross_portal")
+    number = _fresh_aadhaar()
+    assert cross_portal.aadhaar_code(number, KEY) == fp.fingerprint(number, KEY)
+    settings = SimpleNamespace(aadhaar_fingerprint_key=f"  {KEY}\n")
+    assert cross_portal.aadhaar_key(settings) == KEY
+    row = SimpleNamespace(aadhaarFingerprint=fp.fingerprint(number, KEY), aadhaarNumber=None)
+    assert cross_portal.stored_aadhaar_code(row, KEY) == fp.fingerprint(number, KEY)
+
+
 def test_a_different_key_gives_a_different_fingerprint() -> None:
     number = _fresh_aadhaar()
     assert fp.fingerprint(number, KEY) != fp.fingerprint(number, KEY + "-other")

@@ -34,6 +34,7 @@ class FakeKms:
         self.identity = identity
         self.meta = {"KeySpec": spec, "KeyUsage": usage, "KeyState": state}
         self.sign_calls: list[dict[str, Any]] = []
+        self.public_key_calls = 0
 
     def describe_key(self, KeyId: str) -> dict[str, Any]:
         assert KeyId == KEY_ID
@@ -41,6 +42,7 @@ class FakeKms:
 
     def get_public_key(self, KeyId: str) -> dict[str, Any]:
         assert KeyId == KEY_ID
+        self.public_key_calls += 1
         der = self.identity.key.public_key().public_bytes(
             serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
         )
@@ -89,6 +91,22 @@ def test_the_boot_check_refuses_a_certificate_for_another_key(aua) -> None:
     other = make_identity("Someone else")
     with pytest.raises(KmsSigningError, match="not the certificate"):
         check(KmsRsaSigner(KEY_ID, FakeKms(aua)), other.certificate)
+
+
+def test_the_public_key_is_fetched_from_kms_once_and_then_kept(aua) -> None:
+    """GetPublicKey is a KMS round trip (and a billed request). The boot check fetches the public
+    half; every later signature and ``key_size`` read reuses it."""
+    kms = FakeKms(aua)
+    signer = KmsRsaSigner(KEY_ID, kms)
+    check(signer, aua.certificate)
+    assert kms.public_key_calls == 1
+    for txn in ("T1", "T2", "T3"):
+        root = etree.fromstring(f'<Otp uid="999999990019" ver="2.5" txn="{txn}"><Opts ch="00"/></Otp>'.encode())
+        xmldsig.sign_enveloped(root, signer, aua.certificate)
+        assert signer.key_size == 2048
+    assert signer.public_key() is signer.public_key()
+    assert kms.public_key_calls == 1
+    assert len(kms.sign_calls) == 4  # the boot check's probe, then one per request
 
 
 def test_only_pkcs1_v15_is_signed(aua) -> None:

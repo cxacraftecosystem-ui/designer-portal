@@ -168,6 +168,11 @@ ln -sfn /home/ubuntu/app/releases/<older-release> /home/ubuntu/app/current
 sudo systemctl restart fieldrepo fieldrepo-queue
 ```
 
+**Never past the Aadhaar fingerprint release once it has taken an artisan write.** That migration
+is additive, so nothing here stops the flip, but older code would show those artisans with no
+Aadhaar, register the same person twice and start storing full numbers again. Check the query in
+"Aadhaar fingerprint: the run order" below first, and fix forward if it is not 0.
+
 **A release runs the interpreter it was built with, and a rollback needs that interpreter still
 installed.** Releases built before 2026-10-09 run Python 3.12 — their venvs symlink
 `/usr/bin/python3.12`, Ubuntu 24.04's own interpreter. A release built from the deadsnakes PPA's
@@ -611,17 +616,22 @@ box, in this order:
    `npx prisma migrate resolve --rolled-back 20261029090000_drop_aadhaar_number` and deploy again.
    Afterwards run `VACUUM FULL "Artisan"; VACUUM FULL "RecordRevision";` in the SQL editor so the old
    row versions holding numbers are gone from the data files. Copies taken before the drop still hold
-   the numbers for a while, and for longer than the dumps' own 30 days:
-   - the nightly dumps in `designrepo-media-626159998512/backups/`: 30 days as the current version, then
-     90 more as noncurrent versions (the bucket is versioned), so about 120 days;
+   the numbers for a while, and for much longer than the nightly dumps' own 30 days (the lifecycle
+   rules as applied on 2026-10-18; `infra/terraform/backups.tf` and `main.tf` hold them):
+   - the nightly dumps in `designrepo-media-626159998512/backups/designer-portal/`: 30 days as the
+     current version, then 90 more as noncurrent versions (the bucket is versioned), so about 120
+     days;
    - their replica in `designrepo-offsite-626159998512` (ap-south-2): 35 days under Object Lock
      (GOVERNANCE), then 90 more as noncurrent versions, so about 125 days;
+   - the weekly copy (`backups/designer-portal/weekly/`, the first dump of each ISO week), in both
+     buckets: 365 days, then 90 more as a noncurrent version, so about 455 days;
    - the database provider's own backups and point-in-time recovery (WAL), for as long as its plan
      keeps them ([docs/ENVIRONMENT.md](../docs/ENVIRONMENT.md), "The database", names the provider).
 
-   So a number is gone from every copy about 125 days after the drop, plus the provider's window. To
-   end it sooner (an erasure request), an admin deletes the older dump versions in both buckets
-   (`--bypass-governance-retention` in ap-south-2).
+   So a number is gone from every copy about 455 days after the drop (the last weekly copy taken
+   before it), plus the provider's window; from the nightly copies alone, about 125 days. To end it
+   sooner (an erasure request), an admin deletes the older nightly and weekly dump versions in both
+   buckets (`--bypass-governance-retention` in ap-south-2).
 
 **Rollback: do not roll the backend back past step 1 once it has taken an artisan write. Fix
 forward.** The migration is additive, but the data written after it is not something older code can
