@@ -192,3 +192,68 @@ def test_a_batch_marks_the_named_ones_and_all_marks_the_rest(table: Any) -> None
 def test_the_page_size_is_bounded(table: Any) -> None:
     assert _call("GET", "/api/notifications?limit=0").status_code == 422
     assert _call("GET", f"/api/notifications?limit={routes.MAX_PAGE + 1}").status_code == 422
+
+
+# ── The Monday summary's switch and its owner-only read ──────────────────────────────────────────
+# The rules live in ``services/weekly_digest.py`` (and ``test_weekly_digest_db.py``); these pin the
+# routes: the shapes, the 403 on a switch an account cannot have, and the 404 on somebody else's.
+
+
+@pytest.fixture
+def digest_switch(table: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    state: dict[str, Any] = {"eligible": True, "enabled": True, "saved": []}
+
+    async def is_authority(_user: Any) -> bool:
+        return state["eligible"]
+
+    async def preference_state(_user: Any) -> dict[str, Any]:
+        return {
+            "eligible": state["eligible"],
+            "enabled": state["enabled"] if state["eligible"] else False,
+            "emailAvailable": False,
+            "schedule": "Mondays, 08:00 IST",
+            "latest": None,
+        }
+
+    async def set_preference(_user: Any, enabled: bool) -> None:
+        state["saved"].append(enabled)
+        state["enabled"] = enabled
+
+    monkeypatch.setattr(routes.weekly_digest, "is_authority", is_authority)
+    monkeypatch.setattr(routes.weekly_digest, "preference_state", preference_state)
+    monkeypatch.setattr(routes.weekly_digest, "set_preference", set_preference)
+    return state
+
+
+def test_the_digest_switch_reads_and_saves(digest_switch: dict[str, Any]) -> None:
+    got = _call("GET", "/api/notifications/digest")
+    assert got.status_code == 200, got.text
+    assert set(got.json()) == {"eligible", "enabled", "emailAvailable", "schedule", "latest"}
+    put = _call("PUT", "/api/notifications/digest", {"enabled": False})
+    assert put.status_code == 200 and put.json()["enabled"] is False
+    assert digest_switch["saved"] == [False]
+    assert _call("PUT", "/api/notifications/digest", {}).status_code == 422
+
+
+def test_the_digest_switch_is_refused_to_an_account_it_is_not_for(digest_switch: dict[str, Any]) -> None:
+    digest_switch["eligible"] = False
+    assert _call("GET", "/api/notifications/digest").json()["eligible"] is False
+    put = _call("PUT", "/api/notifications/digest", {"enabled": False})
+    assert put.status_code == 403
+    assert put.json()["detail"] == "The weekly summary is for reviewers and officials."
+    assert digest_switch["saved"] == []
+
+
+def test_somebody_elses_digest_is_not_found(table: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    week = datetime(2026, 10, 19, tzinfo=UTC)
+    digests = _Table()
+    digests.rows = [
+        SimpleNamespace(id="d1", userId="bina", weekStart=week, status="DELIVERED", payload={}, createdAt=week),
+        SimpleNamespace(id="d2", userId="asha", weekStart=week, status="DELIVERED",
+                        payload={"sections": [], "coverage": None}, createdAt=week),
+    ]
+    monkeypatch.setattr(routes, "db", SimpleNamespace(notification=table, weeklydigest=digests))
+    assert _call("GET", "/api/notifications/digests/d1").status_code == 404
+    mine = _call("GET", "/api/notifications/digests/d2")
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["id"] == "d2" and mine.json()["weekStart"] == "2026-10-19"

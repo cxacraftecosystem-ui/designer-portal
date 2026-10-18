@@ -763,7 +763,13 @@ no role check, because the link is the whole authority.
   an inspecting officer files a correction suggestion on it or sends it back: the workshop's title,
   the officer's name, the stage, the officer's note and a link to the workshop — never a stage value,
   a photograph or a record. Each person can switch (2) off in Settings
-  (`UserPreference.emailReviewNotes`, opt-out); (1) is not a notification and has no opt-out. Bodies
+  (`UserPreference.emailReviewNotes`, opt-out); (1) is not a notification and has no opt-out. (3) To
+  Inspectors, the ministry tiers, admins and anybody holding an inspection post, a Monday summary
+  (`services/weekly_digest.py`, kind `WEEKLY_DIGEST`): counts, at most three workshop titles per
+  block and app links, read through the same scope the person's own screens use — never an artisan,
+  a phone number, Aadhaar data, a designer's contact or a review note. Switched off in Settings
+  (`UserPreference.weeklyDigest`, opt-out, honoured at send time); `WeeklyDigest.payload` keeps the
+  same content for 26 weeks and goes with the account. Bodies
   are rendered in the queue worker at send time and are never stored or logged; `EmailMessage` keeps
   the kind, the address, the subject, the template parameters above, the status, the attempts, SES's
   message id and the SES error code — the send log.

@@ -2177,6 +2177,13 @@ interface WorkshopRepositoryApi {
     @POST("notifications/read")
     suspend fun markNotificationsRead(@Body body: NotificationReadBody): NotificationReadResultDto
 
+    // The Monday summary's switch (data/WeeklyDigestPreference.kt). Same routes on both servers.
+    @GET("notifications/digest")
+    suspend fun weeklyDigestPreference(): WeeklyDigestPreferenceDto
+
+    @PUT("notifications/digest")
+    suspend fun saveWeeklyDigestPreference(@Body body: WeeklyDigestPreferenceBody): WeeklyDigestPreferenceDto
+
     @POST("access/roster")
     suspend fun addToAccessRoster(@Body body: AccessRosterCreateBody): AccessRosterDto
 

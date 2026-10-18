@@ -47,6 +47,7 @@ from app.core.config import get_settings
 from app.core.db import connect_db, disconnect_db, ensure_db_connected
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
+from app.services.weekly_digest import run_weekly_digests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("app.worker")
@@ -89,6 +90,13 @@ async def _run() -> None:
                 await process_next_email_jobs(worker_id="queue-service", settings=settings)
             except Exception:
                 logger.exception("E-mail outbox iteration failed; backing off")
+            # THE MONDAY SUMMARY (app/services/weekly_digest.py), in its own try, after the outbox. It
+            # runs when mail is off too: the in-app half still goes. Outside Monday 08:00-23:59 IST,
+            # or within ten minutes of the last check, it returns without a query.
+            try:
+                await run_weekly_digests(settings=settings)
+            except Exception:
+                logger.exception("Weekly digest pass failed")
             # Sleep for the interval but wake immediately on shutdown.
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval)

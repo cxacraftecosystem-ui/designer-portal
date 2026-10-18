@@ -11,6 +11,13 @@ documentation portal; both web clients and both Android clients are written agai
     POST /api/notifications/read  {"ids": [...]} or {"all": true}
                                                   -> {"updated": n, "unreadCount": n}
 
+THE MONDAY SUMMARY (``services/weekly_digest.py``) rides here too, with its own switch so it shows
+and works when mail is off:
+
+    GET  /api/notifications/digest                -> {eligible, enabled, emailAvailable, schedule, latest}
+    PUT  /api/notifications/digest  {"enabled": b} -> the same; 403 for an account that cannot get one
+    GET  /api/notifications/digests/{id}          -> one summary, the owner's only (404 for anyone else)
+
 Marking read is idempotent (an already-read notice keeps its first ``readAt``), so the handset's
 offline queue may replay a mark as often as it likes. An id that is not the caller's is ignored by
 the batch route and is a 404 on the single one — never a 403, which would confirm it exists.
@@ -27,6 +34,8 @@ from pydantic import Field
 from app.core.db import db
 from app.core.deps import get_current_user
 from app.schemas.common import APIModel
+from app.schemas.notifications import DigestPreferenceUpdate
+from app.services import weekly_digest
 from app.services.notifications import serialize
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -100,6 +109,35 @@ async def mark_read(payload: MarkReadRequest, current_user: Any = Depends(get_cu
         where["id"] = {"in": ids}
     updated = await db.notification.update_many(where=where, data={"readAt": datetime.now(UTC)})
     return {"updated": int(updated or 0), "unreadCount": await _unread(current_user.id)}
+
+
+# The summary's literal paths, declared before the ``/{notification_id}`` route below.
+
+
+@router.get("/digest")
+async def digest_preference(current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    return await weekly_digest.preference_state(current_user)
+
+
+@router.put("/digest")
+async def save_digest_preference(
+    payload: DigestPreferenceUpdate, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    if not await weekly_digest.is_authority(current_user):
+        raise HTTPException(status_code=403, detail=weekly_digest.NOT_ELIGIBLE)
+    await weekly_digest.set_preference(current_user, payload.enabled)
+    return await weekly_digest.preference_state(current_user)
+
+
+@router.get("/digests/{digest_id}")
+async def read_digest(digest_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    """One summary, for its owner. Anybody else gets 404, never 403, which would confirm it exists."""
+    row = await db.weeklydigest.find_first(
+        where={"id": digest_id, "userId": current_user.id, "status": weekly_digest.DELIVERED}
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Summary not found")
+    return weekly_digest.serialize_digest(row)
 
 
 @router.post("/{notification_id}/read")

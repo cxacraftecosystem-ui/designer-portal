@@ -81,6 +81,13 @@ export default function ReportsToApprovePage() {
   /** A generation counter rather than an abort: `apiFetch` takes no `AbortSignal`. */
   const generation = useRef(0);
 
+  // `?state=approved` (the Monday summary's "Approved, to hand on" row) opens on that tab, once.
+  useEffect(() => {
+    const asked = new URLSearchParams(window.location.search).get("state");
+    const tab = APPROVAL_QUEUE_TABS.find((candidate) => candidate.value === asked);
+    if (tab && tab.value !== "awaiting") setState(tab.value);
+  }, []);
+
   useEffect(() => {
     const term = query.trim();
     const timer = window.setTimeout(

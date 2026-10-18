@@ -373,6 +373,7 @@ model User {
   /// Every e-mail queued for this account. See `EmailMessage`.
   emailMessages EmailMessage[] @relation("EmailMessageRecipient")
   notifications Notification[] @relation("NotificationUser")
+  weeklyDigests WeeklyDigest[] @relation("WeeklyDigestUser")
   sectionStatusesSet QuestionnaireSectionStatus[] @relation("SectionStatusSetBy")
   workshopAssignments     WorkshopAssignment[] @relation("WorkshopAssignmentUser")
   workshopAssignmentsMade WorkshopAssignment[] @relation("WorkshopAssignmentAssignedBy")
@@ -779,6 +780,9 @@ model UserPreference {
   /// (`MAIL_FROM_ADDRESS`); a password link an administrator chose to e-mail is not a notification
   /// and is not governed by this.
   emailReviewNotes Boolean @default(true)
+  /// Opt-out, so true until the person turns it off: the Monday summary for reviewers and officials
+  /// (`services/weekly_digest.py`), in-app and by e-mail. Read only for accounts that can receive it.
+  weeklyDigest  Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -6931,4 +6935,28 @@ model Notification {
   @@index([userId, createdAt])
   /// The badge's read: one person's unread count.
   @@index([userId, readAt])
+}
+
+/// One person's Monday summary for one week (`services/weekly_digest.py`).
+///
+/// `(userId, weekStart)` is the idempotency key: the row is inserted PENDING before anything is
+/// sent, so a second worker pass (or a second worker) skips it. `weekStart` is the Monday, an India
+/// Standard Time calendar date. `payload` holds only what the e-mail shows plus app paths, and rows
+/// older than 26 weeks are purged. `notificationId` and `emailMessageId` carry no foreign key: the
+/// send log may be pruned, as for `Notification.emailMessageId`.
+model WeeklyDigest {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation("WeeklyDigestUser", fields: [userId], references: [id], onDelete: Cascade)
+  weekStart      DateTime @db.Date
+  /// PENDING | DELIVERED | SKIPPED_EMPTY | SKIPPED_OPTOUT
+  status         String   @default("PENDING")
+  payload        Json?
+  notificationId String?
+  emailMessageId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, weekStart])
+  @@index([weekStart, status])
 }

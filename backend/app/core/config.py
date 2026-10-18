@@ -352,6 +352,10 @@ class Settings(BaseSettings):
     mail_max_attempts: int = Field(default=5, alias="MAIL_MAX_ATTEMPTS")
     # Messages sent per drain pass of the queue worker. SES's sandbox rate is 1/s; production 14/s.
     mail_batch_size: int = Field(default=10, alias="MAIL_BATCH_SIZE")
+    # The Monday summary for reviewers and officials (app/services/weekly_digest.py). A kill switch
+    # for the queue worker's scheduler only: false sends no new summaries; the Settings switch and
+    # the summaries already sent keep working. Day and hour are constants (Monday 08:00 IST).
+    weekly_digest_enabled: bool = Field(default=True, alias="WEEKLY_DIGEST_ENABLED")
 
     next_public_app_url: AnyHttpUrl | str = Field(
         default="http://localhost:3000", alias="NEXT_PUBLIC_APP_URL"
