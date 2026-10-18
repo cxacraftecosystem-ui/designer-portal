@@ -958,6 +958,41 @@ fun SearchableSelectSheet(
     )
 }
 
+/**
+ * The multi-select sheet with no trigger of its own, for a control whose trigger is an ACTION —
+ * the stage lists' "Add several" button, which builds rows from the ticks rather than holding them.
+ * Same sheet, same "Select all N shown", same Apply as [SearchableMultiSelectField].
+ */
+@Composable
+fun SearchableMultiSelectSheet(
+    title: String,
+    options: List<SelectOption>,
+    emptyMessage: String = GENERIC_EMPTY_LINE,
+    createAction: SelectCreateAction? = null,
+    /** Non-null when [options] is the server's answer to the box. See [SearchableSelectField.onSearch]. */
+    onSearch: ((String) -> Unit)? = null,
+    /** One muted line under the count, e.g. that the list is one page of a longer one. */
+    note: String? = null,
+    onDismiss: () -> Unit,
+    onApply: (Set<String>) -> Unit
+) {
+    SearchablePickerSheet(
+        title = title,
+        options = options,
+        selected = emptySet(),
+        multiple = true,
+        searchable = true,
+        noneLabel = null,
+        emptyMessage = emptyMessage,
+        createAction = createAction,
+        bulk = true,
+        onSearch = onSearch,
+        note = note,
+        onDismiss = onDismiss,
+        onApply = onApply
+    )
+}
+
 // ---------------------------------------------------------------------------------------------
 // Shared pieces
 // ---------------------------------------------------------------------------------------------
@@ -1049,6 +1084,8 @@ private fun SearchablePickerSheet(
     onSearch: ((String) -> Unit)? = null,
     /** See [SearchableSelectField.loadMore]. */
     loadMore: SelectLoadMore? = null,
+    /** See [SearchableMultiSelectSheet.note]. */
+    note: String? = null,
     onDismiss: () -> Unit,
     onApply: (Set<String>) -> Unit
 ) {
@@ -1281,6 +1318,9 @@ private fun SearchablePickerSheet(
                             enabled = draft.isNotEmpty()
                         ) { Text("Clear all", style = MaterialTheme.typography.labelMedium) }
                     }
+                }
+                if (!note.isNullOrBlank()) {
+                    Text(note, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
                 }
             }
             HorizontalDivider(color = MaterialTheme.field.hairline)

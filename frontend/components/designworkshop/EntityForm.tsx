@@ -60,6 +60,7 @@ import {
 } from "@/components/designworkshop/StageRecordEmbed";
 import { fieldFormatError } from "@/components/designworkshop/stageFieldFormats";
 import { StageReferenceMultiPicker } from "@/components/designworkshop/StageReferenceField";
+import { bulkAllLabel } from "@/components/designworkshop/bulkPick";
 import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { moveIndex, useDragReorder } from "@/components/hooks/useDragReorder";
@@ -1389,8 +1390,9 @@ export function CollectionTable({
    *    prototype names both a sketch and an artisan — and ticking thirty of one leaves thirty rows
    *    half-answered while looking finished.
    *
-   * On the current registry that resolves to the stage-3 roster and to nothing else, which is the
-   * intent; it will pick up any future collection built the same way without a line changing here.
+   * On the current registry that resolves to the stage-3 roster, sketch reviews, validation, cost
+   * sheets and their lines, stage logs, material usage, iterations, certificates and follow-ups (B3);
+   * Android's `dwBulkField` applies the same three conditions, so both clients offer it on the same lists.
    */
   const bulkField = useMemo(() => {
     const refs = formFields(entity).filter(
@@ -1506,8 +1508,8 @@ export function CollectionTable({
    * `stageRoom` AND NOT `STAGE_ROW_CAP - rows.length`: the budget being spent is the stage's, so a
    * roster with room in its own list has none at all when the stage's other lists have filled it.
    */
-  function addFromReferences(options: DwReferenceOption[]) {
-    if (!bulkField) return;
+  function addFromReferences(options: DwReferenceOption[]): number {
+    if (!bulkField) return 0;
     const taken = options.slice(0, stageRoom);
     const dropped = options.slice(stageRoom);
     const refused = dropped.length;
@@ -1543,6 +1545,7 @@ export function CollectionTable({
               .join(", ")}` +
             `${refused > DROPPED_NAMES_SHOWN ? ` and ${refused - DROPPED_NAMES_SHOWN} more` : ""}. Delete rows to make room.`
     );
+    return created.length;
   }
 
   /* ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1869,6 +1872,7 @@ export function CollectionTable({
               */
               disabled={disabled || rowsAtCap}
               triggerLabel={`Add several from ${bulkField.label.toLowerCase()}`}
+              allLabel={bulkAllLabel(bulkField.refModel)}
             />
           ) : null}
           {/* THE ADD CONTROL, AND ITS LABEL SAYS WHAT IT ADDS rather than "Add" or "New row": in a

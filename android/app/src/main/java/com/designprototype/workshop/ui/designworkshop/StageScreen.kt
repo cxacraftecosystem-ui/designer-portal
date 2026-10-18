@@ -47,6 +47,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -138,6 +139,11 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
+import com.designprototype.workshop.data.DwReferenceOption
+import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.SearchableMultiSelectSheet
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.style.TextAlign
 
 /**
  * One of the 22 stages, rendered entirely from the registry.
@@ -1773,6 +1779,12 @@ private fun StageScreenBody(
                 stampsByEntry = state.provenance.collections[entity.key].orEmpty(),
                 media = media,
                 services = services,
+                // The whole stage's entries, counted as the server counts them for its 500 cap: every
+                // list's rows, plus one for an answered singleton and one for custom answers. The
+                // upper bound on purpose, so a bulk add never promises room the save will refuse.
+                stageEntries = state.collections.values.sumOf { it.size } +
+                    (if (state.singleton.isNotEmpty()) 1 else 0) +
+                    (if (state.custom.isNotEmpty()) 1 else 0),
                 focus = focus?.takeIf { it.entityKey == entity.key },
                 errorsByRow = refusals?.refusals.orEmpty()
                     .filter { it.entityKey == entity.key && it.rowIndex != null }
@@ -2312,6 +2324,8 @@ private fun CollectionSection(
     rows: List<CollectionRow>,
     media: DwMediaBridge,
     services: DwFieldServices,
+    /** Every entry the stage would carry now — the budget a bulk add spends. See [dwBulkAdd]. */
+    stageEntries: Int = 0,
     /** A gap the designer tapped that lives in one of these rows — see [DwStageFocus]. */
     focus: DwStageFocus? = null,
     /**
@@ -2423,6 +2437,113 @@ private fun CollectionSection(
     // grip on (`disabled || rows.length < 2`).
     val reorderable = rows.size > 1
 
+    /*
+      ADD SEVERAL, AND "ALL PARTICIPANTS" — the web's bulk picker (see [dwBulkField]). The list is
+      the one the row pickers read, cache first, so it works offline from whatever this phone last
+      saw. Rows are hydrated exactly as a single pick hydrates them and are left collapsed: thirty
+      expanded panels is a wall, and each header already shows its name.
+
+      OPENING THE STAGE COSTS NO REQUEST. Only this phone's copy is read then; the server is asked
+      (for up to [DW_BULK_PAGE]) when the sheet opens or an All button is pressed, so a stage with
+      five qualifying lists does not send five requests nobody asked for. When the server says the
+      page was cut short, the sheet says so and its box searches the server; an All press says it
+      added "the first N", the web's words.
+    */
+    val context = LocalContext.current
+    val bulkField = remember(entity) { dwBulkField(entity) }
+    val bulkFields = remember(entity) { entity.liveFields.associateBy { it.key } }
+    var bulkOptions by remember(entity.key) { mutableStateOf<List<DwReferenceOption>>(emptyList()) }
+    var bulkTruncated by remember(entity.key) { mutableStateOf(false) }
+    /** The server has answered at least once since the stage opened, so the list is the list. */
+    var bulkFresh by remember(entity.key) { mutableStateOf(false) }
+    var bulkLoading by remember(entity.key) { mutableStateOf(false) }
+    var bulkSheet by remember(entity.key) { mutableStateOf(false) }
+    var bulkQuery by remember(entity.key) { mutableStateOf("") }
+    var bulkFound by remember(entity.key) { mutableStateOf<List<DwReferenceOption>?>(null) }
+    /** Every option the sheet has shown, so ticks made under one search survive the next. */
+    val bulkSeen = remember(entity.key) { LinkedHashMap<String, DwReferenceOption>() }
+    val bulkScope = rememberCoroutineScope()
+    LaunchedEffect(bulkField?.refModel, bulkField?.refScope, services.workshopId) {
+        val field = bulkField ?: return@LaunchedEffect
+        services.repository.designWorkshopReferences(
+            context = context,
+            workshopId = services.workshopId,
+            model = field.refModel,
+            scope = field.refScope,
+            filterValue = "",
+            cacheOnly = true,
+        ) { list, _ -> if (!bulkFresh) bulkOptions = list.items }
+    }
+    suspend fun refreshBulk() {
+        val field = bulkField ?: return
+        bulkLoading = true
+        try {
+            val answered = services.repository.designWorkshopReferences(
+                context = context,
+                workshopId = services.workshopId,
+                model = field.refModel,
+                scope = field.refScope,
+                filterValue = "",
+                limit = DW_BULK_PAGE,
+            ) { list, truncated ->
+                bulkOptions = list.items
+                bulkTruncated = truncated
+            }
+            if (answered) bulkFresh = true
+        } finally {
+            bulkLoading = false
+        }
+    }
+    val bulkChosen = remember(rows, bulkField) {
+        bulkField?.let { field -> dwBulkChosenIds(rows.map { it.values }, field) }.orEmpty()
+    }
+    val bulkRemaining = remember(bulkOptions, bulkChosen) { bulkOptions.filter { it.id !in bulkChosen } }
+    val bulkShown = remember(bulkFound, bulkRemaining, bulkChosen) {
+        bulkFound?.filter { it.id !in bulkChosen } ?: bulkRemaining
+    }
+    SideEffect { bulkShown.forEach { bulkSeen.putIfAbsent(it.id, it) } }
+    fun addFromReferences(picked: List<DwReferenceOption>, truncated: Boolean = false) {
+        val field = bulkField ?: return
+        val outcome = dwBulkAdd(picked, field, bulkFields, bulkChosen, stageEntries)
+        if (outcome.created.isNotEmpty()) {
+            onRowsChange(rows + outcome.created.map { CollectionRow(UUID.randomUUID().toString(), it) })
+            expanded = null
+        }
+        announcement = dwBulkAddedSentence(outcome, truncated = truncated, fieldLabel = field.label)
+    }
+    fun addAllFromReferences() {
+        bulkScope.launch {
+            refreshBulk()
+            val fresh = bulkOptions.filter { it.id !in bulkChosen }
+            if (fresh.isEmpty()) {
+                announcement = if (bulkFresh || bulkOptions.isNotEmpty()) "Everything is already on this list." else DW_BULK_NO_LIST
+                return@launch
+            }
+            addFromReferences(fresh, truncated = bulkTruncated)
+        }
+    }
+    fun searchBulk(term: String) {
+        val field = bulkField ?: return
+        bulkQuery = term
+        if (term.isBlank()) {
+            bulkFound = null
+            return
+        }
+        bulkScope.launch {
+            delay(300)
+            if (bulkQuery != term) return@launch
+            val answer = services.repository.designWorkshopReferenceSearch(
+                workshopId = services.workshopId,
+                model = field.refModel,
+                scope = field.refScope,
+                search = term,
+                limit = DW_BULK_PAGE,
+            )
+            if (bulkQuery != term) return@launch
+            bulkFound = answer?.options ?: dwBulkLocalSearch(bulkOptions, term)
+        }
+    }
+
     Column(
         verticalArrangement = Arrangement.spacedBy(COLLECTION_ROW_GAP),
         modifier = Modifier.fillMaxWidth(),
@@ -2455,6 +2576,64 @@ private fun CollectionSection(
         }
         if (entity.description.isNotBlank()) {
             Text(entity.description, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
+        }
+        if (bulkField != null) {
+            val allLabel = dwBulkAllLabel(bulkField.refModel)
+            val atCap = stageEntries >= DW_STAGE_ENTRY_CAP
+            // Until the server has answered, "nothing left" may only mean "nothing on this phone",
+            // so the buttons stay live and the press itself asks.
+            val bulkOpen = !atCap && (bulkRemaining.isNotEmpty() || !bulkFresh)
+            ActionRow {
+                OutlinedButton(
+                    onClick = {
+                        bulkQuery = ""
+                        bulkFound = null
+                        bulkSheet = true
+                        bulkScope.launch { refreshBulk() }
+                    },
+                    enabled = bulkOpen,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("Add several", textAlign = TextAlign.Center)
+                }
+                if (allLabel != null) {
+                    OutlinedButton(
+                        onClick = { addAllFromReferences() },
+                        enabled = bulkOpen && !bulkLoading,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Text(
+                            if (bulkRemaining.isEmpty()) allLabel else "$allLabel (${bulkRemaining.size})",
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            }
+        }
+        if (bulkSheet && bulkField != null) {
+            SearchableMultiSelectSheet(
+                title = bulkField.label,
+                options = buildReferenceOptions(bulkShown, "", tentativeWord = ""),
+                emptyMessage = when {
+                    bulkQuery.isNotBlank() -> "No match on the list."
+                    bulkLoading && bulkOptions.isEmpty() -> "Loading the list…"
+                    !bulkFresh && bulkOptions.isEmpty() -> DW_BULK_NO_LIST
+                    else -> "Everything is already on this list."
+                },
+                // The server searches only when the list it sent was one page of a longer one; a
+                // whole list is filtered on the phone, which also works with no signal.
+                onSearch = if (bulkTruncated) ({ term: String -> searchBulk(term) }) else null,
+                note = if (bulkTruncated && bulkQuery.isBlank()) dwBulkCutShortNote(bulkOptions.size) else null,
+                onDismiss = {
+                    bulkSheet = false
+                    bulkQuery = ""
+                    bulkFound = null
+                },
+                onApply = { ids ->
+                    // In the LIST's order, not the tick order, as the single multi-select stores it.
+                    addFromReferences(bulkSeen.values.filter { it.id in ids && it.id !in bulkChosen })
+                },
+            )
         }
 
         /*

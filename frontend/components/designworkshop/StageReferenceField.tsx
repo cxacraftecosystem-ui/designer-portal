@@ -94,6 +94,7 @@ import { workshopRecordTypeLabel, type WorkshopCodeRef, type WorkshopRecordType 
 // §3.5's cached-and-stale sentence, shared with the workshop pickers so one fact has one wording.
 import { cachedListLine } from "@/lib/workshopOptions";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { BULK_ALL_NOTHING_LEFT, cutShortNote, remainingOptions } from "@/components/designworkshop/bulkPick";
 
 /*
   THE CODE SCANNER IS LOADED WHEN A DESIGNER OPENS IT. It brings the QR decoder and the image
@@ -2275,14 +2276,21 @@ export function StageReferenceMultiPicker({
   alreadyChosen,
   onAdd,
   disabled,
-  triggerLabel
+  triggerLabel,
+  allLabel
 }: {
   workshopId: string;
   field: DwField;
   alreadyChosen: string[];
-  onAdd: (options: DwReferenceOption[]) => void;
+  /** Returns how many rows it actually added (the stage cap may refuse some), or nothing. */
+  onAdd: (options: DwReferenceOption[]) => number | void;
   disabled?: boolean;
   triggerLabel: string;
+  /**
+   * B3 — the one-tap "All participants" / "All final products" beside the trigger (`bulkAllLabel`).
+   * Null or absent draws nothing, which is the answer for the artisan register.
+   */
+  allLabel?: string | null;
 }) {
   const baseId = useId();
   const listboxId = `${baseId}-listbox`;
@@ -2319,6 +2327,9 @@ export function StageReferenceMultiPicker({
   /** Said inside the panel when that description could not be got, or when a save went to the outbox. */
   const [createProblem, setCreateProblem] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  /** An "All" press waiting on the list, and what it found when it could add nothing. */
+  const [allBusy, setAllBusy] = useState(false);
+  const [allNote, setAllNote] = useState<string | null>(null);
   /**
    * This workshop, handed to an inline create — see {@link inlineSeed}.
    *
@@ -2431,8 +2442,61 @@ export function StageReferenceMultiPicker({
     [field, workshopId]
   );
 
+  /**
+   * Add every record not yet on the list, in one press.
+   *
+   * Read through the same cache-then-network path the panel uses, so it works offline from the last
+   * list this browser saw. The rows go through `onAdd` exactly as ticked ones do, so the stage cap
+   * and its sentence apply unchanged.
+   */
+  async function addAll() {
+    const model = field.refModel;
+    if (!model) return;
+    setAllBusy(true);
+    setAllNote(null);
+    const latest: { payload: DwReferencePayload | null } = { payload: null };
+    const outcome = await loadStageReferences<DwReferencePayload>({
+      workshopId,
+      model,
+      scope: field.refScope,
+      isEmpty: (payload) => payload.options.length === 0,
+      // The server's ceiling, so "All" means all for any workshop-sized list.
+      fetch: () =>
+        listStageReferences(workshopId, {
+          model,
+          scope: field.refScope,
+          filterBy: null,
+          search: null,
+          limit: REFERENCE_PAGE_MAX
+        }),
+      onPayload: (payload) => {
+        latest.payload = payload;
+      }
+    });
+    setAllBusy(false);
+    const payload = latest.payload;
+    if (!payload) {
+      setAllNote(outcome.error instanceof Error ? outcome.error.message : "The list could not be loaded.");
+      return;
+    }
+    const fresh = remainingOptions(payload.options, alreadyChosen);
+    if (!fresh.length) {
+      setAllNote(BULK_ALL_NOTHING_LEFT);
+      return;
+    }
+    const added = onAdd(fresh);
+    // Rule 10: a list the server cut short is said to be cut short — but only when every row fitted.
+    // When the stage cap refused some, the form's own "Added 3 of 50" sentence is the count, and a
+    // second "Added the first 50" beside it would contradict it.
+    const note = cutShortNote(payload.truncated, fresh.length, typeof added === "number" ? added : fresh.length, triggerLabel);
+    if (note) setAllNote(note);
+  }
+
   return (
     <div className="relative" ref={wrapperRef}>
+      {/* Two triggers for one list, a toolbar rather than an action row (§19.2): both open or fill
+          the same panel's list and sit inside the header's own wrapping row. */}
+      <div className="flex flex-wrap items-center gap-2">
       <button
         type="button"
         className="field-button-secondary"
@@ -2449,10 +2513,32 @@ export function StageReferenceMultiPicker({
           // not been ticked" would greet the next designer to open this roster, about a record they
           // did not create and can now see in the list.
           setCreateProblem(null);
+          setAllNote(null);
         }}
       >
         {triggerLabel}
       </button>
+      {allLabel ? (
+        <button
+          type="button"
+          className="field-button-secondary"
+          disabled={disabled || allBusy}
+          aria-describedby={allNote ? `${baseId}-all-note` : undefined}
+          onClick={() => {
+            void addAll();
+          }}
+        >
+          {allBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Plus className="h-4 w-4" aria-hidden />}
+          {allLabel}
+        </button>
+      ) : null}
+      </div>
+      {/* Always mounted where the shortcut is, so the first sentence it carries is announced. */}
+      {allLabel ? (
+        <p id={`${baseId}-all-note`} role="status" className={allNote ? "mt-1 text-xs text-ink-500" : "sr-only"}>
+          {allNote ?? ""}
+        </p>
+      ) : null}
 
       {open ? (
         <div className="absolute right-0 z-10 mt-1 w-[min(28rem,90vw)] overflow-hidden rounded-md border border-line-200 bg-card shadow-panel">

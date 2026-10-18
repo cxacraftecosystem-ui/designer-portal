@@ -1279,6 +1279,12 @@ class WorkshopRepository(
      * [onList] is called ONCE for the cache and, if the fetch adds anything, once more for the fresh
      * list — rather than returning a single value — so the dropdown fills instantly from disk and
      * then quietly improves, instead of showing a spinner over a list the device already had.
+     *
+     * [limit] is sent as-is (null keeps the server's default page of 50); the stage lists' bulk add
+     * asks for 200, the server's ceiling and the web's `REFERENCE_PAGE_MAX`. [cacheOnly] stops after
+     * step 1, for a control that should not spend a request until it is used.
+     *
+     * Returns true when the server answered, so a caller can tell "the list" from "this phone's copy".
      */
     suspend fun designWorkshopReferences(
         context: Context,
@@ -1286,9 +1292,11 @@ class WorkshopRepository(
         model: String,
         scope: String,
         filterValue: String,
+        limit: Int? = null,
+        cacheOnly: Boolean = false,
         onList: (DwReferenceList, truncated: Boolean) -> Unit,
-    ) {
-        if (model.isBlank()) return
+    ): Boolean {
+        if (model.isBlank()) return false
         // NOT the bare workshop id — see [dwReferenceCacheOwner]. Every WORKSHOP-owned file already on
         // a handset was written from an un-narrowed answer, and is indistinguishable from a good one.
         val owner = dwReferenceCacheOwner(workshopId.orEmpty())
@@ -1329,11 +1337,12 @@ class WorkshopRepository(
                     whole.copy(filteredBy = "", items = whole.narrowedTo(filterValue))
                 }
         cached?.let { onList(it, false) }
+        if (cacheOnly) return false
 
         // A workshop that has never been sent to the server has no id the references endpoint would
         // recognise. Spending a request on it buys a 404 and nothing else, so the cache above is the
         // final answer — which for an ALL-scoped model is a genuinely useful one.
-        val target = workshopId?.takeUnless { it.isBlank() || isLocalOnlyWorkshop(it) } ?: return
+        val target = workshopId?.takeUnless { it.isBlank() || isLocalOnlyWorkshop(it) } ?: return false
 
         val fetched = runCatching {
             api.designWorkshopReferences(
@@ -1357,8 +1366,9 @@ class WorkshopRepository(
                 scope = scope.takeIf { it.isNotBlank() },
                 filterBy = filterValue.takeIf { it.isNotBlank() },
                 search = null,
+                limit = limit,
             )
-        }.getOrNull() ?: return
+        }.getOrNull() ?: return false
 
         val stored = DwReferenceStore.store(
             context = context,
@@ -1382,6 +1392,33 @@ class WorkshopRepository(
             ),
         )
         onList(stored, fetched.truncated)
+        return true
+    }
+
+    /**
+     * One server SEARCH of a REF field's options — the bulk sheet's answer when its list was cut
+     * short, so a name past the first page can still be found. Never cached (a search answer stored
+     * under the list's key would replace the list) and never throws: null means "no answer", and the
+     * caller falls back to filtering what it holds.
+     */
+    suspend fun designWorkshopReferenceSearch(
+        workshopId: String?,
+        model: String,
+        scope: String,
+        search: String,
+        limit: Int,
+    ): DwReferenceResponseDto? {
+        val target = workshopId?.takeUnless { it.isBlank() || isLocalOnlyWorkshop(it) } ?: return null
+        if (model.isBlank() || search.isBlank()) return null
+        return runCatching {
+            api.designWorkshopReferences(
+                id = target,
+                model = model,
+                scope = scope.takeIf { it.isNotBlank() },
+                search = search,
+                limit = limit,
+            )
+        }.getOrNull()
     }
 
     /**
