@@ -23,7 +23,14 @@ from app.core.deps import (
 from app.core.security import hash_password
 from app.core.user_fields import HAS_PASSWORD_KEY, SECRET_USER_FIELDS
 from app.schemas.users import UserCreate, UserUpdate
-from app.services import access_roster, credential_links, email_outbox, mailer, two_factor
+from app.services import (
+    access_roster,
+    credential_links,
+    email_outbox,
+    mailer,
+    signin_role,
+    two_factor,
+)
 from app.services.aadhaar import flags as aadhaar_flags
 
 # THE RULES OF WHO MAY DO WHAT TO WHOSE ACCOUNT, imported rather than defined here. ``assert_role``
@@ -420,6 +427,12 @@ async def update_user(
     # The cached identity now describes authority, an address or a session watermark the account no
     # longer has, so it must not outlive the write by even one request.
     invalidate_cached_user(user_id)
+    # THE AUDIT ENTRY FOR A CHANGE OF ROLE (the sign-in list rule, ``services/signin_role``): this is
+    # the one door that changes an existing account's role, so it is the one that records it.
+    if "role" in data:
+        signin_role.audit_role_change(
+            user_id=user_id, actor_id=current_user.id, before=role_value(user), after=updated.role, via="users"
+        )
     # After the write, so a refused write withdraws nothing. The redemption asks the issuer's reach
     # again anyway (``auth._link_verdict``), which also covers a promotion made by any other door.
     links_withdrawn = await credential_links.revoke_outstanding(user_id) if promoted else 0

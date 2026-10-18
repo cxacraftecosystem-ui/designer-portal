@@ -374,20 +374,19 @@ account reads as withdrawn (`account_provisioning.issuer_still_manages` — a ma
 passes, and so does one nobody issued or whose issuer's account was deleted). **One consequence on the
 users screen**: an account created with the flag on, as it is by default, cannot be promoted until its
 owner has chosen a password, unless the promotion sets a new temporary one — or create it at the tier
-it needs. **The access screen's approve and re-admit apply the same rule** (since later the same day;
-they asked neither question until then). They lift an existing account to the approved tier
-(`routes/access._lift_existing_account`), and a lift withdraws the account's outstanding links after
-its write. An account still holding a temporary password is not lifted: that screen has no password
-field, and refusing the approval would leave the person's access undecided over a question about their
-tier, so the approval of the address stands, the account keeps its tier, and the decision's answer
-carries `accountPromotionHeld` — the sentence saying so, naming the address, both tiers and the two
-ways on — which `/admin/access` shows word for word in place of its receipt, on Approve and on
-Restore alike. It is `null` on every other decision, REJECT included. The handset decodes the answer
-as the roster row and skips the key, so an approval made on a phone says nothing of it (true as of
-2026-10-09). Both doors ask one predicate, `account_provisioning.holds_a_temporary_password`. A
-Google sign-in on an empanelled address and the sanction register still lift an account without
-asking, and only to `DESIGNER`, which sits below every provisioner, so neither carries a credential
-past whoever issued it.
+it needs. **The access screen's approve and re-admit change no account at all** (the sign-in list rule,
+2026-10-18, `backend/app/services/signin_role.py`). An allow-list row's role is the role a NEW account
+is created with at its first sign-in; it never raises or lowers an existing account, at sign-in or on
+approval. When an account already exists at another role, the decision's answer carries
+`accountPromotionHeld` — "{email} already has an account, as {current}. Its role stays; change it on
+Manage users." — which `/admin/access` shows word for word in place of its receipt, on Approve and on
+Restore alike, and `null` otherwise. A Google sign-in on an empanelled designer-roster address creates
+a NEW account at `DESIGNER` and lifts no existing one. A change of role is an explicit act: on Manage
+users (`PATCH /api/users/{id}`) or, to `DESIGNER` only, the sanction register; both write the audit
+line `AUDIT account role changed: user=… by=… from=… to=… via=…`. The admin screens say "New
+accounts only. To change an existing account, use Manage users." beside every role picker on the
+list, on the web and on Android; documentation-portal behaves identically
+(`shared/signin-role-contract.json`, `tests/test_signin_role_contract.py`).
 
 **ONE ACCOUNT PER MAILBOX, FOR EVERY PROVISIONER (2026-10-09).** No account is created at, or moved
 onto, any spelling of a Gmail mailbox another account already uses — dots, a `+tag`, `googlemail.com`

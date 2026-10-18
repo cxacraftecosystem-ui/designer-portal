@@ -167,6 +167,7 @@ from app.services import (
     designers,
     email_outbox,
     mailer,
+    signin_role,
 )
 from app.services.account_provisioning import is_master_email
 from app.services.design_workshops import (
@@ -1511,7 +1512,17 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
                 # (left alone, correctly). Widening the phase-0 refusal without re-reading this
                 # comparison re-opens the same hole.
                 if role_rank(user) < ROLE_RANK["DESIGNER"]:
+                    before = role_value(user)
                     user = await tx.user.update(where={"id": user.id}, data={"role": "DESIGNER"})
+                    # An officer's explicit act, so it carries the audit entry every change of role
+                    # does (the sign-in list rule, ``services/signin_role``).
+                    signin_role.audit_role_change(
+                        user_id=user.id,
+                        actor_id=getattr(officer, "id", None),
+                        before=before,
+                        after="DESIGNER",
+                        via="sanction-order",
+                    )
 
             # 1.4 THE PROFILE. An upsert, so this is safe for an account that already has one, and
             # it exists because workshop creation READS the profile — a create path that has to

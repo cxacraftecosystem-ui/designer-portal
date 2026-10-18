@@ -1814,6 +1814,12 @@ refusing a token beside `ok`.
 
 ### [LOW] A promotion through the access screen did not wait for a temporary password to be replaced, nor withdraw the account's links (backend) — **CLOSED 2026-10-09**
 
+**Superseded 2026-10-18** by the sign-in list rule (`backend/app/services/signin_role.py`): the access
+screen's approval no longer changes an existing account's role at all, so `_lift_existing_account`,
+`APPROVAL_KEEPS_THE_TIER_DETAIL` and the tests named below are gone. `accountPromotionHeld` now carries
+"{email} already has an account, as {current}. Its role stays; change it on Manage users." The history
+below is kept as it was written.
+
 A `PATCH /api/users/{id}` that raises an account's role withdraws its password links and waits for a
 temporary password to be replaced (the entry above on a promoted account). The access screen's
 approve and re-admit raise an existing account to the tier approved as well — `_lift_existing_account`

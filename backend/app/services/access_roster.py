@@ -1024,8 +1024,8 @@ async def admissions_an_empanelment_carries(email: Any) -> list[Any] | None:
        own test, deliberately, so that the mirror bars exactly the set of people the empanelment
        gate already refuses and not one person more. It is a SECOND question because ``admitRole``
        records what a row admitted somebody AS at the time and nothing keeps it in step afterwards:
-       ``_lift_existing_account`` raises ``User.role`` without touching it, and ``PATCH /users/{id}``
-       changes the role without touching it either. So an ADMIN can perfectly well be carrying a row
+       ``PATCH /users/{id}`` changes the role without touching it, and the row's role is applied only
+       when an account is created (``services/signin_role``). So an ADMIN can perfectly well be carrying a row
        that still says DESIGNER, and barring them on the strength of it is the exact outage the
        paragraph above forbids.
 

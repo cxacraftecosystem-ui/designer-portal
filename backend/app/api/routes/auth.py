@@ -20,7 +20,6 @@ from app.core.deps import (
     is_break_glass_master,
     password_credential,
     require_account_provisioner,
-    role_rank,
     role_value,
 )
 from app.core.security import (
@@ -57,6 +56,7 @@ from app.services import (
     mailer,
     oidc_sign_in,
     password_reset,
+    signin_role,
     two_factor,
     usage,
 )
@@ -699,11 +699,12 @@ async def _sign_in_verified_mailbox(
     # is a side effect of signing in, and running them first would mean a refused stranger had
     # already edited the database on their way to being told no.
     access = await assert_access_admits(email, is_master=role == "MASTER_ADMIN")
-    # The tier a brand-new account is created at, when an admin has chosen one on the allow-list
-    # row. NULL there means DEFAULT_SIGNUP_ROLE — the lowest rung, which is this platform's
-    # documented default for a new joiner and is what `role_for_email` already returned.
+    # The role a brand-new account is created with, when an admin has chosen one on the allow-list
+    # row: never below DEFAULT_SIGNUP_ROLE, which is what `role_for_email` already returned. USED
+    # ONLY BY THE CREATE AT THE BOTTOM: an account that already exists keeps its role (the sign-in
+    # list rule, ``services/signin_role``).
     if role != "MASTER_ADMIN":
-        role = access_roster.role_of(access) or role
+        role = signin_role.role_for_new_account(role, access_roster.role_of(access))
         # THE NAME AN ADMINISTRATOR TYPED ON THE ALLOW-LIST BEATS THE ONE GOOGLE SENDS. A Google
         # display name is whatever the person set on their Google profile ("vandana Rathore",
         # "tahgin Sofi"), and a password-less account is renamed to it on every sign-in below — so
@@ -715,11 +716,10 @@ async def _sign_in_verified_mailbox(
 
     # AN ACTIVE ROSTER ROW IS AN INSTRUCTION TO PROVISION A DESIGNER, and this is where it is
     # carried out. An admin empanels somebody who has never opened the app; there is no account
-    # to promote yet, and there is no invitation email in this product to send them. What there
-    # is, is the moment they first sign in with Google — so the roster row is read here and the
-    # account is created at, or lifted to, DESIGNER on the spot. Without this the admin's only
-    # remaining move is to wait for the person to sign in as a volunteer, notice it happened, and
-    # promote them by hand, which is exactly the manual step the roster exists to remove.
+    # yet, and there is no invitation email in this product to send them. What there is, is the
+    # moment they first sign in — so the roster row is read here and a NEW account is created at
+    # DESIGNER. An account that already exists is NOT lifted (the sign-in list rule, 2026-10-18,
+    # ``services/signin_role``): its role is changed on Manage users, which writes an audit entry.
     rostered = await roster_allows(email)
 
     # ── WHICH ACCOUNT A GOOGLE IDENTITY SIGNS IN TO — THE OWNER'S DECISION OF 2026-10-09 ─────────
@@ -781,16 +781,14 @@ async def _sign_in_verified_mailbox(
             # provider is a second way in, not a change of what the account is.
             if _auth_provider(existing) in ("LOCAL", provider):
                 data["authProvider"] = provider
+        # THE ROLE IS NOT WRITTEN HERE (the sign-in list rule, 2026-10-18). Neither the allow-list
+        # row nor the designer roster raises or lowers an account that already exists: a sign-in
+        # that changed somebody's powers would do it invisibly, with no administrator's name on it
+        # and no audit entry. The one exception is the configured master admin address — the
+        # break-glass, which is not the list — restored to MASTER_ADMIN as it always was.
         if role == "MASTER_ADMIN" and found_literally:
             data["role"] = "MASTER_ADMIN"
             data["canManageQuestionnaire"] = True
-        elif rostered and role_rank(existing) < ROLE_RANK["DESIGNER"]:
-            # PROMOTE ONLY, NEVER DEMOTE. The comparison is strictly-below rather than
-            # not-equal for one reason: an admin or a professor whose email is also on the
-            # roster (they run workshops too) would otherwise be knocked down to DESIGNER by
-            # their own next sign-in — losing their admin rights to a row they added to help
-            # somebody else, with the demotion invisible in the login response.
-            data["role"] = "DESIGNER"
         # By id, not by the address Google sent: an account found through the mailbox fold is
         # stored under a different spelling, and a write keyed on Google's would miss it.
         updated = await db.user.update(
@@ -980,11 +978,11 @@ async def admit_signed_in_account(user: Any, access: Any) -> None:
     #
     # **THIS EXACT PLACE, AND NEITHER EARLIER NOR LATER.**
     #
-    # Not earlier, because the role is not settled until here. On the Google branch the account is
-    # promoted to DESIGNER *inside* ``login_with_google``, out of ``AccessRoster.admitRole``, so
-    # anything upstream of that call reads the role the account held BEFORE this sign-in — a person
-    # an admin has just admitted as a designer is still a volunteer at that point and would not be
-    # empanelled at all, which is precisely the case this feature exists for. Putting it in the two
+    # Not earlier, because the role is not settled until here. On the Google branch a NEW account is
+    # created at DESIGNER *inside* ``login_with_google``, out of ``AccessRoster.admitRole``, so
+    # anything upstream of that call has no account to read — a person an admin has just admitted
+    # as a designer would not be empanelled at all, which is precisely the case this feature exists
+    # for. (An EXISTING account keeps its role at sign-in: ``services/signin_role``.) Putting it in the two
     # branches instead would mean writing it twice, and a rule written twice is one door that
     # quietly stops enforcing it; here it covers the password path and the Google path together.
     #

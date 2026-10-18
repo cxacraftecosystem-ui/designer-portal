@@ -136,6 +136,12 @@ import kotlinx.coroutines.launch
 private const val ACCESS_PAGE_SIZE = 15
 
 /**
+ * The sign-in list rule's copy (2026-10-18), byte for byte the server's `signin_role.NEW_ACCOUNTS_ONLY`
+ * and `shared/signin-role-contract.json`: the list sets the role of NEW accounts only.
+ */
+private const val NEW_ACCOUNTS_ONLY = "New accounts only. To change an existing account, use Manage users."
+
+/**
  * The queue's page size, deliberately smaller again.
  *
  * It sits above the main list, so a queue that paged at fifteen would push the list below two
@@ -650,7 +656,7 @@ fun AccessRosterScreen(
                     if (approving) {
                         "They can sign in from their next attempt, as " +
                             (row.admitRole?.let { FieldPermissions.label(it) } ?: "the default joining tier — the lowest rung") +
-                            ". Existing accounts are raised to match, never lowered."
+                            ". " + NEW_ACCOUNTS_ONLY
                     } else {
                         // The three things an admin gets wrong about Refuse, all said out loud.
                         //
@@ -1182,6 +1188,7 @@ private fun AccessEditDialog(
                     includeNone = true,
                     onSelect = { picked -> role = picked.ifBlank { null } }
                 )
+                Text(NEW_ACCOUNTS_ONLY, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
 
                 // `AccessRoster.notes` — an administrator's note about why this person is on the
                 // list. Dictation only: it is read in a list beside the row and nowhere else, so

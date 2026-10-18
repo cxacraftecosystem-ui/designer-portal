@@ -84,22 +84,16 @@ from app.api.routes.users import assert_role
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import (
-    ROLE_LABELS,
     ROLE_RANK,
     invalidate_cached_user,
     require_access_manager,
-    role_rank,
     role_value,
 )
 from app.schemas.access_roster import AccessDecision, AccessRosterCreate, AccessRosterUpdate
 from app.schemas.users import UserCreate
-from app.services import access_roster, credential_links
+from app.services import access_roster, signin_role
 from app.services.access_roster import access_payload, normalise_email
-from app.services.account_provisioning import (
-    APPROVAL_KEEPS_THE_TIER_DETAIL,
-    create_account,
-    holds_a_temporary_password,
-)
+from app.services.account_provisioning import create_account
 from app.services.designers import (
     adopt_allow_list_name,
     canonical_email,
@@ -512,18 +506,12 @@ async def decide_access_request(
 ) -> dict[str, Any]:
     """Approve or reject — the action the pending queue exists for.
 
-    **APPROVING ALSO PROMOTES AN ACCOUNT THAT ALREADY EXISTS.** A request from somebody who has an
-    account (an admin moved them to PENDING, or the account was made by a path that did not admit
-    it) would otherwise be approved at a role that only takes effect when a NEW account is created —
-    which never happens for them. The lift is strictly-below, never a demotion: an admin approving a
-    colleague at RESEARCHER must not knock a professor down by doing so.
-
-    **AND A PROMOTION HERE IS STILL A PROMOTION (2026-10-09)** — rule 5 of
-    ``services/account_provisioning.py``, which ``PATCH /api/users/{id}`` already applied: a lift
-    withdraws the account's outstanding password links, and an account still holding a temporary
-    password is NOT lifted. The approval stands either way; what waits is the account's tier, and
-    the answer's ``accountPromotionHeld`` carries the sentence that says so (``null`` on every other
-    decision). See :func:`_lift_existing_account`.
+    **APPROVING NEVER CHANGES AN ACCOUNT THAT ALREADY EXISTS** (the sign-in list rule, 2026-10-18,
+    ``services/signin_role``). The row's role is the role a NEW account is created with at its first
+    sign-in. When an account already exists at the address with another role, the answer's
+    ``accountPromotionHeld`` carries the sentence that says so and points to Manage users, where a
+    change of role is an administrator's explicit act with an audit entry (``null`` on every other
+    decision). See :func:`_role_kept`.
 
     **REJECTING IS FINAL UNTIL AN ADMIN SAYS OTHERWISE.** The person's next attempt does not
     re-queue them; it bumps ``attemptCount`` on the rejected row and they are told they were not
@@ -629,7 +617,7 @@ async def decide_access_request(
         actor_id=current_user.id,
         note=_clean(payload.notes) if payload.notes is not None else None,
     )
-    held = await _lift_existing_account(row.email, granted) if granted else None
+    held = await _role_kept(row.email, granted)
     await _empanel_an_admitted_designer(updated, current_user.id)
     return _decision_payload(await with_roster_people(updated), promotion_held=held)
 
@@ -904,8 +892,8 @@ async def end_live_sessions(email: Any) -> None:
 
     Never called for a role demotion. Losing a tier is not losing access, and signing somebody out of
     their own phone because an admin corrected their role would be a worse answer than the demotion
-    itself — ``_lift_existing_account`` below invalidates the identity cache, which is what makes a
-    demotion take effect on the very next request without ending anything.
+    itself — ``PATCH /api/users/{id}`` invalidates the identity cache, which is what makes a demotion
+    take effect on the very next request without ending anything.
     """
     accounts = await access_roster.accounts_on_the_mailbox(email)
     if accounts is None:
@@ -942,8 +930,8 @@ async def end_live_sessions(email: Any) -> None:
 def _decision_payload(row: Any, *, promotion_held: str | None = None) -> dict[str, Any]:
     """The decision's answer: the row as the roster routes return it, and ``accountPromotionHeld``.
 
-    That key is the sentence to show when an APPROVE left an existing account at its tier (rule 5 of
-    ``services/account_provisioning.py``; :func:`_lift_existing_account`), and ``null`` otherwise —
+    That key is the sentence to show when an APPROVE found an existing account at another role, which
+    it leaves alone (``services/signin_role``; :func:`_role_kept`), and ``null`` otherwise —
     on every decision, REJECT included, so both arms answer one shape. A field and not a refusal:
     the approval of the ADDRESS happened, and a 409 would tell the administrator it had not.
     Handsets in the field decode this answer as the roster row with ``ignoreUnknownKeys``, so the
@@ -952,65 +940,24 @@ def _decision_payload(row: Any, *, promotion_held: str | None = None) -> dict[st
     return {**access_payload(row), "accountPromotionHeld": promotion_held}
 
 
-async def _lift_existing_account(email: str, role: str) -> str | None:
-    """Raise an existing account to the approved tier. NEVER lowers it.
+async def _role_kept(email: str, role: str | None) -> str | None:
+    """The approval's sentence when an account already exists at ``email`` with another role, or None.
 
-    The strictly-below comparison is ``login_with_google``'s, for its reason: an admin or professor
-    whose allow-list row says something modest must not be demoted by somebody approving them.
+    APPROVING NEVER CHANGES AN EXISTING ACCOUNT'S ROLE (the sign-in list rule, 2026-10-18,
+    ``services/signin_role``). Until then this door lifted an account to the approved tier, which
+    made the allow-list a second, unaudited promotion screen. The approval now decides the ADDRESS
+    only; the account's role is changed on Manage users, which writes an audit entry. A read and
+    nothing else: no account write, no link withdrawn, no cache to drop.
 
-    **A LIFT IS A PROMOTION, SO RULE 5 OF ``services/account_provisioning.py`` APPLIES HERE TOO
-    (2026-10-09)** — a temporary password or a password link is the credential of whoever issued
-    it, and raising the account past that person hands them an account they could never have
-    managed. ``PATCH /api/users/{id}`` was the only door that asked; this is the second.
-
-    * AN ACCOUNT STILL HOLDING A TEMPORARY PASSWORD IS NOT LIFTED
-      (``account_provisioning.holds_a_temporary_password``), and nothing is written to it. The
-      PATCH refuses such a promotion unless it sets a new password in the same change; this door
-      has no password field, and refusing the whole approval would leave the person's ACCESS
-      undecided over a question about their TIER. So the approval stands and the account keeps its
-      tier — and the returned sentence says so, naming the two ways on, for the decision's answer
-      to carry. The admitted row's ``admitRole`` still records the tier that was approved.
-    * A LIFT THAT HAPPENS WITHDRAWS EVERY OUTSTANDING PASSWORD LINK, after the write, exactly as the
-      PATCH does (``credential_links.revoke_outstanding``). Redemption re-checks the issuer's reach
-      as well (``auth._link_verdict``), but that catches only an issuer the new tier has outranked;
-      the PATCH withdraws them all, and two doors onto one promotion must not disagree.
-
-    Returns the sentence when the lift was held back, and ``None`` otherwise — including when there
-    was nothing to lift.
+    The master admin's account is never reported: its role is not the list's to describe.
     """
+    if not role:
+        return None
     address = normalise_email(email)
     user = await db.user.find_unique(where={"email": address})
     if user is None or role_value(user) == "MASTER_ADMIN":
         return None
-    if role_rank(user) >= ROLE_RANK.get(role, 0):
-        return None
-    if holds_a_temporary_password(user):
-        current = role_value(user)
-        logger.info(
-            "access: approval at %s left account %s at %s: it still holds a temporary password",
-            role,
-            user.id,
-            current,
-        )
-        return APPROVAL_KEEPS_THE_TIER_DETAIL.format(
-            email=address,
-            current=ROLE_LABELS.get(current, current),
-            granted=ROLE_LABELS.get(role, role),
-        )
-    await db.user.update(where={"id": user.id}, data={"role": role})
-    # The cached identity now describes authority the account did not have a moment ago; it must not
-    # outlive the write by even one request. Every User write in this codebase invalidates.
-    invalidate_cached_user(user.id)
-    # After the write, so a lift that failed withdraws nothing — the PATCH's order and its reason.
-    withdrawn = await credential_links.revoke_outstanding(user.id)
-    if withdrawn:
-        logger.info(
-            "access: lifting account %s to %s withdrew %d outstanding password link(s)",
-            user.id,
-            role,
-            withdrawn,
-        )
-    return None
+    return signin_role.role_kept_sentence(address, role_value(user), role)
 
 
 def _now() -> datetime:

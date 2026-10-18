@@ -44,10 +44,8 @@ spelling of a mailbox another account uses — :func:`email_in_use`, which says 
    (:func:`holds_a_temporary_password`) unless it sets a new one
    (:data:`PROMOTION_WITH_A_TEMPORARY_PASSWORD_DETAIL`), and a link is redeemable only while its
    issuer could still manage the account (:func:`issuer_still_manages`). The access screen's
-   approval, which lifts an account that already exists, applies the same rule
-   (``routes/access._lift_existing_account``): it withdraws the links of an account it lifts, and
-   leaves an account still holding a temporary password at its tier, saying so in its answer
-   (:data:`APPROVAL_KEEPS_THE_TIER_DETAIL`) — it has no password field to set a new one in.
+   approval no longer changes an existing account's role at all (``services/signin_role``,
+   2026-10-18), so ``PATCH /api/users/{id}`` is the one door onto a promotion.
 
 ── WHY THE TWO GUARDS MOVED HERE FROM routes/users ──────────────────────────────────────────────
 
@@ -209,17 +207,6 @@ PROMOTION_WITH_A_TEMPORARY_PASSWORD_DETAIL = (
     "hand that password to a higher role than whoever typed it. Promote it once its owner has "
     "chosen their own password, or set it a new temporary password on the website's Users page in "
     "the same change as the promotion."
-)
-
-#: The same rule at the access screen's APPROVE, which lifts an account that already exists
-#: (``routes/access._lift_existing_account``). Not a refusal: the approval of the ADDRESS stands,
-#: and only the account's TIER waits — so it rides in the approval's answer, for the screen to show
-#: beside its own confirmation. ``{email}`` is the approved address; ``{current}`` and ``{granted}``
-#: are tier labels (``deps.ROLE_LABELS``).
-APPROVAL_KEEPS_THE_TIER_DETAIL = (
-    "{email} is approved, but the account stays {current} until its owner replaces the password "
-    "somebody typed for it. Promote it to {granted} then, or set it a new temporary password on "
-    "the website's Users page in the same change as the promotion."
 )
 
 GOOGLE_ADMISSION_REQUIRES_ADMIN_DETAIL = (

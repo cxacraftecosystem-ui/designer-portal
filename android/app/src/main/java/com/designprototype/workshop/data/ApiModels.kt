@@ -3731,7 +3731,7 @@ data class AccessRosterDto(
      * already in.
      */
     val status: String = "PENDING",
-    /** The tier the account is created at (or lifted to) on first sign-in. Null = the platform default. */
+    /** The tier a NEW account is created at on first sign-in; an existing account keeps its own. Null = the platform default. */
     val admitRole: String? = null,
     val joinedAt: String? = null,
     val requestedAt: String? = null,
