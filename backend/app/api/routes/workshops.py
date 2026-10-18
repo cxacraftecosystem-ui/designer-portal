@@ -88,6 +88,7 @@ from app.services.records import (
     take_expected_updated_at,
     viewable_where,
 )
+from app.services.text_format import by_count
 from app.services.workshop_access import (
     DEFAULT_GRANT_LEVEL,
     WORKSHOP_DECISIONS,
@@ -787,7 +788,7 @@ async def request_workshop_access(
     if missing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workshop(s) not found: {', '.join(missing)}",
+            detail=f"{by_count(len(missing), 'Workshop', 'Workshops')} not found: {', '.join(missing)}",
         )
     # The whole multi-select is decided from ONE read of the caller's existing rows, then written as
     # at most one insert and one update. Asking for a season of twenty workshops previously cost two

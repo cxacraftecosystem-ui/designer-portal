@@ -44,6 +44,7 @@ from fastapi import HTTPException, status
 # unrelated failure as if the designer's work had been stored.
 from prisma.errors import UniqueViolationError
 
+from app.services.text_format import by_count, count_noun
 from app.core.db import db
 from app.core.deps import can_run_design_workshops, has_rank, is_admin
 
@@ -1115,7 +1116,7 @@ def _process_media_note(process: Any) -> str | None:
         parts.append(f"{own} on the process itself")
     if per_step:
         covered = sum(1 for step in steps if getattr(step, "media", None))
-        parts.append(f"{per_step} across {covered} step(s)")
+        parts.append(f"{per_step} across {count_noun(covered, 'step')}")
     return "Attached to the process record: " + ", ".join(parts) + "."
 
 
@@ -7467,8 +7468,9 @@ async def attach_report_transcripts(
     refused = len(audio_references(entries)) - len(items)
     if refused > 0:
         warnings.append(
-            f"{refused} recording(s) attached to this workshop could not be included in the "
-            "transcript annexure: they were uploaded by another account, or the file is gone."
+            f"{count_noun(refused, 'recording')} attached to this workshop could not be included "
+            f"in the transcript annexure: {by_count(refused, 'it was', 'they were')} uploaded by "
+            "another account, or the file is gone."
         )
     if not items:
         return warnings
@@ -7680,7 +7682,8 @@ async def attach_report_ai_layers(
     printable_withheld = sum(1 for item in items if item.text_withheld and item.accepted)
     if printable_withheld:
         warnings.append(
-            f"{printable_withheld} accepted machine-assisted passage(s) are named in the annexure "
+            f"{count_noun(printable_withheld, 'accepted machine-assisted passage')} "
+            f"{by_count(printable_withheld, 'is', 'are')} named in the annexure "
             "with their model and provenance, but their text is not printed: they stand on "
             "recordings uploaded by another account. Ask whoever uploaded them for access to their "
             "media, or ask them to generate this report."
@@ -7888,8 +7891,9 @@ def report_custom_section_items(
         # bug in the app. Saying which one, and that it is empty rather than lost, is the difference
         # between "the feature is broken" and "we did not get to those questions".
         warnings.append(
-            f"{len(unanswered)} of this workshop's own section(s) have no answers recorded and are "
-            f"not in this file: "
+            f"{len(unanswered)} of this workshop's own sections "
+            f"{by_count(len(unanswered), 'has', 'have')} no answers recorded and "
+            f"{by_count(len(unanswered), 'is', 'are')} not in this file: "
             + ", ".join(sorted(item.title for item in unanswered)[:4])
             + ("…" if len(unanswered) > 4 else "")
         )
@@ -8132,7 +8136,8 @@ def render_report(
     # are read in that order.
     if over_budget:
         warnings.append(
-            f"{len(over_budget)} of those photograph(s) were left out because this report already "
+            f"{len(over_budget)} of those photographs {by_count(len(over_budget), 'was', 'were')} "
+            "left out because this report already "
             f"holds as many pictures as it can take at once. They are all still saved with the "
             f"workshop. Generate the report again later, or choose a template that prints fewer "
             f"pictures, to include more."
@@ -8218,11 +8223,12 @@ def _dropped_warnings(dropped: list[str]) -> list[str]:
     figures = sum(1 for item in dropped if item.startswith(("chart:", "figure:")))
     if figures:
         said.append(
-            f"{figures} figure(s) could not be drawn. Their numbers are still in the tables."
+            f"{count_noun(figures, 'figure')} could not be drawn. "
+            f"{by_count(figures, 'Its numbers are', 'Their numbers are')} still in the tables."
         )
     photographs = sum(1 for item in dropped if not item.startswith(("map:", "chart:", "figure:")))
     if photographs:
-        said.append(f"{photographs} photograph(s) could not be included in the file.")
+        said.append(f"{count_noun(photographs, 'photograph')} could not be included in the file.")
     return said
 
 

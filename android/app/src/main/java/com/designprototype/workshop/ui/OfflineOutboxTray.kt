@@ -226,7 +226,7 @@ fun OfflineOutboxTray(
                     // somebody who has just been told an artisan already exists, as an offer to delete
                     // that artisan.
                     if (isConflict) "Throw away this copy?" else "Throw this away?",
-                    fontSize = 15.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
             },
@@ -244,7 +244,7 @@ fun OfflineOutboxTray(
                         isDangling = row.danglingNouns.isNotEmpty(),
                     ),
                     color = MaterialTheme.field.body,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     lineHeight = 19.sp,
                 )
             },
@@ -258,10 +258,10 @@ fun OfflineOutboxTray(
                             "“${doomed.label}” deleted from this phone."
                         }
                     }
-                ) { Text("Delete it", color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
+                ) { Text("Delete it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDiscard = null }) { Text("Keep it", fontSize = 13.sp) }
+                TextButton(onClick = { confirmDiscard = null }) { Text("Keep it", style = MaterialTheme.typography.labelLarge) }
             },
         )
         // Deliberately NOT an early return: the tray stays composed underneath, so cancelling the
@@ -297,7 +297,7 @@ fun OfflineOutboxTray(
         title = {
             Text(
                 if (waiting.isEmpty() && rows.isNotEmpty()) "Records this device could not send" else "Saved on this phone",
-                fontSize = 15.sp,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
         },
@@ -310,7 +310,7 @@ fun OfflineOutboxTray(
                     Text(
                         "These couldn't be saved and won't send by waiting. Nothing was deleted.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                     )
                 }
@@ -320,13 +320,13 @@ fun OfflineOutboxTray(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Text("Reading the queue…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        Text("Reading the queue…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     }
 
                     rows.isEmpty() && waiting.isEmpty() -> Text(
                         "Nothing is waiting on you any more.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodySmall,
                     )
 
                     else -> rows.forEach { row ->
@@ -357,7 +357,7 @@ fun OfflineOutboxTray(
                     Text(
                         "Waiting to send",
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     waiting.forEach { row ->
@@ -377,11 +377,11 @@ fun OfflineOutboxTray(
                 }
                 note?.let {
                     HorizontalDivider(color = MaterialTheme.field.hairline)
-                    Text(it, color = MaterialTheme.field.body, fontSize = 12.sp, lineHeight = 17.sp)
+                    Text(it, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onClose) { Text("Close", fontSize = 13.sp) } },
+        confirmButton = { TextButton(onClick = onClose) { Text("Close", style = MaterialTheme.typography.labelLarge) } },
         dismissButton = {
             // COUNTED OVER THE ROWS THIS SESSION MAY ACT ON (2026-09-03). Another account's refusals
             // are listed but not sendable, and `retryAllOutboxFailures` now skips them; offering the
@@ -395,7 +395,7 @@ fun OfflineOutboxTray(
                             outboxRetryAllMessage(repository.retryAllOutboxFailures(appContext))
                         }
                     }
-                ) { Text("Try all again", fontSize = 13.sp) }
+                ) { Text("Try all again", style = MaterialTheme.typography.labelLarge) }
             }
         },
     )
@@ -428,7 +428,7 @@ private fun OutboxFailureCard(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(row.label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(row.label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         Text(
             listOfNotNull(
                 row.kind,
@@ -439,7 +439,7 @@ private fun OutboxFailureCard(
                 },
             ).joinToString(" · "),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
         // EVERY QUEUED FILE CAN BE SAVED FROM HERE, before it is ever sent: Download reads the
         // outbox's private copy on this phone and changes nothing in the queue. Not gated on [busy]
@@ -454,7 +454,7 @@ private fun OutboxFailureCard(
             Text(
                 "Links to a missing ${row.danglingNouns.joinToString(" or ")}",
                 color = MaterialTheme.field.warning,
-                fontSize = 10.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 lineHeight = 14.sp,
             )
@@ -465,7 +465,7 @@ private fun OutboxFailureCard(
             Text(
                 "CHANGED ON THE SERVER SINCE YOU EDITED IT",
                 color = MaterialTheme.field.warning,
-                fontSize = 10.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -478,12 +478,12 @@ private fun OutboxFailureCard(
             Text(
                 "CLASHES WITH A RECORD THE OFFICE ALREADY HAS",
                 color = MaterialTheme.field.warning,
-                fontSize = 10.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
             )
         }
         // VERBATIM, and never truncated. It is the server's sentence, written for this person.
-        Text(row.reason, color = MaterialTheme.field.warning, fontSize = 12.sp, lineHeight = 17.sp)
+        Text(row.reason, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
         if (row.otherAccount) {
             // THE ONE LINE THE WORKSHOP LIST ALREADY USES, reused rather than re-worded: one app must
             // not describe one boundary two ways, and this constant is where that boundary's words
@@ -492,7 +492,7 @@ private fun OutboxFailureCard(
             Text(
                 DW_DRAFT_OTHER_ACCOUNT_ROW,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -503,7 +503,7 @@ private fun OutboxFailureCard(
             Text(
                 "Needs an app update; it'll retry after updating. Don't delete it.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -517,7 +517,7 @@ private fun OutboxFailureCard(
             Text(
                 "Fix the link in the original record and this will send.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -536,7 +536,7 @@ private fun OutboxFailureCard(
                     // FIRST, for the reason Re-pick is first below: it is the one that can resolve
                     // this row. A bare Try again would fetch the identical refusal.
                     OutlinedButton(onClick = onReview, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text("Review changes", fontSize = 12.sp)
+                        Text("Review changes", style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 if (row.repickKeys.isNotEmpty()) {
@@ -545,7 +545,7 @@ private fun OutboxFailureCard(
                     // a courtyard, and putting the one useful act third — beside a retry that cannot
                     // help and a delete that destroys fieldwork — is how the delete gets pressed.
                     OutlinedButton(onClick = onRepick, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text("Re-pick it", fontSize = 12.sp)
+                        Text("Re-pick it", style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 // The shared tonal media button — icon and word, 48dp — so Try again reads the same on
@@ -557,7 +557,7 @@ private fun OutboxFailureCard(
                     // "Throw away" beside it invites the reading that this button deletes that one.
                     Text(
                         if (row.conflict) "Throw away this copy" else "Throw away",
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
@@ -627,7 +627,7 @@ private fun RepickDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Point it at a $noun that exists", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text("Point it at a $noun that exists", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         },
         text = {
             Column(
@@ -637,7 +637,7 @@ private fun RepickDialog(
                 Text(
                     "“${row.label}” is safe. Choose a $noun to file it under and it will send.",
                     color = MaterialTheme.field.body,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     lineHeight = 19.sp,
                 )
                 when {
@@ -649,13 +649,13 @@ private fun RepickDialog(
                         // NOT "there are none", and not silence. A read in flight is the third of the
                         // three facts that share an empty list, and it is the only one that is
                         // genuinely about to change by itself.
-                        Text("Reading the $noun list…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        Text("Reading the $noun list…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     }
 
                     answered.options.isEmpty() -> Text(
                         repickEmptyLine(noun, answered.listed),
                         color = MaterialTheme.field.warning,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                     )
 
@@ -688,10 +688,10 @@ private fun RepickDialog(
                 // NAMES THE ACT AND NOT THE VERB "Save". This sends a queued record, which is a
                 // different promise from saving a form, and the tray has spent four rules on not
                 // letting one screen make the other's promise.
-                Text(if (chosen.isBlank()) "File it under nothing and send" else "Send it", fontSize = 13.sp)
+                Text(if (chosen.isBlank()) "File it under nothing and send" else "Send it", style = MaterialTheme.typography.labelLarge)
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now", fontSize = 13.sp) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now", style = MaterialTheme.typography.labelLarge) } },
     )
 }
 
@@ -728,7 +728,7 @@ private fun StaleCorrectionDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Review changes to “${row.label}”", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) },
+        title = { Text("Review changes to “${row.label}”", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -736,21 +736,21 @@ private fun StaleCorrectionDialog(
             ) {
                 val loaded = review
                 when {
-                    problem != null -> Text(problem.orEmpty(), color = MaterialTheme.field.warning, fontSize = 12.sp)
+                    problem != null -> Text(problem.orEmpty(), color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall)
                     loaded == null -> FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
                     loaded.fields.isEmpty() -> Text(
                         "Your change is already on the record. Send mine to finish saving it.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                     else -> loaded.fields.forEach { field ->
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(field.key, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Yours: ${field.mine.ifBlank { "(empty)" }}", fontSize = 12.sp)
+                            Text(field.key, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                            Text("Yours: ${field.mine.ifBlank { "(empty)" }}", style = MaterialTheme.typography.bodySmall)
                             Text(
                                 "On the server now: ${field.theirs.ifBlank { "(empty)" }}",
                                 color = MaterialTheme.field.muted,
-                                fontSize = 12.sp,
+                                style = MaterialTheme.typography.bodySmall,
                             )
                         }
                     }
@@ -761,7 +761,7 @@ private fun StaleCorrectionDialog(
                         "Your ${filesPhrase(row.mediaCount)} ${if (row.mediaCount == 1) "stays" else "stay"} queued " +
                             "whichever you choose, and ${if (row.mediaCount == 1) "is" else "are"} added to the record.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
@@ -770,14 +770,14 @@ private fun StaleCorrectionDialog(
             TextButton(
                 onClick = { onSendMine(review?.currentUpdatedAt) },
                 enabled = !busy && review != null,
-            ) { Text("Send mine", fontSize = 13.sp) }
+            ) { Text("Send mine", style = MaterialTheme.typography.labelLarge) }
         },
         dismissButton = {
             Row {
                 TextButton(onClick = onKeepTheirs, enabled = !busy) {
-                    Text("Keep theirs", color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                    Text("Keep theirs", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
                 }
-                TextButton(onClick = onDismiss) { Text("Not now", fontSize = 13.sp) }
+                TextButton(onClick = onDismiss) { Text("Not now", style = MaterialTheme.typography.labelLarge) }
             }
         },
     )
@@ -795,7 +795,7 @@ private fun OutboxQueuedFiles(files: List<OutboxQueuedFile>) {
                 Text(
                     file.name,
                     color = MaterialTheme.field.body,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     modifier = Modifier.weight(1f),
                 )
@@ -824,7 +824,7 @@ private fun OutboxWaitingCard(row: OutboxWaitingRow, busy: Boolean, onSendNow: (
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(row.label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(row.label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         Text(
             listOfNotNull(
                 row.kind,
@@ -836,11 +836,11 @@ private fun OutboxWaitingCard(row: OutboxWaitingRow, busy: Boolean, onSendNow: (
                 },
             ).joinToString(" · "),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
         if (row.files.isNotEmpty()) OutboxQueuedFiles(row.files)
         OutlinedButton(onClick = onSendNow, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-            Text("Send now", fontSize = 12.sp)
+            Text("Send now", style = MaterialTheme.typography.labelMedium)
         }
     }
 }

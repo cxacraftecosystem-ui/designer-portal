@@ -245,9 +245,9 @@ internal fun DwReportBlock(
                 .background(MaterialTheme.field.surface50, RoundedCornerShape(10.dp))
                 .padding(12.dp)
         ) {
-            Text(block.title, display = true, color = ink, fontSize = 20.sp)
-            if (block.subtitle.isNotBlank()) Text(block.subtitle, color = muted, fontSize = 13.sp)
-            block.orgLines.forEach { line -> Text(line, color = muted, fontSize = 12.sp) }
+            Text(block.title, display = true, color = ink, style = MaterialTheme.typography.titleLarge)
+            if (block.subtitle.isNotBlank()) Text(block.subtitle, color = muted, style = MaterialTheme.typography.bodySmall)
+            block.orgLines.forEach { line -> Text(line, color = muted, style = MaterialTheme.typography.bodySmall) }
             block.heroImage?.let { hero ->
                 val file = resolveImage(hero.source)
                 if (file != null) {
@@ -268,18 +268,18 @@ internal fun DwReportBlock(
                 // [runsToAnnotated] builds. One row renderer, wrapped here rather than overloaded.
                 block.infoRows.forEach { (label, value) -> KeyValueLine(label, AnnotatedString(value), muted, ink) }
             }
-            block.footerLines.forEach { line -> Text(line, color = muted, fontSize = 11.sp) }
+            block.footerLines.forEach { line -> Text(line, color = muted, style = MaterialTheme.typography.bodySmall) }
         }
 
         // THE TABLE OF CONTENTS IS NAMED, NOT SYNTHESISED. Both writers build it from the headings
         // they emit and from their own page numbers; a list of headings with no page numbers beside
         // them would be a different object wearing the same title.
         is TocBlock -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(block.title, display = true, color = ink, fontSize = 15.sp)
+            Text(block.title, display = true, color = ink, style = MaterialTheme.typography.titleMedium)
             Text(
                 "Page numbers are added on export.",
                 color = muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -294,11 +294,11 @@ internal fun DwReportBlock(
                 color = accent ?: ink,
                 // The four levels, kept in the same ORDER of sizes the writers use. Exact points are
                 // the file's business; what has to survive here is the hierarchy a reader navigates by.
-                fontSize = when (block.level) {
-                    1 -> 19.sp
-                    2 -> 16.sp
-                    3 -> 14.sp
-                    else -> 13.sp
+                style = when (block.level) {
+                    1 -> MaterialTheme.typography.titleLarge
+                    2 -> MaterialTheme.typography.titleMedium
+                    3 -> MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                    else -> MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                 },
                 modifier = Modifier.padding(top = if (block.level <= 2) 6.dp else 2.dp)
             )
@@ -309,7 +309,7 @@ internal fun DwReportBlock(
         is ParagraphBlock -> Text(
             runsToAnnotated(block.runs),
             color = if (block.style.name.contains("CAPTION")) muted else ink,
-            fontSize = if (block.style.name.contains("CAPTION")) 11.sp else 13.sp,
+            style = if (block.style.name.contains("CAPTION")) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
             onTextLayout = { probe?.textLines(key, it) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -327,9 +327,9 @@ internal fun DwReportBlock(
                     Text(
                         if (block.ordered) "${at + 1}." else "•",
                         color = accent ?: muted,
-                        fontSize = 13.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
-                    Text(runsToAnnotated(item), color = ink, fontSize = 13.sp)
+                    Text(runsToAnnotated(item), color = ink, style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
@@ -361,13 +361,13 @@ internal fun DwReportBlock(
                 .background(MaterialTheme.field.surface50, RoundedCornerShape(8.dp))
                 .padding(8.dp)
         ) {
-            if (block.caption.isNotBlank()) Text(block.caption, color = muted, fontSize = 11.sp)
+            if (block.caption.isNotBlank()) Text(block.caption, color = muted, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 block.columns.forEach { column ->
                     Text(
                         column.header,
                         color = accent ?: ink,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.weight(column.widthPct.coerceAtLeast(1f))
                     )
                 }
@@ -390,7 +390,7 @@ internal fun DwReportBlock(
                         Text(
                             runsToAnnotated(row.getOrNull(at2).orEmpty()),
                             color = ink,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.weight(column.widthPct.coerceAtLeast(1f))
                         )
                     }
@@ -407,7 +407,7 @@ internal fun DwReportBlock(
                         Text(
                             runsToAnnotated(total.getOrNull(at).orEmpty()),
                             color = ink,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(column.widthPct.coerceAtLeast(1f))
                         )
@@ -430,7 +430,7 @@ internal fun DwReportBlock(
             } else {
                 MissingFigure(block.caption.ifBlank { "Photograph" })
             }
-            if (block.caption.isNotBlank()) Text(block.caption, color = muted, fontSize = 11.sp)
+            if (block.caption.isNotBlank()) Text(block.caption, color = muted, style = MaterialTheme.typography.bodySmall)
         }
 
         is ImageGridBlock -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -456,7 +456,7 @@ internal fun DwReportBlock(
                             } else {
                                 MissingFigure(caption.ifBlank { "Photograph" })
                             }
-                            if (caption.isNotBlank()) Text(caption, color = muted, fontSize = 10.sp)
+                            if (caption.isNotBlank()) Text(caption, color = muted, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -468,7 +468,7 @@ internal fun DwReportBlock(
             // arm just above already reads this way. This file's header disclaims A4 pagination and
             // figure rasterisation only — it claims to draw the blocks faithfully — so a caption that
             // led its own grid here made the preview the one surface that read differently.
-            if (block.caption.isNotBlank()) Text(block.caption, color = muted, fontSize = 11.sp)
+            if (block.caption.isNotBlank()) Text(block.caption, color = muted, style = MaterialTheme.typography.bodySmall)
         }
 
         is MetricRowBlock -> Row(
@@ -482,9 +482,9 @@ internal fun DwReportBlock(
                         .background(MaterialTheme.field.surface100, RoundedCornerShape(8.dp))
                         .padding(8.dp)
                 ) {
-                    Text(metric.second, display = true, color = accent ?: ink, fontSize = 17.sp)
-                    Text(metric.first, color = muted, fontSize = 10.sp)
-                    if (metric.third.isNotBlank()) Text(metric.third, color = muted, fontSize = 10.sp)
+                    Text(metric.second, display = true, color = accent ?: ink, style = MaterialTheme.typography.titleLarge)
+                    Text(metric.first, color = muted, style = MaterialTheme.typography.labelSmall)
+                    if (metric.third.isNotBlank()) Text(metric.third, color = muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -507,7 +507,7 @@ internal fun DwReportBlock(
                 .padding(10.dp)
         ) {
             if (block.title.isNotBlank()) {
-                Text(block.title, color = ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(block.title, color = ink, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
             }
             // A callout is MOVED WHOLE while it fits a page at all — `_cut_row`'s docstring calls
             // that "an ordinary break" — and is divided only when it fits no page. Its line boxes
@@ -516,7 +516,7 @@ internal fun DwReportBlock(
             Text(
                 runsToAnnotated(block.runs),
                 color = ink,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 onTextLayout = { probe?.textLines(key, it) },
                 modifier = Modifier.fillMaxWidth().dwTextTop(probe, key),
             )
@@ -535,8 +535,8 @@ internal fun DwReportBlock(
                             .background(MaterialTheme.field.hairline)
                             .padding(top = 12.dp)
                     )
-                    Text(name, color = ink, fontSize = 12.sp)
-                    if (role.isNotBlank()) Text(role, color = muted, fontSize = 11.sp)
+                    Text(name, color = ink, style = MaterialTheme.typography.bodySmall)
+                    if (role.isNotBlank()) Text(role, color = muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -549,7 +549,7 @@ internal fun DwReportBlock(
             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
         ) {
             HorizontalDivider(color = MaterialTheme.field.hairline, modifier = Modifier.weight(1f))
-            Text("page break", color = muted, fontSize = 10.sp)
+            Text("page break", color = muted, style = MaterialTheme.typography.labelSmall)
             HorizontalDivider(color = MaterialTheme.field.hairline, modifier = Modifier.weight(1f))
         }
     }
@@ -567,8 +567,8 @@ private fun KeyValueLine(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
-        Text(label, color = muted, fontSize = 12.sp, modifier = Modifier.weight(0.4f))
-        Text(value, color = ink, fontSize = 12.sp, modifier = Modifier.weight(0.6f))
+        Text(label, color = muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.4f))
+        Text(value, color = ink, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.6f))
     }
 }
 
@@ -622,7 +622,7 @@ private fun MissingFigure(name: String) {
         Text(
             "Couldn't open $name, so it's left out of the report.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 15.sp,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
         )
@@ -639,7 +639,7 @@ private fun FigurePlaceholder(name: String, detail: String) {
             .background(MaterialTheme.field.surface100, RoundedCornerShape(8.dp))
             .padding(10.dp)
     ) {
-        Text(name, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Text(detail, color = MaterialTheme.field.muted, fontSize = 11.sp)
+        Text(name, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+        Text(detail, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
     }
 }

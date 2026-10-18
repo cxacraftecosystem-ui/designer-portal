@@ -153,7 +153,7 @@ internal fun DwSketchChooserReviewTab(
                 FilterChip(
                     selected = chosen,
                     onClick = { entity = option },
-                    label = { Text(option.label, fontSize = 12.sp) },
+                    label = { Text(option.label, style = MaterialTheme.typography.labelMedium) },
                     /*
                       HOUSE RULE 4: THE FILL IS NOT THE ONLY THING SAYING WHICH CHIP IS ON, and
                       Material3's `FilterChip` gives no mark of its own — the selected state is a
@@ -182,7 +182,7 @@ internal fun DwSketchChooserReviewTab(
         Text(
             entity.hint(DwRatingRound.PEER),
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp,
         )
 
@@ -402,7 +402,7 @@ private fun DwChooserPeerRound(
                 problem != null -> Text(
                     problem.orEmpty(),
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     lineHeight = 18.sp,
                 )
 
@@ -414,7 +414,7 @@ private fun DwChooserPeerRound(
                     Text(
                         "Reading this workshop's peer round…",
                         color = MaterialTheme.field.muted,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
 
@@ -424,21 +424,21 @@ private fun DwChooserPeerRound(
                 ranked != null && ranked.isEmpty() -> Text(
                     DwRatingRound.PEER.emptyNote,
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 18.sp,
                 )
 
                 orderProblem != null -> Text(
                     orderProblem.orEmpty(),
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                 )
 
                 orderNote != null -> Text(
                     orderNote.orEmpty(),
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                 )
 
@@ -453,7 +453,7 @@ private fun DwChooserPeerRound(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text("Try again", fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
+                Text("Try again", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
             }
         }
 
@@ -537,7 +537,7 @@ private fun DwChooserPeerRound(
         Text(
             DW_SKETCH_CHOOSER_RATING_LIVES_IN_REVIEW,
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }
@@ -584,17 +584,17 @@ private fun DwChooserReviewRow(
             "$position of $total · ${item.label.ifBlank { DW_CHOOSER_UNTITLED }}",
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp,
+            style = MaterialTheme.typography.bodyMedium,
         )
         if (tentative != null) {
             // ABOVE the identifier line and not folded into it: the subtitle is the piece's IDENTITY
             // (its sketch number, its designer), and a working state written into an identifier reads
             // as part of the name. Amber — "wants attention, nothing is wrong" — the same pair the
             // stage form's row and the web's chip use, so one concept has one colour on three screens.
-            Text(tentative, color = MaterialTheme.field.warning, fontSize = 12.sp)
+            Text(tentative, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall)
         }
         if (subtitle.isNotBlank()) {
-            Text(subtitle, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(subtitle, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         Text(
             // "Not rated yet" AND NEVER "0.0" — `dwScoreText`'s rule, shared rather than restated: a
@@ -602,7 +602,7 @@ private fun DwChooserReviewRow(
             "${dwScoreText(item.score, item.ratingCount)} · " +
                 dwPositionText(item, showPlaced = showPlaced, fixedOrder = fixedOrder),
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp,
         )
         onOpenStage?.let { open ->
@@ -612,7 +612,7 @@ private fun DwChooserReviewRow(
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
                 )
-                Text("Open the record", fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
+                Text("Open the record", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
             }
         }
     }

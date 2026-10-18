@@ -649,7 +649,7 @@ class ReportLossWarningsTest {
         // Over-cap first, attachments second — `build_report`'s order. Two call sites each choosing
         // for themselves is how one workshop comes to have two differently-ordered warning lists.
         assertTrue(notes[0], notes[0].contains("photograph cap"))
-        assertTrue(notes[1], notes[1].contains("1 attached file is named in this report"))
+        assertTrue(notes[1], notes[1].contains("named in this report but the"))
 
         val printed = printedText(document)
         // THE FILE STILL SAYS AN ATTACHMENT EXISTS — that is honest and it stays. What must not be in

@@ -68,7 +68,7 @@ internal fun QChip(text: String, container: Color, content: Color) {
             .background(container, RoundedCornerShape(999.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp),
         color = content,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Medium
     )
 }
@@ -149,5 +149,5 @@ internal suspend fun attachableDesignWorkshops(repository: WorkshopRepository): 
 /** The muted "nothing here yet" line every one of these screens needs in at least two places. */
 @Composable
 internal fun EmptyNote(text: String) {
-    Text(text, color = MaterialTheme.field.muted, fontSize = 12.sp)
+    Text(text, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
 }

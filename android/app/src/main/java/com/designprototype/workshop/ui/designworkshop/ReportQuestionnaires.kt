@@ -141,8 +141,8 @@ internal fun renderQuestionnaireAnnexure(
         }
         if (dropped > 0) {
             builder.para(
-                "[$dropped further ${if (dropped == 1) "sitting was" else "sittings were"} recorded against this questionnaire and ${if (dropped == 1) "is" else "are"} " +
-                    "not printed here. The full set is in the online workshop record.]",
+                "[$dropped further ${if (dropped == 1) "sitting was" else "sittings were"} recorded against this questionnaire and " +
+                    "${if (dropped == 1) "is" else "are"} not printed here. The full set is in the online workshop record.]",
                 style = ParaStyle.NOTE,
             )
         }
@@ -252,7 +252,7 @@ internal fun sittingProvenance(sitting: DwQuestionnaireSitting): String {
         else -> ""
     }
     return listOf(
-        "${plural(sitting.answeredCount, "question")} answered",
+        "${sitting.answeredCount} ${if (sitting.answeredCount == 1) "question" else "questions"} answered",
         source,
         sitting.recordedAt.take(10),
         if (sitting.recordedBy.isNotEmpty()) "recorded by ${sitting.recordedBy}" else "",
@@ -269,8 +269,8 @@ internal fun sittingProvenance(sitting: DwQuestionnaireSitting): String {
  */
 internal fun questionnaireProvenance(item: DwQuestionnaireItem): String {
     val parts = listOf(
-        plural(item.printedSittings.size, "sitting"),
-        if (item.questionCount > 0) plural(item.questionCount, "question") else "",
+        "${item.printedSittings.size} ${if (item.printedSittings.size == 1) "sitting" else "sittings"}",
+        if (item.questionCount > 0) "${item.questionCount} ${if (item.questionCount == 1) "question" else "questions"}" else "",
         "version ${item.version}",
         if (item.sourceFilename.isNotEmpty()) "from ${item.sourceFilename}" else "",
         "questionnaire ${item.questionnaireId}",

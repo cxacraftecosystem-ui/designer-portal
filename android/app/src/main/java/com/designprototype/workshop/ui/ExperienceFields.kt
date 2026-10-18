@@ -159,7 +159,7 @@ fun ExperienceFields(
         Text(
             label,
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.semantics { heading() }
         )
         val yearsField = @Composable { fieldModifier: Modifier ->
@@ -196,8 +196,8 @@ fun ExperienceFields(
                 monthsField(Modifier.weight(1f))
             }
         }
-        help?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp) }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+        help?.let { Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall) }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     }
 }
 

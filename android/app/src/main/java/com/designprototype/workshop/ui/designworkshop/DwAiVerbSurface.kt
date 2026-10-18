@@ -2,6 +2,7 @@ package com.designprototype.workshop.ui.designworkshop
 
 import android.content.Context
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -160,7 +161,7 @@ internal fun DwRecordConsentLink(consent: DwTier3Consent) {
     if (consent == DwTier3Consent.GRANTED) return
     val open = LocalDwOpenConsent.current ?: return
     TextButton(onClick = open, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-        Text(DW_VERB_CONSENT_LINK_LABEL, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(DW_VERB_CONSENT_LINK_LABEL, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium)
     }
 }
 

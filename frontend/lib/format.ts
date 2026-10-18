@@ -28,6 +28,16 @@ export function bytes(value: number | string | undefined | null) {
   return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+/** The word that agrees with `count`: `byCount(n, "was", "were")`. */
+export function byCount(count: number, one: string, many: string): string {
+  return count === 1 ? one : many;
+}
+
+/** `count` and its noun in the right number: "1 file", "3 files" (`many` defaults to +s). */
+export function countNoun(count: number, one: string, many = `${one}s`): string {
+  return `${count} ${byCount(count, one, many)}`;
+}
+
 export function blankToNull(value: FormDataEntryValue | null) {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();

@@ -628,7 +628,7 @@ object DwMarketAnalysis {
         if (declaredLow == null || declaredHigh == null) {
             return DwBandVerdict(
                 category, declaredLow, declaredHigh, dist, 0, 0, 0, 0.0, "NO_EVIDENCE",
-                "${plural(dist.count, "price observation")} ${if (dist.count == 1) "exists" else "exist"} for $named, but the band itself is " +
+                "${dist.count} price ${if (dist.count == 1) "observation exists" else "observations exist"} for $named, but the band itself is " +
                     "incomplete."
             )
         }
@@ -651,7 +651,7 @@ object DwMarketAnalysis {
             return DwBandVerdict(
                 category, declaredLow, declaredHigh, dist, inside, below, above, coverage,
                 "UNVERIFIABLE",
-                "Only ${plural(dist.count, "price observation")} ${if (dist.count == 1) "was" else "were"} recorded for $named — too few to " +
+                "Only ${dist.count} price ${if (dist.count == 1) "observation was" else "observations were"} recorded for $named — too few to " +
                     "judge the band against. $inside of them fall inside it."
             )
         }
@@ -1018,7 +1018,8 @@ object DwMarketAnalysis {
         val cautions = ArrayList<String>()
         if (respondentValues.isNotEmpty() && respondentValues.size < DW_MIN_SAMPLE_FOR_VERDICT) {
             cautions.add(
-                "Only ${plural(respondentValues.size, "respondent price expectation")} ${if (respondentValues.size == 1) "was" else "were"} recorded. " +
+                "Only ${respondentValues.size} respondent price " +
+                    "${if (respondentValues.size == 1) "expectation was" else "expectations were"} recorded. " +
                     "The figures below describe what was collected; they are not a market estimate."
             )
         }

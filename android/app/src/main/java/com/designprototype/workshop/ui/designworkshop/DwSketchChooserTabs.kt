@@ -219,16 +219,19 @@ internal fun DwSketchChooserTabStrip(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Icon(tab.icon, contentDescription = null, modifier = Modifier.size(16.dp))
+                            // ONE WORD, ON ONE LINE. A second word ("showing") used to sit beside the
+                            // selected label, and at 360dp half a tab could not hold icon, label and
+                            // word, so it broke as "showin / g". HOUSE RULE 4 still holds without it:
+                            // the selected tab is marked by the indicator bar under it (a shape, so
+                            // it survives greyscale) and by its weight, and `stateDescription` above
+                            // says "showing" to a screen reader. The web's tabs carry the word alone.
                             Text(
                                 tab.label,
-                                fontSize = 13.sp,
+                                style = MaterialTheme.typography.labelLarge,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                maxLines = 1,
+                                softWrap = false,
                             )
-                            // HOUSE RULE 4, ON SCREEN. The filled tab is not the only thing saying
-                            // which tab is showing; this word says it too, and survives greyscale.
-                            if (isSelected) {
-                                Text("showing", fontSize = 11.sp, color = MaterialTheme.field.muted)
-                            }
                         }
                     },
                 )
@@ -237,7 +240,7 @@ internal fun DwSketchChooserTabStrip(
         Text(
             selected.hint,
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp,
             modifier = Modifier.padding(top = 2.dp),
         )

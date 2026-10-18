@@ -41,7 +41,7 @@ fun CachedCopyNote(note: String, modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Icon(Icons.Filled.CloudOff, contentDescription = "Offline copy", modifier = Modifier.size(20.dp))
-            Text(note, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Text(note, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         }
     }
 }

@@ -37,7 +37,7 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch, listResource } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { countNoun, formatDate } from "@/lib/format";
 import { handleFormEnter } from "@/lib/formNav";
 import { describePreProcess, describeProcessStep, renameMediaFile, uploadMediaFile } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
@@ -1500,7 +1500,7 @@ export function ProcessForm({
             */}
             {productCache && productCache.artisanId === artisanId
               ? cachedListLine(artisanProducts.length, "products", formatDate(productCache.cachedAt))
-              : `${artisanProducts.length} product(s) available for this artisan.`}
+              : `${countNoun(artisanProducts.length, "product")} available for this artisan.`}
           </p>
         ) : null}
         {!productsLoading && !productLoadError && artisanId ? <CappedListNotice cuts={[productCut]} /> : null}

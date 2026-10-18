@@ -4689,7 +4689,7 @@
       ]
      ],
      "title": "Survey responses by respondent group",
-     "caption": "4 response(s) plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 response(s) collected, so 4 were never entered as rows and are in no figure here.",
+     "caption": "4 responses plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 responses collected, so 4 were never entered as rows and are in no figure here.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -4716,7 +4716,7 @@
       ]
      ],
      "title": "What respondents said they would pay",
-     "caption": "4 of 5 response(s) stated a price expectation, in rupees. A further 4 response(s) the summary counts were never entered as rows.",
+     "caption": "4 of 5 responses stated a price expectation, in rupees. A further 4 responses the summary counts were never entered as rows.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -10208,15 +10208,15 @@
     }
    ],
    "warnings": [
-    "Stage 4 (Cluster, Area & Craft Background): 2 required field(s) not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
-    "Stage 8 (Market Survey & Field Data): 1 required field(s) not recorded — Survey responses: Group",
-    "Stage 12 (Sketch Review & Shortlisting): 1 required field(s) not recorded — Sketch reviews: Sketch",
-    "Stage 14 (Prototype Iteration & Testing): 1 required field(s) not recorded — Iterations: Prototype",
-    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field(s) not recorded — Cost sheets: Product",
+    "Stage 4 (Cluster, Area & Craft Background): 2 required fields not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
+    "Stage 8 (Market Survey & Field Data): 1 required field not recorded — Survey responses: Group",
+    "Stage 12 (Sketch Review & Shortlisting): 1 required field not recorded — Sketch reviews: Sketch",
+    "Stage 14 (Prototype Iteration & Testing): 1 required field not recorded — Iterations: Prototype",
+    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field not recorded — Cost sheets: Product",
     "2 attached files are named in this report but the files themselves are not inside it — stage 1, stage 3. A report file cannot carry a document, a recording or a video; send them alongside it.",
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form).",
-    "1 of this workshop's own section(s) have no answers recorded and are not in this file: Buyer visits",
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form).",
+    "1 of this workshop's own sections has no answers recorded and is not in this file: Buyer visits",
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone."
    ]
   },
   "dch-file-with-annexures": {
@@ -14883,7 +14883,7 @@
       ]
      ],
      "title": "Survey responses by respondent group",
-     "caption": "4 response(s) plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 response(s) collected, so 4 were never entered as rows and are in no figure here.",
+     "caption": "4 responses plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 responses collected, so 4 were never entered as rows and are in no figure here.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -14910,7 +14910,7 @@
       ]
      ],
      "title": "What respondents said they would pay",
-     "caption": "4 of 5 response(s) stated a price expectation, in rupees. A further 4 response(s) the summary counts were never entered as rows.",
+     "caption": "4 of 5 responses stated a price expectation, in rupees. A further 4 responses the summary counts were never entered as rows.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -21792,17 +21792,17 @@
     }
    ],
    "warnings": [
-    "Stage 4 (Cluster, Area & Craft Background): 2 required field(s) not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
-    "Stage 8 (Market Survey & Field Data): 1 required field(s) not recorded — Survey responses: Group",
-    "Stage 12 (Sketch Review & Shortlisting): 1 required field(s) not recorded — Sketch reviews: Sketch",
-    "Stage 14 (Prototype Iteration & Testing): 1 required field(s) not recorded — Iterations: Prototype",
-    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field(s) not recorded — Cost sheets: Product",
+    "Stage 4 (Cluster, Area & Craft Background): 2 required fields not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
+    "Stage 8 (Market Survey & Field Data): 1 required field not recorded — Survey responses: Group",
+    "Stage 12 (Sketch Review & Shortlisting): 1 required field not recorded — Sketch reviews: Sketch",
+    "Stage 14 (Prototype Iteration & Testing): 1 required field not recorded — Iterations: Prototype",
+    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field not recorded — Cost sheets: Product",
     "2 attached files are named in this report but the files themselves are not inside it — stage 1, stage 3. A report file cannot carry a document, a recording or a video; send them alongside it.",
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form).",
-    "1 recording(s) have no transcript and were left out of the transcript annexure (1 still being transcribed).",
-    "1 machine-generated layer(s) were left out of the annexure because nobody has accepted them yet. Open the workshop's AI layers, read each one against its source, and accept the ones this report should carry.",
-    "1 of this workshop's own section(s) have no answers recorded and are not in this file: Buyer visits",
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form).",
+    "1 recording has no transcript and was left out of the transcript annexure (1 still being transcribed).",
+    "1 machine-generated layer was left out of the annexure because nobody has accepted it yet. Open the workshop's AI layers, read each one against its source, and accept the ones this report should carry.",
+    "1 of this workshop's own sections has no answers recorded and is not in this file: Buyer visits",
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone."
    ]
   },
   "dic": {
@@ -26347,7 +26347,7 @@
       ]
      ],
      "title": "Survey responses by respondent group",
-     "caption": "4 response(s) plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 response(s) collected, so 4 were never entered as rows and are in no figure here.",
+     "caption": "4 responses plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 responses collected, so 4 were never entered as rows and are in no figure here.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -26374,7 +26374,7 @@
       ]
      ],
      "title": "What respondents said they would pay",
-     "caption": "4 of 5 response(s) stated a price expectation, in rupees. A further 4 response(s) the summary counts were never entered as rows.",
+     "caption": "4 of 5 responses stated a price expectation, in rupees. A further 4 responses the summary counts were never entered as rows.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -31908,15 +31908,15 @@
     }
    ],
    "warnings": [
-    "Stage 4 (Cluster, Area & Craft Background): 2 required field(s) not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
-    "Stage 8 (Market Survey & Field Data): 1 required field(s) not recorded — Survey responses: Group",
-    "Stage 12 (Sketch Review & Shortlisting): 1 required field(s) not recorded — Sketch reviews: Sketch",
-    "Stage 14 (Prototype Iteration & Testing): 1 required field(s) not recorded — Iterations: Prototype",
-    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field(s) not recorded — Cost sheets: Product",
+    "Stage 4 (Cluster, Area & Craft Background): 2 required fields not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
+    "Stage 8 (Market Survey & Field Data): 1 required field not recorded — Survey responses: Group",
+    "Stage 12 (Sketch Review & Shortlisting): 1 required field not recorded — Sketch reviews: Sketch",
+    "Stage 14 (Prototype Iteration & Testing): 1 required field not recorded — Iterations: Prototype",
+    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field not recorded — Cost sheets: Product",
     "2 attached files are named in this report but the files themselves are not inside it — stage 1, stage 3. A report file cannot carry a document, a recording or a video; send them alongside it.",
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form).",
-    "1 of this workshop's own section(s) have no answers recorded and are not in this file: Buyer visits",
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form).",
+    "1 of this workshop's own sections has no answers recorded and is not in this file: Buyer visits",
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone."
    ]
   },
   "agency": {
@@ -36346,7 +36346,7 @@
       ]
      ],
      "title": "Survey responses by respondent group",
-     "caption": "4 response(s) plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 response(s) collected, so 4 were never entered as rows and are in no figure here.",
+     "caption": "4 responses plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 responses collected, so 4 were never entered as rows and are in no figure here.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -36373,7 +36373,7 @@
       ]
      ],
      "title": "What respondents said they would pay",
-     "caption": "4 of 5 response(s) stated a price expectation, in rupees. A further 4 response(s) the summary counts were never entered as rows.",
+     "caption": "4 of 5 responses stated a price expectation, in rupees. A further 4 responses the summary counts were never entered as rows.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -38478,15 +38478,15 @@
     }
    ],
    "warnings": [
-    "Stage 4 (Cluster, Area & Craft Background): 2 required field(s) not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
-    "Stage 8 (Market Survey & Field Data): 1 required field(s) not recorded — Survey responses: Group",
-    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field(s) not recorded — Cost sheets: Product",
+    "Stage 4 (Cluster, Area & Craft Background): 2 required fields not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
+    "Stage 8 (Market Survey & Field Data): 1 required field not recorded — Survey responses: Group",
+    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field not recorded — Cost sheets: Product",
     "1 attached file is named in this report but the file itself is not inside it — stage 3. A report file cannot carry a document, a recording or a video; send them alongside it.",
-    "11 cover field(s) did not fit the cover table and the Implementing agency format template prints no workshop-setup section to carry them, so they are not in this file: Venue, Start date, End date, Duration….",
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form).",
-    "1 recording(s) have no transcript and were left out of the transcript annexure (1 still being transcribed).",
-    "1 of this workshop's own section(s) have no answers recorded and are not in this file: Buyer visits",
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+    "11 cover fields did not fit the cover table and the Implementing agency format template prints no workshop-setup section to carry them, so they are not in this file: Venue, Start date, End date, Duration….",
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form).",
+    "1 recording has no transcript and was left out of the transcript annexure (1 still being transcribed).",
+    "1 of this workshop's own sections has no answers recorded and is not in this file: Buyer visits",
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone."
    ]
   },
   "compact": {
@@ -41670,14 +41670,14 @@
     }
    ],
    "warnings": [
-    "Stage 4 (Cluster, Area & Craft Background): 2 required field(s) not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
-    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field(s) not recorded — Cost sheets: Product",
-    "37 field(s) recorded in this workshop are above Compact summary's capture tier (Basic) and are not in this file — stage 1, stage 4, stage 9, stage 10…. Generate the report with a template that captures every tier to include them.",
+    "Stage 4 (Cluster, Area & Craft Background): 2 required fields not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
+    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field not recorded — Cost sheets: Product",
+    "37 fields recorded in this workshop are above Compact summary's capture tier (Basic) and are not in this file — stage 1, stage 4, stage 9, stage 10…. Generate the report with a template that captures every tier to include them.",
     "2 photographs recorded in this workshop did not fit Compact summary's photograph cap and are not in this file — stage 16. Generate the report with a template that prints every photograph to include them.",
-    "1 of this workshop's own section(s) ask only questions above Compact summary's capture tier (Basic) and are not in this file: Advanced colour notes",
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form).",
-    "1 of this workshop's own section(s) have no answers recorded and are not in this file: Buyer visits",
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+    "1 of this workshop's own sections asks only questions above Compact summary's capture tier (Basic) and is not in this file: Advanced colour notes",
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form).",
+    "1 of this workshop's own sections has no answers recorded and is not in this file: Buyer visits",
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone."
    ]
   },
   "detailed": {
@@ -46344,7 +46344,7 @@
       ]
      ],
      "title": "Survey responses by respondent group",
-     "caption": "4 response(s) plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 response(s) collected, so 4 were never entered as rows and are in no figure here.",
+     "caption": "4 responses plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 responses collected, so 4 were never entered as rows and are in no figure here.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -46371,7 +46371,7 @@
       ]
      ],
      "title": "What respondents said they would pay",
-     "caption": "4 of 5 response(s) stated a price expectation, in rupees. A further 4 response(s) the summary counts were never entered as rows.",
+     "caption": "4 of 5 responses stated a price expectation, in rupees. A further 4 responses the summary counts were never entered as rows.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -53493,15 +53493,15 @@
     }
    ],
    "warnings": [
-    "Stage 4 (Cluster, Area & Craft Background): 2 required field(s) not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
-    "Stage 8 (Market Survey & Field Data): 1 required field(s) not recorded — Survey responses: Group",
-    "Stage 12 (Sketch Review & Shortlisting): 1 required field(s) not recorded — Sketch reviews: Sketch",
-    "Stage 14 (Prototype Iteration & Testing): 1 required field(s) not recorded — Iterations: Prototype",
-    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field(s) not recorded — Cost sheets: Product",
+    "Stage 4 (Cluster, Area & Craft Background): 2 required fields not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
+    "Stage 8 (Market Survey & Field Data): 1 required field not recorded — Survey responses: Group",
+    "Stage 12 (Sketch Review & Shortlisting): 1 required field not recorded — Sketch reviews: Sketch",
+    "Stage 14 (Prototype Iteration & Testing): 1 required field not recorded — Iterations: Prototype",
+    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field not recorded — Cost sheets: Product",
     "2 attached files are named in this report but the files themselves are not inside it — stage 1, stage 3. A report file cannot carry a document, a recording or a video; send them alongside it.",
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form).",
-    "1 of this workshop's own section(s) have no answers recorded and are not in this file: Buyer visits",
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form).",
+    "1 of this workshop's own sections has no answers recorded and is not in this file: Buyer visits",
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone."
    ]
   },
   "catalogue": {
@@ -56742,12 +56742,12 @@
     }
    ],
    "warnings": [
-    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field(s) not recorded — Cost sheets: Product",
+    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field not recorded — Cost sheets: Product",
     "1 attached file is named in this report but the file itself is not inside it — stage 3. A report file cannot carry a document, a recording or a video; send them alongside it.",
-    "11 cover field(s) did not fit the cover table and the Photo catalogue template prints no workshop-setup section to carry them, so they are not in this file: Venue, Start date, End date, Duration….",
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form).",
-    "1 of this workshop's own section(s) have no answers recorded and are not in this file: Buyer visits",
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+    "11 cover fields did not fit the cover table and the Photo catalogue template prints no workshop-setup section to carry them, so they are not in this file: Venue, Start date, End date, Duration….",
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form).",
+    "1 of this workshop's own sections has no answers recorded and is not in this file: Buyer visits",
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone."
    ]
   },
   "settings-shaped": {
@@ -61175,7 +61175,7 @@
       ]
      ],
      "title": "Survey responses by respondent group",
-     "caption": "4 response(s) plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 response(s) collected, so 4 were never entered as rows and are in no figure here.",
+     "caption": "4 responses plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 responses collected, so 4 were never entered as rows and are in no figure here.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -61202,7 +61202,7 @@
       ]
      ],
      "title": "What respondents said they would pay",
-     "caption": "4 of 5 response(s) stated a price expectation, in rupees. A further 4 response(s) the summary counts were never entered as rows.",
+     "caption": "4 of 5 responses stated a price expectation, in rupees. A further 4 responses the summary counts were never entered as rows.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -66347,15 +66347,15 @@
     }
    ],
    "warnings": [
-    "Stage 4 (Cluster, Area & Craft Background): 2 required field(s) not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
-    "Stage 8 (Market Survey & Field Data): 1 required field(s) not recorded — Survey responses: Group",
-    "Stage 12 (Sketch Review & Shortlisting): 1 required field(s) not recorded — Sketch reviews: Sketch",
-    "Stage 14 (Prototype Iteration & Testing): 1 required field(s) not recorded — Iterations: Prototype",
-    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field(s) not recorded — Cost sheets: Product",
+    "Stage 4 (Cluster, Area & Craft Background): 2 required fields not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
+    "Stage 8 (Market Survey & Field Data): 1 required field not recorded — Survey responses: Group",
+    "Stage 12 (Sketch Review & Shortlisting): 1 required field not recorded — Sketch reviews: Sketch",
+    "Stage 14 (Prototype Iteration & Testing): 1 required field not recorded — Iterations: Prototype",
+    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field not recorded — Cost sheets: Product",
     "2 attached files are named in this report but the files themselves are not inside it — stage 1, stage 3. A report file cannot carry a document, a recording or a video; send them alongside it.",
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form).",
-    "1 of this workshop's own section(s) have no answers recorded and are not in this file: Buyer visits",
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone.",
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form).",
+    "1 of this workshop's own sections has no answers recorded and is not in this file: Buyer visits",
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone.",
     "“Include the completeness annexure” is on, but the DCH standard workshop report template does not carry that section and this switch can only leave one out — the file was generated without it. Choose a template that includes it, or turn the switch off."
    ]
   },
@@ -70861,7 +70861,7 @@
       ]
      ],
      "title": "Survey responses by respondent group",
-     "caption": "4 response(s) plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 response(s) collected, so 4 were never entered as rows and are in no figure here.",
+     "caption": "4 responses plotted, from the rows entered at this workshop. 1 more recorded no respondent group and could not be plotted. The survey summary states 9 responses collected, so 4 were never entered as rows and are in no figure here.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -70888,7 +70888,7 @@
       ]
      ],
      "title": "What respondents said they would pay",
-     "caption": "4 of 5 response(s) stated a price expectation, in rupees. A further 4 response(s) the summary counts were never entered as rows.",
+     "caption": "4 of 5 responses stated a price expectation, in rupees. A further 4 responses the summary counts were never entered as rows.",
      "unit": "responses",
      "width_pct": 74.0,
      "align": "CENTER"
@@ -77844,15 +77844,15 @@
     }
    ],
    "warnings": [
-    "Stage 4 (Cluster, Area & Craft Background): 2 required field(s) not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
-    "Stage 8 (Market Survey & Field Data): 1 required field(s) not recorded — Survey responses: Group",
-    "Stage 12 (Sketch Review & Shortlisting): 1 required field(s) not recorded — Sketch reviews: Sketch",
-    "Stage 14 (Prototype Iteration & Testing): 1 required field(s) not recorded — Iterations: Prototype",
-    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field(s) not recorded — Cost sheets: Product",
+    "Stage 4 (Cluster, Area & Craft Background): 2 required fields not recorded — Traditional motif photographs (3 of 25), Contemporary motif photographs (0 of 25)",
+    "Stage 8 (Market Survey & Field Data): 1 required field not recorded — Survey responses: Group",
+    "Stage 12 (Sketch Review & Shortlisting): 1 required field not recorded — Sketch reviews: Sketch",
+    "Stage 14 (Prototype Iteration & Testing): 1 required field not recorded — Iterations: Prototype",
+    "Stage 17 (Costing, Packaging & Market Linkage): 1 required field not recorded — Cost sheets: Product",
     "2 attached files are named in this report but the files themselves are not inside it — stage 1, stage 3. A report file cannot carry a document, a recording or a video; send them alongside it.",
-    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form).",
-    "1 of this workshop's own section(s) have no answers recorded and are not in this file: Buyer visits",
-    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+    "1 questionnaire attached to this workshop has no recorded answers and was left out of the questionnaire annexure (Empty form).",
+    "1 of this workshop's own sections has no answers recorded and is not in this file: Buyer visits",
+    "1 attached file could not be included: it was uploaded by another account, or the file is gone."
    ]
   }
  }

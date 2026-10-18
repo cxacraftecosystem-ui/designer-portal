@@ -280,7 +280,7 @@ private fun CaptureNotice(warn: Boolean, text: String, action: (@Composable () -
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(text, color = ink, fontSize = 12.sp)
+        Text(text, color = ink, style = MaterialTheme.typography.bodySmall)
         action?.invoke()
     }
 }
@@ -605,7 +605,7 @@ fun LocationCaptureCard(
                 "Enter coordinates, use GPS, or drop a pin."
             },
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         when (status) {
@@ -695,7 +695,7 @@ fun LocationCaptureCard(
                 } else {
                     MaterialTheme.field.onWarningContainer
                 },
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 

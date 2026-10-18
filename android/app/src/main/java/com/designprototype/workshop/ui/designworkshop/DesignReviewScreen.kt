@@ -235,7 +235,7 @@ fun DesignReviewScreen(
             "Design review",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp,
+            style = MaterialTheme.typography.headlineSmall,
         )
         /*
           THE WEB'S PAGE DESCRIPTION, VERBATIM, INCLUDING THE CLAUSE THAT USED TO BE WRONG. It read
@@ -249,7 +249,7 @@ fun DesignReviewScreen(
         Text(
             "Rate sketches and prototypes, suggest changes, and see the ranking.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp,
         )
 
@@ -314,11 +314,11 @@ fun DesignReviewScreen(
         Text(
             "Workshops you can open. For others, paste the link or ID below.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         listFailure?.let { note ->
-            Text(note, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, lineHeight = 17.sp)
+            Text(note, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
         }
         // RULE 10: EVERY CAP SAYS SO. A designer with two hundred workshops must not read a hundred
         // as "these are mine" — and the sentence names the route to the rest rather than leaving the
@@ -328,7 +328,7 @@ fun DesignReviewScreen(
             Text(
                 "Showing ${workshops?.size ?: 0} of $workshopTotal. Paste a link or ID for others.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -344,7 +344,7 @@ fun DesignReviewScreen(
         Text(
             "Paste a link or ID shared by its designers.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         ActionRow {
@@ -372,7 +372,7 @@ fun DesignReviewScreen(
             Text(
                 "Choose a workshop above, or paste a link.",
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 18.sp,
             )
             return@Column
@@ -392,7 +392,7 @@ fun DesignReviewScreen(
                     label = {
                         Text(
                             if (option == DwRatingRound.PEER) "Peer review" else "The wider pool",
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.labelMedium,
                         )
                     },
                 )
@@ -406,14 +406,14 @@ fun DesignReviewScreen(
                 FilterChip(
                     selected = entity == option,
                     onClick = { entity = option },
-                    label = { Text(option.label, fontSize = 12.sp) },
+                    label = { Text(option.label, style = MaterialTheme.typography.labelMedium) },
                 )
             }
         }
         Text(
             entity.hint(round),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -479,7 +479,7 @@ private fun DesignReviewAccessRefusal(roleLabel: String) {
             "Design review",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp,
+            style = MaterialTheme.typography.headlineSmall,
         )
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -495,19 +495,19 @@ private fun DesignReviewAccessRefusal(roleLabel: String) {
                 "Designer access required",
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
+                style = MaterialTheme.typography.titleMedium,
             )
         }
         Text(
             "Design review is for designers and admins.",
             color = MaterialTheme.field.muted,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 18.sp,
         )
         Text(
             "You're signed in as $roleLabel. Ask an admin for access.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
     }
 }
@@ -856,19 +856,19 @@ private fun DesignReviewRound(
                     round.title,
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 16.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     round.blurb,
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
             OutlinedButton(enabled = !loading, onClick = { attempt += 1 }) {
                 Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text("Refresh", fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
+                Text("Refresh", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
             }
         }
 
@@ -885,13 +885,13 @@ private fun DesignReviewRound(
                         Text(
                             "Order set by ${stamp?.by} on ${dwRatingDay(stamp?.at)}. New ratings won't move it.",
                             color = MaterialTheme.field.body,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 17.sp,
                         )
                         if (canArrange) {
                             ActionRow {
                                 OutlinedButton(onClick = { returnToDefault() }) {
-                                    Text("Return to score order", fontSize = 12.sp)
+                                    Text("Return to score order", style = MaterialTheme.typography.labelMedium)
                                 }
                             }
                         }
@@ -904,13 +904,13 @@ private fun DesignReviewRound(
                     arranged -> Text(
                         "You've arranged this list; it's recorded under your name.",
                         color = MaterialTheme.field.body,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                     )
                     canArrange -> Text(
                         "Highest score first; unrated last. Moving one makes the order yours.",
                         color = MaterialTheme.field.body,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                     )
                     /*
@@ -923,18 +923,18 @@ private fun DesignReviewRound(
                     else -> Text(
                         "Highest score first; unrated last.",
                         color = MaterialTheme.field.body,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                     )
                 }
                 orderNote?.let {
-                    Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
                 }
                 orderProblem?.let {
                     Text(
                         it,
                         color = MaterialTheme.colorScheme.error,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 16.sp,
                     )
                 }
@@ -982,7 +982,7 @@ private fun DesignReviewRound(
                     Text(
                         note,
                         color = if (offline) MaterialTheme.field.body else MaterialTheme.colorScheme.error,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                     )
                 }
@@ -995,7 +995,7 @@ private fun DesignReviewRound(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Reading this round…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Reading this round…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
 
@@ -1018,14 +1018,14 @@ private fun DesignReviewRound(
                     Text(
                         "${index + 1}",
                         color = MaterialTheme.field.body,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             row.rowName(),
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 13.sp,
+                            style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
@@ -1033,7 +1033,7 @@ private fun DesignReviewRound(
                                 "On this phone. Scores load when online."
                             },
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
@@ -1044,7 +1044,7 @@ private fun DesignReviewRound(
             Text(
                 round.emptyNote,
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 18.sp,
             )
             /*
@@ -1064,7 +1064,7 @@ private fun DesignReviewRound(
                         "$open of ${held.size} ${entity.label.lowercase()} have that date. Missing ones may still be uploading."
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -1256,11 +1256,11 @@ private fun DwReviewCard(
             item.label.ifBlank { UNTITLED },
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 15.sp,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
         if (subtitle.isNotBlank()) {
-            Text(subtitle, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(subtitle, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1275,25 +1275,25 @@ private fun DwReviewCard(
             Text(
                 dwScoreText(item.score, item.ratingCount),
                 color = MaterialTheme.field.body,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
             )
         }
         Text(
             dwPositionText(item, showPlaced = showPlaced, fixedOrder = fixedOrder),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         openStage?.let { open ->
             ActionRow {
-                OutlinedButton(onClick = open) { Text("Open the record", fontSize = 12.sp) }
+                OutlinedButton(onClick = open) { Text("Open the record", style = MaterialTheme.typography.labelMedium) }
             }
         }
 
         HorizontalDivider()
 
-        Text("Your score for this piece", color = MaterialTheme.field.muted, fontSize = 11.sp)
+        Text("Your score for this piece", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxWidth().selectableGroup(),
@@ -1330,7 +1330,7 @@ private fun DwReviewCard(
                     Text(
                         if (chosen) "$value chosen" else "$value",
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Normal,
                     )
                 }
@@ -1368,7 +1368,7 @@ private fun DwReviewCard(
         Text(
             "Ratings and comments aren't printed in the report — only the final order. Put report content on the piece's stage.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -1409,7 +1409,7 @@ private fun DwReviewCard(
             },
         ) {
             problem?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, lineHeight = 17.sp)
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
             }
         }
         /*
@@ -1447,7 +1447,7 @@ private fun DwReviewCard(
                     Text(
                         text,
                         color = if (queued) MaterialTheme.field.body else MaterialTheme.field.success,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                     )
                 }
@@ -1529,13 +1529,13 @@ private fun DwReviewCard(
                     }
                 },
             ) {
-                Text(if (mine != null) "Amend my rating" else "Submit my rating", fontSize = 12.sp)
+                Text(if (mine != null) "Amend my rating" else "Submit my rating", style = MaterialTheme.typography.bodySmall)
             }
             if (mine != null) {
                 Text(
                     "You rated this ${mine.score} on ${dwRatingDay(mine.ratedAt ?: mine.createdAt)}.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
         }
@@ -1576,7 +1576,7 @@ private fun DwReviewCard(
             Text(
                 "Who rated this, when and how",
                 color = MaterialTheme.field.body,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -1644,11 +1644,11 @@ private fun DwReviewCard(
                 Text(
                     "Reading the review history…",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
             ledgerProblem?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, lineHeight = 17.sp)
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
             }
             ledger?.let { DwLedgerBlock(it) }
         }
@@ -1764,7 +1764,7 @@ private fun DwReviewTextBox(
                 Text(
                     "$dropped character${if (dropped == 1) "" else "s"} cut — max $MAX_REVIEW_TEXT.",
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -1787,10 +1787,10 @@ private fun DwLedgerBlock(ledger: SubjectLedgerDto) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         dwLedgerEmptyNote(ledger)?.let {
-            Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+            Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
         }
         dwLedgerNamesNote(ledger)?.let {
-            Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
         }
         ledger.ratings.forEach { rating ->
             Column(
@@ -1804,28 +1804,28 @@ private fun DwLedgerBlock(ledger: SubjectLedgerDto) {
                     Text(
                         "${rating.score ?: "—"}/5",
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         dwRatingAttribution(rating),
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 Text(
                     dwRatingClockLine(rating),
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                 )
                 rating.comment?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, color = MaterialTheme.field.body, fontSize = 12.sp, lineHeight = 17.sp)
+                    Text(it, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                 }
                 rating.suggestion?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         "Suggested: $it",
                         color = MaterialTheme.field.body,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                     )
                 }

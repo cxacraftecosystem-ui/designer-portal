@@ -61,6 +61,7 @@
  * outcome the rule above refuses.
  */
 
+import { countNoun } from "@/lib/format";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowDown, ArrowUp, GripVertical, Lock, Plus, Trash2 } from "lucide-react";
@@ -711,7 +712,7 @@ export function CustomSectionsEditor({
           }
         : deleteConfirm(
             "Delete this section?",
-            `"${section.title || section.key}" and its ${liveFields(section).length} question(s) are removed.`,
+            `"${section.title || section.key}" and its ${countNoun(liveFields(section).length, "question")} are removed.`,
             // The same correction as the per-question dialog above, for the same reason.
             "Nobody has answered them, online or on this device."
           )

@@ -168,7 +168,7 @@ internal fun DwAiVerbReviewSheet(
                         "Read it before you rely on it."
                     },
                     color = MaterialTheme.field.body,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     lineHeight = 18.sp,
                 )
 
@@ -188,7 +188,7 @@ internal fun DwAiVerbReviewSheet(
                 }
 
                 dwLayerKindNote(layer.kind)?.let {
-                    Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+                    Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                 }
 
                 /*
@@ -203,14 +203,14 @@ internal fun DwAiVerbReviewSheet(
                     Text(
                         "Generated from an attached file. Check it against the original.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                     )
                 } else if (layer.source?.kind == "LAYER") {
                     Text(
                         "Made from another layer of this workshop.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
 
@@ -228,7 +228,7 @@ internal fun DwAiVerbReviewSheet(
                         layer.textWithheld -> Text(
                             "You can't access the source recording, so you can't view or accept this. Ask its uploader.",
                             color = MaterialTheme.field.warning,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 17.sp,
                         )
 
@@ -237,7 +237,7 @@ internal fun DwAiVerbReviewSheet(
                         else -> Text(
                             "No text — see the cues below.",
                             color = MaterialTheme.field.muted,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
@@ -277,7 +277,7 @@ internal fun DwAiVerbReviewSheet(
                   uncapped deployment, because "0 left" must never be how "no ceiling" looks.
                 */
                 dwAiVerbCountdownLine(result.aiVerbsRemaining, result.aiVerbDay)?.let {
-                    Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp, lineHeight = 16.sp)
+                    Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
                 }
 
                 savedTo?.let {
@@ -288,7 +288,7 @@ internal fun DwAiVerbReviewSheet(
                         // Downloads either way would send a designer looking in the wrong folder.
                         "Saved to $it. Saving doesn't accept it.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     )
@@ -297,7 +297,7 @@ internal fun DwAiVerbReviewSheet(
                     Text(
                         it,
                         color = MaterialTheme.field.warning,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
                         // Announced: the button that caused it is several rows above the sentence,
                         // and on a phone it is routinely below the fold.
@@ -396,7 +396,7 @@ private fun DwVerbCaution(sentence: String) {
             Text(
                 sentence,
                 color = MaterialTheme.colorScheme.onErrorContainer,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
             )
         }
@@ -408,7 +408,7 @@ private fun DwVerbSection(heading: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
         Text(
             heading,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.field.body,
         )
@@ -434,7 +434,7 @@ private fun DwVerbPassage(text: String) {
         Text(
             text,
             color = MaterialTheme.field.body,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             lineHeight = 19.sp,
             modifier = Modifier
                 .heightIn(max = 220.dp)
@@ -463,7 +463,7 @@ private fun DwVerbCueList(
             Text(
                 "Update the app to see cues. You can still save the file below.",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
             )
         }
@@ -475,7 +475,7 @@ private fun DwVerbCueList(
                 cues.language?.let { append(" · $it") }
             },
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
 
         if (cues.cues.isNotEmpty()) {
@@ -495,20 +495,20 @@ private fun DwVerbCueList(
                             Text(
                                 "${dwSubtitleTimecode(cue.start)} → ${dwSubtitleTimecode(cue.end)}",
                                 color = MaterialTheme.field.muted,
-                                fontSize = 11.sp,
+                                style = MaterialTheme.typography.bodySmall,
                             )
                             cue.speaker?.let {
-                                Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp)
+                                Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                             }
                             if (cue.estimated) {
                                 Text(
                                     "approximate timing",
                                     color = MaterialTheme.field.warning,
-                                    fontSize = 11.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                 )
                             }
                         }
-                        Text(cue.text, color = MaterialTheme.field.body, fontSize = 12.sp)
+                        Text(cue.text, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -521,7 +521,7 @@ private fun DwVerbCueList(
                 Text(
                     "First $DW_CUE_PREVIEW_LIMIT of ${cues.count} cues shown; the file has all.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -548,7 +548,7 @@ private fun DwVerbCueList(
             ) {
                 Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text(format.label, fontSize = 12.sp)
+                Text(format.label, style = MaterialTheme.typography.labelMedium)
             }
         }
         /*
@@ -561,7 +561,7 @@ private fun DwVerbCueList(
         Text(
             "Save and check against the recording before deciding.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }
@@ -588,13 +588,13 @@ private fun DwVerbProvenance(layer: DwAiLayerDto) {
             Text(
                 dwTierLabel(layer.tier),
                 color = MaterialTheme.field.body,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium,
             )
             Text(
                 dwTierSentence(layer.tier),
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             HorizontalDivider()
@@ -603,7 +603,7 @@ private fun DwVerbProvenance(layer: DwAiLayerDto) {
                     "Model: ${dwModelWords(layer.modelId, layer.modelVersion)} · " +
                     "Language: ${dwLanguageWords(layer.language)}",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             /*
@@ -618,14 +618,14 @@ private fun DwVerbProvenance(layer: DwAiLayerDto) {
                     "From ${dwLanguageWords(layer.sourceLanguage)} into " +
                         dwLanguageWords(layer.targetLanguage) + ".",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
             Text(
                 "Accepting records your name. Until then, no report prints this ${dwLayerKindNoun(layer.kind)}.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }

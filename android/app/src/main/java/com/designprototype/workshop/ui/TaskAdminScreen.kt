@@ -1302,7 +1302,7 @@ private fun AssigneeTaskCard(task: TaskDto) {
     ) {
         Text(
             task.title,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurface
         )
         FlowRow(
@@ -1852,7 +1852,7 @@ private fun PersonLine(user: TaskUserDto?) {
     Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             user.name,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurface
         )
         Text(

@@ -103,6 +103,7 @@ from app.services.design_workshop_inspectors import INSPECTION_ROLES
 from app.services.design_workshops import stage_writers, workshop_summary
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import contains
+from app.services.text_format import by_count, count_noun
 
 router = APIRouter(prefix="/ministry-dashboard", tags=["ministry"])
 
@@ -1031,7 +1032,9 @@ def _people_envelope(
         None
         if withheld == 0
         else (
-            f"{withheld} administrator account(s) on these workshops are not named here. Their "
+            f"{count_noun(withheld, 'administrator account')} on these workshops "
+            f"{by_count(withheld, 'is', 'are')} not named here. "
+            f"{by_count(withheld, 'Its', 'Their')} "
             "workshops are still counted in the totals above."
         )
     )

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -165,16 +166,19 @@ private fun RichBlock.toAnnotatedString(): AnnotatedString = buildAnnotatedStrin
     }
 }
 
-/** Heading sizes, deliberately the same ladder the report uses, so the phone previews the file. */
-private fun headingSize(level: Int): Int = when (level) {
-    1 -> 22
-    2 -> 19
-    3 -> 17
-    else -> 15
+/**
+ * Heading steps — the app's three (Theme.kt's type scale), in the same ORDER the report uses, so the
+ * phone previews the file's hierarchy. A fourth level reads as an emphasised paragraph.
+ */
+private fun headingStyle(level: Int, type: Typography): TextStyle = when (level) {
+    1 -> type.headlineSmall
+    2 -> type.titleLarge
+    3 -> type.titleMedium
+    else -> type.bodyLarge
 }
 
 /** The paragraph-level styling for a block: its face, its size and its alignment. */
-private fun blockTextStyle(block: RichBlock, base: Color): TextStyle {
+private fun blockTextStyle(block: RichBlock, base: Color, type: Typography): TextStyle {
     val alignment = when (block.align) {
         Align.CENTER -> TextAlign.Center
         Align.RIGHT -> TextAlign.End
@@ -182,19 +186,17 @@ private fun blockTextStyle(block: RichBlock, base: Color): TextStyle {
         else -> TextAlign.Start
     }
     return when (block.kind) {
-        BlockKind.HEADING -> TextStyle(
-            fontSize = headingSize(block.level).sp,
+        BlockKind.HEADING -> headingStyle(block.level, type).copy(
             fontWeight = FontWeight.SemiBold,
             color = base,
             textAlign = alignment,
         )
-        BlockKind.QUOTE -> TextStyle(
-            fontSize = 15.sp,
+        BlockKind.QUOTE -> type.bodyLarge.copy(
             fontStyle = FontStyle.Italic,
             color = base.copy(alpha = 0.86f),
             textAlign = alignment,
         )
-        else -> TextStyle(fontSize = 15.sp, color = base, textAlign = alignment)
+        else -> type.bodyLarge.copy(color = base, textAlign = alignment)
     }
 }
 
@@ -509,7 +511,7 @@ fun RichTextEditor(
         if (label.isNotBlank()) {
             // [requiredMarked]: this render carries the label for every rich-text field in the app,
             // including `RecordProseField`'s rich arm and `MainActivity`'s `"$label *"` wrapper.
-            Text(requiredMarked(label), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(requiredMarked(label), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(4.dp))
         }
 
@@ -778,7 +780,7 @@ fun RichTextEditor(
             helpRow()
         } else if (!help.isNullOrBlank()) {
             Spacer(Modifier.height(4.dp))
-            Text(help, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -857,7 +859,7 @@ private fun RichTextBlockRow(
     ) {
         when {
             block.kind == BlockKind.BULLET_ITEM -> {
-                Text("•", fontSize = 15.sp, modifier = Modifier.padding(end = 8.dp, top = 2.dp))
+                Text("•", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(end = 8.dp, top = 2.dp))
             }
             block.kind == BlockKind.ORDERED_ITEM -> {
                 // The ordinal comes from the model's own numbering, not from the row's position, so
@@ -865,7 +867,7 @@ private fun RichTextBlockRow(
                 // paragraph restarts in both places or in neither.
                 Text(
                     "${ordinal ?: 1}.",
-                    fontSize = 15.sp,
+                    style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(end = 8.dp, top = 2.dp),
                 )
             }
@@ -889,7 +891,7 @@ private fun RichTextBlockRow(
                 if (edit != null) onTextEdit(edit) else onSelectionChanged(updated.selection)
             },
             enabled = enabled,
-            textStyle = blockTextStyle(block, colour),
+            textStyle = blockTextStyle(block, colour, MaterialTheme.typography),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
             modifier = Modifier
@@ -1031,12 +1033,12 @@ private fun InlinePhotograph(
                 Column {
                     Text(
                         "Photograph — the line below is its caption",
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                     )
                     Text(
                         "Stored online.",
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -1054,7 +1056,7 @@ private fun InlinePhotograph(
             ) {
                 Text(
                     "${block.widthPct.toInt()}% of the page width",
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.width(4.dp))

@@ -199,7 +199,7 @@ internal fun NumberedListInput(
         // rendering fault.
         val header = if (required) "$label *" else label
         if (mutedLabel) {
-            Text(requiredMarked(header), color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(requiredMarked(header), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         } else {
             Text(
                 requiredMarked(header),
@@ -207,11 +207,11 @@ internal fun NumberedListInput(
                 fontWeight = FontWeight.SemiBold
             )
         }
-        helper?.let { Text(it, color = Muted, fontSize = 12.sp) }
+        helper?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
         rows.forEachIndexed { index, item ->
             val overlay = rowOverlay(index)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("${index + 1}.", color = Muted, fontSize = 14.sp)
+                Text("${index + 1}.", color = Muted, style = MaterialTheme.typography.bodyMedium)
                 OutlinedTextField(
                     value = overlay ?: item,
                     onValueChange = { raw ->
@@ -259,6 +259,6 @@ internal fun NumberedListInput(
                 Text("Add point")
             }
         }
-        if (error != null) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+        if (error != null) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
 }

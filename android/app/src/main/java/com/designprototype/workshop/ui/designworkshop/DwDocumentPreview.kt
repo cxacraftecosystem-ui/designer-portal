@@ -719,7 +719,7 @@ internal fun DwDocumentPreview(
                         tint = MaterialTheme.field.muted,
                         modifier = Modifier.size(18.dp)
                     )
-                    Text(shown.reason, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                    Text(shown.reason, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -739,7 +739,7 @@ internal fun DwDocumentPreview(
                         (state as? DocState.Page)?.let { append(" · ${it.pages} page${if (it.pages == 1) "" else "s"}") }
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     modifier = Modifier.weight(1f)
                 )
@@ -801,7 +801,7 @@ internal fun DwDocumentPreview(
                             contentDescription = null,
                             modifier = Modifier.size(14.dp)
                         )
-                        Text("Open", fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp))
+                        Text("Open", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
                     }
                 }
             }
@@ -820,7 +820,7 @@ internal fun DwDocumentPreview(
                     Text(
                         "No app can open this file. Install a document viewer.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 15.sp
                     )
                 }

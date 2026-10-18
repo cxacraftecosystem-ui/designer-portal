@@ -48,6 +48,7 @@ from app.services.report_model import (
     TableColumn,
     runs_of,
 )
+from app.services.text_format import by_count, count_noun
 
 DEFAULT_HEADING = "Annexure — Recordings and transcripts"
 
@@ -602,7 +603,8 @@ def annexure_warnings(items: tuple[TranscriptItem, ...] | list[TranscriptItem]) 
     # "have no transcript" and no longer "have no transcript YET": the leading sentence covers both
     # classes, and the word that promised arrival is now only in the clause that can keep it.
     message = (
-        f"{len(missing)} recording(s) have no transcript and were left out of the "
+        f"{count_noun(len(missing), 'recording')} {by_count(len(missing), 'has', 'have')} no "
+        f"transcript and {by_count(len(missing), 'was', 'were')} left out of the "
         f"transcript annexure{detail}."
     )
     return [message]

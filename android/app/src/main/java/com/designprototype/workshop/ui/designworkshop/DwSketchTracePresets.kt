@@ -140,7 +140,7 @@ fun DwTraceStylePicker(
             styles.firstOrNull { it.id == selectedId }?.description
                 ?: "A style sets all controls. Pick one, then adjust.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }
@@ -192,7 +192,7 @@ fun DwTraceSubjectPicker(
                 }
             },
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }
@@ -254,7 +254,7 @@ fun DwTraceStyleSuggestion(
             "Suggested style: “${suggested.name}”. " +
                 suggested.description,
             color = MaterialTheme.field.body,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
         ActionRow {
@@ -265,7 +265,7 @@ fun DwTraceStyleSuggestion(
             ) {
                 Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Use the “${suggested.name}” style", fontSize = 13.sp)
+                Text("Use the “${suggested.name}” style", style = MaterialTheme.typography.labelLarge)
             }
         }
     }

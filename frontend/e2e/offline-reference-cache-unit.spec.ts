@@ -582,7 +582,7 @@ test.describe("what the researcher is told", () => {
     const said = outboxDanglingSentence("Record not found", ["design & prototype workshop", "workshop"], 2, true);
     expect(said).toContain("This correction points at something that no longer exists:");
     expect(said).toContain("a design & prototype workshop or a workshop");
-    expect(said).toContain("2 file(s)");
+    expect(said).toContain("2 files");
   });
 
   test("zero files omits the clause rather than printing a zero", () => {

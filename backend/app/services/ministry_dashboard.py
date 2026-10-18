@@ -100,6 +100,7 @@ from app.services.concurrency import gather_reads
 from app.services.design_workshop_oversight import oversight_by_clause
 from app.services.design_workshops import workshop_completeness
 from app.services.stage_schema import stages
+from app.services.text_format import by_count, count_noun
 
 # --------------------------------------------------------------------------------------
 # Standing groups
@@ -1161,7 +1162,8 @@ def roster_representation_note(report: dict[str, Any], listed: int) -> str | Non
     parts: list[str] = []
     if missing:
         parts.append(
-            f"{missing} empanelled designer(s) have not created an account yet, so this register "
+            f"{count_noun(missing, 'empanelled designer')} {by_count(missing, 'has', 'have')} not "
+            "created an account yet, so this register "
             "cannot show them — there is no role, no workshop and no progress to report against an "
             "invitation."
         )

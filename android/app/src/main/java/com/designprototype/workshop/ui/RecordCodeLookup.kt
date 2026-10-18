@@ -423,14 +423,14 @@ fun RecordCodeLookupPanel(
                 Text(
                     "Open a record from its code",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )
             }
             Text(
                 "The code under the QR on any card, tag or record. Contains no personal details.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             /*
@@ -510,7 +510,7 @@ fun RecordCodeLookupPanel(
             Text(
                 "Spaces and capitals don't matter. The last four characters are a check.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
 
@@ -536,7 +536,7 @@ fun RecordCodeLookupPanel(
                     } else {
                         MaterialTheme.field.body
                     },
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -557,7 +557,7 @@ fun RecordCodeLookupPanel(
                 Text(
                     it,
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -582,16 +582,16 @@ fun RecordCodeLookupPanel(
                     Text(
                         answer.ref.recordType.label,
                         color = MaterialTheme.field.onSuccessContainer,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                     Text(
                         answer.hit.label,
                         color = MaterialTheme.field.onSuccessContainer,
-                        fontSize = 14.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     answer.hit.detail?.let {
-                        Text(it, color = MaterialTheme.field.onSuccessContainer, fontSize = 11.sp)
+                        Text(it, color = MaterialTheme.field.onSuccessContainer, style = MaterialTheme.typography.bodySmall)
                     }
                     Button(
                         onClick = { onOpen(answer.ref.recordType.wire, answer.ref.id) },

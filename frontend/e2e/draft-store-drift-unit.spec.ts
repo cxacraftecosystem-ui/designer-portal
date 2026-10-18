@@ -339,7 +339,7 @@ test("a dialect mismatch met WHILE UPLOADING quotes the server's key, not the ba
     detail: [{ type: "extra_forbidden", loc: ["body", "merge"], msg: "Extra inputs are not permitted" }]
   });
   const wrapped = new MediaBatchError(
-    "All 1 media file(s) failed to upload (merge: Extra inputs are not permitted). Check your internet connection " +
+    "The media file failed to upload (merge: Extra inputs are not permitted). Check your internet connection " +
       "and try again — the record was saved, so re-open it and re-attach the media",
     [{ name: "loom.jpg", error: "merge: Extra inputs are not permitted", cause: answered }]
   );

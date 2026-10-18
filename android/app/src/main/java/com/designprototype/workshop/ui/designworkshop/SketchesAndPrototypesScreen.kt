@@ -338,12 +338,12 @@ fun SketchesAndPrototypesScreen(
             "Sketches & prototypes",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
         Text(
             DW_SKETCH_CHOOSER_SUBTITLE,
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp
         )
 
@@ -387,13 +387,13 @@ fun SketchesAndPrototypesScreen(
                     Text(
                         failure,
                         color = MaterialTheme.colorScheme.error,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         lineHeight = 18.sp
                     )
                     Text(
                         DW_SKETCH_CHOOSER_NOTHING_LOST,
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp
                     )
                 }
@@ -404,7 +404,7 @@ fun SketchesAndPrototypesScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                    Text("Loading your workshops…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                    Text("Loading your workshops…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 }
 
                 // ANSWERED, AND THE ANSWER IS NONE — the ordinary state of a newly onboarded designer
@@ -414,7 +414,7 @@ fun SketchesAndPrototypesScreen(
                 list.isEmpty() -> Text(
                     DW_SKETCH_CHOOSER_NO_WORKSHOPS,
                     color = MaterialTheme.field.muted,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 18.sp
                 )
 
@@ -484,7 +484,7 @@ fun SketchesAndPrototypesScreen(
             },
         )
         prefillNote?.let { note ->
-            Text(note, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+            Text(note, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
         }
 
         DwSketchChooserTabStrip(
@@ -500,7 +500,7 @@ fun SketchesAndPrototypesScreen(
             Text(
                 DW_SKETCH_CHOOSER_PICK_FIRST,
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp
             )
         } else {
@@ -556,7 +556,7 @@ private fun SketchesAccessRefusal(roleLabel: String) {
             "Sketches & prototypes",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp,
+            style = MaterialTheme.typography.headlineSmall,
         )
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -572,19 +572,19 @@ private fun SketchesAccessRefusal(roleLabel: String) {
                 "Designer access required",
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
+                style = MaterialTheme.typography.titleMedium,
             )
         }
         Text(
             DW_SKETCH_CHOOSER_DESIGNERS_ONLY,
             color = MaterialTheme.field.muted,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 18.sp,
         )
         Text(
             "You're signed in as $roleLabel. Ask an admin for designer access.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
     }
 }

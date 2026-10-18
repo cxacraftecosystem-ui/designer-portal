@@ -194,7 +194,7 @@ fun UsageRecordingScreen(
                         display = true,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp
+                        style = MaterialTheme.typography.titleMedium
                     )
                     usageReadNotice(
                         state = consentRead,
@@ -205,15 +205,15 @@ fun UsageRecordingScreen(
                         // said about the states the six shared sentences exist for.
                         emptyLine = "Your answer could not be shown. Try again."
                     )?.let {
-                        Text(it, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 18.sp)
+                        Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
                     }
                     consent?.consent?.let { record -> usageConsentDetail(record) }?.let {
-                        Text(it, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 18.sp)
+                        Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
                     }
                     // The SERVER's sentence for this state, not a summary of it. Three states reach
                     // three different sentences because the next moves differ.
                     consent?.gate?.reason?.takeIf { it.isNotBlank() }?.let {
-                        Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+                        Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                     }
                     if (consentRead is UsageReadState.Failed) {
                         ActionRow {
@@ -233,7 +233,7 @@ fun UsageRecordingScreen(
                                 it,
                                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                                 color = MaterialTheme.colorScheme.error,
-                                fontSize = 13.sp,
+                                style = MaterialTheme.typography.bodyMedium,
                                 lineHeight = 18.sp
                             )
                         }
@@ -249,14 +249,14 @@ fun UsageRecordingScreen(
                                 } else {
                                     MaterialTheme.colorScheme.error
                                 },
-                                fontSize = 13.sp,
+                                style = MaterialTheme.typography.bodyMedium,
                                 lineHeight = 18.sp
                             )
                             Text(
                                 "${usageCount(outcome.storedDeleted)} stored, " +
                                     "${usageCount(outcome.bufferedDropped)} not yet written.",
                                 color = MaterialTheme.field.muted,
-                                fontSize = 12.sp
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
 
@@ -275,7 +275,7 @@ fun UsageRecordingScreen(
                                     "You stay signed in and lose nothing."
                                 },
                                 color = MaterialTheme.field.muted,
-                                fontSize = 12.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 lineHeight = 17.sp
                             )
                         } else {
@@ -316,7 +316,7 @@ fun UsageRecordingScreen(
                                 Text(
                                     "Nothing is recorded while declined. Agreeing again starts fresh.",
                                     color = MaterialTheme.field.muted,
-                                    fontSize = 12.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                     lineHeight = 17.sp
                                 )
                             }
@@ -346,12 +346,12 @@ fun UsageRecordingScreen(
                         display = true,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp
+                        style = MaterialTheme.typography.titleMedium
                     )
                     Text(
                         "Last $RECORD_WINDOW_DAYS days, newest first (up to $TRAIL_PAGE).",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     usageReadNotice(
                         state = recordRead,
@@ -364,21 +364,21 @@ fun UsageRecordingScreen(
                         // implying the person did nothing.
                         emptyLine = "Nothing recorded in this period."
                     )?.let {
-                        Text(it, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 18.sp)
+                        Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
                     }
                     mine?.let { aggregate ->
                         Text(
                             "${usageCount(aggregate.requests)} requests, across " +
                                 "${usageCount(aggregate.routes.size)} screens.",
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 14.sp,
+                            style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                     // The server's own notes about what a trail is and is not — that an absence of
                     // rows is not an absence of work, and that a duration is server time only.
                     trail?.notes.orEmpty().forEach {
-                        Text("• $it", color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+                        Text("• $it", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                     }
                     if (recordRead is UsageReadState.Failed) {
                         ActionRow {
@@ -394,7 +394,7 @@ fun UsageRecordingScreen(
                             Text(
                                 loadingListLine("recorded requests"),
                                 color = MaterialTheme.field.muted,
-                                fontSize = 12.sp
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                     }
@@ -418,7 +418,7 @@ fun UsageRecordingScreen(
                             // short reading would be "this is everything the platform holds".
                             "Newest $TRAIL_PAGE requests only (max ${log.maxRows}).",
                             color = MaterialTheme.field.muted,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 17.sp
                         )
                     }
@@ -433,14 +433,14 @@ fun UsageRecordingScreen(
                         display = true,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp
+                        style = MaterialTheme.typography.titleMedium
                     )
                     val decisions = consent?.decisions.orEmpty()
                     if (consentRead is UsageReadState.Answered && decisions.isEmpty()) {
                         Text(
                             USAGE_NO_DECISIONS_LINE,
                             color = MaterialTheme.field.muted,
-                            fontSize = 13.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 18.sp
                         )
                     }
@@ -448,7 +448,7 @@ fun UsageRecordingScreen(
                         Text(
                             usageDecisionLine(row),
                             color = MaterialTheme.field.muted,
-                            fontSize = 13.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 18.sp
                         )
                     }
@@ -461,7 +461,7 @@ fun UsageRecordingScreen(
         AlertDialog(
             onDismissRequest = { confirmWithdraw = false },
             title = { Text("Withdraw your agreement?") },
-            text = { Text(USAGE_WITHDRAW_CONFIRM, fontSize = 13.sp, lineHeight = 18.sp) },
+            text = { Text(USAGE_WITHDRAW_CONFIRM, style = MaterialTheme.typography.bodyMedium, lineHeight = 18.sp) },
             confirmButton = {
                 TextButton(
                     enabled = !busy,
@@ -520,7 +520,7 @@ private fun TrailRow(event: UsageEventDto) {
             event.routeTemplate,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp
         )
         Text(
@@ -536,7 +536,7 @@ private fun TrailRow(event: UsageEventDto) {
                 }
             },
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }

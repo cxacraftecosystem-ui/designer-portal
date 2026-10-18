@@ -293,17 +293,17 @@ fun QuestionnaireDetailScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
             loadError != null && loaded == null ->
-                Text(loadError.orEmpty(), color = MaterialTheme.field.warning, fontSize = 13.sp)
+                Text(loadError.orEmpty(), color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodyMedium)
 
             loaded == null -> EmptyNote("This questionnaire could not be opened.")
 
             else -> {
                 cachedNotice?.let { notice ->
-                    Text(notice, color = MaterialTheme.field.warning, fontSize = 12.sp, lineHeight = 17.sp)
+                    Text(notice, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                 }
                 HeaderCard(
                     form = loaded,
@@ -659,7 +659,7 @@ fun QuestionnaireDetailScreen(
             title = { Text(if (retires) "Retire this question?" else "Remove this question?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(question.prompt, color = MaterialTheme.field.body, fontSize = 13.sp)
+                    Text(question.prompt, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
                     Text(
                         if (retires) {
                             "Has answers, so it will be retired (no longer asked; answers kept)."
@@ -667,13 +667,13 @@ fun QuestionnaireDetailScreen(
                             "No answers yet, so it will be deleted."
                         },
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     if (blankAnswerRow) {
                         Text(
                             "A sitting holds a blank answer here, so it can't be deleted. Remove that blank first.",
                             color = MaterialTheme.field.warning,
-                            fontSize = 12.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
@@ -755,25 +755,25 @@ private fun HeaderCard(
                 form.title.ifBlank { "Untitled questionnaire" },
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 21.sp
+                style = MaterialTheme.typography.titleLarge
             )
             form.description?.takeIf { it.isNotBlank() }?.let {
-                Text(it, color = MaterialTheme.field.body, fontSize = 12.sp)
+                Text(it, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
             }
             Text(
                 "${plural(activeQuestionCount(form), "question")} in " +
                     "${plural(form.sections.count { it.isActive }, "section")} · version ${form.version}",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             form.sourceFilename?.takeIf { it.isNotBlank() }?.let {
-                Text("From $it", color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text("From $it", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             if (!form.isActive) {
                 Text(
                     "Deactivated — no new sittings. Nothing deleted.",
                     color = MaterialTheme.field.warning,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
@@ -877,7 +877,7 @@ private fun HeaderCard(
                         ?.let { "Attached to $it" }
                         ?: "Not attached to a design workshop",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
                 // Said rather than left as an absence of buttons. The person this form was handed to
                 // can still answer it, and a screen that merely looked read-only would send them off
@@ -885,7 +885,7 @@ private fun HeaderCard(
                 Text(
                     "Only its creator or an admin can edit questions. You can still answer.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
@@ -941,7 +941,7 @@ private fun InterchangeCard(
             Text(
                 "As a spreadsheet",
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold
             )
             // THE DISTINCTION, ONCE, ABOVE BOTH BUTTONS. Each row states its own contents as well —
@@ -950,7 +950,7 @@ private fun InterchangeCard(
             Text(
                 "Two files: one has your questions, the other has every respondent. Check before sharing.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp
             )
 
@@ -977,7 +977,7 @@ private fun InterchangeCard(
                 Text(
                     "For its creator, its workshop's designers, or admins. You can always copy the questions.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp
                 )
             }
@@ -1018,13 +1018,13 @@ private fun SittingsCard(
                 "Sittings",
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 17.sp,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
                 "One sitting is one filled-in copy of this questionnaire.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
 
             if (form.entries.isEmpty()) {
@@ -1093,10 +1093,10 @@ private fun SittingRow(
                 Text(
                     entry.respondentName?.takeIf { it.isNotBlank() } ?: entry.title.ifBlank { "Answers" },
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
-                Text(entrySubtitle(entry, total), color = MaterialTheme.field.muted, fontSize = 11.sp)
+                Text(entrySubtitle(entry, total), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             OutlinedButton(onClick = onOpen) { Text("Answer") }
         }
@@ -1114,15 +1114,15 @@ private fun SittingRow(
                     Text(
                         question?.prompt ?: "(a question no longer on this form)",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     Text(
                         answer.answerText.orEmpty().ifBlank { "—" },
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 13.sp
+                        style = MaterialTheme.typography.bodyMedium
                     )
                     answer.notes?.takeIf { it.isNotBlank() }?.let {
-                        Text("Note: $it", color = MaterialTheme.field.muted, fontSize = 11.sp)
+                        Text("Note: $it", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     }
                     if (question != null && !question.isActive) {
                         QChip(
@@ -1163,7 +1163,7 @@ private fun FormCard(
                 "The questions",
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 17.sp,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
             )
             if (form.sections.isEmpty()) {
@@ -1182,14 +1182,14 @@ private fun FormCard(
                             Text(
                                 "${section.code} — ${section.title}".trim(' ', '—'),
                                 color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 15.sp,
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             if (!section.isActive) {
                                 Text(
                                     "Retired — kept because it has answers.",
                                     color = MaterialTheme.field.warning,
-                                    fontSize = 11.sp
+                                    style = MaterialTheme.typography.bodySmall
                                 )
                             }
                         }
@@ -1247,10 +1247,10 @@ private fun QuestionRow(
         Text(
             requiredMarked(question.prompt + if (question.isRequired) " *" else ""),
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 13.sp
+            style = MaterialTheme.typography.bodyMedium
         )
         question.helpText?.takeIf { it.isNotBlank() }?.let {
-            Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!question.isActive) {
@@ -1277,7 +1277,7 @@ private fun QuestionRow(
                     "Retired. No longer asked; answers kept."
                 },
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         // A retired question is offered NO controls at all. Editing one is refused by the server (and
@@ -1285,9 +1285,9 @@ private fun QuestionRow(
         // only be a way to hit the ON DELETE RESTRICT on its answers.
         if (mayEdit && question.isActive) {
             ActionRow {
-                TextButton(onClick = onEdit, enabled = !busy) { Text(RecordOpen.UPDATE_LABEL, fontSize = 12.sp) }
+                TextButton(onClick = onEdit, enabled = !busy) { Text(RecordOpen.UPDATE_LABEL, style = MaterialTheme.typography.labelMedium) }
                 TextButton(onClick = onRemove, enabled = !busy) {
-                    Text(if (question.hasAnswers) "Retire" else "Delete", fontSize = 12.sp)
+                    Text(if (question.hasAnswers) "Retire" else "Delete", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -1372,7 +1372,7 @@ private fun SingleFieldDialog(
         title = { Text(heading) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(blurb, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text(blurb, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 /* Both call sites of this dialog pass "Section title" — a heading a designer writes,
                    which is prose. If a third caller ever passes a CODE or a number, give this
                    composable a `dictate` parameter rather than reaching for `label == ...`: the
@@ -1427,7 +1427,7 @@ private fun QuestionDialog(
                     Text(
                         "Has answers. Changing the wording adds a new question; the old one keeps its answers. Hint and required can change freely.",
                         color = MaterialTheme.field.warning,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
                 RecordProseField(
@@ -1443,7 +1443,7 @@ private fun QuestionDialog(
                     Text(
                         "Saving adds a new question and retires this wording.",
                         color = MaterialTheme.field.warning,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
                 RecordProseField(
@@ -1483,7 +1483,7 @@ private fun StartSittingDialog(
                 Text(
                     "Name who's answering to tell sittings apart.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedTextField(
                     value = respondent,

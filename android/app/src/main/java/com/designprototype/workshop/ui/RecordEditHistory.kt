@@ -406,17 +406,17 @@ fun RecordEditHistorySection(
             RECORD_EDIT_HISTORY_TITLE,
             display = true,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp
+            style = MaterialTheme.typography.titleMedium
         )
-        Text(RECORD_EDIT_HISTORY_CAPTION, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+        Text(RECORD_EDIT_HISTORY_CAPTION, color = Muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
         if (revs.isEmpty()) {
-            Text(RECORD_EDIT_HISTORY_EMPTY, color = Muted, fontSize = 12.sp)
+            Text(RECORD_EDIT_HISTORY_EMPTY, color = Muted, style = MaterialTheme.typography.bodySmall)
         } else {
             revs.forEach { revision ->
                 Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(recordRevisionEditorLine(revision), color = Muted, fontSize = 11.sp)
+                    Text(recordRevisionEditorLine(revision), color = Muted, style = MaterialTheme.typography.bodySmall)
                     recordRevisionRows(revision.changes).forEach { row ->
-                        Text(recordRevisionRowText(row), fontSize = 12.sp, lineHeight = 16.sp)
+                        Text(recordRevisionRowText(row), style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
                     }
                 }
             }

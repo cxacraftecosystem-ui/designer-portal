@@ -373,7 +373,7 @@ internal fun DwSketchRectifyPanel(
             Text(
                 "Mark the sheet's corners to square it up as black-on-white line art, attached as ${field.label}. Works offline.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             ActionRow {
@@ -389,7 +389,7 @@ internal fun DwSketchRectifyPanel(
                 ) {
                     Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Straighten a sketch", fontSize = 13.sp)
+                    Text("Straighten a sketch", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -848,7 +848,7 @@ private fun DwSketchRectifyOpen(
                     "Straightening “${it.item.displayName}”."
                 } ?: ("Choose a photo in “$DW_SHARED_PHOTOGRAPH_LABEL” above."),
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         } else if (sources.size > 1) {
@@ -937,14 +937,14 @@ private fun DwSketchRectifyOpen(
                 decoding -> Text(
                     "Opening the photograph…",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.align(Alignment.Center),
                 )
 
                 bitmap == null -> Text(
                     "Couldn't open this photo. You can still attach line art above.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                     modifier = Modifier
                         .align(Alignment.Center)
@@ -1078,7 +1078,7 @@ private fun DwSketchRectifyOpen(
                     // plate build and the attach, so a "Looking…" here would be a lie during either of
                     // those — and the search itself is tens of milliseconds, which is a flash nobody
                     // reads. The note below is what actually reports back.
-                    Text("Find the sheet", fontSize = 13.sp)
+                    Text("Find the sheet", style = MaterialTheme.typography.labelLarge)
                 }
             }
 
@@ -1090,7 +1090,7 @@ private fun DwSketchRectifyOpen(
                 Text(
                     note,
                     color = MaterialTheme.field.body,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1112,7 +1112,7 @@ private fun DwSketchRectifyOpen(
                     ) {
                         Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Use these corners", fontSize = 13.sp)
+                        Text("Use these corners", style = MaterialTheme.typography.labelLarge)
                     }
                     // A FIRST-CLASS OUTCOME AND NOT A CANCEL. Deciding the outline is wrong is a
                     // correct decision made by the only person who can make it, so it gets a plain
@@ -1125,7 +1125,7 @@ private fun DwSketchRectifyOpen(
                         enabled = enabled,
                         modifier = Modifier.heightIn(min = 48.dp),
                     ) {
-                        Text("Leave the handles alone", fontSize = 12.sp)
+                        Text("Leave the handles alone", style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
@@ -1167,7 +1167,7 @@ private fun DwSketchRectifyOpen(
         Text(
             "“As marked” uses the sides as they appear. Choose a paper size if you know it.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -1195,7 +1195,7 @@ private fun DwSketchRectifyOpen(
         Text(
             "Soft shading may be lost in black-and-white. Try both and compare.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -1207,7 +1207,7 @@ private fun DwSketchRectifyOpen(
             ) {
                 Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text(if (working) "Working…" else "Make the plate", fontSize = 13.sp)
+                Text(if (working) "Working…" else "Make the plate", style = MaterialTheme.typography.labelLarge)
             }
         }
 
@@ -1231,7 +1231,7 @@ private fun DwSketchRectifyOpen(
                 Text(
                     "The plate — not attached yet",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Medium,
                 )
                 Box(
@@ -1259,12 +1259,12 @@ private fun DwSketchRectifyOpen(
                     }
                 }
                 plateNote?.let { note ->
-                    Text(note, color = MaterialTheme.field.muted, fontSize = 11.sp)
+                    Text(note, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
                     "Check it against the original sheet before attaching.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
                 ActionRow {
@@ -1287,7 +1287,7 @@ private fun DwSketchRectifyOpen(
                         // registry's own field is the home of. It covers both outputs of the toggle above:
                         // "Line art — black on white" and "Straightened only — keep the tones" are two
                         // renderings of one rectified plate, not two different things to attach.
-                        Text("Add to “${field.label}”", fontSize = 13.sp)
+                        Text("Add to “${field.label}”", style = MaterialTheme.typography.labelLarge)
                     }
                 }
                 // THE SAME WARNING THE TRACING PANEL PRINTS, IN THE SAME BOX, FROM THE SAME FUNCTION.
@@ -1302,7 +1302,7 @@ private fun DwSketchRectifyOpen(
                 Text(
                     "The original photo is kept unchanged.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -1315,7 +1315,7 @@ private fun DwSketchRectifyOpen(
                     // in a browser from the same photograph. See [DwSketchPlate]'s header.
                     "Marked on a ${decoded.bitmap.width}×${decoded.bitmap.height} working copy of a ${decoded.sourceWidth}×${decoded.sourceHeight} photo.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }
@@ -1357,7 +1357,7 @@ private fun DwSketchNudgePad(
 ) {
     val step = if (displayScale > 0f) max(1.0, (4.0 / displayScale).roundToInt().toDouble()) else 1.0
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text("Nudge corner $badge", color = MaterialTheme.field.muted, fontSize = 11.sp)
+        Text("Nudge corner $badge", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.width(4.dp))
         /*
          * THE PLAIN ARROWS AND NOT `Icons.AutoMirrored`, which is what the deprecation warning asks

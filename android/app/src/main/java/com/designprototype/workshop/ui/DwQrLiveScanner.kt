@@ -371,7 +371,7 @@ fun DwQrLiveScanControl(
             ) {
                 Icon(Icons.Filled.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Scan with the camera", fontSize = 13.sp)
+                Text("Scan with the camera", style = MaterialTheme.typography.labelLarge)
             }
             /*
              * Offered when and only when Android has stopped asking, on `DwQrScanControl`'s own
@@ -387,14 +387,14 @@ fun DwQrLiveScanControl(
                 ) {
                     Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(DW_CAMERA_SETTINGS_BUTTON, fontSize = 13.sp)
+                    Text(DW_CAMERA_SETTINGS_BUTTON, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
         Text(
             "Line the code up in the box; it reads automatically. Works offline.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }
@@ -909,7 +909,7 @@ fun DwQrLiveScannerDialog(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Close", color = Color.White, fontSize = 14.sp)
+                    Text("Close", color = Color.White, style = MaterialTheme.typography.labelLarge)
                 }
                 // Gated on `hasFlashUnit`, because a torch button that does nothing is worse than no
                 // torch button: it is the control a designer in a dark room presses twice and then
@@ -926,7 +926,7 @@ fun DwQrLiveScannerDialog(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text(if (torchOn) "Light on" else "Light", color = Color.White, fontSize = 14.sp)
+                        Text(if (torchOn) "Light on" else "Light", color = Color.White, style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }
@@ -943,7 +943,7 @@ fun DwQrLiveScannerDialog(
                 Text(
                     if (hit != null) "Read." else DW_QR_LIVE_AIMING,
                     color = Color.White,
-                    fontSize = 15.sp,
+                    style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
@@ -986,7 +986,7 @@ private fun DwQrLiveNote(message: String) {
     Text(
         message,
         color = Color.White,
-        fontSize = 12.sp,
+        style = MaterialTheme.typography.bodySmall,
         lineHeight = 17.sp,
         textAlign = TextAlign.Center,
         modifier = Modifier

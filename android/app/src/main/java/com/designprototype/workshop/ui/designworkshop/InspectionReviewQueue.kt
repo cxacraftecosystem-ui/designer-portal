@@ -128,7 +128,7 @@ fun InspectionAwaitingSection(
             Text(
                 "Handed-in reports waiting for you. Open one to file suggestions or send it back.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             savedAt?.let {
                 InspectionNotice(
@@ -145,7 +145,7 @@ fun InspectionAwaitingSection(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FieldCircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text("Loading…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                    Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 }
 
                 served == null -> OutlinedButton(onClick = { reload++ }) { Text("Try again") }
@@ -155,7 +155,7 @@ fun InspectionAwaitingSection(
                         Text(
                             "Nothing is waiting for your decision.",
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 13.sp
+                            style = MaterialTheme.typography.bodyMedium
                         )
                     }
                     served.awaitingYou.forEach { row ->
@@ -165,7 +165,7 @@ fun InspectionAwaitingSection(
                         Text(
                             "Sent back, waiting for their designers",
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
                         )
                         served.withDesigners.forEach { row ->
@@ -177,14 +177,14 @@ fun InspectionAwaitingSection(
                         Text(
                             "$n more assigned ${if (n == 1) "workshop isn't" else "workshops aren't"} handed in yet.",
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                     if (more) {
                         Text(
                             "Too many to load. Search Workshops to inspect.",
                             color = MaterialTheme.field.warning,
-                            fontSize = 11.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
@@ -205,7 +205,7 @@ private fun QueueRow(row: DesignWorkshopDto, notes: List<DwQueuedInspectionNote>
         Text(
             row.title.ifBlank { "Untitled workshop" },
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 14.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold
         )
         val line = listOfNotNull(
@@ -214,13 +214,13 @@ private fun QueueRow(row: DesignWorkshopDto, notes: List<DwQueuedInspectionNote>
             row.clusterName?.takeIf { it.isNotBlank() },
             row.submissionRound.takeIf { it > 0 }?.let { "round $it" },
         ).joinToString(" · ")
-        if (line.isNotBlank()) Text(line, color = MaterialTheme.field.muted, fontSize = 12.sp)
+        if (line.isNotBlank()) Text(line, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         if (notes.isNotEmpty()) {
             val held = notes.count { !it.waiting }
             Text(
                 "${notes.size} unsent ${if (notes.size == 1) "note" else "notes"}" + if (held > 0) " — $held need${if (held == 1) "s" else ""} your attention." else ".",
                 color = if (held > 0) MaterialTheme.field.warning else MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }

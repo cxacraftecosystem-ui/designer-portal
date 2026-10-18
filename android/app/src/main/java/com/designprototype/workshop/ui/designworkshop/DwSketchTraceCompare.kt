@@ -488,7 +488,7 @@ fun DwSketchTraceCompare(
                 // nobody uses — and this one is the reason the strip can afford to be below the frame.
                 "Drag to compare. Press and hold to see the photo.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -509,7 +509,7 @@ fun DwSketchTraceCompare(
             Text(
                 DW_TRACE_DIFFERENCE_NOTE,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -537,7 +537,7 @@ fun DwSketchTraceCompare(
         Text(
             if (reduction.isEmpty()) DW_TRACE_COMPARE_WHITE_NOTE else "$DW_TRACE_COMPARE_WHITE_NOTE $reduction",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
     }
@@ -638,7 +638,7 @@ private fun DwCompareBadge(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         color = Color.White,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Medium,
         modifier = modifier
             .padding(6.dp)

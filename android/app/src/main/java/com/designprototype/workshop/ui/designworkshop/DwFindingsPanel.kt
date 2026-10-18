@@ -430,7 +430,7 @@ private fun FindingsCard(
                 Text(
                     title,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 15.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
@@ -440,7 +440,7 @@ private fun FindingsCard(
                     tint = MaterialTheme.field.muted,
                 )
             }
-            Text(subtitle, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(subtitle, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             if (expanded) {
                 HorizontalDivider()
                 content()
@@ -454,7 +454,7 @@ private fun SectionLabel(text: String) {
     Text(
         text,
         color = MaterialTheme.field.muted,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.SemiBold,
         modifier = Modifier.padding(top = 4.dp),
     )
@@ -465,7 +465,7 @@ private fun Advisory(text: String, container: Color, ink: Color) {
     Text(
         text,
         color = ink,
-        fontSize = 12.sp,
+        style = MaterialTheme.typography.bodySmall,
         modifier = Modifier
             .fillMaxWidth()
             .background(container, RoundedCornerShape(8.dp))
@@ -503,9 +503,9 @@ private fun Verdict(token: String, headline: String, body: String, good: Boolean
         Text(
             "$token · $headline",
             color = ink,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
         )
-        Text(body, color = ink, fontSize = 12.sp)
+        Text(body, color = ink, style = MaterialTheme.typography.bodySmall)
     }
 }

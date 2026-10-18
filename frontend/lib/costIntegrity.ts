@@ -56,6 +56,7 @@
  * spent, and its absence from every subtotal may be the very discrepancy being looked at.
  */
 
+import { byCount } from "@/lib/format";
 import { asNumber, pyRound, pyStrip, pySum } from "@/lib/marketAnalysis";
 
 /** One stored stage row's `data`, with `_entryId` injected by whoever loaded it. */
@@ -292,7 +293,7 @@ export function checkSubtotal(
 
   if (declared === null) {
     const message =
-      `${sheetLabel}: the ${linesAdd(rolled.count, noun)} up to ${rupees(rolled.total)}; no ` +
+      `${sheetLabel}: the ${rolled.count} ${noun} ${byCount(rolled.count, "line adds", "lines add")} up to ${rupees(rolled.total)}; no ` +
       `${noun} cost is declared on the sheet.`;
     return { key, unit: "INR", declared: null, computed: rolled.total, difference: null, verdict: "NOT_DECLARED", message, lineCount: rolled.count };
   }
@@ -301,9 +302,9 @@ export function checkSubtotal(
   const verdict = compare(declared, rolled.total, TOLERANCE_RUPEES);
   const message =
     verdict === "AGREES"
-      ? `${sheetLabel}: the ${linesAdd(rolled.count, noun)} up to ${rupees(rolled.total)}, ` +
+      ? `${sheetLabel}: the ${rolled.count} ${noun} ${byCount(rolled.count, "line adds", "lines add")} up to ${rupees(rolled.total)}, ` +
         `which is what the sheet declares.`
-      : `${sheetLabel}: the ${linesAdd(rolled.count, noun)} up to ${rupees(rolled.total)}, but ` +
+      : `${sheetLabel}: the ${rolled.count} ${noun} ${byCount(rolled.count, "line adds", "lines add")} up to ${rupees(rolled.total)}, but ` +
         `the sheet declares ${rupees(declared)} — ${rupees(Math.abs(difference))} ` +
         `${difference < 0 ? "less" : "more"} than the lines account for.`;
   return { key, unit: "INR", declared, computed: rolled.total, difference, verdict, message, lineCount: rolled.count };

@@ -98,15 +98,15 @@ internal fun ReuseCard(busy: Boolean, onOpen: () -> Unit) {
                 "Use this questionnaire again",
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             OutlinedButton(onClick = onOpen, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Copy it to another workshop", fontSize = 13.sp)
+                Text("Copy it to another workshop", style = MaterialTheme.typography.labelLarge)
             }
-            Text(REUSE_BLURB, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text(REUSE_BLURB, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
         }
     }
 }
@@ -148,7 +148,7 @@ internal fun ReuseQuestionnaireDialog(
         title = { Text("Use “${source.title.ifBlank { "this questionnaire" }}” again", display = true) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(REUSE_BLURB, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+                Text(REUSE_BLURB, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
 
                 val options = workshops.options()
                 SearchableSelectField(
@@ -190,7 +190,7 @@ internal fun ReuseQuestionnaireDialog(
                         Text(
                             "$line The copy can be attached later.",
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                         )
                     }
@@ -198,14 +198,14 @@ internal fun ReuseQuestionnaireDialog(
                     Text(
                         "Only workshops you can open.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 16.sp,
                     )
                     workshops.capNotice()?.let { cap ->
                         Text(
                             cap,
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                         )
                     }
@@ -226,7 +226,7 @@ internal fun ReuseQuestionnaireDialog(
                     // apart in a list.
                     "Defaults to “${source.title.ifBlank { "Untitled" }} (reused)”.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
 
@@ -256,7 +256,7 @@ internal fun ReuseQuestionnaireDialog(
                             ?: "The source has no description."
                     },
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                 )
             }

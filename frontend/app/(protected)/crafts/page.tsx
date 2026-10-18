@@ -30,7 +30,7 @@ import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { apiFetch, listResource } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { countNoun, formatDate } from "@/lib/format";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { requiredText, textValue } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
@@ -352,7 +352,7 @@ function CraftsPageBody() {
           */
           setMediaFiles(stranded.map((outcome) => outcome.file));
           setError(
-            `${stranded.length} of ${mediaFiles.length} file(s) failed to upload: ${stranded
+            `${stranded.length} of ${countNoun(mediaFiles.length, "file")} failed to upload: ${stranded
               .map((outcome) => outcome.file.name)
               .join(", ")}. ` +
               "The craft was saved. Retry them before leaving this form, or they're lost."

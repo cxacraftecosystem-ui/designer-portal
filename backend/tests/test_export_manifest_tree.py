@@ -912,7 +912,7 @@ class TestDesignWorkshopHalf:
         )
         paths = _paths(manifest)
         note = _content(manifest, f"Design workshops/{export.DW_WITHHELD_FILE}")
-        assert "2 design workshop(s)" in note
+        assert "2 design workshops are" in note
         assert "By design workshop" in note
         assert "Design workshops/Bagru indigo fortnight/details.txt" not in paths
 

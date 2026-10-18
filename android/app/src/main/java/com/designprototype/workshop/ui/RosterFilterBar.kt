@@ -252,7 +252,7 @@ fun RosterFilterSheet(
                     RosterLabels.FILTERS,
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 16.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
                 // SHOWN ONLY WHEN SOMETHING IS SET, because a button that clears nothing is a button
@@ -361,7 +361,7 @@ fun RosterFilterSheet(
                     Text(
                         RosterLabels.DATE_RANGE,
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     // ⚠ TWO `FieldDateField`s AND NOT `FieldDateRangeField`, WHICH IS WHAT §4.9 NAMES.
                     //
@@ -535,7 +535,7 @@ fun RosterNotice(text: String) {
     Text(
         text,
         color = MaterialTheme.field.onWarningContainer,
-        fontSize = 12.sp,
+        style = MaterialTheme.typography.bodySmall,
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.field.warningContainer, RoundedCornerShape(8.dp))
@@ -546,7 +546,7 @@ fun RosterNotice(text: String) {
 /** A line under a control saying what it means. Muted, because it explains rather than warns. */
 @Composable
 fun RosterHint(text: String) {
-    Text(text, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+    Text(text, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
 }
 
 /** One request in flight, named. Never "Loading…" alone — a reader cannot tell which read is late. */
@@ -557,7 +557,7 @@ fun RosterLoadingRow(label: String) {
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-        Text(label, color = MaterialTheme.field.muted, fontSize = 13.sp)
+        Text(label, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -579,9 +579,9 @@ fun RosterEmptyState(title: String, body: String) {
             title,
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 15.sp
+            style = MaterialTheme.typography.titleMedium
         )
-        Text(body, color = MaterialTheme.field.muted, fontSize = 13.sp, lineHeight = 18.sp)
+        Text(body, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
     }
 }
 
@@ -616,7 +616,7 @@ fun RosterPageBar(
         Text(
             "Page $page of $pages · $total $noun",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.weight(1f)
         )
         OutlinedButton(

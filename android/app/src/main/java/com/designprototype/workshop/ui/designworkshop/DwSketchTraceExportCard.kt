@@ -235,7 +235,7 @@ fun DwSketchTraceExportCard(
         Text(
             "Save this drawing",
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 14.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
@@ -243,7 +243,7 @@ fun DwSketchTraceExportCard(
             "$DW_TRACE_EXPORT_FORMAT_COUNT formats. The drawing is the same in all of them; what " +
                 "changes is which machine can open it.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -257,7 +257,7 @@ fun DwSketchTraceExportCard(
                         saved = null
                         savedNote = ""
                     },
-                    label = { Text(row.label, fontSize = 13.sp) },
+                    label = { Text(row.label, style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.heightIn48(),
                 )
             }
@@ -269,7 +269,7 @@ fun DwSketchTraceExportCard(
         Text(
             format.hint,
             color = MaterialTheme.field.body,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 16.sp,
         )
 
@@ -287,7 +287,7 @@ fun DwSketchTraceExportCard(
         Text(
             "Background",
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
         )
         if (onBackgroundChange != null) {
@@ -302,7 +302,7 @@ fun DwSketchTraceExportCard(
                             savedNote = ""
                             onBackgroundChange(option)
                         },
-                        label = { Text(if (option) "White" else "Transparent", fontSize = 13.sp) },
+                        label = { Text(if (option) "White" else "Transparent", style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.heightIn48(),
                     )
                 }
@@ -310,7 +310,7 @@ fun DwSketchTraceExportCard(
             Text(
                 DW_TRACE_BACKGROUND_RETRACE_SENTENCE,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         } else {
@@ -319,7 +319,7 @@ fun DwSketchTraceExportCard(
             Text(
                 dwTraceBackgroundLabel(documentBackground),
                 color = MaterialTheme.field.body,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
 
@@ -335,7 +335,7 @@ fun DwSketchTraceExportCard(
             Text(
                 "· $line",
                 color = MaterialTheme.field.warning,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
         }
@@ -345,7 +345,7 @@ fun DwSketchTraceExportCard(
                 Text(
                     DW_TRACE_EXPORT_PREVIEW_SENTENCE,
                     color = MaterialTheme.field.warning,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                 )
                 if (onNeedFullResolution != null) {
@@ -354,7 +354,7 @@ fun DwSketchTraceExportCard(
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth().heightIn48(),
                     ) {
-                        Text("Trace it at full size", fontSize = 13.sp)
+                        Text("Trace it at full size", style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }
@@ -367,7 +367,7 @@ fun DwSketchTraceExportCard(
                 Text(
                     plan.reason,
                     color = MaterialTheme.field.warning,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                 )
             }
@@ -437,7 +437,7 @@ fun DwSketchTraceExportCard(
                         )
                     }
                     Spacer(Modifier.width(6.dp))
-                    Text(if (working) "Writing the file…" else format.save, fontSize = 13.sp)
+                    Text(if (working) "Writing the file…" else format.save, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -465,14 +465,14 @@ fun DwSketchTraceExportCard(
                     Text(
                         "Saved",
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     // WHERE IT WENT, IN THE NAME MediaProvider ACTUALLY USED. A colliding DISPLAY_NAME
                     // is silently uniquified to `name (1).ext`, and printing the requested name would
                     // name a file that is not on disk — the defect `persistFileToDownloads` re-queries
                     // the store to close.
-                    Text(file.savedTo, color = MaterialTheme.field.body, fontSize = 11.sp)
+                    Text(file.savedTo, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
 
                     // WHAT WAS DECIDED WHILE THIS FILE WAS BEING WRITTEN, in the past tense and with
                     // the real numbers in it. Inside the live region above rather than beside it, so a
@@ -483,7 +483,7 @@ fun DwSketchTraceExportCard(
                         Text(
                             savedNote,
                             color = MaterialTheme.field.warning,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                         )
                     }
@@ -519,14 +519,14 @@ fun DwSketchTraceExportCard(
                         Text(
                             DW_TRACE_EXPORT_SHARE_CAVEAT,
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                         )
                     } else {
                         Text(
                             DW_TRACE_EXPORT_NO_SHARE_SENTENCE,
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                         )
                     }

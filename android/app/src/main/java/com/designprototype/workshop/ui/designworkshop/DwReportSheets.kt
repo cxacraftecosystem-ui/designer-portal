@@ -61,6 +61,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -180,12 +182,14 @@ private const val DW_HEAD_CLEARANCE_MM = 6f
 private const val DW_FOOT_RESERVE_MM = 10f
 
 /**
- * The running head and foot are set at 7.8 pt against a 10.5 pt body in `PdfWriter.drawFurniture`.
- * This preview's body is 13 sp (`DwReportBlock`'s PARAGRAPH arm), so the furniture is
- * 13 × 7.8 ÷ 10.5 = 9.66 sp. Rounded to one decimal rather than to a round number, because the
- * running foot's width is what decides whether the page label and the footer text share a line.
+ * The running head and foot. `PdfWriter.drawFurniture` sets them at 7.8 pt against a 10.5 pt body,
+ * which against this preview's 14sp body (bodyMedium, `DwReportBlock`'s PARAGRAPH arm) would be
+ * 10.4sp — under the app's 11sp floor. So the furniture sits ON the floor, labelSmall at the
+ * body's weight: a step larger than the file's proportion, which can only move the page label onto
+ * a line of its own sooner, never hide it.
  */
-private val DW_FURNITURE_SIZE = 9.7.sp
+private val DW_FURNITURE_STYLE: TextStyle
+    @Composable get() = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Normal)
 
 /** The space between two blocks in the flow. Used to LAY OUT and to PLAN, so the two cannot drift. */
 private val DW_SHEET_BLOCK_GAP = 10.dp
@@ -522,7 +526,7 @@ internal fun DwReportSheets(
                 (if (focusPages.size == 1) "Page ${focusPages.first().pageNumber}" else "Pages ${focusPages.first().pageNumber}–${focusPages.last().pageNumber}") +
                     " of ${drawPacked.pages.size}",
                 color = chrome,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 15.sp,
             )
         }
@@ -538,7 +542,7 @@ internal fun DwReportSheets(
             Text(
                 "Laying the document out onto pages…",
                 color = chrome,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(vertical = 12.dp),
             )
         } else {
@@ -626,7 +630,7 @@ private fun DwSheetStrip(
                 "$total page${if (total == 1) "" else "s"} · ${geometry.label} · ${geometry.marginLabel}"
             },
             color = color,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 15.sp,
         )
 
@@ -653,7 +657,7 @@ private fun DwSheetStrip(
             Text(
                 "Page counts are close estimates; Word and the .pdf may break lines differently.",
                 color = color,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 15.sp,
             )
         }
@@ -662,7 +666,7 @@ private fun DwSheetStrip(
             Text(
                 "Shown at the document's own text size. Pinch or tap 100% to read.",
                 color = color,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 15.sp,
             )
         }
@@ -676,7 +680,7 @@ private fun DwSheetStrip(
             Text(
                 "· $figures figure${if (figures == 1) "" else "s"} shown as a placeholder, so breaks may shift.",
                 color = MaterialTheme.field.warning,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 15.sp,
             )
         }
@@ -690,7 +694,7 @@ private fun DwSheetStrip(
             Text(
                 "· $count tall block${if (count == 1) "" else "s"} scaled to fit (page${if (scaledPages.size == 1) " " else "s "}${scaledPages.joinToString(", ")}).",
                 color = MaterialTheme.field.warning,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 15.sp,
             )
         }
@@ -700,7 +704,7 @@ private fun DwSheetStrip(
             Text(
                 "· ${abandoned.size} block${if (abandoned.size == 1) "" else "s"} couldn't be laid out. Export to see everything.",
                 color = MaterialTheme.field.warning,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 15.sp,
             )
         }
@@ -711,7 +715,7 @@ private fun DwSheetStrip(
         Text(
             "In this report's accent colour.",
             color = color,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 15.sp,
         )
     }
@@ -740,7 +744,7 @@ private fun DwZoomTool(label: String, description: String, icon: ImageVector, on
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
-            Text(label, fontSize = 11.sp, maxLines = 1)
+            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
         }
     }
 }
@@ -879,7 +883,7 @@ private fun DwSheetStage(
                     "Shown at ${(scale * 100).roundToInt()}%." +
                         if (overflows) " Drag sideways to see the rest of the sheet." else "",
                     color = chromeColor,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 15.sp,
                 )
             }
@@ -1152,8 +1156,7 @@ private fun DwSheetHead(document: ReportDocument) {
         Text(
             document.meta.headerText,
             color = MaterialTheme.field.muted,
-            fontSize = DW_FURNITURE_SIZE,
-            lineHeight = DW_FURNITURE_SIZE * 1.3f,
+            style = DW_FURNITURE_STYLE,
             // `drawLine(line, margin, textW, Align.RIGHT, …)` — the running head is right-aligned.
             textAlign = TextAlign.End,
             modifier = Modifier.fillMaxWidth(),
@@ -1178,8 +1181,7 @@ private fun DwSheetFoot(document: ReportDocument, label: String) {
             Text(
                 document.meta.footerText,
                 color = MaterialTheme.field.muted,
-                fontSize = DW_FURNITURE_SIZE,
-                lineHeight = DW_FURNITURE_SIZE * 1.3f,
+                style = DW_FURNITURE_STYLE,
                 modifier = Modifier.weight(1f, fill = false),
             )
             // `showPageNumbers` is the template's own switch and the writers obey it; a preview that
@@ -1189,8 +1191,7 @@ private fun DwSheetFoot(document: ReportDocument, label: String) {
                 Text(
                     label,
                     color = MaterialTheme.field.muted,
-                    fontSize = DW_FURNITURE_SIZE,
-                    lineHeight = DW_FURNITURE_SIZE * 1.3f,
+                    style = DW_FURNITURE_STYLE,
                 )
             }
         }

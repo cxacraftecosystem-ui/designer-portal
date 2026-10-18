@@ -53,7 +53,7 @@ import Link from "next/link";
 import { ChevronDown, CloudOff, Loader2, MessageSquareQuote, Star } from "lucide-react";
 
 import { isUnreachable } from "@/lib/failureTriage";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { countNoun, formatDate, formatDateTime } from "@/lib/format";
 
 import { fetchSubjectLedger, refusalText, submitOrQueueDesignRating } from "./ratingsApi";
 import type { DesignRating, RankedItem, RatingRound, SubjectLedger } from "./reviewRanking";
@@ -509,7 +509,7 @@ function Ledger({ ledger }: { ledger: SubjectLedger }) {
           ? "Nobody has rated this piece yet."
           : ledger.canReadLedger
             ? "No ratings were found for this round."
-            : `${ledger.summary.ratingCount} rating(s), anonymous.`}
+            : `${countNoun(ledger.summary.ratingCount, "rating")}, anonymous.`}
       </p>
     );
   }

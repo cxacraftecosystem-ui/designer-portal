@@ -852,7 +852,7 @@ internal fun DwIdentityCardControl(
                         } else {
                             MaterialTheme.field.muted
                         },
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -865,12 +865,12 @@ internal fun DwIdentityCardControl(
                     Icon(Icons.Filled.Badge, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
                 Spacer(Modifier.width(6.dp))
-                Text(if (working) "Reading the card…" else "Photograph the card", fontSize = 13.sp)
+                Text(if (working) "Reading the card…" else "Photograph the card", style = MaterialTheme.typography.labelLarge)
             }
             OutlinedButton(onClick = ::startPick, enabled = usable) {
                 Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Choose a photo", fontSize = 13.sp)
+                Text("Choose a photo", style = MaterialTheme.typography.labelLarge)
             }
             /*
              * THE WAY FORWARD, and it appears only once there is nowhere else to go.
@@ -890,7 +890,7 @@ internal fun DwIdentityCardControl(
                     Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     // The label the blocked sentence quotes, from the one place it is spelled.
-                    Text(DW_CAMERA_SETTINGS_BUTTON, fontSize = 13.sp)
+                    Text(DW_CAMERA_SETTINGS_BUTTON, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -914,7 +914,7 @@ internal fun DwIdentityCardControl(
                     "Works offline. You confirm the number before it's filled in." + notKeptSuffix(canKeep)
             },
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         // What actually happened to the photograph a designer asked to keep — including the two
         // failures, which are the messages that matter most: the upload that produced nothing to
@@ -926,7 +926,7 @@ internal fun DwIdentityCardControl(
         // there; that is the outcome a designer should notice on their way past, not a receipt. The
         // ordinary state of this control has no note here at all.
         keptNote?.let { note ->
-            Text(note, color = MaterialTheme.field.warning, fontSize = 11.sp, lineHeight = 16.sp)
+            Text(note, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
         }
         // THE SERVER'S CONFIRMATION, and only when the server actually gave one. See
         // [photographWasNotStored] for why an absent key is silence rather than reassurance.
@@ -934,7 +934,7 @@ internal fun DwIdentityCardControl(
             Text(
                 "The photo was read and discarded.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
@@ -951,13 +951,13 @@ internal fun DwIdentityCardControl(
                 if (choices.size == 1) "Check this against the card before using it"
                 else "Check these ${choices.size} numbers against the card",
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
                 "Nothing is saved into $targetLabel until you tap a number. Check it against the card itself.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
             if (storeMasked) {
                 // WHAT THE FIELD WILL ACTUALLY KEEP, SAID WHERE THE FULL NUMBER IS ON SCREEN.
@@ -976,14 +976,14 @@ internal fun DwIdentityCardControl(
                 Text(
                     "$targetLabel stores only the last four digits (“XXXX XXXX ####”).",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
             if (unconfirmedByServer) {
                 Text(
                     "Check this against the card.",
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
             choices.forEach { choice ->
@@ -1008,7 +1008,7 @@ internal fun DwIdentityCardControl(
                             // The button SAYS the number it will write, grouped 4-4-4 as the card
                             // prints it. "Accept" would be a button whose effect the designer has to
                             // remember; this one is the sentence they are agreeing to.
-                            Text("Use ${displayOf(choice)}", fontSize = 13.sp)
+                            Text("Use ${displayOf(choice)}", style = MaterialTheme.typography.labelLarge)
                         }
                     }
                     Text(
@@ -1028,7 +1028,7 @@ internal fun DwIdentityCardControl(
                             choice.confidence?.let { if (it >= 0.85) "read clearly" else "read with difficulty" },
                         ).joinToString(" · "),
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -1036,7 +1036,7 @@ internal fun DwIdentityCardControl(
                 TextButton(modifier = Modifier.destructiveAction(), onClick = {
                     choices = emptyList()
                     discardPhoto()
-                }) { Text("None of these — discard", fontSize = 13.sp) }
+                }) { Text("None of these — discard", style = MaterialTheme.typography.labelLarge) }
             }
         }
     }

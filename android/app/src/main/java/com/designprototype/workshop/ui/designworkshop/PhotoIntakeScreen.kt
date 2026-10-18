@@ -287,11 +287,11 @@ fun PhotoIntakeScreen(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Import photographs", display = true, color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp)
+        Text("Import photographs", display = true, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.headlineSmall)
         Text(
             "Match camera photos to this workshop's dates, then confirm.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 17.sp
         )
 
@@ -301,7 +301,7 @@ fun PhotoIntakeScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Reading this workshop…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Reading this workshop…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             return@Column
         }
@@ -321,11 +321,11 @@ fun PhotoIntakeScreen(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text("How the dates are read", display = true, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
+            Text("How the dates are read", display = true, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium)
             Text(
                 "Times are read as ${DwPhotoIntake.DEFAULT_TIMEZONE}. Nothing is attached until you confirm.",
                 color = MaterialTheme.field.body,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 18.sp
             )
             Text(
@@ -335,7 +335,7 @@ fun PhotoIntakeScreen(
                     "No dates yet. Add start and end dates on stage 1."
                 },
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 18.sp
             )
         }
@@ -352,14 +352,14 @@ fun PhotoIntakeScreen(
         Text(
             "Files aren't copied until you confirm.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         reading?.let { (done, total) ->
             Text(
                 "Reading capture dates — $done of $total.",
                 color = MaterialTheme.field.body,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
             )
         }
@@ -378,7 +378,7 @@ fun PhotoIntakeScreen(
         Text(
             "${summary.total} chosen · $ready ready to attach · ${summary.total - ready} need you",
             color = if (ready < summary.total) MaterialTheme.field.warning else MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         Button(
@@ -459,7 +459,7 @@ private fun DwIntakeRowCard(
                     Text(
                         line.row.fileName,
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -467,7 +467,7 @@ private fun DwIntakeRowCard(
                     Text(
                         line.row.stamp?.let { "Taken ${DwPhotoIntake.formatStamp(it)}" } ?: "No capture date",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     Text(
                         destination?.label ?: "Left out — choose a stage to attach it",
@@ -476,7 +476,7 @@ private fun DwIntakeRowCard(
                         } else {
                             MaterialTheme.field.warning
                         },
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -532,7 +532,7 @@ private fun DwIntakeRowCard(
                     } else {
                         MaterialTheme.field.muted
                     },
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                     modifier = if (matching == null && line.row.refusal != null) {
                         Modifier
@@ -562,7 +562,7 @@ private fun DwIntakeRowCard(
                     Text(
                         "This workshop has no photograph fields to attach to yet.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 } else {
                     SearchableSelectField(

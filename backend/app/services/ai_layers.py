@@ -77,6 +77,7 @@ from enum import Enum
 from typing import Any
 
 from app.core.db import db
+from app.services.text_format import by_count
 
 logger = logging.getLogger(__name__)
 
@@ -1420,8 +1421,9 @@ def deletion_plan(
     if live:
         kinds = sorted({_enum_str(getattr(d, "kind", None)) or "layer" for d in live})
         raise LayerRuleViolation(
-            f"{len(live)} layer(s) were produced from this one ({', '.join(kinds)}) and would be "
-            f"left describing something no longer on screen. Delete those first, or leave this one "
+            f"{len(live)} {by_count(len(live), 'layer was', 'layers were')} produced from this one "
+            f"({', '.join(kinds)}) and would be left describing something no longer on screen. "
+            f"Delete {by_count(len(live), 'that', 'those')} first, or leave this one "
             f"in place — nothing here is printed unless it has been accepted."
         )
     return LayerWritePlan(

@@ -135,6 +135,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import model_validator
 
+from app.services.text_format import by_count, count_noun
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import (
@@ -4995,7 +4996,8 @@ async def report_sources(
     if resolver.withheld:
         # The sentence `_report_inputs` writes, word for word — see there.
         media_warnings.append(
-            f"{len(resolver.withheld)} attached file(s) could not be included: they were "
+            f"{count_noun(len(resolver.withheld), 'attached file')} could not be included: "
+            f"{by_count(len(resolver.withheld), 'it was', 'they were')} "
             "uploaded by another account, or the file is gone."
         )
     return {
@@ -5762,7 +5764,8 @@ async def _report_inputs(
         # saying so is what tells a designer to ask the colleague who uploaded it for a data-access
         # grant instead of re-photographing an artisan who has gone home.
         warnings.append(
-            f"{len(resolver.withheld)} attached file(s) could not be included: they were "
+            f"{count_noun(len(resolver.withheld), 'attached file')} could not be included: "
+            f"{by_count(len(resolver.withheld), 'it was', 'they were')} "
             "uploaded by another account, or the file is gone."
         )
     # AND THE THREE STAGE-20 SWITCHES THIS TEMPLATE CANNOT HONOUR. `apply_report_settings` can only
@@ -5987,8 +5990,8 @@ def _dropped_note(count: int) -> str:
     the packing above exists to stop.
     """
     return (
-        f"{count} further warning(s) did not fit in this header. The report preview lists all of "
-        "them."
+        f"{count_noun(count, 'further warning')} did not fit in this header. The report preview "
+        "lists all of them."
     )
 
 

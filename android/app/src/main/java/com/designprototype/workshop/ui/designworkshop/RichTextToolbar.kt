@@ -266,7 +266,7 @@ private fun RteToolLabelButton(
     onClick: () -> Unit,
 ) {
     RteToolShell(label, active, enabled = true, onClick = onClick) { tint ->
-        Text(glyph, color = tint, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(glyph, color = tint, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
     }
 }
 

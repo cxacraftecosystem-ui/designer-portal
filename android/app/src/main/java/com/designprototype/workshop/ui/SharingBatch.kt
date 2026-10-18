@@ -181,7 +181,7 @@ private fun BatchOutcomePanel(outcomes: List<ShareOutcome>, verb: String) {
         Text(
             summary,
             color = if (allGood) tokens.onSuccessContainer else tokens.onWarningContainer,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
             // Polite: this lands after a button press the researcher already knows they made, so
             // interrupting whatever TalkBack is mid-way through would be rude for no information.
@@ -195,7 +195,7 @@ private fun BatchOutcomePanel(outcomes: List<ShareOutcome>, verb: String) {
             Text(
                 "${outcome.name} — $prefix: ${outcome.reason.orEmpty()}",
                 color = tokens.onWarningContainer,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
@@ -246,7 +246,7 @@ fun RequestAccessFields(
         Text(
             "Request access to other researchers' data. Each decides and can limit it.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         SearchableMultiSelectField(
             label = "Researchers",
@@ -411,7 +411,7 @@ fun GrantAccessFields(
         Text(
             "Share all or selected records with colleagues, at the same tier.",
             color = Muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         SearchableMultiSelectField(
             label = "Colleagues",
@@ -451,8 +451,8 @@ fun GrantAccessFields(
         if (!allData) {
             val recs = myRecords
             when {
-                recs == null -> Text("Loading your records…", color = Muted, fontSize = 12.sp)
-                recs.isEmpty() -> Text("You have no records to share.", color = Muted, fontSize = 12.sp)
+                recs == null -> Text("Loading your records…", color = Muted, style = MaterialTheme.typography.bodySmall)
+                recs.isEmpty() -> Text("You have no records to share.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 // The same sheet as the people field above. This used to be every record rendered
                 // as a raw checkbox straight into the card — no summary line, so the only way to
                 // see what was ticked was to scroll back over it, and no search, so a researcher
@@ -546,7 +546,7 @@ private fun ScopeChoice(
         Text(
             label,
             color = Body,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

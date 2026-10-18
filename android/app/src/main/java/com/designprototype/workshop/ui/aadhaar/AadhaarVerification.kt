@@ -161,7 +161,7 @@ fun AadhaarStatusChip(status: String?) {
     Text(
         label,
         color = ink,
-        fontSize = 12.sp,
+        style = MaterialTheme.typography.bodySmall,
         fontWeight = FontWeight.Medium,
         modifier = Modifier
             .background(ground, RoundedCornerShape(50))
@@ -304,16 +304,16 @@ fun AadhaarVerifyCard(
                         current.verifiedAt?.take(10),
                         current.last4?.let { "Aadhaar ending $it" },
                     ).joinToString(" · ")
-                    if (detail.isNotEmpty()) Text(detail, color = MaterialTheme.field.muted, fontSize = 13.sp)
-                    current.name?.let { Text("Name as UIDAI holds it: $it", fontSize = 13.sp) }
+                    if (detail.isNotEmpty()) Text(detail, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
+                    current.name?.let { Text("Name as UIDAI holds it: $it", style = MaterialTheme.typography.bodyMedium) }
                     if (current.status == "NAME_MISMATCH") {
-                        current.recordName?.let { Text("Name on this record: $it", color = WarningInk, fontSize = 13.sp) }
+                        current.recordName?.let { Text("Name on this record: $it", color = WarningInk, style = MaterialTheme.typography.bodyMedium) }
                     }
                 } else {
                     Text(
                         if (subject is AadhaarSubject.Self) "Verify this account with your Aadhaar."
                         else "Verify this artisan with their Aadhaar.",
-                        fontSize = 14.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                 }
                 Button(onClick = { step = Step.CONSENT }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
@@ -352,8 +352,8 @@ fun AadhaarVerifyCard(
                 Text(AadhaarCopy.CONSENT_HEADING, fontWeight = FontWeight.SemiBold)
                 AadhaarCopy.consentPoints(subject).forEach { point ->
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("•", fontSize = 14.sp)
-                        Text(point, fontSize = 14.sp, lineHeight = 20.sp)
+                        Text("•", style = MaterialTheme.typography.bodyMedium)
+                        Text(point, style = MaterialTheme.typography.bodyMedium, lineHeight = 20.sp)
                     }
                 }
                 Row(
@@ -361,7 +361,7 @@ fun AadhaarVerifyCard(
                     modifier = Modifier.fillMaxWidth().clickable { agreed = !agreed },
                 ) {
                     Checkbox(checked = agreed, onCheckedChange = { agreed = it })
-                    Text(AadhaarCopy.consentStatement(subject), fontSize = 14.sp)
+                    Text(AadhaarCopy.consentStatement(subject), style = MaterialTheme.typography.bodyMedium)
                 }
                 Button(onClick = { step = Step.METHOD }, enabled = agreed, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(AadhaarCopy.CONTINUE)
@@ -437,7 +437,7 @@ fun AadhaarVerifyCard(
                 Text(
                     "Optional: registered mobile or email to cross-check. Not stored.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                 )
                 OutlinedTextField(
                     value = mobile,
@@ -480,7 +480,7 @@ fun AadhaarVerifyCard(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text(AadhaarCopy.VID_HINT, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text(AadhaarCopy.VID_HINT, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 val current = issued
                 if (current != null) {
                     // The owner's six boxes (`OtpCodeField`): digits only, a paste fills all six.
@@ -521,7 +521,7 @@ fun AadhaarVerifyCard(
             Text(
                 line,
                 color = if (error != null) RefusedInk else MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
         }
@@ -540,8 +540,8 @@ private fun MethodRow(icon: @Composable () -> Unit, title: String, note: String,
     ) {
         icon()
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-            Text(note, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(title, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+            Text(note, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

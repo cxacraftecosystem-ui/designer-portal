@@ -13,7 +13,7 @@ import {
 // used to reach the outbox drain as an unrecognised error, default to "the connection is at fault",
 // and be re-thrown for ever under "Still no connection" — the whole jam, through the storage leg.
 import { LocalRefusalError, StorageError, triageFailure, underlyingError } from "@/lib/failureTriage";
-import { bytes } from "@/lib/format";
+import { byCount, bytes } from "@/lib/format";
 import type { MediaFile, MediaType } from "@/lib/types";
 
 /**
@@ -2402,7 +2402,7 @@ export async function uploadMediaBatch({
   // which stopped the pass as offline and came back to the same refusal for ever.
   if (files.length > 0 && failed.length === files.length) {
     throw new MediaBatchError(
-      `All ${files.length} media file(s) failed to upload (${failed[0]?.error ?? "network error"}). ` +
+      `${byCount(files.length, "The media file", `All ${files.length} media files`)} failed to upload (${failed[0]?.error ?? "network error"}). ` +
         adviceForALostBatch(failed[0]?.cause),
       failed
     );

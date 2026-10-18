@@ -761,7 +761,7 @@ internal fun DwReferenceSelectField(
             Text(
                 "Choose ${parentField?.label ?: "the field above"} first.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -794,7 +794,7 @@ internal fun DwReferenceSelectField(
             Text(
                 dwCascadeClearedMessage(parentField?.label.orEmpty()),
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -862,7 +862,7 @@ internal fun DwReferenceSelectField(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.size(6.dp))
-                    Text("${RecordOpen.UPDATE_LABEL} this $noun", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    Text("${RecordOpen.UPDATE_LABEL} this $noun", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -882,13 +882,13 @@ internal fun DwReferenceSelectField(
             Text(
                 dwCraftRegisterNote(field, writableFields),
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
         ReferenceProvenance(list = list, truncated = truncated, bridge = bridge, visible = !needsParent)
         if (!error.isNullOrBlank()) {
-            Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -1008,7 +1008,7 @@ internal fun DwReferenceMultiSelectField(
             Text(
                 "Choose ${parentField?.label ?: "the field above"} first.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         SearchableMultiSelectField(
@@ -1065,7 +1065,7 @@ internal fun DwReferenceMultiSelectField(
         )
         ReferenceProvenance(list = list, truncated = truncated, bridge = bridge, visible = !needsParent)
         if (!error.isNullOrBlank()) {
-            Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -1090,7 +1090,7 @@ private fun ReferenceProvenance(
         Text(
             "Linking opens once you can edit this workshop.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         return
     }
@@ -1098,7 +1098,7 @@ private fun ReferenceProvenance(
         Text(
             "Not downloaded yet. Connect once and reopen the stage.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         return
     }
@@ -1113,13 +1113,13 @@ private fun ReferenceProvenance(
             }
         },
         color = MaterialTheme.field.muted,
-        fontSize = 11.sp
+        style = MaterialTheme.typography.bodySmall
     )
     if (truncated) {
         Text(
             "Partly loaded. Refresh online if a record is missing.",
             color = MaterialTheme.colorScheme.error,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }
@@ -1742,7 +1742,7 @@ private fun DwReferenceScanPanel(
                 Text(
                     if (expanded) "Hide the code reader" else "Scan a card or tag",
                     color = MaterialTheme.colorScheme.primary,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.labelMedium,
                 )
             }
         }
@@ -1751,7 +1751,7 @@ private fun DwReferenceScanPanel(
             Text(
                 "Scan the ${wanted.label.lowercase()}'s card or tag to link it.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
             /*
@@ -1829,7 +1829,7 @@ private fun DwReferenceScanPanel(
             Text(
                 "Spaces and capitals don't matter. The last four characters are a check.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
 
@@ -1840,7 +1840,7 @@ private fun DwReferenceScanPanel(
                 Text(
                     it,
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 17.sp,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1853,7 +1853,7 @@ private fun DwReferenceScanPanel(
                 Text(
                     it,
                     color = MaterialTheme.field.onSuccessContainer,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
                     lineHeight = 17.sp,
                     modifier = Modifier

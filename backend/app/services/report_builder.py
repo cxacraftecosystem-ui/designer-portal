@@ -108,6 +108,7 @@ from app.services.stage_schema import (
     stage_completeness,
     stages,
 )
+from app.services.text_format import by_count, count_noun
 
 # Resolves a stored media id to something a renderer can embed. Returning None is normal — a
 # photo that failed to sync is not an error, it is a gap the report should survive.
@@ -2374,12 +2375,11 @@ class ReportBuilder:
         if artisans.placed:
             sentences.append(
                 f"Home places of {artisans.placed} of {artisans.total} participating artisans, "
-                f"at {len(artisans.points)} location{'' if len(artisans.points) == 1 else 's'}."
+                f"at {count_noun(len(artisans.points), 'location')}."
             )
         if artisans.total > artisans.placed:
             sentences.append(
-                f"{artisans.total - artisans.placed} participant{'' if artisans.total - artisans.placed == 1 else 's'} "
-                f"recorded no address that "
+                f"{count_noun(artisans.total - artisans.placed, 'participant')} recorded no address that "
                 f"could be placed."
             )
         if facts.approximate:
@@ -2584,7 +2584,7 @@ class ReportBuilder:
             kind=ChartKind.DONUT,
             series=tuple((label, float(count)) for label, count in tally.items()),
             title="Prototypes by review decision",
-            caption=f"{sum(tally.values())} prototype{'' if sum(tally.values()) == 1 else 's'} reviewed.",
+            caption=f"{count_noun(sum(tally.values()), 'prototype')} reviewed.",
         )
 
     def _survey_responses(self) -> list[dict[str, Any]]:
@@ -2650,7 +2650,7 @@ class ReportBuilder:
         if len(series) < MIN_CHART_CATEGORIES:
             return None
         plotted = sum(tally.values())
-        caption = f"{plotted} response(s) plotted, from the rows entered at this workshop."
+        caption = f"{count_noun(plotted, 'response')} plotted, from the rows entered at this workshop."
         # EVERY ROW THIS FIGURE DID NOT COUNT IS NAMED. A tally that quietly stops short is
         # indistinguishable from a survey that reached fewer people than it did.
         if unstated:
@@ -2658,7 +2658,7 @@ class ReportBuilder:
         unentered = self._unentered_responses()
         if unentered:
             caption += (
-                f" The survey summary states {plotted + unstated + unentered} response(s) "
+                f" The survey summary states {count_noun(plotted + unstated + unentered, 'response')} "
                 f"collected, so {unentered} were never entered as rows and are in no figure here."
             )
         return ChartBlock(
@@ -2695,12 +2695,14 @@ class ReportBuilder:
         if len(bands) < MIN_CHART_CATEGORIES:
             return None
         caption = (
-            f"{len(prices)} of {len(responses)} response(s) stated a price expectation, in rupees."
+            f"{len(prices)} of {count_noun(len(responses), 'response')} stated a price expectation, "
+            "in rupees."
         )
         unentered = self._unentered_responses()
         if unentered:
             caption += (
-                f" A further {unentered} response(s) the summary counts were never entered as rows."
+                f" A further {count_noun(unentered, 'response')} the summary counts "
+                f"{by_count(unentered, 'was', 'were')} never entered as rows."
             )
         return ChartBlock(
             kind=ChartKind.BAR,
@@ -2772,7 +2774,7 @@ class ReportBuilder:
             series=tuple(bands),
             title="Products by price band",
             unit="products",
-            caption=f"{len(prices)} product{'' if len(prices) == 1 else 's'} with a recorded price, in rupees.",
+            caption=f"{count_noun(len(prices), 'product')} with a recorded price, in rupees.",
         )
 
     def _chart_adoption(self) -> ChartBlock | None:
@@ -3337,7 +3339,8 @@ def build_report(
         )
         if not score.is_complete and score.missing:
             warnings.append(
-                f"Stage {spec.number} ({spec.title}): {len(score.missing)} required field(s) "
+                f"Stage {spec.number} ({spec.title}): "
+                f"{count_noun(len(score.missing), 'required field')} "
                 f"not recorded — {', '.join(score.missing[:4])}"
                 + ("…" if len(score.missing) > 4 else "")
             )
@@ -3398,10 +3401,12 @@ def build_report(
         # sentence has to stay a sentence.
         where = ", ".join(f"stage {spec.number}" for spec, _labels in lost_by_tier[:4])
         warnings.append(
-            f"{total} field(s) recorded in this workshop are above {template.name}'s capture tier "
-            f"({template.max_tier.value.title()}) and are not in this file — {where}"
+            f"{count_noun(total, 'field')} recorded in this workshop {by_count(total, 'is', 'are')} "
+            f"above {template.name}'s capture tier ({template.max_tier.value.title()}) and "
+            f"{by_count(total, 'is', 'are')} not in this file — {where}"
             + ("…" if len(lost_by_tier) > 4 else "")
-            + ". Generate the report with a template that captures every tier to include them."
+            + ". Generate the report with a template that captures every tier to include "
+            + f"{by_count(total, 'it', 'them')}."
         )
 
     # ── the photographs a template's photograph cap kept out ──────────────────────────────
@@ -3427,10 +3432,12 @@ def build_report(
         total = sum(count for _spec, count in over_cap)
         where = ", ".join(f"stage {spec.number}" for spec, _count in over_cap[:4])
         warnings.append(
-            f"{total} photograph{'' if total == 1 else 's'} recorded in this workshop did not fit "
-            f"{template.name}'s photograph cap and {'is' if total == 1 else 'are'} not in this file — {where}"
+            f"{count_noun(total, 'photograph')} recorded in this workshop did not fit "
+            f"{template.name}'s photograph cap and {by_count(total, 'is', 'are')} not in this file "
+            f"— {where}"
             + ("…" if len(over_cap) > 4 else "")
-            + ". Generate the report with a template that prints every photograph to include them."
+            + ". Generate the report with a template that prints every photograph to include "
+            + f"{by_count(total, 'it', 'them')}."
         )
 
     # ── the attached files this report names and does not contain ────────────────────────
@@ -3463,12 +3470,9 @@ def build_report(
         total = sum(count for _spec, count in attachments)
         where = ", ".join(f"stage {spec.number}" for spec, _count in attachments[:4])
         warnings.append(
-            (
-                f"1 attached file is named in this report but the file itself is not "
-                if total == 1
-                else f"{total} attached files are named in this report but the files themselves are not "
-            )
-            + f"inside it — {where}"
+            f"{total} attached {by_count(total, 'file is', 'files are')} named in this report but "
+            f"the {by_count(total, 'file itself is', 'files themselves are')} not "
+            f"inside it — {where}"
             + ("…" if len(attachments) > 4 else "")
             + ". A report file cannot carry a document, a recording or a video; send them "
             "alongside it."
@@ -3484,9 +3488,10 @@ def build_report(
     if builder.cover_fields_dropped:
         names = ", ".join(builder.cover_fields_dropped[:4])
         warnings.append(
-            f"{len(builder.cover_fields_dropped)} cover field(s) did not fit the cover table and "
-            f"the {template.name} template prints no workshop-setup section to carry them, so "
-            f"they are not in this file: {names}"
+            f"{count_noun(len(builder.cover_fields_dropped), 'cover field')} did not fit the cover "
+            f"table and the {template.name} template prints no workshop-setup section to carry "
+            f"{by_count(len(builder.cover_fields_dropped), 'it, so it is', 'them, so they are')} "
+            f"not in this file: {names}"
             + ("…" if len(builder.cover_fields_dropped) > 4 else "")
             + "."
         )
@@ -3507,8 +3512,9 @@ def build_report(
         # DETAILED_TECHNICAL" — which is a thing the designer can actually do about it.
         titles = sorted(item.title for item in hidden)
         warnings.append(
-            f"{len(hidden)} of this workshop's own section(s) ask only questions above "
-            f"{template.name}'s capture tier ({template.max_tier.value.title()}) and are not in "
+            f"{len(hidden)} of this workshop's own sections {by_count(len(hidden), 'asks', 'ask')} "
+            f"only questions above {template.name}'s capture tier "
+            f"({template.max_tier.value.title()}) and {by_count(len(hidden), 'is', 'are')} not in "
             f"this file: " + ", ".join(titles[:4]) + ("…" if len(titles) > 4 else "")
         )
 

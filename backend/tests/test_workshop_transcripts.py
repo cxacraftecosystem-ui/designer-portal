@@ -370,7 +370,7 @@ def test_a_failed_recording_is_never_reported_as_one_still_on_its_way():
 
     assert len(warnings) == 1
     message = warnings[0]
-    assert "1 recording(s) have no transcript and" in message
+    assert "1 recording has no transcript and" in message
     assert "yet" not in message, "the word that promises arrival must not cover a stalled clip"
     assert "still being transcribed" not in message
     assert "will not arrive on their own" in message
@@ -415,7 +415,7 @@ def test_both_classes_are_counted_separately_in_one_sentence():
         ),
     ]
     message = annexure_warnings(items)[0]
-    assert message.startswith("3 recording(s) have no transcript")
+    assert message.startswith("3 recordings have no transcript")
     assert "1 still being transcribed" in message
     assert "1 will not arrive on their own" in message
 

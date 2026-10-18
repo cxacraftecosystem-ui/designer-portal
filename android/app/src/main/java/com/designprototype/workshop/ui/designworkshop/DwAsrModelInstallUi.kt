@@ -1909,7 +1909,7 @@ internal fun DwAsrModelBody(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text("Looking at what this phone has…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text("Looking at what this phone has…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             return@Column
         }
@@ -1954,7 +1954,7 @@ internal fun DwAsrModelBody(
             Text(
                 "Speech model",
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f)
             )
             Text(
@@ -1964,7 +1964,7 @@ internal fun DwAsrModelBody(
                 } else {
                     MaterialTheme.field.muted
                 },
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         Text(
@@ -1976,7 +1976,7 @@ internal fun DwAsrModelBody(
                 source,
             ),
             color = MaterialTheme.field.body,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
         )
 
         /*
@@ -1996,7 +1996,7 @@ internal fun DwAsrModelBody(
             Text(
                 "The online model isn't the expected file. Ask an admin.",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
 
@@ -2015,11 +2015,11 @@ internal fun DwAsrModelBody(
         Text(
             dwAsrModelWhatItBuysSentence(languageLabels, support),
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         controller.status.failure?.let { failure ->
-            Text(failure, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            Text(failure, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
 
         // What a pause actually left on the phone, in bytes, above the two buttons that decide its
@@ -2028,7 +2028,7 @@ internal fun DwAsrModelBody(
             Text(
                 dwPausedSentence(controller.partialOnDiskBytes),
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -2047,7 +2047,7 @@ internal fun DwAsrModelBody(
             val stage = controller.phase
             Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
                 stage?.let {
-                    Text(dwTransferHeading(it), color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
+                    Text(dwTransferHeading(it), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodySmall)
                 }
                 live.percent?.let { percent ->
                     FieldLinearProgressIndicator(
@@ -2055,9 +2055,9 @@ internal fun DwAsrModelBody(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                Text(dwTransferLine(live), color = MaterialTheme.field.body, fontSize = 12.sp)
+                Text(dwTransferLine(live), color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
                 stage?.let { dwStalledSentence(live, it) }?.let { note ->
-                    Text(note, color = MaterialTheme.field.warning, fontSize = 11.sp)
+                    Text(note, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

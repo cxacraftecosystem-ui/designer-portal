@@ -517,7 +517,7 @@ fun SearchableSelectField(
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // [requiredMarked] and not a bare `label`: a caller's trailing " *" is painted in the error
         // colour here, and a label without one is unchanged. `field.muted` still sets the words.
-        Text(requiredMarked(label), color = MaterialTheme.field.muted, fontSize = 12.sp)
+        Text(requiredMarked(label), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         Box(modifier = Modifier.fillMaxWidth()) {
             SelectTrigger(
                 // The visible label sits in a separate Text above the button, which TalkBack reads
@@ -617,7 +617,7 @@ fun SearchableSelectField(
                                     // unasked, and there this file says nothing it was not told.
                                     emptyMessage ?: GENERIC_EMPTY_LINE,
                                     color = MaterialTheme.field.muted,
-                                    fontSize = 13.sp,
+                                    style = MaterialTheme.typography.labelLarge,
                                     lineHeight = 17.sp
                                 )
                             },
@@ -689,7 +689,7 @@ fun SearchableSelectField(
         // uses for its own replacement sentence a few hundred lines below — one shape for one fact,
         // whichever of the two controls is carrying it.
         standDownLine?.let { line ->
-            Text(line, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 16.sp)
+            Text(line, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
         }
     }
 
@@ -822,14 +822,14 @@ fun SearchableMultiSelectField(
         Text(
             requiredMarked(label) + AnnotatedString(" (${chosen.size} selected)"),
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         // THE TRIGGER SURVIVES AN EMPTY LIST WHEN THERE IS SOMETHING TO CREATE, and that exception is
         // the whole point of it. An empty roster is the state in which a designer most needs to add
         // the artisan standing in front of them; replacing the control with a sentence would take the
         // one action that answers it away at exactly the moment it is wanted.
         if (options.isEmpty() && createAction == null) {
-            Text(emptyMessage, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(emptyMessage, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         } else {
             SelectTrigger(
                 // THE REQUIRED MARK STAYS IN THIS STRING, as it does in the single-select's
@@ -876,7 +876,7 @@ fun SearchableMultiSelectField(
                         Text(
                             option.label,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
@@ -1181,7 +1181,7 @@ private fun SearchablePickerSheet(
                 Text(
                     title,
                     display = true,
-                    fontSize = 18.sp,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.semantics { heading() }
@@ -1249,7 +1249,7 @@ private fun SearchablePickerSheet(
                         if (loadMore != null) pagedCountLine(loadMore.shown, loadMore.total)
                         else countLine(filtered.size, options.size, searching),
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier
                             .align(Alignment.CenterVertically)
                             // Polite, not Assertive: it fires on every keystroke, and a screen
@@ -1275,11 +1275,11 @@ private fun SearchablePickerSheet(
                         TextButton(
                             onClick = { draft = draft + filtered.map { it.value } },
                             enabled = visibleUnselected > 0
-                        ) { Text("Select all ${filtered.size} shown", fontSize = 12.sp) }
+                        ) { Text("Select all ${filtered.size} shown", style = MaterialTheme.typography.labelMedium) }
                         TextButton(
                             onClick = { draft = emptySet() },
                             enabled = draft.isNotEmpty()
-                        ) { Text("Clear all", fontSize = 12.sp) }
+                        ) { Text("Clear all", style = MaterialTheme.typography.labelMedium) }
                     }
                 }
             }
@@ -1359,7 +1359,7 @@ private fun SearchablePickerSheet(
                             Text(
                                 pickerEmptyLine(searching, query, emptyMessage, options.isEmpty()),
                                 color = MaterialTheme.field.muted,
-                                fontSize = 13.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 lineHeight = 17.sp
                             )
                             if (searching) {
@@ -1522,11 +1522,11 @@ private fun PickerRow(
                     selected && !multiple -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.field.body
                 },
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
             )
             hint?.let {
-                Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         if (isHighlighted) {

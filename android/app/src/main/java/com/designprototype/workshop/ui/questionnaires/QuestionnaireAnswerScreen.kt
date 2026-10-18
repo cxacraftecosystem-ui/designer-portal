@@ -324,7 +324,7 @@ fun QuestionnaireAnswerScreen(
             Text(
                 notice,
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 17.sp,
             )
         }
@@ -334,13 +334,13 @@ fun QuestionnaireAnswerScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Opening the questionnaire…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Opening the questionnaire…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
             loadError != null -> Text(
                 loadError.orEmpty(),
                 color = MaterialTheme.field.warning,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodyMedium
             )
 
             loaded == null || entry == null -> EmptyNote("This sitting could not be opened.")
@@ -350,7 +350,7 @@ fun QuestionnaireAnswerScreen(
                     loaded.title.ifBlank { "Untitled questionnaire" },
                     display = true,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 20.sp
+                    style = MaterialTheme.typography.titleLarge
                 )
                 EmptyNote(
                     "No questions yet. Add them from the questionnaire screen."
@@ -399,7 +399,7 @@ fun QuestionnaireAnswerScreen(
                             "${section.code} — ${section.title}".trim(' ', '—'),
                             display = true,
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 17.sp,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.SemiBold
                         )
                         if (questions.isEmpty()) {
@@ -524,7 +524,7 @@ private fun AnswerHeader(
                 questionnaireTitle.ifBlank { "Untitled questionnaire" },
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 20.sp
+                style = MaterialTheme.typography.titleLarge
             )
             Text(
                 listOfNotNull(
@@ -532,14 +532,14 @@ private fun AnswerHeader(
                     respondentName?.takeIf { it.isNotBlank() && it != entryTitle }
                 ).joinToString(" · ").ifBlank { "Answers" },
                 color = MaterialTheme.field.body,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium
             )
             FieldLinearProgressIndicator(
                 progress = { if (total == 0) 0f else answered.toFloat() / total },
                 modifier = Modifier.fillMaxWidth()
             )
-            Text("$answered of $total answered", color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text("$answered of $total answered", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (source == "UPLOAD") {
                     QChip(
@@ -561,7 +561,7 @@ private fun AnswerHeader(
             }
             ActionRow {
                 TextButton(onClick = onEditSitting, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                    Text("Who is answering?", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    Text("Who is answering?", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -593,7 +593,7 @@ private fun SectionNavigator(
             Text(
                 "Section ${index + 1} of ${sections.size}",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f)
             )
             OutlinedButton(onClick = { onGo(index + 1) }, enabled = index < sections.lastIndex) {
@@ -639,11 +639,11 @@ private fun AnswerField(
         Text(
             requiredMarked(question.prompt + if (question.isRequired) " *" else ""),
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 14.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
         question.helpText?.takeIf { it.isNotBlank() }?.let {
-            Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp)
+            Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         /*
          * ── THESE TWO CARRY A MICROPHONE, AND THE WEB'S ANSWER PAGE ALREADY DID ────────────────
@@ -691,9 +691,9 @@ private fun AnswerField(
             locked -> Text(
                 "Recorded by someone else. Only they or an admin can change it.",
                 color = MaterialTheme.field.warning,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
-            dirty -> Text("Not saved yet", color = MaterialTheme.field.warning, fontSize = 11.sp)
+            dirty -> Text("Not saved yet", color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -719,7 +719,7 @@ private fun EntryDetailsDialog(
                 Text(
                     "Name who's answering to tell sittings apart.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
                 /*
                  * ── NO MICROPHONE ON THESE TWO, AND IT IS NOT AN OVERSIGHT ────────────────────

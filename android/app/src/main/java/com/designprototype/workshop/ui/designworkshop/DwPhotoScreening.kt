@@ -388,7 +388,7 @@ internal fun DwPhotoRefusalNotice(refused: List<DwPhotoGate.RefusedPhoto>, modif
                     Text(
                         DwPhotoGate.refusalHeading(lines.size),
                         color = MaterialTheme.colorScheme.onErrorContainer,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         lineHeight = 18.sp,
                     )
@@ -396,7 +396,7 @@ internal fun DwPhotoRefusalNotice(refused: List<DwPhotoGate.RefusedPhoto>, modif
                         Text(
                             line,
                             color = MaterialTheme.colorScheme.onErrorContainer,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 17.sp,
                         )
                     }
@@ -406,7 +406,7 @@ internal fun DwPhotoRefusalNotice(refused: List<DwPhotoGate.RefusedPhoto>, modif
                         // believes the app is checking exposure will stop checking it themselves.
                         DwPhotoGate.scopeSentence(),
                         color = MaterialTheme.colorScheme.onErrorContainer,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 16.sp,
                     )
                 }

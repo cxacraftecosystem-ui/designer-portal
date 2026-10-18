@@ -61,7 +61,7 @@ import { useWorkshopScope, WorkshopScopeSelect } from "@/components/WorkshopScop
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { ApiError, apiFetch, buildQuery, listResource } from "@/lib/api";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { countNoun, formatDate, formatDateTime } from "@/lib/format";
 import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, textValue } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { INTERVIEW_LANGUAGE_PLACEHOLDER, interviewLanguageOptions } from "@/lib/interviewLanguages";
@@ -285,12 +285,12 @@ function sectionProgress(
  * Android's own sentence, word for word.
  *
  * A field team that hears one thing described two ways ends up with two mental models of it, so the
- * handset owns this wording and the browser copies it — including the "(s)", which is how the
- * original is written.
+ * handset owns this wording and the browser copies it — including the count-chosen "recording" /
+ * "recordings", which the handset prints the same way.
  */
 function sectionProgressLabel(progress: SectionProgress): string {
   const head = `${progress.questions} questions · ${progress.answered} answered`;
-  return progress.recordings ? `${head} · ${progress.recordings} saved recording(s)` : head;
+  return progress.recordings ? `${head} · ${countNoun(progress.recordings, "saved recording")}` : head;
 }
 
 /**
@@ -2069,11 +2069,11 @@ function QuestionnairePageBody() {
         // SECOND interview rather than fold — which is correct, and is why the sentence says press
         // Save again rather than "re-submit however you like".
         setUploadError(
-          `${failedNames.length} of ${attempted} audio file(s) failed to upload: ${failedNames.join(", ")}.` +
+          `${failedNames.length} of ${countNoun(attempted, "audio file")} failed to upload: ${failedNames.join(", ")}.` +
             (firstCause ? ` Reason given: ${firstCause}` : "") +
             " The interview was saved. Press Save again to send them — leaving would lose them." +
             (orphanedClips
-              ? ` ${orphanedClips} more clip(s) belong to a removed question.`
+              ? ` ${orphanedClips} more ${orphanedClips === 1 ? "clip belongs" : "clips belong"} to a removed question.`
               : "")
         );
         setSaving(false);

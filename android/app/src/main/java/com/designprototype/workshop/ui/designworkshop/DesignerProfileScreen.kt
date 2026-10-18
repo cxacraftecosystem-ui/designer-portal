@@ -1172,7 +1172,7 @@ fun DesignerProfileScreen(
             if (editingSomebodyElse) "Designer profile" else "My designer profile",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
         Text(
             if (editingSomebodyElse) {
@@ -1181,7 +1181,7 @@ fun DesignerProfileScreen(
                 "Printed on the cover and signature of your reports."
             },
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         when {
@@ -1190,7 +1190,7 @@ fun DesignerProfileScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
             // A failed LOAD is not the same as an empty profile, and the difference has to be on
@@ -1199,7 +1199,7 @@ fun DesignerProfileScreen(
             loadFailed -> Text(
                 "Couldn't load this profile. Go back and reopen online — don't edit the empty fields.",
                 color = MaterialTheme.field.warning,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodyMedium
             )
 
             else -> {
@@ -1321,7 +1321,7 @@ fun DesignerProfileScreen(
                     Text(
                         "Printed in stage 3 of every report.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     /*
                      * THE LARGEST PROSE BOX IN THIS APP OUTSIDE A STAGE SCREEN, AND THE ONE WHERE
@@ -1435,7 +1435,7 @@ fun DesignerProfileScreen(
                     Text(
                         "Printed on your reports.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                     /*
                       THE WEB'S RICH BOX, ON THE HANDSET TOO (DA-28). The web made this column rich
@@ -1466,7 +1466,7 @@ fun DesignerProfileScreen(
                                 Text(
                                     "Full — $ADDRESS_LINE_MAX characters max.",
                                     color = MaterialTheme.field.muted,
-                                    fontSize = 11.sp
+                                    style = MaterialTheme.typography.bodySmall
                                 )
                             }
                         },
@@ -1514,7 +1514,7 @@ fun DesignerProfileScreen(
                     stateNotice?.takeIf { listIsAnswerable(stateRows) }?.let { line ->
                         // Only the CACHED case reaches here: the control is enabled, so the
                         // primitive draws nothing of its own and the date would otherwise be lost.
-                        Text(line, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        Text(line, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     }
                     DistrictOrTown(
                         state = form.state,
@@ -1590,7 +1590,7 @@ fun DesignerProfileScreen(
                     Text(
                         "Used to place you on the map. The address above is what reports print.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp
                     )
                     /*
@@ -1724,7 +1724,7 @@ fun DesignerProfileScreen(
                     Text(
                         "Photo and signature appear in reports. The CV is not. Reports name it, but a report file cannot carry a document, so send the CV alongside the report.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp
                     )
                     ProfileMediaRow(
@@ -1776,14 +1776,14 @@ fun DesignerProfileScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("CV", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        Text("CV", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                         Text(
                             "PDF, .docx, .odt or a scan.",
                             color = MaterialTheme.field.muted,
-                            fontSize = 11.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                         if (uploading == ProfileMediaSlot.CV) {
-                            Text("Uploading…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                            Text("Uploading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                         }
                         DwDocumentPreview(
                             mediaId = form.cvMediaId,
@@ -1871,7 +1871,7 @@ fun DesignerProfileScreen(
                     Text(
                         "Clearing a box clears the value, except the * fields and your district/map point.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -1918,7 +1918,7 @@ private fun ReadOnlyNotice(viewer: UserDto?) {
             )
         },
         color = MaterialTheme.field.onWarningContainer,
-        fontSize = 12.sp,
+        style = MaterialTheme.typography.bodySmall,
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.field.warningContainer, RoundedCornerShape(8.dp))
@@ -1942,7 +1942,7 @@ private fun ProfileSection(title: String, content: @Composable () -> Unit) {
                 title,
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 15.sp,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             HorizontalDivider(color = MaterialTheme.field.hairline)
@@ -2076,7 +2076,7 @@ private fun ProfileText(
     onValueChange: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp), modifier = Modifier.fillMaxWidth()) {
-        help?.let { Text(it, color = MaterialTheme.field.muted, fontSize = 12.sp) }
+        help?.let { Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall) }
         RecordProseField(
             label = if (required) "$label *" else label,
             value = value,
@@ -2118,7 +2118,7 @@ private fun StoredLocationSummary(location: LocationRequest?) {
         Text(
             "No district or map point yet.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         return
     }
@@ -2132,12 +2132,12 @@ private fun StoredLocationSummary(location: LocationRequest?) {
         Text(
             "Stated: " + stated.ifEmpty { "not recorded" },
             color = MaterialTheme.field.body,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
         Text(
             "Captured at ${readableCoordinate(location.latitude)}, ${readableCoordinate(location.longitude)} (the device's location).",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }
@@ -2224,7 +2224,7 @@ private fun DistrictOrTown(
             Text(
                 "No districts listed for $state. Type the town above.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
@@ -2255,7 +2255,7 @@ private fun ProfileMediaRow(
     // and the profile being saved.
     val model: Any? = localFile ?: remoteUrl
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(slot.caption(), color = MaterialTheme.field.muted, fontSize = 12.sp)
+        Text(slot.caption(), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(
                 contentAlignment = Alignment.Center,
@@ -2277,9 +2277,9 @@ private fun ProfileMediaRow(
                     mediaId.isNotBlank() -> Text(
                         "On file",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
-                    else -> Text("None", color = MaterialTheme.field.placeholder, fontSize = 11.sp)
+                    else -> Text("None", color = MaterialTheme.field.placeholder, style = MaterialTheme.typography.bodySmall)
                 }
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {

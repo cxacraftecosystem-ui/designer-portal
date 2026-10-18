@@ -90,7 +90,7 @@ def test_an_accepted_layer_with_no_text_prints_nothing_but_is_reported():
     """TAGS and METADATA carry structure, not prose. Silence about them would look like a bug."""
     tags = _layer(kind="TAGS", text="")
     assert ai_layer_annexure_blocks([tags]) == ()
-    assert any("carry no text" in w for w in annexure_warnings([tags]))
+    assert any("carries no text" in w for w in annexure_warnings([tags]))
 
 
 def test_the_designer_is_told_what_acceptance_left_out():
@@ -100,7 +100,7 @@ def test_the_designer_is_told_what_acceptance_left_out():
     acceptance is for, which is the one thing this feature needs them to understand.
     """
     warnings = annexure_warnings([_layer(), _layer(layer_id="l2", accepted=False)])
-    assert any("nobody has accepted them yet" in w for w in warnings)
+    assert any("nobody has accepted it yet" in w for w in warnings)
     assert any("accept the ones this report should carry" in w for w in warnings)
 
 

@@ -155,7 +155,7 @@ fun PlaceSearchOverlay(
             Text(
                 "Place search unavailable. Move the map or type coordinates.",
                 color = Muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
             )
         }
@@ -265,7 +265,7 @@ fun PlaceSearchOverlay(
             Text(
                 "Search only moves the map; place the pin yourself.",
                 color = Muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 14.sp
             )
 
@@ -284,7 +284,7 @@ fun PlaceSearchOverlay(
                         Text(
                             status,
                             color = if (state == PlaceSearchState.Failed) MaterialTheme.colorScheme.error else Muted,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                             fontWeight = if (state == PlaceSearchState.Failed) FontWeight.Medium else FontWeight.Normal,
                             modifier = Modifier
@@ -329,12 +329,12 @@ private fun PlaceSearchRow(hit: PlaceHit, onClick: () -> Unit) {
             Text(
                 hit.name.ifBlank { "Unnamed place" },
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             if (hit.context.isNotBlank()) {
-                Text(hit.context, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(hit.context, color = Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

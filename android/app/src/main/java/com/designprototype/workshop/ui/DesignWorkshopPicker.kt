@@ -554,7 +554,7 @@ internal fun WorkshopTypeField(
         Text(
             workshopTypeHint(state.served),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 15.sp,
         )
     }
@@ -1121,7 +1121,7 @@ fun DesignWorkshopField(
             onSelect = { state.choose(it) },
         )
         state.prefillNote?.let { note ->
-            Text(note, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+            Text(note, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
         }
         /*
           SAID ON THE CONTROL THAT COULD BE MISREAD AS A PERMISSION. A designer who believes this box
@@ -1133,7 +1133,7 @@ fun DesignWorkshopField(
         Text(
             "Files this record under a design workshop. Doesn't change who can read it.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
             lineHeight = 15.sp,
         )
         /*
@@ -1148,7 +1148,7 @@ fun DesignWorkshopField(
           another on the phone learns that the numbers are approximate.
         */
         workshopCapLine(state.workshops.size, state.total, WorkshopListKind.DESIGN)?.let { cap ->
-            Text(cap, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+            Text(cap, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
         }
         /*
           AND THE ONE SENTENCE ABOUT THE LIST ITSELF — the replacement for a gate that could only
@@ -1161,7 +1161,7 @@ fun DesignWorkshopField(
         */
         if (!standDown) {
             notice?.let { line ->
-                Text(line, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)
+                Text(line, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
             }
         }
     }

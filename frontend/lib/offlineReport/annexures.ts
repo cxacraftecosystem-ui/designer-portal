@@ -11,6 +11,7 @@
  * the draft already holds.
  */
 
+import { byCount, countNoun } from "@/lib/format";
 import {
   DocumentBuilder,
   cleanText,
@@ -256,8 +257,8 @@ export function customSectionItems(
   if (unanswered.length) {
     const titles = unanswered.map((i) => i.title).sort(pyCompare);
     warnings.push(
-      `${unanswered.length} of this workshop's own section(s) have no answers recorded and are ` +
-        `not in this file: ` +
+      `${unanswered.length} of this workshop's own sections ${byCount(unanswered.length, "has", "have")} no answers recorded and ` +
+        `${byCount(unanswered.length, "is", "are")} not in this file: ` +
         titles.slice(0, 4).join(", ") +
         (unanswered.length > 4 ? "…" : "")
     );
@@ -373,7 +374,7 @@ function sittingProvenance(sitting: QuestionnaireSitting): string {
     String(sitting.source).toUpperCase()
   ] ?? "";
   return [
-    `${answeredCount(sitting)} question${answeredCount(sitting) === 1 ? "" : "s"} answered`,
+    `${countNoun(answeredCount(sitting), "question")} answered`,
     source,
     sitting.recorded_at ? sitting.recorded_at.slice(0, 10) : "",
     sitting.recorded_by ? `recorded by ${sitting.recorded_by}` : ""
@@ -395,8 +396,8 @@ function questionnaireProvenance(item: QuestionnaireItem, stageTitles: Record<st
   const printed = printedSittings(item);
   const parts = [
     stageGroup(item, stageTitles)[2],
-    `${printed.length} sitting${printed.length === 1 ? "" : "s"}`,
-    item.question_count ? `${item.question_count} question${item.question_count === 1 ? "" : "s"}` : "",
+    countNoun(printed.length, "sitting"),
+    item.question_count ? countNoun(item.question_count, "question") : "",
     `version ${item.version}`,
     item.source_filename ? `from ${item.source_filename}` : "",
     `questionnaire ${item.questionnaire_id}`
@@ -512,8 +513,8 @@ export function appendQuestionnaireAnnexure(
       }
       if (dropped > 0) {
         doc.para(
-          `[${dropped} further ${dropped === 1 ? "sitting was" : "sittings were"} recorded against this ` +
-            `questionnaire and ${dropped === 1 ? "is" : "are"} not printed here. The full set is in the online workshop record.]`,
+          `[${dropped} further ${byCount(dropped, "sitting was", "sittings were")} recorded against this questionnaire and ` +
+            `${byCount(dropped, "is", "are")} not printed here. The full set is in the online workshop record.]`,
           "NOTE"
         );
       }

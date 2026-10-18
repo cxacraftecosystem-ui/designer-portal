@@ -125,7 +125,7 @@ private fun DwCustomSectionBlock(
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             section.title.ifBlank { section.key },
-            fontSize = 15.sp,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
         // NAMED AS THE DESIGNER'S OWN, once per section. Without it a custom question is
@@ -134,10 +134,10 @@ private fun DwCustomSectionBlock(
         Text(
             "Added to this workshop by its designer.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
         if (section.description.isNotBlank()) {
-            Text(section.description, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(section.description, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
 
         live.forEach { field ->
@@ -172,12 +172,12 @@ private fun DwCustomSectionBlock(
 @Composable
 private fun DwCustomRetiredAnswer(field: DwCustomFieldDto, value: JsonElement?) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(field.label.ifBlank { field.key }, color = MaterialTheme.field.muted, fontSize = 12.sp)
-        Text(DwValues.text(value), fontSize = 13.sp)
+        Text(field.label.ifBlank { field.key }, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
+        Text(DwValues.text(value), style = MaterialTheme.typography.bodyMedium)
         Text(
             "No longer asked. Earlier answer kept.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.bodySmall,
         )
     }
 }
@@ -195,13 +195,13 @@ private fun DwCustomUnreadNote() {
             Text(
                 "Some answers here can't be shown yet",
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
                 "They're safe and will sync. Open this workshop once online to see them.",
                 color = MaterialTheme.field.onWarningContainer,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
     }

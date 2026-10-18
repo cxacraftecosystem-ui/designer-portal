@@ -87,7 +87,7 @@ test("the .docx is a Word document carrying the workshop's text, in both scripts
   expect(footers.join("")).toContain("NUMPAGES");
   expect(Object.keys(zip.files).some((name) => name.startsWith("word/media/"))).toBe(true);
   // The one photograph the stub could not load is named beside the download, not lost in silence.
-  expect(file.warnings.join(" ")).toContain("photograph(s) are not on this device");
+  expect(file.warnings.join(" ")).toContain("1 photograph is not on this device");
 });
 
 test("the .pdf has pages and embeds the Noto faces the document's scripts need", async () => {

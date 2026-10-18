@@ -43,6 +43,7 @@ from app.services.csv_export import records_to_csv
 from app.services.record_fields import cell, info_panel, info_text, interview_label
 from app.services.records import owned_or_granted_where
 from app.services.s3 import presign_get_url
+from app.services.text_format import by_count, count_noun
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -894,7 +895,8 @@ async def dataset_manifest(
         for item in unknown:
             if item.entity_key == dw.CUSTOM_ENTITY_KEY:
                 notes.append(
-                    f"{item.rows} answer(s) to this workshop's own designer-written questions are "
+                    f"{count_noun(item.rows, 'answer')} to this workshop's own designer-written "
+                    f"questions {by_count(item.rows, 'is', 'are')} "
                     "not in this archive. Open the workshop in View Data (By design workshop) and "
                     "read designer-questions.txt there."
                 )
@@ -953,7 +955,8 @@ async def dataset_manifest(
         add_text(
             DESIGN_WORKSHOP_FOLDER,
             DW_WITHHELD_FILE,
-            f"{dw_withheld} design workshop(s) are not in this "
+            f"{count_noun(dw_withheld, 'design workshop')} {by_count(dw_withheld, 'is', 'are')} "
+            "not in this "
             "archive.\n\nOnly an admin can download design workshop data. You can read all of it on "
             "screen: View Data, then the By design workshop folder.\n",
         )

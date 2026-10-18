@@ -123,8 +123,8 @@ test.describe("what a file written on the device says beside it", () => {
   test("each kind of loss is named for what it is, and none of them mentions a server", () => {
     const said = droppedWarnings(["map:india", "chart:BAR", "cmgmedia1"]).join(" ");
     expect(said).toContain("locator map");
-    expect(said).toContain("1 figure(s)");
-    expect(said).toContain("1 photograph(s)");
+    expect(said).toContain("1 figure could not be drawn. Its numbers");
+    expect(said).toContain("1 photograph is not on this device");
     expect(said).not.toMatch(/server|endpoint|API|HTTP/i);
   });
 });

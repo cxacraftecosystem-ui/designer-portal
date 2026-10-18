@@ -223,7 +223,7 @@ fun MediaActionButton(
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(6.dp))
-        Text(label, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+        Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
     }
 }
 
@@ -311,7 +311,7 @@ fun MediaDownloadButton(
         ) {
             Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Download", fontSize = 13.sp)
+            Text("Download", style = MaterialTheme.typography.labelLarge)
         }
         return
     }
@@ -324,7 +324,7 @@ fun MediaDownloadButton(
             accessibleLabel = unavailableReason?.let { "Download $fileName. $it" } ?: "Download $fileName",
         )
         if (unavailableReason != null) {
-            Text(unavailableReason, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(unavailableReason, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -352,7 +352,7 @@ fun MediaDownloadNotice(downloader: MediaDownloader, modifier: Modifier = Modifi
             TextButton(onClick = { downloader.saved = null }) { Text("Dismiss") }
         },
     ) {
-        Text("Saved to Downloads as ${saved.name}", fontSize = 12.sp, maxLines = 2)
+        Text("Saved to Downloads as ${saved.name}", style = MaterialTheme.typography.bodySmall, maxLines = 2)
     }
 }
 

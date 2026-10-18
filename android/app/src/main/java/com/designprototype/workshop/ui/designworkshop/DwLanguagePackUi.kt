@@ -586,7 +586,7 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
         if (controller.checking) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text("Checking…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text("Checking…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
 
@@ -634,7 +634,7 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
         val reason = controller.cannotAsk
         if (!controller.checking) {
             when {
-                reason != null -> Text(reason, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                reason != null -> Text(reason, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 // `reason` is null here, which means the platform DID answer — so this is the "your
                 // phone's catalogue carries none of these" line and never the "cannot be asked" one.
                 // The other branch of that function is now composed by the controller, at the one
@@ -642,7 +642,7 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
                 rows.isEmpty() -> Text(
                     dwPackEmptyListSentence(canAsk = true),
                     color = MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
@@ -677,8 +677,8 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
          * not need a paragraph explaining why some rows have no button.
          */
         if (askable.isNotEmpty()) {
-            Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, fontSize = 12.sp)
-            Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
+            Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
         val downloadable = askable.size
 
@@ -759,18 +759,18 @@ private fun DwLanguagePackRow(
                 // being announced twice by a screen reader.
                 Checkbox(checked = checked, onCheckedChange = null)
             }
-            Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             Text(
                 dwPackStateLabel(state),
                 color = if (state == DwPackState.INSTALLED) MaterialTheme.field.success else MaterialTheme.field.muted,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         note?.let { request ->
             Text(
                 request.text,
                 color = if (request.failed) MaterialTheme.colorScheme.error else MaterialTheme.field.body,
-                fontSize = 11.sp
+                style = MaterialTheme.typography.bodySmall
             )
             request.percent?.let { percent ->
                 FieldLinearProgressIndicator(
@@ -902,11 +902,11 @@ internal fun DwLanguagePackOfferDialog(
                         Text(
                             "Checking $label…",
                             color = MaterialTheme.field.muted,
-                            fontSize = 13.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 } else {
-                    Text(dwPackStateSentence(label, state), color = MaterialTheme.field.body, fontSize = 13.sp)
+                    Text(dwPackStateSentence(label, state), color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
                     /*
                      * ONLY THE ARM THAT SPENDS MONEY SAYS ANYTHING MORE.
                      *
@@ -917,15 +917,15 @@ internal fun DwLanguagePackOfferDialog(
                      * `DwDictationButton`), so the arm was also unreachable in practice.
                      */
                     if (offer == DwPackOffer.DOWNLOAD) {
-                        Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, fontSize = 12.sp)
-                        Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
+                        Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 note?.let {
                     Text(
                         it.text,
                         color = if (it.failed) MaterialTheme.colorScheme.error else MaterialTheme.field.body,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }

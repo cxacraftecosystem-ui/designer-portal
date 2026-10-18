@@ -417,10 +417,10 @@ fun WorkshopViewersScreen(
             "Who can open this workshop",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
         if (title.isNotBlank()) {
-            Text(title, color = MaterialTheme.field.body, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(title, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
         }
 
         // ── The refusal, first, and never as a greyed control ─────────────────────────────────────
@@ -435,7 +435,7 @@ fun WorkshopViewersScreen(
         Text(
             "Besides the creator, only designers named here can open this workshop.",
             color = MaterialTheme.field.muted,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         // Said before anything is attempted, not only when it fails. This is the one capability in
@@ -444,7 +444,7 @@ fun WorkshopViewersScreen(
         Text(
             "Needs a connection.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         if (!onServer) {
@@ -469,7 +469,7 @@ fun WorkshopViewersScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             return@Column
         }
@@ -579,7 +579,7 @@ fun WorkshopViewersScreen(
                     // The WORD carries it; the colour only separates "somebody is hidden from you"
                     // from "nobody matched", and neither is an error.
                     color = if (offer.truncated) MaterialTheme.field.warning else MaterialTheme.field.muted,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
@@ -607,7 +607,7 @@ fun WorkshopViewersScreen(
         Text(
             "Unticking removes access when you save.",
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
 
         // ── What is currently SAVED ──────────────────────────────────────────────────────────────
@@ -619,7 +619,7 @@ fun WorkshopViewersScreen(
             Text(
                 "Only the creator and admins can open this workshop.",
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodySmall
             )
         } else {
             granted.forEach { row ->
@@ -632,7 +632,7 @@ fun WorkshopViewersScreen(
             Text(
                 "Will be added on save: " + added.joinToString(", ") { dwPersonLabel(it.name, it.email) } + ".",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -670,7 +670,7 @@ fun WorkshopViewersScreen(
             Text(
                 "$pending unsaved change${if (pending == 1) "" else "s"} · ${selection.resultingCount} designer${if (selection.resultingCount == 1) "" else "s"} with access.",
                 color = MaterialTheme.field.warning,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
         Spacer(Modifier.height(8.dp))
@@ -760,23 +760,23 @@ private fun CreatorCard(
             Text(
                 "ALWAYS HAS ACCESS",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
                 named?.first ?: "The designer who created it",
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 15.sp,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             named?.second?.takeIf { it.isNotBlank() }?.let {
-                Text(FieldPermissions.label(it), color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text(FieldPermissions.label(it), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             Text(
                 "Creator — always has access.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
             // SAID rather than passed over. With no creator id the picker cannot hold them out, so
             // they may appear in the list below — and an admin who does not know that would read
@@ -786,7 +786,7 @@ private fun CreatorCard(
                 Text(
                     "Creator unknown; they always have access regardless of this list.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
@@ -799,7 +799,7 @@ private fun GrantedRow(row: DwViewerDto, willBeRemoved: Boolean) {
         Text(
             dwPersonLabel(row.name, row.email),
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 14.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
         Text(
@@ -811,7 +811,7 @@ private fun GrantedRow(row: DwViewerDto, willBeRemoved: Boolean) {
                 row.grantedAt?.takeIf { it.isNotBlank() }?.let { "added ${it.take(10)}" },
             ).joinToString(" · "),
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
         // The WORDS carry it, not the colour: "will be removed on save" is legible to somebody who
         // cannot tell the red container from the grey one.
@@ -819,7 +819,7 @@ private fun GrantedRow(row: DwViewerDto, willBeRemoved: Boolean) {
             Text(
                 "will be removed on save",
                 color = MaterialTheme.colorScheme.onErrorContainer,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier
                     .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(6.dp))
                     .padding(horizontal = 8.dp, vertical = 3.dp)
@@ -834,7 +834,7 @@ private fun Notice(text: String, warning: Boolean) {
     Text(
         text,
         color = if (warning) MaterialTheme.field.onWarningContainer else MaterialTheme.colorScheme.onErrorContainer,
-        fontSize = 13.sp,
+        style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier
             .fillMaxWidth()
             .background(

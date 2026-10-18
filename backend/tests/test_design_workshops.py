@@ -676,7 +676,7 @@ def test_a_single_warning_wider_than_the_budget_is_marked_rather_than_passed_off
     header = _header(["y" * 4000, "A second warning."])
     assert len(header) <= _WARNINGS_HEADER_BUDGET
     assert header.split("; ")[0].endswith("...")
-    assert "1 further warning(s)" in header
+    assert "1 further warning did not fit" in header
 
 
 def test_non_ascii_is_replaced_rather_than_raising_inside_starlette():

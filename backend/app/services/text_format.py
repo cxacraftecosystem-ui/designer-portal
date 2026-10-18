@@ -216,6 +216,16 @@ def title_case_fields(data: dict[str, Any], fields: frozenset[str] | set[str]) -
     return data
 
 
+def by_count(count: int, one: str, many: str) -> str:
+    """The word that agrees with ``count``: ``by_count(n, "was", "were")``."""
+    return one if count == 1 else many
+
+
+def count_noun(count: int, one: str, many: str | None = None) -> str:
+    """``count`` and its noun in the right number: "1 file", "3 files" (``many`` defaults to +s)."""
+    return f"{count} {by_count(count, one, many if many is not None else one + 's')}"
+
+
 def title_case_rule() -> dict[str, Any]:
     """The rule as JSON, so the web and Android forms mirror it instead of forking their own copy.
 

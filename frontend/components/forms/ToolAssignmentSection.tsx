@@ -18,7 +18,7 @@ import {
   toolToOption
 } from "@/components/forms/recordPickers";
 import { apiFetch, listResource } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { countNoun, formatDate } from "@/lib/format";
 import { loadCachedRegister } from "@/lib/referenceCache";
 import {
   cachedListLine,
@@ -372,7 +372,7 @@ export function ToolAssignmentSection() {
       });
       setAssigned(updated);
       setArtisanIds([]);
-      setMessage(`This tool is now assigned to ${updated.length} artisan(s).`);
+      setMessage(`This tool is now assigned to ${countNoun(updated.length, "artisan")}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Assignment failed");
     } finally {

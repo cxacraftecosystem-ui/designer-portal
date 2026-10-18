@@ -49,6 +49,7 @@
  *    and {@link retiredFields} are the two halves, and no caller may filter by hand.
  */
 
+import { countNoun } from "@/lib/format";
 import { ApiError, apiFetch } from "@/lib/api";
 import {
   isFilled,
@@ -1083,7 +1084,7 @@ function fieldProblems(
   if (OPTION_TYPES.has(field.type)) {
     if (field.options.length < 2) {
       problems.push(
-        `Field ${where} is a ${field.type} with ${field.options.length} option(s). A choice needs ` +
+        `Field ${where} is a ${field.type} with ${countNoun(field.options.length, "option")}. A choice needs ` +
           "at least two; a single-option list is a label."
       );
     }

@@ -210,7 +210,7 @@ fun InspectionDetailScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     FieldCircularProgressIndicator(modifier = Modifier.size(18.dp))
-                    Text("Loading…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                    Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 }
             } else {
                 OutlinedButton(onClick = { reload++ }, modifier = Modifier.fillMaxWidth()) {
@@ -224,7 +224,7 @@ fun InspectionDetailScreen(
             record.title.ifBlank { "Untitled workshop" },
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 22.sp
+            style = MaterialTheme.typography.headlineSmall
         )
         val subtitle = listOfNotNull(
             record.craftName?.takeIf { it.isNotBlank() },
@@ -236,7 +236,7 @@ fun InspectionDetailScreen(
             record.workshopCode?.takeIf { it.isNotBlank() },
         ).joinToString(" · ")
         if (subtitle.isNotBlank()) {
-            Text(subtitle, color = MaterialTheme.field.body, fontSize = 13.sp)
+            Text(subtitle, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
         }
 
         // ── THE READ-ONLY STRIP, AND IT IS DRAWN FROM THE WIRE'S OWN FLAG ────────────────────────
@@ -314,7 +314,7 @@ private fun InspectionStage(
             "${stage.number}. ${stage.title}",
             display = true,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 17.sp,
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold
         )
         // The server's own numbers, printed only when the server sent them. A stage the payload
@@ -323,7 +323,7 @@ private fun InspectionStage(
             Text(
                 "$requiredFilled of $requiredTotal required fields answered.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -353,7 +353,7 @@ private fun InspectionStage(
                         ""
                     },
                 color = MaterialTheme.field.muted,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.bodySmall
             )
             HorizontalDivider()
             return@Column
@@ -375,7 +375,7 @@ private fun InspectionStage(
                 "${entity.title.ifBlank { entity.name }} · ${rows.size} " +
                     if (rows.size == 1) "record" else "records",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold
             )
             rows.forEachIndexed { index, row ->
@@ -404,7 +404,7 @@ private fun InspectionStage(
             Text(
                 "$customCount custom ${if (customCount == 1) "answer" else "answers"} recorded.",
                 color = MaterialTheme.field.muted,
-                fontSize = 12.sp
+                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -440,7 +440,7 @@ private fun InspectionRecord(
                 Text(
                     heading,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
                 )
             }
@@ -469,7 +469,7 @@ private fun InspectionRecord(
                         (if (unanswered == 1) "is" else "are") + " unanswered and " +
                         (if (unanswered == 1) "is" else "are") + " not listed above.",
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
@@ -496,7 +496,7 @@ private fun InspectionValue(
         Text(
             field.label.ifBlank { field.key },
             color = MaterialTheme.field.muted,
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold
         )
         Text(
@@ -505,13 +505,13 @@ private fun InspectionValue(
             // so it is set in the muted colour that every other explanatory sentence on this screen
             // uses — and the words say so too, because the colour alone is not legible to everybody.
             color = if (media) MaterialTheme.field.muted else MaterialTheme.colorScheme.onSurface,
-            fontSize = 13.sp
+            style = MaterialTheme.typography.bodyMedium
         )
         stamp?.attribution()?.let {
             Text(
                 it,
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier
                     .background(MaterialTheme.field.surface50, RoundedCornerShape(4.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp)

@@ -56,6 +56,7 @@ from app.services.artisan_identity import (
 from app.services.contact_formats import email_error, normalize_email, phone_error
 from app.services.report_model import clean_text
 from app.services.report_theme import ACCENT_PRESET_ENUM, FONT_PRESET_ENUM
+from app.services.text_format import by_count
 
 
 class Tier(str, Enum):
@@ -2245,7 +2246,10 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
                 allowed = ENUMS.get(spec.enum, {})
                 unknown = [v for v in items if v not in allowed]
                 if unknown:
-                    return None, f"{spec.label}: unknown option(s) {', '.join(unknown)}"
+                    return None, (
+                        f"{spec.label}: unknown {by_count(len(unknown), 'option', 'options')} "
+                        f"{', '.join(unknown)}"
+                    )
             # A RECORD-BACKED MULTI_ENUM IS NOT CHECKED AGAINST ANYTHING HERE, AND THAT IS THE
             # SAME ANSWER ``REF`` HAS ALWAYS GIVEN. (2026-09-03)
             #

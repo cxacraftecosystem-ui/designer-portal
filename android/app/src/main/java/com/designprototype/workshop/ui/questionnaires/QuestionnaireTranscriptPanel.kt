@@ -140,7 +140,7 @@ fun QuestionnaireQuickTranscript(
                     // region interrupts them to announce something they can do nothing about.
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     color = MaterialTheme.field.muted,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
             flag?.let { label ->
@@ -165,7 +165,7 @@ fun QuestionnaireQuickTranscript(
                     Text(
                         label,
                         color = if (amber) MaterialTheme.field.onWarningContainer else MaterialTheme.field.muted,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -183,7 +183,7 @@ fun QuestionnaireQuickTranscript(
                 Text(
                     QUESTIONNAIRE_OFFER_LINE,
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold,
                     lineHeight = 17.sp
                 )
@@ -219,15 +219,15 @@ fun QuestionnaireQuickTranscript(
                 Text(
                     text,
                     color = MaterialTheme.field.onWarningContainer,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     lineHeight = 19.sp
                 )
                 ActionRow {
                     OutlinedButton(onClick = onAccept) {
-                        Text(QUESTIONNAIRE_OFFER_ACCEPT, fontSize = 12.sp, maxLines = 1, softWrap = false)
+                        Text(QUESTIONNAIRE_OFFER_ACCEPT, style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
                     }
                     TextButton(onClick = onDiscard) {
-                        Text(QUESTIONNAIRE_OFFER_DISCARD, fontSize = 12.sp, maxLines = 1, softWrap = false)
+                        Text(QUESTIONNAIRE_OFFER_DISCARD, style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -238,7 +238,7 @@ fun QuestionnaireQuickTranscript(
                 it,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp
             )
         }

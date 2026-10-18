@@ -324,14 +324,14 @@ fun RecordCodeSection(
                 Text(
                     "${recordType.label} code",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 15.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
             }
             Text(
                 "Scan to open this ${recordType.label.lowercase()} on any device. Contains no personal details.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
 
@@ -355,7 +355,7 @@ fun RecordCodeSection(
                     Text(
                         render.message,
                         color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 16.sp,
                     )
                 }
@@ -367,7 +367,7 @@ fun RecordCodeSection(
                             Text(
                                 render.printed,
                                 color = MaterialTheme.field.body,
-                                fontSize = 11.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 lineHeight = 15.sp,
                                 // Monospace, because this string is read aloud and typed back: the
                                 // grouping is only legible if the groups line up.
@@ -376,7 +376,7 @@ fun RecordCodeSection(
                             Text(
                                 "The last four characters are a check.",
                                 color = MaterialTheme.field.muted,
-                                fontSize = 11.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 lineHeight = 14.sp,
                             )
                         }
@@ -410,7 +410,7 @@ fun RecordCodeSection(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
-                            Text("Drawing the code on this device…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                            Text("Drawing the code on this device…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                         }
                     }
 
@@ -419,7 +419,7 @@ fun RecordCodeSection(
             }
 
             problem?.let {
-                Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp, lineHeight = 16.sp)
+                Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
             }
         }
     }
@@ -439,7 +439,7 @@ fun RecordCodeSection(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(heading, color = MaterialTheme.field.body, fontSize = 13.sp)
+                    Text(heading, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
                     // A white plate under the symbol rather than the dialog's own surface: in dark
                     // mode the dialog is dark, and a dark quiet zone is a symbol most scanners never
                     // find. See the file header.
@@ -453,14 +453,14 @@ fun RecordCodeSection(
                     Text(
                         ok.printed,
                         color = MaterialTheme.field.body,
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         lineHeight = 18.sp,
                         fontFamily = FontFamily.Monospace,
                     )
                     Text(
                         "Scan it, or type the characters. Spaces and capitals don't matter.",
                         color = MaterialTheme.field.muted,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 16.sp,
                     )
                 }
@@ -487,8 +487,8 @@ private fun SavedCodeCard(file: SavedCode) {
             .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
             .padding(10.dp),
     ) {
-        Text("Saved", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        Text(file.displayLocation, color = MaterialTheme.field.body, fontSize = 11.sp)
+        Text("Saved", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+        Text(file.displayLocation, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodySmall)
         if (file.shareUri != null) {
             OutlinedButton(
                 onClick = {
@@ -511,7 +511,7 @@ private fun SavedCodeCard(file: SavedCode) {
             Text(
                 "Find it in Downloads.",
                 color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
     }
