@@ -8,6 +8,7 @@ gets skipped on the machine where somebody is changing the code.
 Every test is named as the sentence it asserts.
 """
 
+import re
 from io import BytesIO
 
 import pytest
@@ -202,9 +203,12 @@ def test_the_pro_forma_is_named_after_the_workshop_when_there_is_one():
     """
     from types import SimpleNamespace
 
-    assert pro_forma_filename(None) == "artisan-list-pro-forma.xlsx"
+    assert pro_forma_filename(None) == "DesignWorkshop_Artisan_Pro-Forma.xlsx"
     name = pro_forma_filename(SimpleNamespace(title='Bagru "block" printing\nwinter'))
-    assert name == "artisan-list-Bagru-block-printing-winter.xlsx"
+    # NAMING 2.1: <Portal>_Workshop_<date>_<code or title>_Artisan-List.xlsx
+    assert re.fullmatch(
+        r"DesignWorkshop_Workshop_\d{4}-\d{2}-\d{2}_Bagru-Block-Printing-Winter_Artisan-List\.xlsx", name
+    ), name
     assert '"' not in name and "\n" not in name
 
 

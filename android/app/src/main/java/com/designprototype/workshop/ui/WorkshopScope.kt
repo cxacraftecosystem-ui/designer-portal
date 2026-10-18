@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.WorkshopDetailDto
 import com.designprototype.workshop.data.apiErrorMessage
@@ -207,7 +208,9 @@ fun rememberWorkshopScope(
 
 /** "Chanderi weaving · 2026-07-12" — the same workshop label every other picker in the app shows. */
 fun workshopScopeLabel(workshop: WorkshopDetailDto): String {
-    val title = workshop.title.ifBlank { "Untitled workshop" }
+    // A blank title reads as its generated default (NAMING 2.4), which already carries the day.
+    if (workshop.title.isBlank()) return workshopDisplayTitle(null, date = workshop.occurrenceDate(), place = workshop.place)
+    val title = workshop.title
     val day = workshop.occurrenceDate().take(10)
     return if (day.isBlank()) title else "$title · $day"
 }
@@ -218,8 +221,9 @@ fun workshopScopeSummary(selected: Set<String>, workshops: List<WorkshopDetailDt
     val named = selected
         .filter { it != UNASSIGNED_WORKSHOP }
         .map { id ->
-            workshops.firstOrNull { it.id == id }?.title?.trim()?.ifBlank { null }
-                ?: "Untitled workshop"
+            workshops.firstOrNull { it.id == id }
+                ?.let { workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place) }
+                ?: workshopDisplayTitle(null)
         }
     if (named.isEmpty()) return "Only records not linked to a workshop."
     val list = if (named.size <= 3) named.joinToString(", ")

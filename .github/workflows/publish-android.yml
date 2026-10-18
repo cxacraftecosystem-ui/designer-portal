@@ -1233,8 +1233,8 @@ jobs:
           put_cfg="${RUNNER_TEMP}/curl-put.cfg"
           put_out="${RUNNER_TEMP}/put-response.txt"
 
-          code="$(jq -nc --argjson size "$APK_BYTES" \
-                '{filename: "app-release.apk",
+          code="$(jq -nc --arg name "DesignWorkshop_Android-App_Release-Build_v${VERSION_NAME}.apk" --argjson size "$APK_BYTES" \
+                '{filename: $name,
                   mimeType: "application/vnd.android.package-archive",
                   mediaType: "DOCUMENT",
                   sizeBytes: $size}' \
@@ -1395,7 +1395,7 @@ jobs:
           }
 
           create_body="$(jq -n \
-            --arg n "design-prototype-workshop-${VERSION_NAME}.apk" \
+            --arg n "DesignWorkshop_Android-App_Release-Build_v${VERSION_NAME}.apk" \
             --argjson b "${APK_BYTES}" \
             '{filename:$n, mimeType:"application/vnd.android.package-archive", mediaType:"DOCUMENT", sizeBytes:$b}')"
           code="$(api /api/media/multipart/create "$create_body")" || code=000
@@ -1854,7 +1854,7 @@ jobs:
           # reader needs it to confirm which key signed what they are installing. It is masked in
           # logs by virtue of being a secret value, which is why it is written to the notes file
           # rather than echoed.
-          named="design-prototype-workshop-${VERSION_NAME}.apk"
+          named="DesignWorkshop_Android-App_Release-Build_v${VERSION_NAME}.apk"
           cp "$APK" "${RUNNER_TEMP}/${named}"
 
           # `--clobber` so a re-cut tag (see GUARD 4's [republish] path) replaces the asset instead
@@ -1873,6 +1873,11 @@ jobs:
           echo "url=${url}" >> "$GITHUB_OUTPUT"
           echo "- GitHub Release: ${url}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Name the published APK by the convention (NAMING 2.1)
+        if: ${{ always() && steps.size.outcome == 'success' }}
+        working-directory: ${{ github.workspace }}
+        run: cp android/app/build/outputs/apk/release/app-release.apk "android/app/build/outputs/apk/release/DesignWorkshop_Android-App_Release-Build_v${{ env.VERSION_NAME }}.apk"
+
       - name: Upload the published APK as a run artifact
         if: ${{ always() && steps.size.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1885,7 +1890,7 @@ jobs:
           # `path:` is repo-root relative — actions/upload-artifact does not honour
           # `defaults.run.working-directory`.
           name: app-release-${{ env.VERSION_NAME }}-${{ github.sha }}
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: android/app/build/outputs/apk/release/DesignWorkshop_Android-App_Release-Build_v${{ env.VERSION_NAME }}.apk
           if-no-files-found: error
           retention-days: 90
 

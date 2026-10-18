@@ -19,6 +19,7 @@ from fastapi.responses import RedirectResponse
 from app.core.db import db
 from app.core.deps import get_current_user, require_master_admin
 from app.schemas.app_release import AppReleasePublishRequest
+from app.services import naming
 from app.services.s3 import presign_get_url, public_url_for_key
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ def _durable_url(release: Any) -> str | None:
 
 
 def _download_filename(release: Any) -> str:
-    """``design-workshop-v1.1.17.apk`` — the version, in the name, in the user's Downloads folder.
+    """``DesignWorkshop_Android-App_Release-Build_v1.1.17.apk`` — the version, in the name, in the user's Downloads folder.
 
     Whoever is sideloading this is comparing it against what is already on the phone, and often
     keeping several. A name that carries the version answers "which build is this?" without them
@@ -98,7 +99,10 @@ def _download_filename(release: Any) -> str:
     version = str(
         getattr(release, "versionName", "") or getattr(release, "versionCode", "") or "latest"
     )
-    return f"design-workshop-v{version}.apk"
+    # NAMING 2.1: DesignWorkshop_Android-App_Release-Build_v1.1.17.apk
+    return naming.export_filename(
+        "Android-App", "Release-Build", "apk", dated=False, sequence=f"v{version}"
+    )
 
 
 @router.post("/release", status_code=status.HTTP_201_CREATED)

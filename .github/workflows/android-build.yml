@@ -280,6 +280,12 @@ jobs:
         id: assemble
         run: ./gradlew :app:assembleDebug --console=plain --stacktrace
 
+      - name: Name the debug APK by the convention (NAMING 2.1)
+        working-directory: ${{ github.workspace }}
+        run: |
+          version="$(sed -n 's/^val appVersionName = "\([^"]*\)".*/\1/p' android/app/build.gradle.kts)"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/DesignWorkshop_Android-App_Debug-Build_v${version}.apk"
+
       - name: Upload the debug APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -289,7 +295,7 @@ jobs:
           # already on the device. Cutting a real release is a `v*` tag push to
           # publish-android.yml, the one workflow that holds the key (docs/CI.md §1.4).
           name: app-debug-${{ github.event.workflow_run.head_sha || github.sha }}
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/DesignWorkshop_Android-App_Debug-Build_v*.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -332,5 +338,5 @@ jobs:
             echo "| unit tests (:app, :core-*) | ${{ steps.tests.outcome }} |"
             echo "| lintDebug | ${{ steps.lint.outcome }} (advisory, does not fail the build) |"
             echo "| assembleDebug | ${{ steps.assemble.outcome }} |"
-            echo "| APK | \`app-debug.apk\` — debug-signed, NOT an OTA release |"
+            echo "| APK | \`DesignWorkshop_Android-App_Debug-Build_v<version>.apk\` — debug-signed, NOT an OTA release |"
           } >> "$GITHUB_STEP_SUMMARY"

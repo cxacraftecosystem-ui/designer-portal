@@ -117,7 +117,6 @@ import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -180,6 +179,7 @@ from app.services import (
     dictation_cap,
     dictation_consent,
     email_outbox,
+    naming,
 )
 from app.services.ai import transcribe_audio_bytes
 from app.services.concurrency import gather_reads
@@ -4608,7 +4608,7 @@ async def download_subtitles(
 
     THE MEDIA GATE APPLIES, because a cue list is a transcript with times on it.
     """
-    await load_workshop_or_404(workshop_id, current_user)
+    record = await load_workshop_or_404(workshop_id, current_user)
     row = await _layer_or_404(workshop_id, layer_id)
     if await _layer_text_withheld(workshop_id, row, current_user):
         raise HTTPException(
@@ -4627,13 +4627,15 @@ async def download_subtitles(
         content=body.encode("utf-8"),
         media_type=mime,
         headers={
-            "Content-Disposition": (
-                # THE FILENAME SAYS WHICH OF THE TWO FILES THIS IS. A designer who downloads both
-                # ends up with two files whose names differ in nothing, in a downloads folder, and
-                # the one that attributes an artisan's words to a named speaker is not the one to
-                # confuse with the other when attaching it to an email.
-                f'attachment; filename="subtitles-{quote(layer_id)}'
-                f'{".speakers" if speakers else ""}.{extension}"'
+            # THE FILENAME SAYS WHICH OF THE TWO FILES THIS IS: Subtitles or
+            # Subtitles-With-Speakers, so the one that attributes an artisan's words to a named
+            # speaker is not confused with the other when attaching it to an email (NAMING 2.1).
+            "Content-Disposition": naming.content_disposition(
+                naming.workshop_filename(
+                    record,
+                    "Subtitles-With-Speakers" if speakers else "Subtitles",
+                    extension,
+                )
             )
         },
     )
@@ -5856,23 +5858,14 @@ def _build_only(data: Any, template_id: str, resolver: Any, record: Any) -> tupl
 
 
 def _report_file_name(record: Any, fmt: str) -> str:
-    """A file name safe on every filesystem the report will land on.
+    """The report's download name (NAMING 2.1), identical to the web offline report and Android:
 
-    Windows forbids nine characters outright and a report named after a craft is routinely
-    saved onto a departmental share; a name that fails to save is a report that was not
-    delivered.
+    ``DesignWorkshop_Workshop_2026-10-18_Bagru-Jaipur_Hand-Block-Printing_DW-RJ-0012_Report.pdf``.
 
-    Unicode letters are kept here — a designer whose workshop is titled in Odia should get a
-    file named in Odia — and :func:`_content_disposition` is what makes that safe to put in a
-    header. Sanitising to ASCII in this function instead would have been the easy fix and the
-    wrong one: it would have named every Devanagari workshop ``workshop_20260807.docx``, and
-    a folder of thirty identically-named reports is its own kind of data loss.
+    ASCII by construction: a workshop titled in Odia is transliterated, never collapsed to
+    underscores, so a folder of reports still tells them apart.
     """
-    stem = record.workshopCode or record.title or "workshop"
-    safe = "".join(c if (c.isalnum() or c in " -_") else "_" for c in str(stem)).strip()
-    safe = "_".join(safe.split())[:60] or "workshop"
-    stamp = datetime.now(UTC).strftime("%Y%m%d")
-    return f"DesignWorkshop_{safe}_{stamp}.{_EXTENSION[fmt]}"
+    return naming.workshop_filename(record, "Report", _EXTENSION[fmt])
 
 
 def _content_disposition(file_name: str) -> str:
@@ -5891,14 +5884,7 @@ def _content_disposition(file_name: str) -> str:
     every browser released this decade prefers. The designer gets the Odia name; the header
     stays latin-1.
     """
-    ascii_name = (
-        "".join(
-            c if (c.isascii() and (c.isalnum() or c in " -_.")) else "_" for c in file_name
-        ).strip("_ ")
-        or "workshop-report"
-    )
-    quoted = quote(file_name, safe="")
-    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}"
+    return naming.content_disposition(file_name)
 
 
 #: How much of ``X-Report-Warnings`` a response may spend. A cap is not optional — every warning is

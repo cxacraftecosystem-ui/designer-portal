@@ -74,6 +74,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app.services import naming
 from app.services.annual_plan_xlsx import read_plan_date
 from app.services.xlsx_report import _put
 from app.services.xlsx_table import (
@@ -100,7 +101,9 @@ __all__ = [
 ]
 
 
-PRO_FORMA_FILENAME = "sanction-orders-pro-forma.xlsx"
+PRO_FORMA_FILENAME = naming.export_filename(
+    "Sanction-Orders", "Pro-Forma", "xlsx", dated=False
+)
 
 SHEET_ORDERS = "Sanction orders"
 SHEET_HELP = "How to fill this in"

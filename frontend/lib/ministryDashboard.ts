@@ -24,6 +24,7 @@
 import { apiFetch, buildQuery } from "@/lib/api";
 import { downloadFile } from "@/lib/fileDownload";
 import type { PageResult } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The type switch
@@ -341,7 +342,7 @@ export function listStageDataExports() {
 export function downloadStageDataExport(item: StageDataExport) {
   return downloadFile(
     `${EXPORTS}/${encodeURIComponent(item.id)}/download`,
-    item.fileName ?? "ministry-stage-data.xlsx"
+    item.fileName ?? exportFilename("Ministry", "Export", "xlsx", { subject: "Stage Data" })
   );
 }
 
@@ -567,8 +568,8 @@ export function fetchRegisterEntitlements() {
 export function downloadRegister(kind: RegisterKind, params: RegisterQuery) {
   const query = registerQuery({ search: params.search, standing: params.standing });
   return kind === "design"
-    ? downloadFile(`/ministry-dashboard/design-workshops.csv${query}`, "design-prototype-workshops.csv")
-    : downloadFile(`/ministry-dashboard/workshops.csv${query}`, "other-workshops.csv");
+    ? downloadFile(`/ministry-dashboard/design-workshops.csv${query}`, exportFilename("Ministry", "Export", "csv", { subject: "Design Prototype Workshops" }))
+    : downloadFile(`/ministry-dashboard/workshops.csv${query}`, exportFilename("Ministry", "Export", "csv", { subject: "Other Workshops" }));
 }
 
 /**
@@ -581,7 +582,7 @@ export function downloadRegister(kind: RegisterKind, params: RegisterQuery) {
  * over the whole one and saying which it is.
  */
 export function downloadBeneficiaries() {
-  return downloadFile("/export/artisans.csv", "artisans.csv");
+  return downloadFile("/export/artisans.csv", exportFilename("Artisan", "Export", "csv"));
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

@@ -32,6 +32,7 @@
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { fetchFile } from "@/lib/fileDownload";
 import type { PageResult } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The form
@@ -671,7 +672,7 @@ const fetchWorkbook = fetchFile;
 
 /** The blank workbook a designer types their own questions into. */
 export function downloadProForma() {
-  return fetchWorkbook("/questionnaires/pro-forma", "questionnaire-pro-forma.xlsx");
+  return fetchWorkbook("/questionnaires/pro-forma", exportFilename("Questionnaire", "Pro-Forma", "xlsx", { dated: false }));
 }
 
 /**
@@ -683,7 +684,7 @@ export function downloadProForma() {
  * rather than to a fresh pro-forma when they want to change an existing form in Excel.
  */
 export function downloadQuestionnaireWorkbook(id: string) {
-  return fetchWorkbook(`/questionnaires/${id}/xlsx`, "questionnaire.xlsx");
+  return fetchWorkbook(`/questionnaires/${id}/xlsx`, exportFilename("Questionnaire", "Export", "xlsx"));
 }
 
 /**
@@ -703,7 +704,7 @@ export function downloadQuestionnaireWorkbook(id: string) {
  * offering to fork somebody else's form into their own.
  */
 export function downloadQuestionSet(id: string) {
-  return fetchWorkbook(`/questionnaires/${id}/question-set.xlsx`, "questionnaire-questions.xlsx");
+  return fetchWorkbook(`/questionnaires/${id}/question-set.xlsx`, exportFilename("Questionnaire", "Questions", "xlsx"));
 }
 
 /**

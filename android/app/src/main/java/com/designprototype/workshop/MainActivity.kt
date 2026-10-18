@@ -1,5 +1,6 @@
 package com.designprototype.workshop
 
+import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.ui.destructiveAction
@@ -9373,7 +9374,9 @@ private fun workshopEndedLocally(workshop: WorkshopDetailDto?): Boolean {
 
 /** "Chanderi weaving · 2026-07-12" — the date it took place separates repeat visits to one place. */
 private fun workshopOptionLabel(workshop: WorkshopDetailDto): String {
-    val title = workshop.title.ifBlank { "Untitled workshop" }
+    // A blank title reads as its generated default (NAMING 2.4), which already carries the day.
+    if (workshop.title.isBlank()) return workshopDisplayTitle(null, date = workshop.occurrenceDate(), place = workshop.place)
+    val title = workshop.title
     val day = workshop.occurrenceDate().take(10)
     return if (day.isBlank()) title else "$title · $day"
 }
@@ -10300,7 +10303,7 @@ private fun RecordPickerScreen(
                 EntryMode.PRODUCT -> repository.productPage(search).let { p -> p.total to p.items.map { it.id to "${it.productName} · ${it.artisanName}" } }
                 EntryMode.PROCESS -> repository.processPage(search).let { p -> p.total to p.items.map { it.id to (it.name + (it.product?.productName?.let { pr -> " · $pr" } ?: "")) } }
                 EntryMode.TOOL -> repository.toolPage(search).let { p -> p.total to p.items.map { it.id to "${it.toolkitName} · ${it.artisanName}" } }
-                EntryMode.WORKSHOP -> repository.workshopPage(search).let { p -> p.total to p.items.map { it.id to it.title.ifBlank { "Untitled workshop" } } }
+                EntryMode.WORKSHOP -> repository.workshopPage(search).let { p -> p.total to p.items.map { it.id to workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place) } }
                 EntryMode.MEDIA -> repository.mediaPage(search).let { p ->
                     p.total to p.items.map { m -> m.id to (m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename) }
                 }
@@ -14579,7 +14582,7 @@ private suspend fun loadViewEntries(repository: WorkshopRepository, mode: EntryM
     EntryMode.PRODUCT -> repository.products().sortedByDescending { it.createdAt ?: "" }.map { it.id to "${it.productName} · ${it.artisanName}" }
     EntryMode.PROCESS -> repository.processes().sortedByDescending { it.createdAt ?: "" }.map { it.id to (it.name + (it.product?.productName?.let { p -> " · $p" } ?: "")) }
     EntryMode.TOOL -> repository.tools().sortedByDescending { it.createdAt ?: "" }.map { it.id to "${it.toolkitName} · ${it.artisanName}" }
-    EntryMode.WORKSHOP -> repository.workshops().sortedByDescending { it.createdAt ?: "" }.map { it.id to it.title.ifBlank { "Untitled workshop" } }
+    EntryMode.WORKSHOP -> repository.workshops().sortedByDescending { it.createdAt ?: "" }.map { it.id to workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place) }
     EntryMode.QUESTIONNAIRE -> repository.interviews().sortedByDescending { it.createdAt ?: "" }.map { it.id to it.title.ifBlank { "Untitled interview" } }
     EntryMode.MEDIA -> repository.mediaList().sortedByDescending { it.createdAt ?: "" }.map { m ->
         val tag = m.linkedRecordType?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
@@ -14673,7 +14676,7 @@ private suspend fun loadMyActivity(repository: WorkshopRepository, userId: Strin
     attempt { repository.crafts(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.CRAFT, it.id, it.name, "Craft", it.createdAt)) }
     attempt { repository.workshops(createdBy = userId) }.filter { mine(it.createdById) }
-        .forEach { items.add(ActivityItem(EntryMode.WORKSHOP, it.id, it.title.ifBlank { "Untitled workshop" }, "Workshop", it.createdAt)) }
+        .forEach { items.add(ActivityItem(EntryMode.WORKSHOP, it.id, workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place), "Workshop", it.createdAt)) }
     attempt { repository.interviews(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.QUESTIONNAIRE, it.id, it.title.ifBlank { "Untitled interview" }, "Interview", it.createdAt)) }
     // MEDIA, which this list used to omit entirely while the menu carried an "Upload media" entry —
@@ -16189,7 +16192,7 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
                     "tool" -> repository.tools().map { it.id to "${it.toolkitName} · ${it.artisanName}" }
                     "artisan" -> repository.artisans().map { it.id to it.name }
                     "craft" -> repository.crafts().map { it.id to it.name }
-                    "workshop" -> repository.workshops().map { it.id to it.title.ifBlank { "Untitled workshop" } }
+                    "workshop" -> repository.workshops().map { it.id to workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place) }
                     else -> emptyList()
                 }
             }.onSuccess { map[t] = it }
@@ -20519,14 +20522,12 @@ private fun QuestionnaireForm(
                 }
                 uris.forEachIndexed { index, uri ->
                     val baseName = questionnaireClipBaseName(
-                        context = context,
                         sectionCode = sectionCodePart,
                         questionNumber = questionNumberPart,
                         interviewName = title,
-                        uri = uri
                     // Append the clip index when a target has more than one clip, so two
                     // recordings of the same question in the same minute never collide.
-                    ).let { if (uris.size > 1) "${it}_${index + 1}" else it }
+                    ).let { if (index > 0) "${it}_${index + 1}" else it }
                     // Prefer the eagerly pre-uploaded object (awaiting any still-in-flight
                     // transfer); only fall back to a fresh upload if staging never ran/failed.
                     val staged = qMedia.stagedDeferred[uri]?.let { runCatching { it.await() }.getOrNull() }
@@ -20627,8 +20628,8 @@ private fun QuestionnaireForm(
                                 questionNumberPart = question?.sortOrder?.toString()
                             }
                             uris.forEachIndexed { index, uri ->
-                                val baseName = questionnaireClipBaseName(context, sectionCodePart, questionNumberPart, title, uri)
-                                    .let { if (uris.size > 1) "${it}_${index + 1}" else it }
+                                val baseName = questionnaireClipBaseName(sectionCodePart, questionNumberPart, title)
+                                    .let { if (index > 0) "${it}_${index + 1}" else it }
                                 items.add(com.designprototype.workshop.data.OfflineMediaSpec(
                                     uri = uri, caption = caption, recordName = hint,
                                     overrideBaseName = baseName, batchIndex = index + 1))
@@ -24024,44 +24025,31 @@ private fun openUri(context: Context, uri: Uri, mimeType: String?) {
     }
 }
 
-/** A media file's duration as HHMMSS (zero-padded), read from its metadata; "000000" if unknown. */
-private fun mediaDurationHHMMSS(context: Context, uri: Uri): String {
-    val ms = runCatching {
-        val retriever = android.media.MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(context, uri)
-            retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-        } finally {
-            runCatching { retriever.release() }
-        }
-    }.getOrDefault(0L)
-    val totalSeconds = ms / 1000
-    val h = totalSeconds / 3600
-    val m = (totalSeconds % 3600) / 60
-    val s = totalSeconds % 60
-    return "%02d%02d%02d".format(h, m, s)
-}
-
 /**
- * Build the questionnaire recording filename base per the required nomenclature:
- * `SECTION_QUESTION_INTERVIEWNAME_DURATIONHHMMSS_DATETIMEDDMMYYYYHHMM`. The repository sanitises this
- * and appends the file extension. For a whole-section recording the question slot is "SEC".
+ * The questionnaire recording's name stem (NAMING 2.1): Interview, the capture date and time in IST,
+ * the interview as Subject, What `Recording` and the question (`D-Q03`) or section (`D-All`) as
+ * Sequence. The repository appends the file extension. For a whole-section recording the question
+ * slot is "SEC".
  */
 private fun questionnaireClipBaseName(
-    context: Context,
     sectionCode: String?,
     questionNumber: String?,
     interviewName: String?,
-    uri: Uri
 ): String {
-    fun token(value: String?, fallback: String): String =
-        value?.trim()?.replace(Regex("[^A-Za-z0-9]+"), "")?.uppercase()?.take(40)?.ifBlank { fallback } ?: fallback
-    val section = token(sectionCode, "SEC")
-    val question = token(questionNumber, "SEC")
-    val name = token(interviewName, "INTERVIEW")
-    val duration = mediaDurationHHMMSS(context, uri)
-    val stamp = java.text.SimpleDateFormat("ddMMyyyyHHmm", java.util.Locale.US).format(java.util.Date())
-    return listOf(section, question, name, duration, stamp).joinToString("_")
+    // NAMING 2.1 (data/Naming.kt), the stem only; the extension is added where the file is written:
+    // DesignWorkshop_Interview_2026-07-01_1824_Giriraj-Prasad-Chhipa_Recording_D-Q03
+    val sequence = if (questionNumber == null || questionNumber == "SEC") {
+        com.designprototype.workshop.data.Naming.sectionSequence(sectionCode)
+    } else {
+        com.designprototype.workshop.data.Naming.questionSequence(sectionCode, questionNumber)
+    }
+    return com.designprototype.workshop.data.Naming.recordingFilename(
+        entity = "Interview",
+        ext = "",
+        capturedAt = java.time.Instant.now(),
+        subject = interviewName,
+        sequence = sequence,
+    )
 }
 
 private fun createAudioRecorder(context: Context, file: File): MediaRecorder {

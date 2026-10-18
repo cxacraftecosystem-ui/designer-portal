@@ -40,6 +40,8 @@ import { Check, Copy, Download, PencilLine, Sparkles } from "lucide-react";
 
 import { Markdown } from "@/components/Markdown";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { asciiLeaf, fileName, splitExtension } from "@/lib/naming";
+import { PORTAL } from "@/lib/namingPortal";
 
 /**
  * Hand a blob to the browser as a download, and release the object URL once it has been taken.
@@ -71,13 +73,14 @@ function saveBlob(blob: Blob, name: string): void {
  * at 255 BYTES, which a UTF-8 Devanagari title reaches a long way before it reaches 255 characters.
  */
 export function safeDocumentFileName(base: string, extension: string): string {
-  const cleaned = base
-    .replace(/[\\/:*?"<>|]/g, "-")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60);
-  return `${cleaned || "transcript"}.${extension}`;
+  // NAMING 2.1. A transcript of a clip already named by the convention keeps that name with What
+  // `Transcript` (`..._Recording_D-Q03.m4a` -> `..._Transcript_D-Q03.md`); anything else is the
+  // Subject of a `<Portal>_<Subject>_Transcript.md`.
+  const [stem] = splitExtension(base.replace(/-transcript$/i, "").trim());
+  if (stem.startsWith(`${PORTAL}_`)) {
+    return asciiLeaf(`${stem.replace(/_Recording(?=_|$)/, "_Transcript")}.${extension}`);
+  }
+  return fileName({ subject: stem, what: "Transcript", ext: extension });
 }
 
 /**

@@ -36,7 +36,7 @@ from app.core.deps import (
     can_view_design_workshop_data,
     get_current_user,
 )
-from app.services import answer_drafts, design_workshop_data as dw
+from app.services import answer_drafts, design_workshop_data as dw, naming
 from app.services.access import owner_download_scope
 from app.services.concurrency import gather_reads
 from app.services.csv_export import records_to_csv
@@ -81,7 +81,7 @@ def csv_response(filename: str, body: str) -> Response:
     return Response(
         content=body,
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": naming.content_disposition(filename)},
     )
 
 
@@ -938,7 +938,7 @@ async def dataset_manifest(
             for entity, rows in with_rows:
                 add_text(
                     sbase,
-                    f"{_seg(entity.title, entity.key)}.txt",
+                    naming.workshop_filename(record, entity.title or entity.key, "txt", dated=False),
                     _dw_rows_text(entity.title, dw.entity_columns(entity), rows),
                 )
             if has_media:
@@ -1078,7 +1078,7 @@ async def export_products(current_user: Any = Depends(get_current_user)) -> Resp
         order=_EXPORT_ORDER,
     )
     body = records_to_csv("product", records, truncated=len(records) >= EXPORT_TAKE)
-    return csv_response("products.csv", body)
+    return csv_response(naming.export_filename("Product", "Export", "csv"), body)
 
 
 @router.get("/tools.csv")
@@ -1091,7 +1091,7 @@ async def export_tools(current_user: Any = Depends(get_current_user)) -> Respons
         order=_EXPORT_ORDER,
     )
     body = records_to_csv("tool", records, truncated=len(records) >= EXPORT_TAKE)
-    return csv_response("tools.csv", body)
+    return csv_response(naming.export_filename("Tool", "Export", "csv"), body)
 
 
 #: The relations the artisan sheet reads, copied from ``datasets.DATASETS["artisans"].include``.
@@ -1153,7 +1153,7 @@ async def export_artisans(current_user: Any = Depends(get_current_user)) -> Resp
         order=_EXPORT_ORDER,
     )
     body = records_to_csv("artisan", records, truncated=len(records) >= EXPORT_TAKE)
-    return csv_response("artisans.csv", body)
+    return csv_response(naming.export_filename("Artisan", "Export", "csv"), body)
 
 
 @router.get("/workshops.csv")
@@ -1189,4 +1189,4 @@ async def export_workshops(current_user: Any = Depends(get_current_user)) -> Res
         order=_EXPORT_ORDER,
     )
     body = records_to_csv("workshop", records, truncated=len(records) >= EXPORT_TAKE)
-    return csv_response("workshops.csv", body)
+    return csv_response(naming.export_filename("Workshop", "Export", "csv"), body)

@@ -90,7 +90,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.core.db import db
-from app.services import design_workshop_posts
+from app.services import design_workshop_posts, naming
 from app.services.concurrency import gather_reads
 from app.services.dictation_consent import MEDIA_TAG as DESIGN_WORKSHOP_TAG
 from app.services.s3 import delete_object
@@ -332,7 +332,16 @@ def build_windows(workshops: Iterable[Any]) -> list[WorkshopWindow]:
         windows.append(
             WorkshopWindow(
                 id=workshop.id,
-                title=str(getattr(workshop, "title", "") or "Untitled workshop"),
+                title=str(
+                    getattr(workshop, "title", "")
+                    or naming.session_title(
+                        {
+                            "entity": "Workshop",
+                            "date": getattr(workshop, "date", None),
+                            "place": getattr(workshop, "place", None),
+                        }
+                    )
+                ),
                 start=start,
                 end=end,
             )

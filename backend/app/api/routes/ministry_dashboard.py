@@ -96,6 +96,7 @@ from app.core.deps import (
 from app.services import (
     design_workshop_oversight as officers,
     ministry_dashboard as register,
+    naming,
     report_delivery,
 )
 from app.services.concurrency import gather_reads
@@ -808,7 +809,11 @@ async def export_design_workshops_csv(
         rows.append(_truncation_row(len(records), _DESIGN_EXPORT_COLUMNS))
 
     return _csv_response(
-        "design-prototype-workshops.csv", rows, _DESIGN_EXPORT_COLUMNS
+        naming.export_filename(
+            "Ministry", "Export", "csv", subject="Design Prototype Workshops"
+        ),
+        rows,
+        _DESIGN_EXPORT_COLUMNS,
     )
 
 
@@ -888,7 +893,11 @@ async def export_other_workshops_csv(
     if len(records) >= EXPORT_TAKE:
         rows.append(_truncation_row(len(records), _OTHER_EXPORT_COLUMNS))
 
-    return _csv_response("other-workshops.csv", rows, _OTHER_EXPORT_COLUMNS)
+    return _csv_response(
+        naming.export_filename("Ministry", "Export", "csv", subject="Other Workshops"),
+        rows,
+        _OTHER_EXPORT_COLUMNS,
+    )
 
 
 @router.get("/entitlements")

@@ -171,6 +171,7 @@ import {
 } from "./oversight";
 import { officerOptionsForPost, officersOfferedTo } from "./pickers";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 /** 300 ms, this app's number, for the reason every other debounced search here gives. */
 const SEARCH_DEBOUNCE_MS = 300;
@@ -511,7 +512,7 @@ function WorkshopPicker({
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-ministry-200 bg-ministry-50 px-3 py-2 dark:border-ministry-900 dark:bg-ministry-950/40">
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium text-ink-900">
-              {chosen.title?.trim() || "Untitled design workshop"}
+              {workshopDisplayTitle(chosen)}
             </span>
             <span className="block truncate text-xs text-ink-500">
               {chosen.workshopCode ?? "No workshop code yet"}
@@ -639,7 +640,7 @@ function WorkshopPicker({
                     onClick={() => onChoose(row)}
                   >
                     <span className="truncate font-medium text-ink-900">
-                      {row.title?.trim() || "Untitled design workshop"}
+                      {workshopDisplayTitle(row)}
                     </span>
                     <span className="truncate text-xs text-ink-500">
                       {row.workshopCode ?? "No workshop code yet"}

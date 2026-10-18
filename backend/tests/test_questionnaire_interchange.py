@@ -247,9 +247,11 @@ def test_the_two_downloads_have_different_file_names():
     One of them is a list of questions and the other is every respondent that designer has ever
     interviewed. The name is the last thing standing between a colleague and the wrong attachment.
     """
-    assert download_filename("Loom study") == "Loom-study.xlsx"
-    assert question_set_filename("Loom study") == "Loom-study-questions.xlsx"
-    assert question_set_filename(None) == "questionnaire-questions.xlsx"
+    # NAMING 2.1: <Portal>_Questionnaire_<date>_<title>_Export / _Questions.xlsx
+    assert download_filename("Loom study").endswith("_Loom-Study_Export.xlsx")
+    assert question_set_filename("Loom study").endswith("_Loom-Study_Questions.xlsx")
+    assert question_set_filename(None).endswith("_Questions.xlsx")
+    assert download_filename("Loom study") != question_set_filename("Loom study")
 
 
 def test_the_pro_forma_still_parses_after_the_details_sheet_learned_extra_rows():
@@ -412,7 +414,7 @@ async def test_the_question_set_is_open_to_any_designer_while_the_full_workbook_
     )
     assert allowed.status_code == 200, allowed.text
     assert allowed.headers["content-type"].startswith(XLSX_MIME)
-    assert "-questions.xlsx" in allowed.headers["content-disposition"]
+    assert "_Questions.xlsx" in allowed.headers["content-disposition"]
 
 
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")

@@ -32,6 +32,7 @@ import { expect, test } from "@playwright/test";
 
 import { safeDocumentFileName } from "@/components/richtext/MarkdownDocument";
 import { plainFromStoredRichText } from "@/components/richtext/storedRichText";
+import { PORTAL } from "@/lib/namingPortal";
 
 const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
 
@@ -279,32 +280,37 @@ test("every surface that renders an answer as prose flattens it", () => {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 test.describe("safeDocumentFileName", () => {
+  // NAMING 2.1: every transcript download is <Portal>_<Subject>_Transcript.md, ASCII, <= 150.
   test("strips the characters Windows refuses outright", () => {
     // Every one of these is reachable from a question prompt, which is what these names are built
     // from. A file the browser cannot write is a download button that silently does nothing.
-    expect(safeDocumentFileName('a/b\\c:d*e?f"g<h>i|j', "md")).toBe("a-b-c-d-e-f-g-h-i-j.md");
+    expect(safeDocumentFileName('a/b\\c:d*e?f"g<h>i|j', "md")).toBe(`${PORTAL}_A-B-C-D-E-F-G-H-I-J_Transcript.md`);
   });
 
   test("collapses whitespace rather than leaving it in a file name", () => {
-    expect(safeDocumentFileName("Section D  RAW   MATERIALS", "md")).toBe("Section-D-RAW-MATERIALS.md");
+    expect(safeDocumentFileName("Section D  RAW   MATERIALS", "md")).toBe(`${PORTAL}_Section-D-RAW-Materials_Transcript.md`);
   });
 
   test("never leads or trails with a separator", () => {
-    expect(safeDocumentFileName("  ?leading and trailing?  ", "md")).toBe("leading-and-trailing.md");
+    expect(safeDocumentFileName("  ?leading and trailing?  ", "md")).toBe(`${PORTAL}_Leading-And-Trailing_Transcript.md`);
   });
 
-  test("caps the length, because several filesystems cap a path segment at 255 BYTES", () => {
-    // A UTF-8 Devanagari title reaches 255 bytes a long way before it reaches 255 characters, and a
-    // questionnaire prompt runs to two thousand.
+  test("caps the length and stays ASCII, because several filesystems cap a segment at 255 BYTES", () => {
     const long = safeDocumentFileName("क".repeat(500), "md");
-    expect(long.length).toBeLessThanOrEqual(63);
-    expect(Buffer.byteLength(long, "utf8")).toBeLessThan(255);
+    expect(long.length).toBeLessThanOrEqual(150);
+    expect(/^[\x21-\x7e]+$/.test(long)).toBe(true);
+  });
+
+  test("a clip already named by the convention keeps its name, with What Transcript", () => {
+    expect(safeDocumentFileName(`${PORTAL}_Interview_2026-07-01_1824_Giriraj_Recording_D-Q03.m4a-transcript`, "md")).toBe(
+      `${PORTAL}_Interview_2026-07-01_1824_Giriraj_Transcript_D-Q03.md`
+    );
   });
 
   test("a name that reduces to nothing still produces a usable file", () => {
     // "???" is a real prompt shape, and an empty name would make the anchor download the page.
-    expect(safeDocumentFileName("???", "md")).toBe("transcript.md");
-    expect(safeDocumentFileName("", "md")).toBe("transcript.md");
+    expect(safeDocumentFileName("???", "md")).toBe(`${PORTAL}_Transcript.md`);
+    expect(safeDocumentFileName("", "md")).toBe(`${PORTAL}_Transcript.md`);
   });
 });
 

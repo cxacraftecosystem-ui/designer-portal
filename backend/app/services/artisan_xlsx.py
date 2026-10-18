@@ -90,6 +90,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app.services import naming
 from app.services.artisan_identity import (
     aadhaar_error,
     is_masked_aadhaar,
@@ -128,7 +129,7 @@ __all__ = [
     "parse_artisan_workbook",
 ]
 
-ARTISAN_PRO_FORMA_FILENAME = "artisan-list-pro-forma.xlsx"
+ARTISAN_PRO_FORMA_FILENAME = naming.export_filename("Artisan", "Pro-Forma", "xlsx", dated=False)
 
 SHEET_ARTISANS = "Artisans"
 SHEET_DETAILS = "Details"
@@ -1331,11 +1332,12 @@ def pro_forma_filename(workshop: Any | None = None) -> str:
     ``Content-Disposition`` header, and a quote or a newline in a workshop title is a header
     injection rather than an odd filename.
     """
-    title = str(getattr(workshop, "title", "") or "").strip()
-    if not title:
+    if workshop is None or not (
+        getattr(workshop, "workshopCode", None) or getattr(workshop, "title", None)
+    ):
         return ARTISAN_PRO_FORMA_FILENAME
-    stem = re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-")[:60]
-    return f"artisan-list-{stem or 'pro-forma'}.xlsx"
+    # NAMING 2.1: DesignWorkshop_Workshop_2026-10-18_DW-RJ-0012_Artisan-List.xlsx
+    return naming.workshop_filename(workshop, "Artisan-List", "xlsx")
 
 
 # THE INVARIANT, CHECKED AT IMPORT. The header writer and the parser must agree about which columns

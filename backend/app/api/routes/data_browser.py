@@ -75,11 +75,9 @@ call only runs the queries that level needs (each bounded by ``TAKE``).
 import asyncio
 import io
 import json
-import re
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import (
@@ -97,7 +95,7 @@ from app.core.deps import (
     can_view_design_workshop_data,
     require_dataset_downloader,
 )
-from app.services import answer_drafts, design_workshop_data as dw, memory_budget
+from app.services import answer_drafts, design_workshop_data as dw, memory_budget, naming
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
 from app.services.dictation_consent import MEDIA_TAG as DESIGN_WORKSHOP_MEDIA_TAG
@@ -105,10 +103,10 @@ from app.services.media_naming import (
     RESERVED_NAMES as _RESERVED_NAMES,
     clip as _clip,
     display_filename,
-    display_stem,
     folder_order,
     interview_record,
     safe_chars as _safe_chars,
+    transcript_filename,
     unique_display_filename,
     unique_display_stem,
     unique_name,
@@ -178,11 +176,6 @@ MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024
 REPORT_TAKE = 5000
 # Pseudo craft-folder id gathering a workshop's artisans that have no craft assigned.
 NO_CRAFT = "_none"
-
-# The ASCII reduction of a name, used ONLY for the fallback parameter of a Content-Disposition
-# header (see _content_disposition). Folder and file names themselves are NOT reduced to ASCII —
-# see _seg.
-_ASCII_ONLY = re.compile(r"[^A-Za-z0-9 _.\-]+")
 
 # Name caps. File systems limit a name to ~255 BYTES, not characters, and a Devanagari character
 # costs three of them, so both limits are applied. The character rules themselves now live in
@@ -434,8 +427,7 @@ def _content_disposition(name: str) -> str:
     `filename*=UTF-8''…` carries the real name percent-encoded. Every current browser prefers the
     starred form, so the researcher gets the artisan's actual name and nothing breaks in between.
     """
-    ascii_name = _ASCII_ONLY.sub("_", name).strip(" ._") or "download"
-    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name, safe='')}"
+    return naming.content_disposition(name)
 
 
 def _join(parent: str, name: str) -> str:
@@ -739,8 +731,15 @@ def _media_entries(
                 "sizeBytes": int(m.sizeBytes) if m.sizeBytes is not None else None,
                 "transcriptAvailable": bool((m.transcriptText or "").strip()),
                 # Internal (stripped from /tree responses): lets /manifest emit transcript files
-                # without a second query.
+                # without a second query, under the clip's own name with What ``Transcript``.
                 "_transcriptText": m.transcriptText,
+                "_transcriptName": transcript_filename(
+                    m,
+                    record_type=record_type,
+                    record_name=record_name,
+                    step_number=step_number,
+                    position=position,
+                ),
             }
         )
     return entries
@@ -1966,7 +1965,7 @@ async def _list_design_workshops_level(segs: list[str], parent: str, scope: Scop
             continue
         text = _text(
             parent,
-            f"{_seg(entity.title, entity.key)}.txt",
+            naming.workshop_filename(record, entity.title or entity.key, "txt", dated=False),
             _dw_rows_text(entity.title, dw.entity_columns(entity), rows),
         )
         if text:
@@ -2003,6 +2002,12 @@ async def _list_design_workshops_level(segs: list[str], parent: str, scope: Scop
                 "sizeBytes": int(m.sizeBytes) if m.sizeBytes is not None else None,
                 "transcriptAvailable": bool((m.transcriptText or "").strip()),
                 "_transcriptText": m.transcriptText,
+                "_transcriptName": transcript_filename(
+                    m,
+                    record_type="Stage",
+                    record_name=f"{attribution.stage_number:02d} {attribution.field_label}",
+                    position=position,
+                ),
             }
         )
     return out, {
@@ -2177,8 +2182,15 @@ async def _list_uploader_level(segs: list[str], parent: str, scope: Scope) -> Le
         used: set[str] = set()
         entries: list[dict[str, Any]] = []
         for record in records:
-            name = _uniq(_seg(spec.title(record), spec.label), used)
-            details = _text(parent, f"{name}.txt", _info_text(info_panel(kind, record)))
+            # NAMING 2.1: DesignWorkshop_Artisan_Giriraj-Prasad-Chhipa_Details.txt
+            stem = naming.file_name(
+                entity=None if spec.label == "Craft" else spec.label,
+                craft=spec.title(record) if spec.label == "Craft" else None,
+                subject=None if spec.label == "Craft" else spec.title(record),
+                what="Details",
+            )
+            name = unique_name(stem, ".txt", used)
+            details = _text(parent, name, _info_text(info_panel(kind, record)))
             if details:
                 entries.append(details)
         # The folder itself carries the tabular view of every record listed in it.
@@ -2530,8 +2542,7 @@ async def _walk(
                     "originalFilename": original,
                     "mediaId": e["mediaId"],
                 },
-                stem,
-                ".transcript.md",
+                *_split_leaf(e.get("_transcriptName") or f"{stem}.md"),
             )
     if child_walks:
         await asyncio.gather(*child_walks)
@@ -3377,7 +3388,7 @@ def _media_link_label(
         return f"Tool: {_cell(tool.toolkitName) or 'Tool'}"
     interview = getattr(m, "questionnaireInterview", None)
     if interview is not None:
-        return f"Interview: {_cell(interview.title) or 'Interview'}"
+        return f"Interview: {_cell(interview.title) or _interview_label(interview)}"
     artisan = getattr(m, "artisan", None)
     if artisan is not None:
         return f"Artisan: {_cell(artisan.name) or 'Artisan'}"
@@ -4424,11 +4435,18 @@ async def data_report(
     payload = await asyncio.to_thread(
         build_report_workbook, _rendered(sheets), f"{level_name} report"
     )
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", level_name).strip("-").lower() or "repository"
+    # NAMING 2.1: DesignWorkshop_Dataset_2026-10-18_Rajasthan_Report.xlsx. The web takes this name
+    # from the header rather than building its own, so the two can no longer disagree.
+    report_name = naming.export_filename(
+        "Dataset",
+        "Report",
+        "xlsx",
+        subject="All Records" if level_name == "Repository" else level_name,
+    )
     return StreamingResponse(
         io.BytesIO(payload),
         media_type=XLSX_MIME,
-        headers={"Content-Disposition": _content_disposition(f"{slug}-report.xlsx")},
+        headers={"Content-Disposition": _content_disposition(report_name)},
     )
 
 
@@ -4578,11 +4596,11 @@ async def download_media(
             # must go on the failure path too, or every ffmpeg error leaves a copy of the recording
             # on the disk this cap exists to protect.
             discard_temp(source_path)
-        stem = display_stem(media, fallback=media.id)
+        mp4_name = display_filename(media, extension=".mp4")
         return StreamingResponse(
             out,
             media_type="video/mp4",
-            headers={"Content-Disposition": _content_disposition(f"{stem}.mp4")},
+            headers={"Content-Disposition": _content_disposition(mp4_name)},
         )
 
     # Non-audio (or an explicitly non-mp4 format): hand back the original object.

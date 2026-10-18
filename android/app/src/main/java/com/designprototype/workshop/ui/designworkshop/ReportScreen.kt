@@ -750,10 +750,24 @@ fun ReportScreen(
                 // the saved file is describing the previous file.
                 unresolvedMedia = unresolvedIds.size
                 val loader = deviceImageLoader()
+                // NAMING 2.1, through the helper the server and the web's offline report use, so the
+                // three name one workshop's report identically.
+                val setup = stored?.stages?.get("WORKSHOP_SETUP")?.values.orEmpty()
+                fun setupText(key: String) = DwValues.text(setup[key]).trim().ifBlank { null }
+                val reportName = com.designprototype.workshop.data.Naming.workshopFilename(
+                    workshopCode = setupText("workshopCode"),
+                    title = stored?.title,
+                    clusterName = setupText("clusterName"),
+                    district = setupText("district"),
+                    state = setupText("state"),
+                    craftName = setupText("craftName"),
+                    what = "Report",
+                    ext = if (format == "PDF") "pdf" else "docx",
+                )
                 val exported = if (format == "PDF") {
-                    ReportExport.exportPdf(appContext, repository, document, loader)
+                    ReportExport.exportPdf(appContext, repository, document, loader, fileName = reportName)
                 } else {
-                    ReportExport.exportDocx(appContext, repository, document, loader)
+                    ReportExport.exportDocx(appContext, repository, document, loader, fileName = reportName)
                 }
                 // Record the fact — never the bytes. A designer on a metered field connection should
                 // not be charged for a thirty-megabyte report merely to prove one was made, and the

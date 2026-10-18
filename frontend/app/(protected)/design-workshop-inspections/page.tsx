@@ -87,6 +87,7 @@ import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
 import type { AddressReference } from "@/lib/types";
 import { CalendarField } from "@/components/ui/CalendarField";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 const PAGE_SIZE = 20;
 
@@ -435,7 +436,7 @@ export default function DesignWorkshopInspectionsPage() {
                 >
                   <div className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-ink-900">
-                      {workshop.title?.trim() || "Untitled design workshop"}
+                      {workshopDisplayTitle(workshop)}
                     </span>
                     {/* The code is denormalised from stage 1 and is null until that stage has been
                         saved — so its absence means "stage 1 is not done", not "missing". An

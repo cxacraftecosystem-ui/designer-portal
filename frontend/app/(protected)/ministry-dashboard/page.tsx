@@ -106,6 +106,7 @@ import { canApproveDesignWorkshops, canReadWorkshopAnalytics, canSeeMinistryDash
 import { registerRowHref } from "@/lib/reviewAids";
 import { AttentionCards, MinistryAnalyticsPanel, StageDataExportPanel, StateBreakdown } from "./MinistryInsights";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 const PAGE_SIZE = 20;
 
@@ -1169,7 +1170,7 @@ function DesignTable({ rows, hrefFor }: { rows: DesignRegisterPage["items"]; hre
           <OpenableRow key={row.id} href={hrefFor(row.id)}>
             <td className="px-4 py-3">
               <OpenableRowLink className="block" href={hrefFor(row.id)}>
-                {row.title?.trim() || "Untitled design workshop"}
+                {workshopDisplayTitle(row)}
               </OpenableRowLink>
               {/* The code is denormalised from stage 1 and is null until that stage has been saved —
                   so its absence means "stage 1 is not done", not "missing". An officer reads that as

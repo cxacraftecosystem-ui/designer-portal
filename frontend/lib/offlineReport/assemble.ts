@@ -55,6 +55,8 @@ export type OfflineWorkshop = {
   workshopCode: string | null;
   craftName: string | null;
   clusterName: string | null;
+  /** For the file name only (NAMING 2.1): the server names the report from the same column. */
+  district?: string | null;
   state: string | null;
   designerName: string | null;
   implementingAgency: string | null;

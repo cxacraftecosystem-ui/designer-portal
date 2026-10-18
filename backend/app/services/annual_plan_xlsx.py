@@ -69,7 +69,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.services import address
+from app.services import address, naming
 from app.services.stage_schema import ENUMS
 from app.services.xlsx_report import _put
 from app.services.xlsx_table import (
@@ -106,7 +106,7 @@ __all__ = [
 ]
 
 
-PRO_FORMA_FILENAME = "annual-plan-pro-forma.xlsx"
+PRO_FORMA_FILENAME = naming.export_filename("Annual-Plan", "Pro-Forma", "xlsx", dated=False)
 
 SHEET_PLAN = "Annual plan"
 SHEET_DETAILS = "Details"
@@ -430,14 +430,13 @@ def plan_year_label(year: int | None) -> str:
 
 
 def export_filename(year: int | None) -> str:
-    """``annual-plan-2026-27.xlsx`` — pure ASCII, which is load-bearing for the download header.
-
-    ``xlsx_report.xlsx_response`` writes a plain ``filename="…"`` content-disposition. The RFC 6266
-    ``filename*`` form that ``data_browser._content_disposition`` builds exists for Devanagari RECORD
-    names and is not needed here, because every character this function can emit is an ASCII digit
-    or a hyphen. Said out loud so nobody "fixes" the simpler header into the harder one.
-    """
-    return f"annual-plan-{plan_year_label(year)}.xlsx" if year is not None else "annual-plan.xlsx"
+    """``DesignWorkshop_Annual-Plan_FY2026-27_Export.xlsx`` (NAMING 2.1: the plan period takes the
+    date's place). Without a year it is dated the day it is generated."""
+    if year is None:
+        return naming.export_filename("Annual-Plan", "Export", "xlsx")
+    return naming.export_filename(
+        "Annual-Plan", "Export", "xlsx", period=f"FY{plan_year_label(year)}"
+    )
 
 
 # --- Reading a plan year --------------------------------------------------------------------------

@@ -37,6 +37,7 @@ import { pyStrip, type MarketFindingsPayload } from "@/lib/marketAnalysis";
 import type { DwReportHistory } from "@/lib/reportDiff";
 import { isStoredRichTextEmpty, richSummary, type StoredRichDoc } from "@/lib/richText";
 import type { PageResult } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The registry — mirrors app/services/stage_schema.py's `*_to_dict` serialisers.
@@ -3413,7 +3414,10 @@ export type DwReportFile = {
   warningCount: number;
 };
 
-const REPORT_FALLBACK_NAME: Record<string, string> = { DOCX: "report.docx", PDF: "report.pdf" };
+const REPORT_FALLBACK_NAME: Record<string, string> = {
+  DOCX: exportFilename("Workshop", "Report", "docx", { dated: false }),
+  PDF: exportFilename("Workshop", "Report", "pdf", { dated: false })
+};
 
 /**
  * Generate and return one report file's bytes.

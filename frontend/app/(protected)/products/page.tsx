@@ -25,6 +25,7 @@ import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { RECORD_UPDATE_HREF, RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { PageResult, ProductDocumentation } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 export default function ProductsPage() {
   const { user } = useAuth();
@@ -146,7 +147,7 @@ export default function ProductsPage() {
         icon={<Boxes className="h-5 w-5" aria-hidden />}
         actions={
           <>
-            {canDownloadDataset(user) ? <DownloadCsvButton path="/export/products.csv" filename="products.csv" /> : null}
+            {canDownloadDataset(user) ? <DownloadCsvButton path="/export/products.csv" filename={exportFilename("Product", "Export", "csv")} /> : null}
             {/* Gated, not merely locked: an ungated "New …" invited every tier to press a
                 button that lands on the route guard's refusal. Below researcher the honest UI is
                 no button, matching `require_record_creator` on the server. */}

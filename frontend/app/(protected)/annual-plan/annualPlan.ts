@@ -34,6 +34,7 @@ import { ApiError, apiFetch } from "@/lib/api";
 // binary this app has. See `lib/fileDownload.ts`.
 import { fetchFile, saveBlobToDisk } from "@/lib/fileDownload";
 import type { PageResult } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 /** PLANNED / PROMOTED / WITHDRAWN — derived on the server from two columns, never stored. */
 export type PlanStanding = "PLANNED" | "PROMOTED" | "WITHDRAWN";
@@ -273,7 +274,7 @@ const fetchWorkbook = fetchFile;
 
 /** The blank pro-forma a ministry's directory is typed into. */
 export async function downloadPlanProForma(): Promise<void> {
-  const { blob, fileName } = await fetchWorkbook("/annual-plan/pro-forma", "annual-plan-pro-forma.xlsx");
+  const { blob, fileName } = await fetchWorkbook("/annual-plan/pro-forma", exportFilename("Annual-Plan", "Pro-Forma", "xlsx", { dated: false }));
   saveBlobToDisk(blob, fileName);
 }
 

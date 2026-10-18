@@ -105,6 +105,7 @@ import {
   type WorkshopPost
 } from "@/lib/permissions";
 import type { PageResult, User } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 /** How long a search box on either picker may get. Mirrors the routes' `Query(max_length=120)`. */
 export const OVERSIGHT_SEARCH_MAX = 120;
@@ -751,7 +752,7 @@ const fetchWorkbook = fetchFile;
 export function downloadArtisanProForma(workshopId?: string | null) {
   return fetchWorkbook(
     `/design-workshop-oversight/artisan-pro-forma${buildQuery({ workshopId: workshopId || undefined })}`,
-    "artisan-list-pro-forma.xlsx"
+    exportFilename("Artisan", "Pro-Forma", "xlsx", { dated: false })
   );
 }
 

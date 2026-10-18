@@ -565,7 +565,9 @@ def test_the_default_disposition_is_still_attachment(fake_storage):
         OBJECT_KEY, filename="pit-loom.jpg", mime_type="image/jpeg", expires_in=900
     )
 
-    assert _query(url)["response-content-disposition"] == 'attachment; filename="pit-loom.jpg"'
+    assert _query(url)["response-content-disposition"] == (
+        "attachment; filename=\"pit-loom.jpg\"; filename*=UTF-8''pit-loom.jpg"
+    )
 
 
 def test_an_inline_disposition_is_what_the_encoder_asks_for(fake_storage):
@@ -585,7 +587,9 @@ def test_an_inline_disposition_is_what_the_encoder_asks_for(fake_storage):
     )
     params = _query(url)
 
-    assert params["response-content-disposition"] == 'inline; filename="pit-loom.jpg"'
+    assert params["response-content-disposition"] == (
+        "inline; filename=\"pit-loom.jpg\"; filename*=UTF-8''pit-loom.jpg"
+    )
     assert params["response-content-type"] == "image/jpeg"
 
 
@@ -603,7 +607,9 @@ def test_an_unknown_disposition_is_spelled_attachment(fake_storage):
         disposition='inline"; x-injected="1',
     )
 
-    assert _query(url)["response-content-disposition"] == 'attachment; filename="pit-loom.jpg"'
+    assert _query(url)["response-content-disposition"] == (
+        "attachment; filename=\"pit-loom.jpg\"; filename*=UTF-8''pit-loom.jpg"
+    )
 
 
 # --------------------------------------------------------------------------------------

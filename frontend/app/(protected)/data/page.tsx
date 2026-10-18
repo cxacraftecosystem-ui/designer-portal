@@ -46,6 +46,8 @@ import { DataSearchPanel } from "@/components/data/DataSearchPanel";
 import { OpenableCard, OpenableRow, OpenableRowLink } from "@/components/data/OpenableRow";
 import { API_BASE, apiFetch, buildQuery, listResource } from "@/lib/api";
 import { bytes, formatDateTime } from "@/lib/format";
+import { fileNameFromDisposition } from "@/lib/fileDownload";
+import { exportFilename } from "@/lib/naming";
 import {
   canDownloadDataset,
   canExportDesignWorkshopData,
@@ -218,11 +220,14 @@ function mp4Path(path: string) {
  * saying how many workshops were withheld and where to read them. A name is not the place to encode
  * a permission — a note is.
  */
-const REPOSITORY_ARCHIVE_NAME = "design-workshop-dataset.zip";
+function repositoryArchiveName(): string {
+  // NAMING 2.1: DesignWorkshop_Dataset_2026-10-18_All-Records_Export.zip — dated, so a second
+  // download never collides with the first.
+  return exportFilename("Dataset", "Export", "zip", { subject: "All Records" });
+}
 
-function zipFilename(path: string) {
-  const base = path.split("/").filter(Boolean).pop() ?? "dataset";
-  return `${base.replace(/[^A-Za-z0-9._-]+/g, "_") || "dataset"}.zip`;
+function zipFilename(folderName: string) {
+  return exportFilename("Dataset", "Export", "zip", { subject: folderName });
 }
 
 /** Filename without its extension — used to pair a transcript with its media file. */
@@ -342,8 +347,12 @@ function pillTextColor(cssHex: string) {
   return (r * 299 + g * 587 + b * 114) / 1000 > 160 ? "#1e1b2e" : "#ffffff";
 }
 
-function reportFilename(folderName: string) {
-  return `${folderName.replace(/[^A-Za-z0-9._-]+/g, "_") || "dataset"}.xlsx`;
+/** The server names the workbook (NAMING 2.1); this is only the fallback when no header arrives. */
+function reportFilename(folderName: string, disposition: string | null) {
+  return (
+    fileNameFromDisposition(disposition) ??
+    exportFilename("Dataset", "Report", "xlsx", { subject: folderName === "Repository" ? "All Records" : folderName })
+  );
 }
 
 /**
@@ -442,7 +451,7 @@ function DataTablesPanel({
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = reportFilename(folderName);
+      anchor.download = reportFilename(folderName, response.headers.get("content-disposition"));
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -1016,7 +1025,7 @@ function BrowseByTypePanel() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = REPOSITORY_ARCHIVE_NAME;
+      anchor.download = repositoryArchiveName();
       anchor.click();
       URL.revokeObjectURL(url);
       // A capped export that presents itself as complete is the worst outcome here — the researcher
@@ -1718,7 +1727,9 @@ export default function DataBrowserPage() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = zipFilename(selectedPath);
+      anchor.download = zipFilename(
+        treeByPath[selectedPath]?.crumbs?.at(-1)?.name ?? (selectedPath.split("/").filter(Boolean).pop() || "All Records")
+      );
       anchor.click();
       URL.revokeObjectURL(url);
       setFailures(failed);

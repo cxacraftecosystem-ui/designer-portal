@@ -2244,7 +2244,7 @@ object WorkshopSyncEngine {
                     // naming the account — not as a schema skew, so no later app run silently
                     // retries it — and the workshop stays on the phone with everything in it.
                     DesignWorkshopCreateBody(
-                        title = draft.title.ifBlank { "Untitled design workshop" },
+                        title = workshopCreateTitle(draft.title, draft.createdAt),
                         templateId = draft.templateId.ifBlank { "DCH_STANDARD" },
                         // THE TYPE THE DESIGNER PICKED IN THE CREATE DIALOG, days ago, in a
                         // courtyard. Sent straight off the draft and already folded to null there,
@@ -2418,7 +2418,7 @@ object WorkshopSyncEngine {
     ): DwResumedCreate {
         // THE TITLE THE POST WOULD SEND, not `draft.title` — the two differ for a blank title, and
         // the record on the server carries the default rather than the blank.
-        val title = draft.title.ifBlank { "Untitled design workshop" }
+        val title = workshopCreateTitle(draft.title, draft.createdAt)
         val summaries = WorkshopDraftStore.list(context)
         // Only a `local-`keyed draft can be awaiting a create — a draft filed under a server id is,
         // by definition, one the server already knows about — so these are the only ones that have

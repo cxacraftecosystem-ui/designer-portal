@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.occurrenceDate
+import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.data.userMessage
 
 import androidx.compose.foundation.background
@@ -1033,7 +1035,7 @@ private fun SearchResultsDto.toSearchBuckets(
         SearchRow(
             recordType = SearchRecordTypes.WORKSHOP,
             id = item.id,
-            title = item.title.ifBlank { "Untitled workshop" },
+            title = workshopDisplayTitle(item.title, date = item.occurrenceDate(), place = item.place),
             subtitle = item.place,
             status = item.status,
             date = item.startDate ?: item.date
@@ -1080,7 +1082,14 @@ private fun SearchResultsDto.toSearchBuckets(
         SearchRow(
             recordType = SearchRecordTypes.DESIGN_WORKSHOP,
             id = item.id,
-            title = item.title.ifBlank { "Untitled design workshop" },
+            title = workshopDisplayTitle(
+                item.title,
+                workshopCode = item.workshopCode,
+                clusterName = item.clusterName,
+                district = item.district,
+                state = item.state,
+                craftName = item.craftName,
+            ),
             // The PROMOTED columns, which are the axes a researcher filters on — and which are null
             // until stage 1 has been saved, so a freshly opened workshop legitimately shows a title
             // and nothing else rather than a row of the word "null". Same four, in the same order,

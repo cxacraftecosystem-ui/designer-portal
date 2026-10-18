@@ -102,7 +102,7 @@ class QuestionnaireWorkshopPickerTest {
         val options = drive(server(listOf(row("w-1", title = ""))))
 
         assertEquals(1, options.size)
-        assertEquals("Untitled workshop", options.first().label)
+        assertEquals("Workshop", options.first().label) // NAMING 2.4 generated default
         assertEquals("w-1", options.first().value)
     }
 

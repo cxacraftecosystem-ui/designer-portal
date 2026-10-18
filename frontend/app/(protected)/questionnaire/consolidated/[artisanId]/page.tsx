@@ -28,6 +28,7 @@ import {
   type InterviewSource
 } from "@/lib/consolidatedQuestionnaire";
 import type { RecordStatus } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 /**
  * One artisan's questionnaire, read as a single document.
@@ -158,7 +159,7 @@ export default function ConsolidatedQuestionnairePage({
             path={`/questionnaire/artisans/${artisan.id}/consolidated.csv${buildQuery({
               workshopIds: scope.queryValue
             })}`}
-            filename={`questionnaire-${artisan.name.replace(/[^A-Za-z0-9]+/g, "-")}.csv`}
+            filename={exportFilename("Questionnaire", "Export", "csv", { subject: artisan.name })}
           />
         }
       />

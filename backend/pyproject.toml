@@ -80,6 +80,9 @@ dependencies = [
     # the phone show the same square without a QR library of their own.
     "cryptography>=50.0.2",
     "segno>=1.6.6",
+    # app/services/naming.py: ASCII file names and S3 leaves for names in any script, from the same
+    # table the browser (any-ascii) and the handset (com.anyascii) use (NAMING_2026-10-18).
+    "anyascii>=0.3.3",
 ]
 
 [project.optional-dependencies]
