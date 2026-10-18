@@ -1,40 +1,38 @@
 name: Uptime probe
 
-# ─── THE ZERO-VENDOR FLOOR, AND IT IS A FLOOR RATHER THAN THE ANSWER ─────────────────────
+# ─── WHAT THIS IS ────────────────────────────────────────────────────────────────────────
+# Every 15 minutes, from a GitHub runner, four questions about production:
 #
-# Nothing was watching production. The deploy pipeline asserts readiness at the moment it deploys
-# and then stops looking, so the failure this closes is the ordinary one: the box wedges, the
-# pooler saturates, CloudFront starts serving 5xx, and the first report is a researcher in a
-# village who cannot sign in. `app/main.py`'s own docstring on `/health/ready` says out loud that
-# it is "what uptime alerting should watch" — and until this file landed, nothing did.
+#   1. Is the API process up?                       GET <CloudFront>/health
+#   2. Can the API reach its database, quickly?     GET <CloudFront>/health/ready
+#   3. Does the web app serve its sign-in screen?   GET designer-repository.vercel.app/login
+#   4. Is the Android App Link file intact?         GET designer-repository.vercel.app/.well-known/assetlinks.json
 #
-# This costs nothing, needs no account anywhere, and its alert channel is GitHub's own failed-run
-# email, which every collaborator already receives. That is the whole design.
+# A red check fails the run (GitHub emails the failed run to collaborators) AND opens an issue
+# labelled `outage`. While the outage lasts the same issue is updated rather than a new one opened
+# every quarter hour; the first all-green run comments "recovered" and closes it. The issue is the
+# record of when it started, what broke and when it came back; the email is the nudge.
 #
-# ─── THE UPGRADE, NAMED SO IT IS NOT RE-DISCOVERED ───────────────────────────────────────
-# A real external monitor — UptimeRobot's free tier, Better Stack, anything off this account —
-# pointed at exactly:
+# Same shape as documentation-portal's `.github/workflows/monitor.yml` — keep the two in step.
+#
+# ─── IT IS A FLOOR, NOT THE ANSWER ───────────────────────────────────────────────────────
+# This runs ON GitHub. A GitHub Actions incident takes the monitor down together with the ability to
+# notice it is down. A free external checker (UptimeRobot, Better Stack) pointed at
 #
 #     https://d3ekigkotd1xa2.cloudfront.net/health/ready
 #
-# is strictly better and should replace this the moment somebody has five minutes, for one reason
-# that this workflow can never fix: THIS PROBE RUNS ON GITHUB. A GitHub Actions incident takes the
-# monitor down together with the ability to notice it is down, and a monitor that is silent both
-# when everything is fine and when it cannot run at all is a monitor whose silence means nothing.
-# An external checker also probes from several regions and can page rather than email.
+# is strictly better: several regions, and it can page rather than email. Keep this file when that
+# lands, or delete it — but do not keep it and believe it is the alerting.
 #
-# Keep this file when that lands, or delete it — but do not keep it and believe it is the alerting.
+# ─── THE CRON IS BEST-EFFORT ─────────────────────────────────────────────────────────────
+# `*/15` asks for four runs an hour; GitHub's scheduler drifts (ten or more minutes late under load)
+# and drops runs during its own incidents. The real detection window is "usually a quarter of an
+# hour, sometimes worse". Cost: about 96 runs a day, each well under a minute, on a public
+# repository — free.
 #
-# ─── THE CRON IS HONEST ABOUT ITSELF ─────────────────────────────────────────────────────
-# `*/15` asks for four runs an hour. GitHub's scheduler is best-effort and drifts — under load a
-# run can start ten or more minutes late, and scheduled runs are dropped outright during incidents
-# — so the real detection window is "usually a quarter of an hour, sometimes much worse". That is
-# fine for what this is and would not be fine for a paging system, which is the paragraph above.
-#
-# COST: about 96 runs a day, each well under a minute, so roughly an hour and a half of runner
-# time a month. On a public repository that is free; on a private one it is the cheapest line item
-# in this account. If minutes ever matter, `*/30` halves it and doubles the detection window —
-# change the number, not the design.
+# ─── THE BOX ONLY ANSWERS THROUGH CLOUDFRONT ─────────────────────────────────────────────
+# Since the origin lock (docs/INFRA_ORIGIN_LOCK.md) the EC2 box refuses web traffic that did not come
+# through CloudFront, so the probes go to the CloudFront address and never to the box's own IP.
 
 on:
   schedule:
@@ -43,14 +41,18 @@ on:
 
 permissions:
   contents: read
+  issues: write # open, update and close the `outage` issue — nothing else
 
 concurrency:
-  # A probe that overlaps itself tells you nothing extra. Cancel-in-progress is safe here (nothing
-  # outside the runner is touched) but is deliberately OFF: a run cancelled by its successor is
-  # reported as cancelled rather than as failed, which would hide exactly the slow-response case
-  # this exists to catch.
+  # Deliberately NOT cancel-in-progress: a run cancelled by its successor reports as cancelled, not
+  # failed, which would hide exactly the slow-response case this exists to catch.
   group: monitor
   cancel-in-progress: false
+
+env:
+  API: https://d3ekigkotd1xa2.cloudfront.net
+  WEB: https://designer-repository.vercel.app
+  ANDROID_PACKAGE: com.designprototype.workshop
 
 jobs:
   probe:
@@ -59,83 +61,191 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      # NO CHECKOUT — this job reads nothing from the repository, and a checkout is 5-10 s of every
-      # one of the ~96 daily runs for nothing at all. jq and curl are both on the runner image.
+      # NO CHECKOUT — nothing here reads the repository. curl, jq and gh are all on the runner image.
+      #
+      # Every probe after the first carries `if: ${{ !cancelled() }}` so one red check does not hide
+      # the others: the API and the web app are deployed by different pipelines onto different
+      # infrastructure and fail independently. Each probe writes its one-line reason to
+      # $RUNNER_TEMP/failures before failing; a probe that dies before it can (a curl timeout under
+      # `set -e`) is still caught by the report step, which reads every step's outcome.
 
-      - name: The API is ready (database reachable, and fast enough)
-        # `/health/ready`, NOT `/health`. The dumb liveness endpoint deliberately never touches the
-        # database — its own docstring explains that it must stay dumb so CloudFront does not evict a
-        # box that is busy recovering — so a monitor pointed at it reports 200 through a total data
-        # outage. Readiness is the endpoint that answers the question.
-        #
-        # THE LATENCY ASSERTION IS THE HALF THAT EARNS ITS KEEP. This deployment has a documented
-        # history of connection-pool exhaustion whose first symptom is a probe that still succeeds
-        # and takes seconds (see the `/health/ready` docstring in backend/app/main.py, and the
-        # orphaned-query-engine story in infra/terraform/user_data.sh). Alerting only on failure
-        # fires once researchers are already locked out; alerting on 2000 ms fires while there is
-        # still time to restart something. The number is a ceiling on a healthy p99, not a target:
-        # a warm box answers this in tens of milliseconds, and a cold CloudFront edge plus a
-        # cross-region hop is still comfortably inside it.
+      - name: The API process is up
+        id: live
         run: |
           set -euo pipefail
-          url="https://d3ekigkotd1xa2.cloudfront.net/health/ready"
-          # -w writes the HTTP status onto its own last line so status and body come out of ONE
-          # request. Two requests could straddle a restart and report a state that never existed.
-          # No -f: a 503 from this endpoint is a real answer with a body worth printing, and -f
-          # would throw it away and report only "22".
-          out="$(curl -sS --max-time 25 -w '\n%{http_code}' "$url")"
+          url="${API}/health"
+          fail() { echo "- **API process** (\`${url}\`): $1" >> "$RUNNER_TEMP/failures"; echo "::error::$1"; exit 1; }
+          out="$(curl -sS --max-time 25 -w '\n%{http_code}' "$url")" || fail "no answer within 25 s (curl exit $?)."
           code="$(printf '%s' "$out" | tail -n1)"
           body="$(printf '%s' "$out" | sed '$d')"
           echo "GET ${url} -> ${code}"
           echo "${body}"
+          [ "$code" = "200" ] || fail "answered HTTP ${code}. The API is down or CloudFront cannot reach the box."
+          printf '%s' "$body" | jq -e '.status == "ok"' > /dev/null 2>&1 \
+            || fail "answered 200 but not with the API's own payload — something in front of the API answered instead."
+          echo "live: ok"
 
-          if [ "$code" != "200" ]; then
-            echo "::error::the API answered HTTP ${code} at ${url}. Body: ${body}"
-            exit 1
-          fi
-          # Parsed, not grepped: `"database":true` as a substring would also match inside a longer
-          # key, and a body that is not JSON at all (a CloudFront error page) has to fail here
-          # rather than three lines later with something confusing about arithmetic.
-          if ! printf '%s' "$body" | jq -e 'has("database") and has("latencyMs")' > /dev/null 2>&1; then
-            echo "::error::the response is not the readiness payload. Something between here and the app — CloudFront, nginx — answered instead of the API."
-            exit 1
-          fi
-          if [ "$(printf '%s' "$body" | jq -r '.database')" != "true" ]; then
-            echo "::error::the API is up but reports no database connection. Researchers can load the site and can do nothing on it."
-            exit 1
-          fi
+      - name: The API is ready (database reachable, and fast enough)
+        id: ready
+        if: ${{ !cancelled() }}
+        # `/health/ready` touches the database; `/health` deliberately does not, and reports 200
+        # through a total data outage. The 2000 ms ceiling is the half that earns its keep: this
+        # deployment's history of connection-pool exhaustion shows up first as a probe that still
+        # succeeds and takes seconds (see the `/health/ready` docstring in backend/app/main.py). A
+        # warm box answers in tens of milliseconds.
+        run: |
+          set -euo pipefail
+          url="${API}/health/ready"
+          fail() { echo "- **API database** (\`${url}\`): $1" >> "$RUNNER_TEMP/failures"; echo "::error::$1"; exit 1; }
+          # One request for status AND body: two could straddle a restart. No -f: a 503 here has a
+          # body worth printing.
+          out="$(curl -sS --max-time 25 -w '\n%{http_code}' "$url")" || fail "no answer within 25 s (curl exit $?)."
+          code="$(printf '%s' "$out" | tail -n1)"
+          body="$(printf '%s' "$out" | sed '$d')"
+          echo "GET ${url} -> ${code}"
+          echo "${body}"
+          [ "$code" = "200" ] || fail "answered HTTP ${code}. Body: ${body}"
+          printf '%s' "$body" | jq -e 'has("database") and has("latencyMs")' > /dev/null 2>&1 \
+            || fail "the response is not the readiness payload — CloudFront or nginx answered instead of the API."
+          [ "$(printf '%s' "$body" | jq -r '.database')" = "true" ] \
+            || fail "the API is up but reports no database connection. People can load the site and do nothing on it."
           latency="$(printf '%s' "$body" | jq -r '.latencyMs')"
-          # Integer comparison in the shell cannot take the endpoint's one decimal place, and
-          # rounding here would need another tool. jq already has the number, so let jq decide.
-          if [ "$(printf '%s' "$body" | jq -r 'if .latencyMs >= 2000 then "slow" else "ok" end')" = "slow" ]; then
-            echo "::error::the database answered in ${latency} ms, over the 2000 ms ceiling. This is the shape connection-pool exhaustion takes before it becomes an outage — check the pooler's client count and the fieldrepo units."
-            exit 1
-          fi
+          [ "$(printf '%s' "$body" | jq -r 'if .latencyMs >= 2000 then "slow" else "ok" end')" = "ok" ] \
+            || fail "the database answered in ${latency} ms, over the 2000 ms ceiling. This is how pool exhaustion looks before it becomes an outage — check the pooler's client count and the fieldrepo units."
           echo "ready: database=true latency=${latency}ms"
 
       - name: The web app serves its sign-in screen
-        # `/login` and not `/`. The root redirects and a redirect is served happily by a build that
-        # cannot render anything; the sign-in screen is the first page every user actually needs and
-        # the one whose absence is a total outage.
-        #
-        # NO `-f`, AND THE STATUS IS COMPARED INSTEAD. `curl -f` collapses every failure into exit
-        # code 22 with no number attached, so the alert email would say "the probe failed" where it
-        # could say "the site answered 503". Reading `%{http_code}` and comparing it costs one line
-        # and puts the actual status in the error text, which is the difference between an alert
-        # somebody can triage from their phone and one that needs a laptop.
-        #
-        # `!cancelled()` so a red API does not hide a red website. The two are deployed by different
-        # pipelines onto different infrastructure and fail independently; stopping at the first one
-        # would report half the state of production. Not `always()`: a cancelled run should not spend
-        # a runner finishing a probe nobody asked for any more.
+        id: web
         if: ${{ !cancelled() }}
+        # `/login` and not `/`. The root redirects, and a redirect is served happily by a build that
+        # cannot render anything; the sign-in screen is the first page every user needs and the one
+        # whose absence is a total outage. No -f: the status goes into the error text, so the alert
+        # says "503" instead of "failed".
         run: |
           set -euo pipefail
-          url="https://designer-repository.vercel.app/login"
-          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 "$url")"
+          url="${WEB}/login"
+          fail() { echo "- **Web app** (\`${url}\`): $1" >> "$RUNNER_TEMP/failures"; echo "::error::$1"; exit 1; }
+          code="$(curl -sS -o "$RUNNER_TEMP/login.html" -w '%{http_code}' --max-time 25 "$url")" || fail "no answer within 25 s (curl exit $?)."
           echo "GET ${url} -> ${code}"
-          if [ "$code" != "200" ]; then
-            echo "::error::the web app answered HTTP ${code} at ${url}. Nobody can sign in."
-            exit 1
-          fi
+          [ "$code" = "200" ] || fail "answered HTTP ${code}. Nobody can sign in."
+          grep -qi '<html' "$RUNNER_TEMP/login.html" || fail "answered 200 with something that is not a web page."
           echo "web: login screen served"
+
+      - name: The Android App Link file is intact
+        id: assetlinks
+        if: ${{ !cancelled() }}
+        # Android checks this file to decide whether links to the site open in the app. Android
+        # requires a direct 200 (no redirects) served as JSON; the file must name this app's package
+        # and the release signing certificate. If any of that breaks, links quietly open in the
+        # browser instead of the app — nothing errors, which is why it is probed.
+        #
+        # The certificate is compared with the ANDROID_RELEASE_CERT_SHA256 secret that
+        # publish-android.yml signs against (colons and case ignored). The value is never printed.
+        env:
+          EXPECTED_CERT_SHA256: ${{ secrets.ANDROID_RELEASE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          url="${WEB}/.well-known/assetlinks.json"
+          fail() { echo "- **Android App Links** (\`${url}\`): $1" >> "$RUNNER_TEMP/failures"; echo "::error::$1"; exit 1; }
+          meta="$(curl -sS -o "$RUNNER_TEMP/assetlinks.json" -w '%{http_code} %{content_type}' --max-time 25 "$url")" || fail "no answer within 25 s (curl exit $?)."
+          code="${meta%% *}"
+          ctype="${meta#* }"
+          echo "GET ${url} -> ${code} (${ctype})"
+          cat "$RUNNER_TEMP/assetlinks.json"
+          [ "$code" = "200" ] || fail "answered HTTP ${code}. Links to the site will open in the browser, not the app."
+          case "$ctype" in application/json*) ;; *) fail "served as '${ctype}', not application/json. Android ignores the file." ;; esac
+          jq -e --arg pkg "$ANDROID_PACKAGE" '
+            any(.[]; (.relation | index("delegate_permission/common.handle_all_urls"))
+                     and .target.namespace == "android_app"
+                     and .target.package_name == $pkg
+                     and (.target.sha256_cert_fingerprints | length) > 0)
+          ' "$RUNNER_TEMP/assetlinks.json" > /dev/null 2>&1 \
+            || fail "the file does not grant link handling to ${ANDROID_PACKAGE}."
+          if [ -n "${EXPECTED_CERT_SHA256}" ]; then
+            want="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ': ' | tr 'A-F' 'a-f')"
+            # Into a variable first: `grep -q` closing a pipe early would trip pipefail on a match.
+            have="$(jq -r --arg pkg "$ANDROID_PACKAGE" '.[] | select(.target.package_name == $pkg) | .target.sha256_cert_fingerprints[]' \
+              "$RUNNER_TEMP/assetlinks.json" | tr -d ': ' | tr 'A-F' 'a-f')"
+            printf '%s\n' "$have" | grep -qx "$want" \
+              || fail "no fingerprint in the file matches the release signing certificate. Installed copies of the app will not open links."
+          else
+            echo "::warning::ANDROID_RELEASE_CERT_SHA256 is not set; the certificate fingerprint was not compared."
+          fi
+          echo "assetlinks: ok"
+
+      - name: Open, update or close the outage issue
+        # Runs whatever the probes did, but not when the run was cancelled — a cancelled run proves
+        # nothing either way and must not close an open outage.
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OUTCOMES: >-
+            API process=${{ steps.live.outcome }};API database=${{ steps.ready.outcome }};Web app=${{ steps.web.outcome }};Android App Links=${{ steps.assetlinks.outcome }}
+        run: |
+          set -euo pipefail
+          now="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          touch "$RUNNER_TEMP/failures"
+          # A probe that failed without writing its reason (it died mid-command) still counts.
+          IFS=';' read -ra pairs <<< "$OUTCOMES"
+          for p in "${pairs[@]}"; do
+            name="${p%%=*}"; outcome="${p#*=}"
+            if [ "$outcome" = "failure" ] && ! grep -q "\*\*${name}\*\*" "$RUNNER_TEMP/failures"; then
+              echo "- **${name}**: the check failed before it could say why. See the run log." >> "$RUNNER_TEMP/failures"
+            fi
+          done
+          failures="$(cat "$RUNNER_TEMP/failures")"
+          # Which checks are red, as a stable signature, so a long outage gets one comment per change
+          # rather than one every quarter hour.
+          # `|| true`: an all-green run has no lines to match, and grep's exit 1 would trip pipefail.
+          signature="$( (grep -o '^- \*\*[^*]*\*\*' "$RUNNER_TEMP/failures" || true) | sort | tr '\n' ' ' | sed 's/ *$//')"
+
+          # Only an issue this probe opened counts: it carries the `outage-signature` marker. An issue a
+          # person labelled `outage` by hand is never edited or closed by this step.
+          # One retry: a brief GitHub API blip on an all-green run must not turn the run red.
+          find_open() {
+            gh issue list --label outage --state open --json number,body --limit 50               --jq '[.[] | select(.body | contains("<!-- outage-signature:"))] | sort_by(.number) | .[0].number // empty'
+          }
+          if ! open="$(find_open)"; then
+            sleep 10
+            if ! open="$(find_open)"; then
+              if [ -z "$failures" ]; then
+                echo "::warning::Could not list issues (GitHub API error). Every check is green; any open outage issue closes on the next run."
+                exit 0
+              fi
+              echo "::error::Could not list issues (GitHub API error), so the outage issue was not opened or updated."
+              exit 1
+            fi
+          fi
+
+          if [ -z "$failures" ]; then
+            if [ -n "$open" ]; then
+              gh issue comment "$open" --body "**Recovered** at ${now}. Every check is green again. [Run](${RUN_URL})"
+              gh issue close "$open"
+              echo "closed outage issue #${open}"
+            fi
+            echo "all green"
+            exit 0
+          fi
+
+          body="$(printf '%s\n\n%s\n\n%s\n%s\n' \
+            "Production is failing the uptime probe. This issue closes itself when every check is green again." \
+            "**Failing as of ${now}** ([run](${RUN_URL})):" \
+            "$failures" \
+            "<!-- outage-signature: ${signature} -->")"
+
+          if [ -z "$open" ]; then
+            gh label list --search outage --json name --jq '.[].name' | grep -qx outage \
+              || gh label create outage --color B60205 --description "Production is down or degraded (opened by the uptime probe)"
+            title="Outage: $(grep -o '^- \*\*[^*]*\*\*' "$RUNNER_TEMP/failures" | sed 's/^- \*\*//; s/\*\*$//' | paste -sd, - | sed 's/,/, /g') failing"
+            gh issue create --title "$title" --label outage --body "$body"
+            echo "opened an outage issue"
+          else
+            previous="$(gh issue view "$open" --json body --jq '.body' | sed -n 's/.*<!-- outage-signature: \(.*\) -->.*/\1/p')"
+            gh issue edit "$open" --body "$body"
+            if [ "$previous" != "$signature" ]; then
+              gh issue comment "$open" --body "$(printf '**What is failing changed** at %s ([run](%s)):\n\n%s\n' "$now" "$RUN_URL" "$failures")"
+            fi
+            echo "updated outage issue #${open}"
+          fi

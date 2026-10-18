@@ -560,9 +560,18 @@ because the failure being closed is not "the copy errored" but "the copy succeed
 nothing".
 
 **`.github/workflows/monitor.yml` — uptime probe.** Every 15 minutes it asserts `/health/ready`
-(**not** `/health`, which deliberately never touches the database and would report 200 through a
-total data outage) and that the web app serves `/login` (**not** `/`, which redirects happily from a
-build that cannot render anything). The readiness check parses the payload with `jq` and fails on
+(**not only** `/health`, which deliberately never touches the database and would report 200 through
+a total data outage — `/health` is probed too, since 2026-10-17, so an alert tells "the box is down"
+apart from "the database is"), that the web app serves `/login` (**not** `/`, which redirects happily
+from a build that cannot render anything), and that `/.well-known/assetlinks.json` is served directly
+as JSON for `com.designprototype.workshop` with the certificate in `ANDROID_RELEASE_CERT_SHA256` —
+when that file breaks, links quietly open in the browser instead of the app. **Since 2026-10-17 a red
+run also opens an issue labelled `outage`**, updates that same issue while the outage lasts (a new
+comment only when what is failing changes), and comments and closes it on the first all-green run;
+the job holds `issues: write` for that and nothing more. The `outage` label is reserved for the
+probe: it only edits or closes an issue it opened itself (marked by a hidden `outage-signature`
+line), so an issue a person labels `outage` by hand stays open until a person closes it. documentation-portal runs the same file
+shape. The readiness check parses the payload with `jq` and fails on
 three separate conditions: a non-200, `database` not true, and **`latencyMs >= 2000`**. That last one
 is the half that earns its keep — this deployment has a documented history of pool exhaustion whose
 first symptom is a probe that still succeeds and takes seconds, and 2000 ms is a ceiling on a healthy
