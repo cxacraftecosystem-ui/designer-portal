@@ -87,6 +87,10 @@ def test_transcribe_now_refuses_while_paused_and_sends_nothing(monkeypatch) -> N
     async def _row(*_a: Any, **_k: Any) -> Any:
         return None  # no settings row at all: paused
 
+    async def _verdict(*_a: Any, **_k: Any) -> Any:
+        return SimpleNamespace(may_send=True, refusal=None)
+
+    monkeypatch.setattr(media_queue.dictation_consent, "transcription_verdict", _verdict)
     monkeypatch.setattr(media_queue, "load_app_settings", _row)
     monkeypatch.setattr(media_queue, "transcribe_audio_bytes", _never)
     monkeypatch.setattr(requests, "post", _never)
@@ -263,6 +267,9 @@ def _load_backfill():
     path = Path(__file__).resolve().parents[2] / "scripts" / "backfill_consent_owner_attestation.py"
     spec = importlib.util.spec_from_file_location("backfill_consent_owner_attestation", path)
     module = importlib.util.module_from_spec(spec)
+    import sys
+
+    sys.modules[spec.name] = module  # dataclasses resolve their module through sys.modules
     spec.loader.exec_module(module)
     return module
 

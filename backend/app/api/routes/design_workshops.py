@@ -1304,13 +1304,6 @@ async def _transcribe_one_dictation(
     # on a swipe-away, and a spend ceiling defeated by a swipe-away is the one direction that costs
     # money rather than a retry. The handset's mirror of these numbers exists so the dictation control
     # can drop this rung BEFORE recording; it enforces nothing and is not consulted here.
-    # THE OWNER'S HOLD FIRST (18 Oct 2026): while transcription is paused this rung answers 503
-    # before anything is counted or uploaded, and the dictation ladder falls through to the
-    # on-device rungs with the server's own sentence.
-    if await app_settings.load_transcription_paused():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=PAUSED_MESSAGE
-        )
     allowance = await dictation_cap.load_allowance(current_user.id)
     refusal = dictation_cap.cap_refusal(allowance)
     if refusal is not None:
@@ -1362,6 +1355,12 @@ async def _transcribe_one_dictation(
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No audio was uploaded."
+        )
+    # THE OWNER'S HOLD (18 Oct 2026), after every other refusal and before any provider is
+    # touched: 503, nothing counted, and the dictation ladder falls through to the on-device rungs.
+    if await app_settings.load_transcription_paused():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=PAUSED_MESSAGE
         )
     result = await transcribe_audio_bytes(
         content,
@@ -4514,9 +4513,6 @@ async def subtitle_ai_layer(
     the annexure (which prints text), a search (which matches strings) and the acceptance screen
     (which previews). A subtitle file is always built from the cues.
     """
-    # Subtitles send the audio to a provider again, so the owner's hold applies (18 Oct 2026).
-    if await app_settings.load_transcription_paused():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=PAUSED_MESSAGE)
     allowance = await _verb_gate(workshop_id, current_user, ai_verbs.Verb.SUBTITLES)
     media = await _verb_source_media(
         workshop_id, payload.sourceMediaId, current_user, verb=ai_verbs.Verb.SUBTITLES
@@ -4524,6 +4520,10 @@ async def subtitle_ai_layer(
     # SIZE, WHICH `_verb_source_media` DOES NOT CHECK — see `MAX_SUBTITLE_FETCH_BYTES`. This verb
     # takes VIDEO as well as AUDIO, so it is the one most likely to be pointed at the 668 MiB object.
     await _refuse_oversize_verb_source(media, MAX_SUBTITLE_FETCH_BYTES, what="subtitle")
+    # Subtitles send the audio to a provider again, so the owner's hold applies (18 Oct 2026),
+    # after every refusal about the caller and the file and before a byte is downloaded.
+    if await app_settings.load_transcription_paused():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=PAUSED_MESSAGE)
     answer: Mapping[str, Any] | None = None
     source_path: str | None = None
     try:

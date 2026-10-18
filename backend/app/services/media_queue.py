@@ -677,15 +677,16 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
     decided it. An admin who believes the artisan agreed has a route for saying so, and this refusal
     names it. :class:`dictation_consent.SendRefused` is raised — see that class for why not a result."""
     settings = settings or get_settings()
-    # THE PAUSE HOLDS HERE TOO. "Transcribe now" bypasses the queue and the window, never the pause.
-    if transcription_paused(await load_app_settings()):
-        raise transcription_jobs.TranscriptionPaused()
     # ``resolve_from_stages`` for the drain's reason above, and this route needed it just as badly:
     # measured on the running API, an admin pressing "Transcribe now" on an untagged clip that a stage
     # of a REFUSED workshop names got HTTP 200 and the recording went to all three providers.
     verdict = await dictation_consent.transcription_verdict(media, resolve_from_stages=True)
     if not verdict.may_send:
         raise dictation_consent.SendRefused(verdict)
+    # THE PAUSE HOLDS HERE TOO, after consent (the more useful sentence). "Transcribe now"
+    # bypasses the queue and the window, never the pause.
+    if transcription_paused(await load_app_settings()):
+        raise transcription_jobs.TranscriptionPaused()
     media_id = str(_value(media, "id"))
     # THE SIZE GATE BEFORE THE STATUS WRITE, so a refusal does not leave the row saying PROCESSING
     # for something this server is never going to process.

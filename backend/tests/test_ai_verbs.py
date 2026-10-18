@@ -1114,6 +1114,12 @@ def api(monkeypatch):
     from app.api.routes import design_workshops as routes
     from app.core import deps
 
+    async def _unpaused() -> bool:
+        return False
+
+    # Transcription ships PAUSED (owner hold, 18 Oct 2026); these tests are about what happens once on.
+    monkeypatch.setattr(routes.app_settings, "load_transcription_paused", _unpaused)
+
     tripwire = _Tripwire()
     real_db = core_db.db
     monkeypatch.setattr(core_db, "db", tripwire)

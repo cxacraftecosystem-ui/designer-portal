@@ -1145,6 +1145,12 @@ def dictation(monkeypatch):
     """
     from app.api.routes import design_workshops as routes
 
+    async def _unpaused() -> bool:
+        return False
+
+    # Transcription ships PAUSED (owner hold, 18 Oct 2026); these tests are about what happens once on.
+    monkeypatch.setattr(routes.app_settings, "load_transcription_paused", _unpaused)
+
     seen = SimpleNamespace(provider_calls=[], spends=[], allowance=None, transcribed_for=[])
 
     async def _workshop(workshop_id, user, **kwargs):
