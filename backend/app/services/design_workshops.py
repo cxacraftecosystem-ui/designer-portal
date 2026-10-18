@@ -5837,7 +5837,12 @@ async def save_stage(
                 continue
             removed.append(row.id)
 
+    # C13: whether THIS save handed a sent-back report back in, so its round copy is kept afterwards.
+    # Reset on every attempt — a re-run whose transaction rolled back handed nothing in.
+    handed_in: dict[str, bool] = {}
+
     async def write_everything() -> None:
+        handed_in.clear()
         async with db.tx() as tx:
             # One transaction, because a 22-stage submit is a many-statement write and a failure
             # halfway through would otherwise leave a stage that is neither the old data nor the
@@ -6104,8 +6109,11 @@ async def save_stage(
                     or design_workshop_approvals.FROZEN_APPROVED,
                 )
             if resubmission:
-                await tx.designworkshop.update_many(
-                    where={"id": workshop_id, "status": "NEEDS_REVISION"}, data=resubmission
+                handed_in["now"] = (
+                    await tx.designworkshop.update_many(
+                        where={"id": workshop_id, "status": "NEEDS_REVISION"}, data=resubmission
+                    )
+                    == 1
                 )
 
     # ── THE WRITE, AND THE TWO RACES IT IS RE-RUN FOR ─────────────────────────────────────────────
@@ -6201,6 +6209,10 @@ async def save_stage(
                     STAGE_ROW_CONFLICT_MESSAGE
                 )
 
+    if handed_in.get("now"):
+        from app.services.design_workshop_review_aids import capture_round_snapshot
+
+        await capture_round_snapshot(workshop_id)
     rows = await entry_rows(workshop_id, stage_key=spec.key)
     completeness = workshop_completeness(rows, definition=definition).get(spec.key)
     # AN AUDIO FIELD ON A STAGE IS A RECORDING, AND A RECORDING GETS TRANSCRIBED. This is the one

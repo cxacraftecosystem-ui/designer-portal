@@ -467,6 +467,8 @@ model User {
   /// pairing the two consent relations above are.
   dwWorkshopsReviewed         DesignWorkshop[]            @relation("DesignWorkshopReviewedBy")
   dwInspectionFeedback        DwInspectionFeedback[]      @relation("DwInspectionFeedbackActor")
+  /// Rounds this account marked "Checked, no corrections" as an inspector.
+  dwInspectionClearances      DwInspectionClearance[]     @relation("DwInspectionClearanceInspector")
   /// The approving authority's sign-off: the workshops whose standing approval, and whose hand-on
   /// to the office, this account is named on (SetNull — pointers; the acts themselves are
   /// `ReviewLog` rows under `reviews` above, which are Restrict).
@@ -2879,6 +2881,10 @@ model DesignWorkshop {
   /// what the last decision WAS; this says what has been ASKED FOR, round by round, and it is the
   /// only thing the designer's "what was sent back" screen can be built from.
   inspectionFeedback DwInspectionFeedback[] @relation("DesignWorkshopInspectionFeedback")
+  /// "Checked, no corrections" verdicts, one per inspector per round.
+  inspectionClearances DwInspectionClearance[] @relation("DesignWorkshopInspectionClearances")
+  /// The stage data as it stood at each hand-in, for "Changed since round N".
+  roundSnapshots DwRoundSnapshot[] @relation("DesignWorkshopRoundSnapshots")
   /// Every peer- and pool-round rating filed against this workshop's sketches and prototypes.
   /// Denormalised onto the rating so the level-1 review page needs no join; see DwReviewRating.
   reviewRatings     DwReviewRating[]            @relation("DesignWorkshopReviewRatings")
@@ -4225,6 +4231,9 @@ model DwReportExport {
   schemaVersion String?
   warnings      String?
   storageKey    String?
+  /// What the file was built from (stage rows, header, options). A later request with the same
+  /// fingerprint is served this stored file again instead of rebuilding it.
+  inputFingerprint String?
 
   generatedAt   DateTime @default(now())
   generatedById String?
@@ -4239,6 +4248,7 @@ model DwReportExport {
   deliveries        DwReportDelivery[] @relation("DwReportDeliveryExport")
 
   @@index([designWorkshopId, generatedAt])
+  @@index([designWorkshopId, inputFingerprint])
   @@index([generatedById])
 }
 
@@ -4797,6 +4807,10 @@ model DwInspectionFeedback {
   /// correction to make like any other — but it is not an inspection, so the ministry register's
   /// per-inspector counts leave these rows out, and the screens label them as the authority's.
   byApprovingAuthority Boolean @default(false)
+
+  /// The oversight post the note was filed from ("ASSISTANT_DIRECTOR" / "REGIONAL_DIRECTOR"), or
+  /// null for an inspector or the approving authority.
+  actorPost String?
 
   /// WHO said it.
   actorId String
@@ -6961,4 +6975,37 @@ model AadhaarOtpThrottle {
   @@index([userId, createdAt])
   @@index([uidHash, createdAt])
   @@index([createdAt])
+}
+
+/// "Checked, no corrections": one inspector's verdict on one round of one report. Shown to the
+/// approving authority and filterable in the queue; never required for approval. Filing a note in
+/// the same round removes it.
+model DwInspectionClearance {
+  id               String   @id @default(cuid())
+  designWorkshopId String
+  inspectorId      String
+  round            Int
+  clearedAt        DateTime @default(now())
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopInspectionClearances", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+  inspector      User           @relation("DwInspectionClearanceInspector", fields: [inspectorId], references: [id], onDelete: Cascade)
+
+  @@unique([designWorkshopId, inspectorId, round])
+  @@index([designWorkshopId, round])
+  @@index([inspectorId])
+}
+
+/// The stage data of one workshop as it stood when round N was handed in. Kept for the life of the
+/// workshop plus one year after it is deleted; read by "Changed since round N".
+model DwRoundSnapshot {
+  id               String   @id @default(cuid())
+  designWorkshopId String
+  round            Int
+  takenAt          DateTime @default(now())
+  /// The stages payload (`_stages_payload`) at hand-in.
+  stages           Json
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopRoundSnapshots", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+
+  @@unique([designWorkshopId, round])
 }

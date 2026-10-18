@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.AppToggle
 import com.designprototype.workshop.ui.destructiveAction
 import com.designprototype.workshop.data.userMessage
 
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DW_CLEARANCE_LABEL
 import com.designprototype.workshop.data.DW_NOT_UNDER_REVIEW_SENTENCE
 import com.designprototype.workshop.data.DwInspectionDetailDto
 import com.designprototype.workshop.data.DwInspectionFeedbackDto
@@ -46,11 +48,15 @@ import com.designprototype.workshop.data.DwInspectionSyncReport
 import com.designprototype.workshop.data.DwQueuedInspectionNote
 import com.designprototype.workshop.data.StageDto
 import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.dwClearanceBlocked
+import com.designprototype.workshop.data.dwClearanceDescription
+import com.designprototype.workshop.data.dwClearanceStatus
 import com.designprototype.workshop.data.dwFeedbackAuthor
 import com.designprototype.workshop.data.dwFeedbackRounds
 import com.designprototype.workshop.data.dwInspectionNoteProblem
 import com.designprototype.workshop.data.dwIsUnderReview
 import com.designprototype.workshop.data.dwQueuedNoteSentence
+import com.designprototype.workshop.data.withFeedbackAnswer
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
@@ -94,6 +100,8 @@ internal fun InspectionFeedbackPanel(
     var confirmDiscard by remember { mutableStateOf<DwQueuedInspectionNote?>(null) }
     var queued by remember(record.id) { mutableStateOf<List<DwQueuedInspectionNote>>(emptyList()) }
     var reread by remember { mutableIntStateOf(0) }
+    var clearing by remember { mutableStateOf(false) }
+    val viewerId = remember(repository) { repository.cachedUser()?.id }
 
     // THE NOTE BEING TYPED, ON DISK (2026-10-16). `rememberSaveable` above survives Android recycling
     // the process in the background but not a swipe-away, a force-stop or an update; this survives
@@ -242,6 +250,30 @@ internal fun InspectionFeedbackPanel(
                 !underReview -> InspectionNotice(DW_NOT_UNDER_REVIEW_SENTENCE, warning = true)
 
                 else -> {
+                    // C5: the web's "Checked, no corrections", the same words. Online only.
+                    AppToggle(
+                        label = DW_CLEARANCE_LABEL,
+                        checked = record.myClearedAt != null,
+                        description = dwClearanceDescription(record, viewerId),
+                        status = dwClearanceStatus(record.myClearedAt),
+                        enabled = !dwClearanceBlocked(record, viewerId),
+                        busy = clearing,
+                        onCheckedChange = { next ->
+                            clearing = true
+                            problem = null
+                            scope.launch {
+                                try {
+                                    onRecord(record.withFeedbackAnswer(repository.setInspectionRoundCleared(record.id, next)))
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    problem = e.userMessage("Couldn't record that. Try again when you're online.")
+                                } finally {
+                                    clearing = false
+                                }
+                            }
+                        }
+                    )
                     OutlinedTextField(
                         value = note,
                         onValueChange = { note = it; problem = null },

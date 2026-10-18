@@ -57,6 +57,7 @@ from app.schemas.design_workshop_review_loop import (
     APPROVAL_CACHE_KEYS,
     APPROVED,
     HAND_ON_CACHE_KEYS,
+    MAX_BATCH_NOTES,
     MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS,
     NEEDS_REVISION,
     PRE_SUBMISSION,
@@ -261,6 +262,14 @@ class DwApproveIn(BaseModel):
     readAt: str = Field(min_length=1, max_length=64)
 
 
+class DwDecisionNoteIn(BaseModel):
+    """One field note carried by a send-back (B2): the sentence and what it is about."""
+
+    note: str = Field(min_length=1, max_length=MAX_DECISION_NOTE_CHARS)
+    stageKey: str | None = Field(default=None, max_length=120)
+    fieldKey: str | None = Field(default=None, max_length=120)
+
+
 class DwReviseIn(BaseModel):
     """POST to send a report back without approving it, withdraw an approval, or return a report
     that has been handed on — whichever the report's state makes it (``reviseKind`` on the read).
@@ -273,6 +282,8 @@ class DwReviseIn(BaseModel):
     note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
     stageKey: str | None = Field(default=None, max_length=120)
     fieldKey: str | None = Field(default=None, max_length=120)
+    #: The reader's tray of field notes (B2, 2026-10-17). With notes the sentence above is optional.
+    notes: list[DwDecisionNoteIn] = Field(default_factory=list, max_length=MAX_BATCH_NOTES)
 
 
 class DwHandOnIn(BaseModel):
@@ -312,11 +323,16 @@ class DecisionPlans:
     workshop: InspectionWritePlan
     log: InspectionWritePlan
     feedback: InspectionWritePlan | None = None
+    #: The further notes of a batch send-back (B2), filed after ``feedback``.
+    extra: tuple[InspectionWritePlan, ...] = ()
+    #: The batch's notes as one numbered text, for the designers' e-mail; None for a single note.
+    digest: str | None = None
 
     def __iter__(self):
         writes = [self.workshop]
         if self.feedback is not None:
             writes.append(self.feedback)
+        writes.extend(self.extra)
         writes.append(self.log)
         return iter(writes)
 
@@ -413,8 +429,13 @@ def revise_plans(
     handed_on: bool = False,
     stage_key: str | None = None,
     field_key: str | None = None,
+    notes: list[tuple[str | None, str | None, str | None]] | None = None,
 ) -> DecisionPlans:
     """Back to NEEDS_REVISION, with a mandatory sentence: whichever of the three the state makes it.
+
+    ``notes`` (B2) is a batch of ``(note, stage, field)``: with it the sentence becomes an optional
+    covering note, every note is filed in the same transaction, and the first row is the one marked
+    as sending the report back.
 
     * **RETURN** (from PRE_SUBMISSION, or NEEDS_REVISION as a no-op that still files the sentence):
       the inspector's ``send_back_plans`` VERBATIM, its suggestion marked as the authority's and its
@@ -432,12 +453,23 @@ def revise_plans(
 
     cycle = _round(round)
     text = (note or "").strip()
-    if not text:
+    if not text and not notes:
         raise InspectionRuleViolation(REVISE_NOTE_REQUIRED)
     kind = revise_kind(current_status, handed_on=handed_on)
     if kind is None:
         raise InspectionRuleViolation(
             revise_refusal(current_status, handed_on=handed_on) or REVISE_NOTE_REQUIRED
+        )
+    if notes:
+        return _revise_batch_plans(
+            workshop_id=workshop_id,
+            cycle=cycle,
+            actor_id=actor_id,
+            at=at,
+            cover=text,
+            notes=notes,
+            kind=kind,
+            current_status=current_status,
         )
     if kind == RETURN:
         plans: SendBackPlans = loop.send_back_plans(
@@ -494,6 +526,82 @@ def revise_plans(
         actor_id=actor_id,
     )
     return DecisionPlans(workshop=workshop, log=log, feedback=feedback)
+
+
+def _revise_batch_plans(
+    *,
+    workshop_id: str,
+    cycle: int,
+    actor_id: str,
+    at: datetime,
+    cover: str,
+    notes: list[tuple[str | None, str | None, str | None]],
+    kind: str,
+    current_status: str,
+) -> DecisionPlans:
+    """:func:`revise_plans` carrying a batch: the same guards and cache writes, every note filed."""
+    from app.services.records import review_update
+
+    if kind == RETURN:
+        batch, workshop, log = loop.send_back_batch_plans(
+            workshop_id=workshop_id,
+            round=cycle,
+            actor_id=actor_id,
+            at=at,
+            notes=notes,
+            cover=cover,
+            by_approving_authority=True,
+            log_prefix=RETURNED_BY_APPROVER,
+        )
+        guarded = InspectionWritePlan(
+            table="DesignWorkshop",
+            operation=Operation.UPDATE,
+            where={"id": workshop_id, "status": {"in": sorted(UNDER_REVIEW)}, "deletedAt": None},
+            data=dict(workshop.data),
+        )
+        return DecisionPlans(
+            workshop=guarded,
+            log=log,
+            feedback=batch.rows[0],
+            extra=batch.rows[1:],
+            digest=batch.digest,
+        )
+    batch = loop.note_batch(
+        workshop_id=workshop_id,
+        round=cycle,
+        actor_id=actor_id,
+        at=at,
+        notes=notes,
+        cover=cover,
+        sends_back=True,
+        by_approving_authority=True,
+    )
+    where: dict[str, Any] = {"id": workshop_id, "status": current_status, "deletedAt": None}
+    if kind == RETURN_FROM_OFFICE:
+        where["handedOnAt"] = {"not": None}
+    workshop = InspectionWritePlan(
+        table="DesignWorkshop",
+        operation=Operation.UPDATE,
+        where=where,
+        data={
+            **review_update(NEEDS_REVISION, batch.cover, actor_id),
+            **dict.fromkeys(APPROVAL_CACHE_KEYS),
+            **dict.fromkeys(HAND_ON_CACHE_KEYS),
+        },
+    )
+    log = _log(
+        workshop_id=workshop_id,
+        status_value=NEEDS_REVISION,
+        notes=_prefixed(APPROVAL_WITHDRAWN, batch.cover),
+        actor_id=actor_id,
+    )
+    return DecisionPlans(
+        workshop=workshop,
+        log=log,
+        feedback=batch.rows[0],
+        extra=batch.rows[1:],
+        digest=batch.digest,
+    )
 
 
 def hand_on_plans(

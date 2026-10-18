@@ -1441,6 +1441,8 @@ export type DwReportBody = {
    */
   includeAiLayers?: boolean;
   record?: boolean;
+  /** Rebuild even when an identical file is stored (the approver's door reuses one otherwise). */
+  fresh?: boolean;
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -3382,6 +3384,10 @@ export function recordDesignWorkshopExport(id: string, body: DwExportRecordBody)
 export type DwReportFile = {
   blob: Blob;
   fileName: string;
+  /** When an unchanged report was served from its stored file (approver's door): when it was made. */
+  reusedFrom?: string | null;
+  /** The ledger row this file is, when the server said. */
+  exportId?: string | null;
   /** Split back out of the `x-report-warnings` header, which joins them with "; ". */
   warnings: string[];
   warningCount: number;
@@ -3454,7 +3460,9 @@ export async function downloadDesignWorkshopReport(
       .split(";")
       .map((line) => line.trim())
       .filter(Boolean),
-    warningCount: Number.parseInt(response.headers.get("x-report-warning-count") ?? "0", 10) || 0
+    warningCount: Number.parseInt(response.headers.get("x-report-warning-count") ?? "0", 10) || 0,
+    reusedFrom: response.headers.get("x-report-reused-from") || null,
+    exportId: response.headers.get("x-report-export-id") || null
   };
 }
 

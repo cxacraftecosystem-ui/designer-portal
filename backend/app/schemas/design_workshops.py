@@ -508,6 +508,13 @@ class ReportGenerateIn(APIModel):
         default=True,
         description="Record the export against stage 20, so every generated file is traceable.",
     )
+    fresh: bool = Field(
+        default=False,
+        description=(
+            "Build the file again even when an identical one is stored. Without it the approving "
+            "authority's door serves the stored file of an unchanged report."
+        ),
+    )
 
     @model_validator(mode="after")
     def _known_formats(self) -> ReportGenerateIn:

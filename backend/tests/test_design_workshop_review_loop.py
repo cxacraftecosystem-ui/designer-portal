@@ -496,7 +496,9 @@ def test_every_review_log_status_a_plan_builder_writes_is_a_recordstatus_token()
             if param.kind
             not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         }
-        kwargs = {k: v for k, v in _plan_kwargs().items() if k in named}
+        # The batch builders (2026-10-17) also take `notes`, a list of (note, stage, field).
+        offered = {**_plan_kwargs(), "notes": [("Stage 14's cost sheet does not add up.", None, None)]}
+        kwargs = {k: v for k, v in offered.items() if k in named}
         missing = [
             name
             for name, param in named.items()
@@ -766,6 +768,7 @@ def test_feedback_payload_has_the_eleven_keys_the_clients_decode():
         "note",
         "sentBack",
         "byApprovingAuthority",
+        "actorPost",
         "actorId",
         "actorName",
         "recordedAt",

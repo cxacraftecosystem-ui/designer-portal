@@ -117,6 +117,12 @@ MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS = 4000
 #: was cut is cheaper than a second route with its own scope decision.
 DESIGN_WORKSHOP_FEEDBACK_READ_LIMIT = 200
 
+#: How many notes one batch may carry (the reader's tray of field flags, B2).
+MAX_BATCH_NOTES = 30
+
+#: The oversight posts that may file a note (C16, owner decision 2026-10-17).
+NOTE_POSTS = frozenset({"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"})
+
 #: What a route answers when somebody tries to file a suggestion, or send a report back, on a
 #: workshop that has not been handed in.
 #:
@@ -628,6 +634,7 @@ def feedback_plan(
     recorded_at: datetime | None = None,
     sent_back: bool = False,
     by_approving_authority: bool = False,
+    actor_post: str | None = None,
 ) -> InspectionWritePlan:
     """One correction suggestion, as a row.
 
@@ -655,21 +662,22 @@ def feedback_plan(
             "The device that filed this suggestion has its clock set ahead of the real time. "
             "Correct the device's date and time and file it again."
         )
-    return InspectionWritePlan(
-        table="DwInspectionFeedback",
-        operation=Operation.CREATE,
-        data={
-            "designWorkshopId": workshop_id,
-            "round": round,
-            "stageKey": _clean_stage_key(stage_key),
-            "fieldKey": (field_key or "").strip() or None,
-            "note": _clean_note(note),
-            "sentBack": sent_back,
-            "byApprovingAuthority": by_approving_authority,
-            "actorId": actor_id,
-            "recordedAt": recorded_at,
-        },
-    )
+    data: dict[str, Any] = {
+        "designWorkshopId": workshop_id,
+        "round": round,
+        "stageKey": _clean_stage_key(stage_key),
+        "fieldKey": (field_key or "").strip() or None,
+        "note": _clean_note(note),
+        "sentBack": sent_back,
+        "byApprovingAuthority": by_approving_authority,
+        "actorId": actor_id,
+        "recordedAt": recorded_at,
+    }
+    if actor_post is not None:
+        if actor_post not in NOTE_POSTS:
+            raise InspectionRuleViolation(f"{actor_post!r} is not a post that files notes.")
+        data["actorPost"] = actor_post
+    return InspectionWritePlan(table="DwInspectionFeedback", operation=Operation.CREATE, data=data)
 
 
 def send_back_plans(
@@ -779,8 +787,142 @@ def feedback_payload(row: Any) -> dict[str, Any]:
         "note": getattr(row, "note", ""),
         "sentBack": bool(getattr(row, "sentBack", False)),
         "byApprovingAuthority": bool(getattr(row, "byApprovingAuthority", False)),
+        # The thirteenth (2026-10-17): the oversight post a director filed it from, else null.
+        "actorPost": getattr(row, "actorPost", None),
         "actorId": getattr(row, "actorId", ""),
         "actorName": getattr(actor, "name", None) if actor is not None else None,
         "recordedAt": _iso(getattr(row, "recordedAt", None)),
         "createdAt": _iso(getattr(row, "createdAt", None)),
     }
+
+
+# ── BATCHES (B2, 2026-10-17) ─────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class NoteBatch:
+    """The rows a batch of notes writes, and the one sentence that stands for them all.
+
+    ``cover`` is the sentence a send-back records as its reason (``reviewNotes``, the audit row, the
+    e-mail's lead): the covering note when one was typed, else the first note.
+    """
+
+    rows: tuple[InspectionWritePlan, ...]
+    cover: str
+    digest: str
+
+
+def note_batch(
+    *,
+    workshop_id: str,
+    round: int,
+    actor_id: str,
+    at: datetime,
+    notes: list[tuple[str | None, str | None, str | None]],
+    cover: str | None = None,
+    recorded_at: datetime | None = None,
+    sends_back: bool = False,
+    by_approving_authority: bool = False,
+    actor_post: str | None = None,
+) -> NoteBatch:
+    """Plan a batch of notes. ``notes`` is ``(note, stage_key, field_key)`` per row, in order.
+
+    On a send-back the covering sentence (when typed) is its own row about the whole report and is
+    the one marked ``sentBack``; with no covering sentence the FIRST note is. Every row is validated
+    exactly as a single note is, so a batch is refused whole rather than half-filed.
+    """
+    if not notes:
+        raise InspectionRuleViolation("Add at least one note.")
+    if len(notes) > MAX_BATCH_NOTES:
+        raise InspectionRuleViolation(f"Send at most {MAX_BATCH_NOTES} notes at once.")
+    typed = (cover or "").strip()
+    planned: list[tuple[str | None, str | None, str | None]] = list(notes)
+    if typed:
+        planned.insert(0, (typed, None, None))
+
+    rows = tuple(
+        feedback_plan(
+            workshop_id=workshop_id,
+            round=round,
+            actor_id=actor_id,
+            at=at,
+            note=text,
+            stage_key=stage_key,
+            field_key=field_key,
+            recorded_at=recorded_at,
+            sent_back=sends_back and index == 0,
+            by_approving_authority=by_approving_authority,
+            actor_post=actor_post,
+        )
+        for index, (text, stage_key, field_key) in enumerate(planned)
+    )
+    lead = str(rows[0].data["note"])
+    extra = len(rows) - 1
+    summary = lead if extra == 0 else f"{lead} (and {extra} more note{'s' if extra != 1 else ''})"
+    digest = "\n".join(f"{n}. {row.data['note']}" for n, row in enumerate(rows, start=1))
+    return NoteBatch(
+        rows=rows,
+        cover=summary[:MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS],
+        digest=digest if extra else lead,
+    )
+
+
+def send_back_batch_plans(
+    *,
+    workshop_id: str,
+    round: int,
+    actor_id: str,
+    at: datetime,
+    notes: list[tuple[str | None, str | None, str | None]],
+    cover: str | None = None,
+    recorded_at: datetime | None = None,
+    by_approving_authority: bool = False,
+    log_prefix: str | None = None,
+) -> BatchSendBackPlans:
+    """A send-back carrying a batch: the notes, the decision cache, the audit row — one transaction.
+
+    The same three writes as :func:`send_back_plans`, with the batch's ``cover`` as the reason.
+    """
+    from app.services.records import review_update
+
+    batch = note_batch(
+        workshop_id=workshop_id,
+        round=round,
+        actor_id=actor_id,
+        at=at,
+        notes=notes,
+        cover=cover,
+        recorded_at=recorded_at,
+        sends_back=True,
+        by_approving_authority=by_approving_authority,
+    )
+    workshop = InspectionWritePlan(
+        table="DesignWorkshop",
+        operation=Operation.UPDATE,
+        where={"id": workshop_id},
+        data=review_update(NEEDS_REVISION, batch.cover, actor_id),
+    )
+    log = InspectionWritePlan(
+        table="ReviewLog",
+        operation=Operation.CREATE,
+        data={
+            "recordType": "DESIGN_WORKSHOP",
+            "recordId": workshop_id,
+            "status": NEEDS_REVISION,
+            "notes": f"{log_prefix}: {batch.cover}" if log_prefix else batch.cover,
+            "reviewerId": actor_id,
+        },
+    )
+    return BatchSendBackPlans(batch=batch, workshop=workshop, log=log)
+
+
+@dataclass(frozen=True, slots=True)
+class BatchSendBackPlans:
+    """A batch send-back's writes: the notes, the decision cache, the audit row. Unpacks in that order."""
+
+    batch: NoteBatch
+    workshop: InspectionWritePlan
+    log: InspectionWritePlan
+
+    def __iter__(self):
+        return iter((self.batch, self.workshop, self.log))

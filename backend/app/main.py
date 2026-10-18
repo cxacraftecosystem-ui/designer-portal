@@ -33,6 +33,7 @@ from app.core.security import verify_jwt_configuration
 from app.scale import install_rate_limit
 from app.services import two_factor, usage
 from app.services.account_provisioning import EXISTING_ACCOUNT_HEADER
+from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 
@@ -218,6 +219,8 @@ async def _media_queue_worker() -> None:
             await process_next_email_jobs(worker_id="fastapi-background", settings=settings)
         except Exception:
             logger.exception("E-mail outbox drain failed")
+        # Round snapshots of workshops deleted over a year ago (throttled inside; never raises).
+        await purge_expired_snapshots()
         await asyncio.sleep(interval)
 
 
@@ -1098,6 +1101,10 @@ def create_app() -> FastAPI:
             TWO_FACTOR_REQUIRED_HEADER,
             # A duplicate account's 409 names the account that holds the address.
             EXISTING_ACCOUNT_HEADER,
+            # The approving authority's report download: which ledger row the file is, and — when
+            # an unchanged report was served again rather than rebuilt — when it was made (A22).
+            "X-Report-Export-Id",
+            "X-Report-Reused-From",
         ],
     )
     # Added AFTER CORS so it wraps it (Starlette runs the most recently added middleware outermost),

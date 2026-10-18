@@ -3,624 +3,145 @@
 /**
  * ONE WORKSHOP UNDER INSPECTION — every stage, read-only, with who wrote each field.
  *
- * ── WHAT AN INSPECTION IS FOR, AND WHY PROVENANCE IS THE POINT OF THIS SCREEN ─────────────────
+ * ── WHAT AN INSPECTION IS FOR ───────────────────────────────────────────────────────────────────
  *
- * `read_workshop_under_inspection` resolves the per-field authorship names before it answers,
- * deliberately, "because 'who wrote this field' is most of what an inspection is for, and the ids
- * without them are unreadable". So this page draws {@link FieldProvenance} under every value — the
- * SAME component the designer's stage form draws under every box, producing the same sentence in the
- * same words, because an inspector and the designer being inspected must not be reading two
- * different accounts of who did what.
+ * "Who wrote this field" is most of what an inspection is for, so every value carries the same
+ * {@link FieldProvenance} line the designer's stage form draws. There is no stage form, no Save, no
+ * delete and no report button here: the server refuses all of it. What an inspector writes is a
+ * NOTE — filed, or sent back with the report — and, since 2026-10-17, a verdict.
  *
- * ── `readOnly` IS HONOURED RATHER THAN ASSUMED ────────────────────────────────────────────────
+ * `readOnly` STAYS TRUE ON THIS PAYLOAD AND THE NOTES ARE GATED ON A SECOND KEY, `mayRecordFeedback`,
+ * which fails CLOSED on its absence. Every link into the workshop tree is asked for through
+ * {@link inspectionMayOpen}, which is false for a read: those pages 404 for an inspector.
  *
- * Every link into the workshop tree is asked for through {@link inspectionMayOpen}, which is false
- * for a read. That is not ceremony: `/design-workshops/{id}` and all nine pages beneath it answer a
- * 404 to an inspector, because `load_workshop_or_404` refuses anybody outside `DESIGN_WORKSHOP_ROLES`
- * before it looks at the row — and INSPECTOR is outside it, exactly as PROFESSOR is. A stage heading
- * that linked to the page a designer edits it on is the single most natural thing to write here and
- * it would 404 every time.
+ * ── THE REVIEW LAYOUT (2026-10-17) ──────────────────────────────────────────────────────────────
  *
- * There is likewise no Save, no stage form, no delete, no submit and no report button on this page,
- * and none of them is missing: there is no route on this prefix that would accept any of them.
+ * A fixed stage menu and decision bar (A18), a Flag on every field that drafts a note into a tray and
+ * one "File 3 notes" / "Send back with 3 notes" (B2), each note marked "Edited since" or "Untouched"
+ * (A19), "Checked, no corrections" for the round (C5), and "Changed since round N" (C13). The
+ * single-note routes are unchanged — Android's queued notes replay through them.
  *
- * ── **THAT LAST SENTENCE IS CORRECTED, NOT DELETED (2026-09-13)** ──────────────────────────────
+ * ── THE REGISTRY IS THE LIST OF STAGES, NOT THE PAYLOAD ─────────────────────────────────────────
  *
- * There are now exactly two routes on this prefix that accept a write, and both of them write a
- * NOTE: `POST /{id}/feedback` files one correction suggestion, and `POST /{id}/send-back` files one
- * and moves the report to Needs revision. Everything above stays true of the workshop's CONTENT —
- * no stage form, no Save, no delete, no report — because the server refuses all of it before the
- * database and the write plan behind these two refuses every table but three by construction.
- *
- * `readOnly` STAYS TRUE ON THIS PAYLOAD AND THE BOX IS GATED ON A SECOND KEY. `mayRecordFeedback`
- * is that key, and `dwMayRecordFeedback` fails CLOSED on its absence. Reusing `readOnly` for this
- * would have been the obvious shortcut and it is the bug: the handset's own helper is
- * `readOnly != false`, so setting it false to "enable" the box would offer a Save button on every
- * stage form and open nine designer screens that answer 404.
- *
- * ── WHY IT IS NOT `FieldInput` WITH `disabled` PASSED DOWN ────────────────────────────────────
- *
- * The argument is at {@link inspectionFieldReading} in full. The short version is that mounting the
- * designer's control would draw the media picker, the reference picker, the dictation button and a
- * whole embedded record form — every one of them pointed at a route this account is refused — and
- * would render each photograph's "could not be read" state, which is indistinguishable from a
- * photograph that failed to load and is not what happened. What this page reuses instead is every
- * function that INTERPRETS a stored value (`inputValue`, `listValue`, `geoValue`, `isFilled`,
- * `richSummary`, `referenceDisplayHint`, `formFields`, `rowTitle`) plus the
- * provenance component, so nothing about what a value MEANS is decided twice.
- *
- * ── THE WORKSHOP'S FILES AND ITS OWN QUESTIONS ARE SHOWN, READ-ONLY (sweep item F5, 2026-10-10) ──
- *
- * 1. **Photographs, recordings and attachments** come from this surface's own second read,
- *    `GET /design-workshop-inspections/{id}/media`, behind the same loader as the workshop. Every link
- *    on it is a short-lived signature; `ReaderWorkshopMedia` draws them and offers no control that
- *    writes. A media field's ids are resolved against that list, and an id filed with another record
- *    is said in words rather than drawn as an empty frame.
- * 2. **The workshop's own questions** travel on the workshop read as `customSections`, so each stage's
- *    `custom` answers are printed beside their wording and their author.
- *
- * ── THE REGISTRY IS THE LIST OF STAGES, NOT THE PAYLOAD ───────────────────────────────────────
- *
- * `GET /design-workshops/schema` takes `get_current_user` with no role dependency, so an inspector
- * reads it like anybody else, and iterating IT rather than `Object.keys(detail.stages)` is what makes
- * an untouched stage appear at all. A stage with nothing in it is a FINDING on this screen — the one
- * a list built from the payload's own keys would silently omit.
+ * Iterating the registry rather than `Object.keys(detail.stages)` is what makes an untouched stage
+ * appear at all — on an inspection, a stage with nothing in it is a finding.
  */
 
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
-import { FileSearch, Loader2, Lock } from "lucide-react";
+import { FileSearch, Loader2, Lock, MessageSquarePlus, Send, Undo2 } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
-import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
+import { ReaderFilesPanel, ReaderMediaProvider, useReaderMedia } from "@/components/designworkshop/ReaderWorkshopMedia";
+import { NoteComposer, NoteRegister, NoteTray, useReviewTray } from "@/components/designworkshop/review/ReviewNotes";
+import { ReviewReadStage, type FlagTarget } from "@/components/designworkshop/review/ReviewReadStage";
 import {
-  ReaderCustomAnswers,
-  ReaderFilesPanel,
-  ReaderMediaProvider,
-  ReaderMediaValue,
-  useReaderMedia
-} from "@/components/designworkshop/ReaderWorkshopMedia";
+  ReviewDecisionBar,
+  ReviewLayout,
+  RoundCompareControls,
+  useActiveStage,
+  useRoundCompare
+} from "@/components/designworkshop/review/ReviewWorkspace";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ActionGroup } from "@/components/ui/ActionGroup";
+import { Toggle } from "@/components/ui/Toggle";
 import { ApiError } from "@/lib/api";
-import type { DwCustomDefinition } from "@/lib/customSections";
+import { signOffLines } from "@/lib/designWorkshopApprovals";
 import {
   getWorkshopUnderInspection,
-  inspectionFieldReading,
   inspectionIsReadOnly,
   inspectionMayOpen,
   inspectionRefusalMeansNoPosts,
   type DwInspectionDetail
 } from "@/lib/designWorkshopInspections";
 import {
-  dwFeedbackRounds,
   dwMayRecordFeedback,
   fetchStageRegistry,
-  formFields,
-  isFilled,
   overallPercent,
-  recordInspectionFeedback,
-  rowTitle,
-  sendWorkshopBackForRevision,
-  type DwEntity,
-  type DwEntryData,
-  type DwField,
-  type DwFieldStamp,
-  type DwRegistry,
   type DwInspectionFeedbackKeys,
-  type DwRow,
-  type DwStage,
-  type DwStageCompleteness,
-  type DwStageData
+  type DwRegistry,
+  type DwStage
 } from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
-import { signOffLines } from "@/lib/designWorkshopApprovals";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
+import {
+  fileLabel,
+  fileNotes,
+  sendBackLabel,
+  sendBackWithNotes,
+  setRoundCleared,
+  type DwNotesAnswer,
+  type DwReviewAidKeys,
+  type DwReviewNote
+} from "@/lib/reviewAids";
 import type { User } from "@/lib/types";
-import { SearchableSelect } from "@/components/ui/SearchableSelect";
-import { ActionGroup } from "@/components/ui/ActionGroup";
+
+type Detail = DwInspectionDetail & DwInspectionFeedbackKeys & DwReviewAidKeys;
 
 /**
- * The failures this page can suffer, told apart in words.
- *
- * THE 404 ARM IS THE INTERESTING ONE AND IT IS DELIBERATELY VAGUE ABOUT WHICH.
- * `load_inspectable_workshop_or_404` raises the identical 404 for four different states — not an
- * inspector, no such workshop, the workshop is soft-deleted, and no inspection row for this account
- * — and that is the server being careful rather than careless: distinguishing them would let anybody
- * probe which workshop ids exist. So this sentence must not guess either. It names the two states
- * the reader can actually do something about and attributes neither.
+ * The failures this page can suffer, told apart in words. The 404 is deliberately vague: the server
+ * gives the same one for "not an inspector", "no such workshop", "deleted" and "not yours".
  */
 function describeFailure(error: unknown, user: User | null | undefined): string {
-  if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "No connection. Try again.";
-  }
-  if (inspectionRefusalMeansNoPosts(error, user)) {
-    // An administering tier the server will not yet show this surface to holds no inspection posts
-    // anywhere — so none here either. Said as that, not as the server's door-shaped sentence.
-    return "You aren't appointed to inspect any workshop.";
-  }
-  if (error.status === 403) {
-    return error.message;
-  }
-  if (error.status === 404) {
-    return "This workshop isn't open to you.";
-  }
+  if (!(error instanceof ApiError) || isUnreachable(error)) return "No connection. Try again.";
+  if (inspectionRefusalMeansNoPosts(error, user)) return "You aren't appointed to inspect any workshop.";
+  if (error.status === 403) return error.message;
+  if (error.status === 404) return "This workshop isn't open to you.";
   return error.message || "This workshop couldn't be loaded.";
 }
 
-/** One field's label, value and authorship — the whole of what a read shows about one answer. */
-function ReadField({
-  registry,
-  entity,
-  field,
-  row,
-  stamp
-}: {
-  registry: DwRegistry;
-  entity: DwEntity;
-  field: DwField;
-  row: DwEntryData;
-  stamp?: DwFieldStamp | null;
-}) {
-  const reading = inspectionFieldReading(registry, entity, field, row);
-  if (reading.kind === "empty") return null;
-
-  return (
-    <div className="grid gap-0.5 py-2">
-      <span className="field-label">{field.label}</span>
-      {reading.kind === "media" ? (
-        // THE FILES THEMSELVES, read-only and resolved against this workshop's own files.
-        <ReaderMediaValue value={row[field.key]} />
-      ) : (
-        <span className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{reading.text}</span>
-      )}
-      {/* The designer's own component, verbatim: same sentence, same wording, same day-first date. */}
-      <FieldProvenance stamp={stamp} />
-    </div>
-  );
-}
-
-/** Every field of one record — a singleton entity, or one row of a collection. */
-function ReadRecord({
-  registry,
-  entity,
-  row,
-  stamps
-}: {
-  registry: DwRegistry;
-  entity: DwEntity;
-  row: DwEntryData;
-  stamps: Record<string, DwFieldStamp> | undefined;
-}) {
-  // `formFields` and not `entity.fields`: deprecated fields are dead inputs on the designer's form
-  // and a caption belongs to the media field it captions, so showing either here would put a field
-  // in front of an inspector that the person being inspected never saw.
-  const fields = formFields(entity);
-  const answered = fields.filter((field) => {
-    const reading = inspectionFieldReading(registry, entity, field, row);
-    return reading.kind !== "empty";
-  });
-  const unanswered = fields.length - answered.length;
-
-  return (
-    <div className="grid divide-y divide-line-200">
-      {answered.map((field) => (
-        <ReadField
-          entity={entity}
-          field={field}
-          key={field.key}
-          registry={registry}
-          row={row}
-          stamp={stamps?.[field.key]}
-        />
-      ))}
-      {/* WHAT WAS LEFT OUT IS COUNTED. A read that silently drops empty boxes and a record that was
-          fully answered look identical, and on an inspection the difference is the finding. */}
-      {unanswered > 0 ? (
-        <p className="pt-2 text-xs leading-5 text-ink-500">
-          {unanswered} of {fields.length} field{fields.length === 1 ? "" : "s"} here {unanswered === 1 ? "is" : "are"}{" "}
-          unanswered and {unanswered === 1 ? "is" : "are"} not listed above.
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-/** One stage: its entities, its rows, and what this read cannot show about it. */
-function ReadStage({
-  registry,
-  stage,
-  data,
-  score,
-  definition
-}: {
-  registry: DwRegistry;
-  stage: DwStage;
-  data: DwStageData | undefined;
-  /** The workshop's own questions, off the same read — see `customSections`. */
-  definition: DwCustomDefinition | null | undefined;
-  /**
-   * THIS STAGE'S SCORE, PASSED IN FROM THE WORKSHOP-LEVEL MAP AND NOT READ OFF `data`.
-   *
-   * `DwStageData.completeness` exists and is EMPTY HERE, which is the trap: `_stages_payload`
-   * writes no such key, and only the single-stage route `GET /design-workshops/{id}/stages/{key}`
-   * — which an inspector cannot reach — attaches one afterwards. The workshop read carries the
-   * scores in a sibling map keyed by stage instead. Reading the optional key would have shown
-   * "Nothing recorded" beside every stage of a finished workshop.
-   */
-  score: DwStageCompleteness | undefined;
-}) {
-  const singleton: DwEntryData = data?.singleton ?? {};
-  const provenance = data?.provenance;
-
-  /** Whether this stage holds any answer to the workshop's own questions — printed below with them. */
-  const customAnswers = Object.entries(data?.custom ?? {}).filter(([, value]) => isFilled(value)).length;
-
-  const collections = stage.entities.filter((entity) => entity.cardinality === "COLLECTION");
-  const singletons = stage.entities.filter((entity) => entity.cardinality !== "COLLECTION");
-
-  const nothingRecorded =
-    !data ||
-    (Object.keys(singleton).length === 0 &&
-      collections.every((entity) => (data.collections?.[entity.key] ?? []).length === 0) &&
-      customAnswers === 0);
-
-  return (
-    <section className="panel p-4" id={`stage-${stage.key}`}>
-      <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line-200 pb-3">
-        <h2 className="font-display text-lg font-bold text-ink-900">
-          {stage.number}. {stage.title}
-        </h2>
-        <span className="text-xs text-ink-500">
-          {score
-            ? score.isComplete
-              ? "Every required field answered"
-              : `${score.requiredFilled} of ${score.requiredTotal} required fields answered`
-            : "Nothing recorded"}
-          {stage.optionalStage ? " · this stage may be dropped" : ""}
-        </span>
-      </header>
-
-      {stage.purpose ? <p className="pt-3 text-xs leading-5 text-ink-500">{stage.purpose}</p> : null}
-
-      {nothingRecorded ? (
-        <p className="pt-3 text-sm text-ink-500">
-          Nothing has been recorded on this stage.
-          {stage.optionalStage ? " This stage is optional." : ""}
-        </p>
-      ) : (
-        <div className="grid gap-4 pt-3">
-          {singletons.map((entity) => (
-            <div key={entity.key}>
-              {singletons.length > 1 || collections.length > 0 ? (
-                <h3 className="mb-1 text-sm font-medium text-ink-700">{entity.title}</h3>
-              ) : null}
-              <ReadRecord
-                entity={entity}
-                registry={registry}
-                row={singleton}
-                stamps={provenance?.singleton}
-              />
-            </div>
-          ))}
-
-          {collections.map((entity) => {
-            const rows: DwRow[] = data?.collections?.[entity.key] ?? [];
-            if (rows.length === 0) return null;
-            return (
-              <div key={entity.key}>
-                <h3 className="mb-1 text-sm font-medium text-ink-700">
-                  {entity.title} · {rows.length} {rows.length === 1 ? "entry" : "entries"}
-                </h3>
-                <div className="grid gap-3">
-                  {rows.map((row, index) => (
-                    <div className="rounded-md border border-line-200 bg-surface-50 p-3" key={row._entryId ?? row._clientKey ?? index}>
-                      {/* `rowTitle` and never the row's id — a list of cuids asks an inspector to
-                          recognise rows they cannot possibly recognise. */}
-                      <p className="mb-1 text-sm font-medium text-ink-900">{rowTitle(entity, row, index)}</p>
-                      <ReadRecord
-                        entity={entity}
-                        registry={registry}
-                        row={row}
-                        // Keyed by ENTRY ID and never by position: the readers of this data sort
-                        // their rows differently, and a positional map shows one participant's edits
-                        // against another participant's name.
-                        stamps={
-                          row._entryId
-                            ? provenance?.collections?.[entity.key]?.[row._entryId]
-                            : undefined
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-
-          {customAnswers > 0 ? (
-            <ReaderCustomAnswers
-              definition={definition}
-              stageKey={stage.key}
-              stamps={provenance?.custom}
-              values={data?.custom}
-            />
-          ) : null}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/**
- * Why the box is closed, by the report's status — the server's refusal, said before the press.
- *
- * An approved report and one handed on to the office HAVE been handed in, so "it has not been handed
- * in yet" would be false about them: what has happened is that the inspection is over.
- */
+/** Why notes are closed, by the report's status — the server's refusal, said before the press. */
 function closedInspectionSentence(status: string, handedOnAt: string | null): string {
-  if (status === "APPROVED") {
-    return "Approved — inspection is closed.";
-  }
-  if (status === "SUBMITTED" && handedOnAt) {
-    return "Handed on to the office — inspection is closed.";
-  }
+  if (status === "APPROVED") return "Approved — inspection is closed.";
+  if (status === "SUBMITTED" && handedOnAt) return "Handed on to the office — inspection is closed.";
   return "Not handed in for inspection yet.";
 }
 
-/**
- * THE FEEDBACK BOX — the whole of what an inspection can WRITE, and the register it writes into.
- *
- * ── TWO BUTTONS, BECAUSE THEY ARE TWO ACTS ────────────────────────────────────────────────────
- *
- * *File a suggestion* adds a sentence to the open round and moves nothing. *Send the report back*
- * does the same and moves the report to Needs revision, which puts a fortnight of somebody's work
- * back on their desk and tells them to do it again. One control with a tick box would make the
- * second happen by accident — the record page's own rule, "one button per status, never one button
- * per intention" — so the second one is a separate button behind a confirmation.
- *
- * ── THE NOTE IS MANDATORY ON BOTH AND THE SERVER IS THE AUTHORITY ─────────────────────────────
- *
- * A send-back with no sentence tells a designer only that a fortnight of work is wrong. The button
- * is disabled while the box is empty, which is an affordance and not the rule: the server answers
- * 422 with the same sentence the six repository record types get, and whitespace is caught there.
- *
- * ── IT IS ONLINE-ONLY, AND SAYS SO WHEN IT FAILS ──────────────────────────────────────────────
- *
- * There is no outbox on this surface at all — an inspection is a read of the server's copy — so a
- * suggestion written with no signal is not queued anywhere. The failure sentence says that rather
- * than letting an officer believe it was filed.
- */
-function FeedbackPanel({
-  workshopId,
-  detail,
-  stages,
-  onAnswer
-}: {
-  workshopId: string;
-  detail: (DwInspectionDetail & DwInspectionFeedbackKeys) | null;
-  stages: DwStage[];
-  onAnswer: (answer: DwInspectionFeedbackKeys & { status?: string }) => void;
-}) {
-  const confirm = useConfirm();
-  const [note, setNote] = useState("");
-  const [stageKey, setStageKey] = useState("");
-  const [busy, setBusy] = useState<"file" | "send" | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<string | null>(null);
-
-  const rows = detail?.inspectionFeedback ?? [];
-  const rounds = dwFeedbackRounds(rows);
-  /** A suggestion names its stage by title, never by its stored key; an unknown key is shown as stored. */
-  const stageTitle = (key: string) => stages.find((stage) => stage.key === key)?.title ?? key;
-  /*
-    FAILS CLOSED ON AN ABSENT KEY. A server that predates this feature sends no `mayRecordFeedback`,
-    and the dangerous default is the permissive one: a box that posts to a route that is not there.
-  */
-  const mayRecord = dwMayRecordFeedback(detail);
-  const status = (detail?.status ?? "").trim().toUpperCase();
-  const underReview = status === "PRE_SUBMISSION" || status === "NEEDS_REVISION";
-
-  async function file(kind: "file" | "send") {
-    const text = note.trim();
-    if (!text) return;
-    if (kind === "send") {
-      const agreed = await confirm({
-        title: "Send this report back to its designers?",
-        tone: "warning",
-        confirmLabel: "Send it back",
-        body: (
-          <>
-            <span className="block">
-              The report moves to Needs revision for its designers.
-            </span>
-            <span className="mt-2 block">
-              Saving a corrected stage hands it back in.
-            </span>
-          </>
-        ),
-        note: "Recorded under your name. It can't be edited afterwards."
-      });
-      if (!agreed) return;
-    }
-    setBusy(kind);
-    setProblem(null);
-    setOutcome(null);
-    try {
-      const body = { note: text, stageKey: stageKey || null };
-      const answer =
-        kind === "send"
-          ? await sendWorkshopBackForRevision(workshopId, body)
-          : await recordInspectionFeedback(workshopId, body);
-      onAnswer(answer);
-      setNote("");
-      setStageKey("");
-      setOutcome(
-        kind === "send"
-          ? "Sent back for revision."
-          : "Suggestion filed."
-      );
-    } catch (err) {
-      if (isUnreachable(err)) {
-        setProblem("No connection — not sent. Your text is kept.");
-      } else {
-        setProblem(
-          err instanceof Error && err.message.trim()
-            ? `Nothing was filed: ${err.message}`
-            : "Nothing was filed. Try again."
-        );
-      }
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  if (!detail) return null;
-
-  return (
-    <section className="panel mb-4 grid gap-3 p-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-sm font-medium text-ink-900">Correction suggestions</h2>
-        <span className="text-xs text-ink-500">
-          {rows.length} on record{detail.inspectionFeedbackTruncated ? " (older ones not shown)" : ""}
-        </span>
-      </div>
-
-      {rounds.map((group) => (
-        <div className="grid gap-2" key={group.round}>
-          <h3 className="field-label">Round {group.round}</h3>
-          <ul className="grid gap-2">
-            {group.rows.map((row) => (
-              <li className="rounded-md border border-line-200 bg-field-50 px-3 py-2" key={row.id}>
-                <p className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{row.note}</p>
-                <p className="mt-1 text-xs leading-5 text-ink-500">
-                  {/* NEVER A GUESS AT A NAME. The account cannot have been deleted — the relation is
-                      Restrict — but a name column can be blank, and attributing an instruction to
-                      the wrong officer is worse than not naming one. */}
-                  {row.actorName?.trim() || "An officer no longer named"}
-                  {row.stageKey ? ` · about ${stageTitle(row.stageKey)}` : " · about the report as a whole"}
-                  {row.sentBack ? " · sent the report back" : ""}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-
-      {!mayRecord ? (
-        /* SAID, NOT DRAWN GREY. A disabled box refuses a press without saying why, which is how
-           somebody concludes the app is broken. */
-        <p className="text-sm leading-6 text-ink-700">Filing suggestions isn&apos;t available right now.</p>
-      ) : !underReview ? (
-        /* THE SERVER'S OWN REFUSAL, SAID BEFORE THE PRESS. `POST /feedback` answers 422 on a report
-           nobody has handed in, because a suggestion belongs to a submission cycle and there is not
-           one yet. Printing it here saves the officer typing a paragraph into a box that cannot
-           take it. */
-        <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-          {closedInspectionSentence(status, detail.handedOnAt ?? null)}
-        </p>
-      ) : (
-        <div className="grid gap-2">
-          <label className="field-label" htmlFor="dw-inspection-note">
-            What should be corrected?
-          </label>
-          <textarea
-            className="field-input min-h-24"
-            id="dw-inspection-note"
-            onChange={(event) => setNote(event.target.value)}
-            placeholder="What's wrong and what it should say"
-            value={note}
-          />
-          <span className="field-label">Which stage is it about?</span>
-          {/* THE EMPTY ANSWER IS A REAL ANSWER AND IS FIRST (`noneLabel`), because most suggestions are
-              about the report as a whole and the server stores null for exactly that. */}
-          <SearchableSelect
-            ariaLabel="Which stage is it about?"
-            value={stageKey}
-            onChange={setStageKey}
-            noneLabel="The report as a whole"
-            options={stages.map((stage) => ({ value: stage.key, label: stage.title }))}
-            advanceOnSelect={false}
-          />
-          <ActionGroup>
-            <button
-              className="field-button-secondary"
-              disabled={busy !== null || note.trim().length === 0}
-              onClick={() => void file("file")}
-              type="button"
-            >
-              {busy === "file" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-              Suggest
-            </button>
-            <button
-              className="field-button"
-              disabled={busy !== null || note.trim().length === 0}
-              onClick={() => void file("send")}
-              type="button"
-            >
-              {busy === "send" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-              Send back
-            </button>
-          </ActionGroup>
-          <p className="text-xs leading-5 text-ink-500">
-            Sending back moves it to Needs revision. Neither can be undone.
-          </p>
-        </div>
-      )}
-
-      {problem ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700">{problem}</p>
-      ) : null}
-      {outcome ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm leading-6 text-emerald-800">
-          {outcome}
-        </p>
-      ) : null}
-    </section>
-  );
+function failureSentence(err: unknown, what: string): string {
+  if (isUnreachable(err)) return `No connection — nothing was ${what}. Your notes are kept.`;
+  return err instanceof Error && err.message.trim() ? `Nothing was ${what}: ${err.message}` : `Nothing was ${what}. Try again.`;
 }
 
 export default function WorkshopUnderInspectionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user, loading } = useAuth();
+  const confirm = useConfirm();
 
-  /*
-    THE REGISTER RIDES ON THE SAME PAYLOAD, and the type says so by intersection rather than by a
-    second fetch: `read_workshop_under_inspection` adds `inspectionFeedback`,
-    `inspectionFeedbackTruncated` and `mayRecordFeedback` to the summary it already returned.
-    `DwInspectionDetail` itself is declared in `lib/designWorkshopInspections.ts`, which this wave
-    does not edit — so the three keys are spread in here from the module that owns them, which is
-    also the module both screens decode the register with.
-  */
-  const [detail, setDetail] = useState<(DwInspectionDetail & DwInspectionFeedbackKeys) | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(null);
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
-  /* The workshop's files, asked for once the workshop itself has been read. */
+  const [composing, setComposing] = useState<FlagTarget | null>(null);
+  const [busy, setBusy] = useState<"file" | "send" | "clear" | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+
+  const allowed = !loading && canInspectDesignWorkshops(user);
   const media = useReaderMedia("inspection", id, detail !== null);
+  const tray = useReviewTray(user?.id, id, "inspect");
 
   useEffect(() => {
-    if (loading || !canInspectDesignWorkshops(user)) return;
+    if (!allowed) return;
     let cancelled = false;
     getWorkshopUnderInspection(id)
       .then((result) => {
         if (cancelled) return;
-        setDetail(result);
+        setDetail(result as Detail);
         setError(null);
       })
       .catch((err) => {
-        if (cancelled) return;
-        setError(describeFailure(err, user));
+        if (!cancelled) setError(describeFailure(err, user));
       });
     return () => {
       cancelled = true;
     };
-  }, [id, loading, user]);
+  }, [id, allowed, user]);
 
   useEffect(() => {
-    if (loading || !canInspectDesignWorkshops(user)) return;
+    if (!allowed) return;
     let cancelled = false;
     fetchStageRegistry()
       .then((result) => {
@@ -629,29 +150,23 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
         setRegistryError(null);
       })
       .catch(() => {
-        if (cancelled) return;
-        // A SEPARATE FAILURE FROM THE WORKSHOP READ, because it means something different: the
-        // answers are in hand and the field list that names them is not. Folding it into the error
-        // above would tell an inspector the workshop could not be read when it was.
-        setRegistryError("Couldn't load the form. Try again.");
+        // A separate failure: the answers are in hand and the field list that names them is not.
+        if (!cancelled) setRegistryError("Couldn't load the form. Try again.");
       });
     return () => {
       cancelled = true;
     };
-  }, [loading, user]);
+  }, [allowed]);
 
-  /*
-    EVERY HOOK ABOVE THE REFUSAL BELOW, WITHOUT EXCEPTION. The refusal returns early, and a `useMemo`
-    written under it would run on some renders and not others — the hook-order rule, and the reason
-    this one figure is computed here rather than beside the paragraph that prints it.
-  */
+  // EVERY HOOK ABOVE THE REFUSAL BELOW — the refusal returns early.
+  const stages: DwStage[] = useMemo(() => registry?.stages ?? [], [registry]);
   const overall = useMemo(() => overallPercent(detail?.completeness), [detail]);
+  const active = useActiveStage(
+    stages.map((stage) => stage.key),
+    detail !== null && registry !== null
+  );
+  const compare = useRoundCompare("inspection", id, stages, detail?.stages, detail?.roundSnapshots, detail?.submissionRound);
 
-  /*
-    THE SERVER'S OWN PREDICATE, MIRRORED. `assert_inspection_surface` refuses everybody who may not
-    be appointed to inspect — since 2026-10-09 the three administering tiers may be, and a designer, a
-    professor and the two directorate posts may not — so this is not a narrowing.
-  */
   if (!loading && !canInspectDesignWorkshops(user)) {
     return (
       <div>
@@ -660,12 +175,8 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
           <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-purple-50 text-purple-700">
             <Lock className="h-5 w-5" aria-hidden />
           </div>
-          <h1 className="font-display text-xl font-bold tracking-tight text-ink-900">
-            Inspector / Reviewer access required
-          </h1>
-          <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Only appointed inspectors can open it here.
-          </p>
+          <h1 className="font-display text-xl font-bold tracking-tight text-ink-900">Inspector / Reviewer access required</h1>
+          <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">Only appointed inspectors can open it here.</p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
           </p>
@@ -680,62 +191,101 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
   }
 
   const readOnly = inspectionIsReadOnly(detail);
-  /*
-    ASKED, NOT ASSUMED. It is false on every payload this route can produce, and asking it is what
-    stops the obvious edit — making each stage heading a link to the page a designer edits it on —
-    from being written without anybody noticing that the link 404s. The nine destinations it covers
-    are listed at `DESIGN_WORKSHOP_DESTINATIONS`.
-  */
   const mayOpenTheWorkshop = inspectionMayOpen("stages", detail);
+  const notes = (detail?.inspectionFeedback ?? []) as DwReviewNote[];
+  const mayRecord = dwMayRecordFeedback(detail);
+  const status = (detail?.status ?? "").trim().toUpperCase();
+  const underReview = status === "PRE_SUBMISSION" || status === "NEEDS_REVISION";
+  const canWrite = mayRecord && underReview;
+  const round = detail?.submissionRound ?? 0;
+  const myNotesThisRound = notes.some((note) => note.actorId === user?.id && note.round === round);
+  const activeStage = stages.find((stage) => stage.key === active) ?? null;
 
-  const stages: DwStage[] = registry?.stages ?? [];
+  /** The server answers with the register as it now stands; it replaces ours, never appends. */
+  function adopt(answer: DwNotesAnswer) {
+    setDetail((held) => (held ? { ...held, ...answer } : held));
+  }
+
+  async function send(kind: "file" | "send") {
+    if (!tray.drafts.length) return;
+    if (kind === "send") {
+      const agreed = await confirm({
+        title: "Send this report back to its designers?",
+        tone: "warning",
+        confirmLabel: sendBackLabel(tray.drafts.length),
+        body: (
+          <>
+            <span className="block">The report moves to Needs revision for its designers.</span>
+            <span className="mt-2 block">Saving a corrected stage hands it back in.</span>
+          </>
+        ),
+        note: "Recorded under your name. It can't be edited afterwards."
+      });
+      if (!agreed) return;
+    }
+    setBusy(kind);
+    setProblem(null);
+    setOutcome(null);
+    try {
+      const count = tray.drafts.length;
+      const answer = kind === "send" ? await sendBackWithNotes(id, tray.drafts) : await fileNotes("inspection", id, tray.drafts);
+      adopt(answer);
+      tray.clear();
+      setOutcome(kind === "send" ? "Sent back for revision." : count === 1 ? "Note filed." : `${count} notes filed.`);
+    } catch (err) {
+      setProblem(failureSentence(err, kind === "send" ? "sent back" : "filed"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function setCleared(next: boolean) {
+    setBusy("clear");
+    setProblem(null);
+    setOutcome(null);
+    try {
+      adopt(await setRoundCleared(id, next));
+    } catch (err) {
+      setProblem(failureSentence(err, "recorded"));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
     <div>
-      {/* ABOVE THE STAGES, NOT BELOW THEM. An officer reads the report and then says something about
-          it — but a panel under twenty-two stages is one they scroll past on the way in and never
-          find on the way out, and what they have to say is the entire point of the tier. */}
       <PageHeader
         title={detail?.title?.trim() || "Workshop under inspection"}
         description={
           detail
-            ? [detail.workshopCode, detail.craftName, detail.clusterName, detail.district, detail.state]
-                .filter(Boolean)
-                .join(" · ") || "No workshop code yet"
+            ? [detail.workshopCode, detail.craftName, detail.clusterName, detail.district, detail.state].filter(Boolean).join(" · ") ||
+              "No workshop code yet"
             : undefined
         }
         icon={<FileSearch className="h-5 w-5" aria-hidden />}
         actions={detail ? <StatusBadge status={detail.status} /> : undefined}
       />
 
-      {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-      ) : null}
+      {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
       {registryError ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
           {registryError}
         </div>
       ) : null}
 
-      {/* THE READ IS DECLARED, not left to be inferred from the absence of buttons. A screen with no
-          Save on it looks the same as a screen whose Save has not loaded yet. */}
       {detail && readOnly ? (
         <p className="mb-4 rounded-md border border-purple-300 bg-purple-50 px-3 py-2 text-xs leading-5 text-ink-700">
           <span className="font-semibold text-purple-700 dark:text-purple-300">Read-only.</span> Shown as the designers recorded it.
         </p>
       ) : null}
 
-      {/* WHO SIGNED IT OFF — an officer reading a report that has been approved or handed on is owed
-          who did it, beside the closed box that says the inspection is over. */}
       {detail && signOffLines(detail).length ? (
         <p className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           {signOffLines(detail).join(" ")}
         </p>
       ) : null}
 
-      {detail === null && !error ? (
-        <section className="panel p-4 text-sm text-ink-700">Loading the workshop…</section>
-      ) : null}
+      {detail === null && !error ? <section className="panel p-4 text-sm text-ink-700">Loading the workshop…</section> : null}
 
       {detail ? (
         <>
@@ -759,57 +309,130 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
             </p>
           </section>
 
-          {/*
-            The one place this page would naturally link into the workshop tree, and the one place it
-            must not. `mayOpenTheWorkshop` is false, so the alternative branch is what always renders;
-            the `true` branch exists so the predicate has a consumer that a reader can see, and so
-            that the day an inspection can be more than a read the change is here rather than nowhere.
-          */}
           {mayOpenTheWorkshop ? (
             <p className="mb-4 text-sm">
-              <Link className="text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline" href={`/design-workshops/${id}`}>
+              <Link className="text-purple-700 underline-offset-2 hover:underline dark:text-purple-300" href={`/design-workshops/${id}`}>
                 Open this workshop
               </Link>
             </p>
           ) : null}
 
-          <FeedbackPanel
-            detail={detail}
-            onAnswer={(answer) =>
-              /*
-                THE SERVER'S ANSWER REPLACES THE REGISTER, NOT A LOCAL APPEND. Both write routes
-                return the whole register plus the header as it now stands, so the panel redraws from
-                what the repository holds — including the status, which a send-back has just moved.
-                Appending the row we sent would show an officer their own guess at what was stored.
-              */
-              setDetail((held) => (held ? { ...held, ...answer } : held))
-            }
-            stages={stages}
-            workshopId={id}
-          />
+          <section className="panel mb-4 grid gap-3 p-4" aria-labelledby="your-review-heading">
+            <h2 id="your-review-heading" className="font-display text-base font-bold tracking-tight text-ink-900">
+              Your review · round {round}
+            </h2>
+            {!mayRecord ? (
+              <p className="text-sm leading-6 text-ink-700">Notes aren&apos;t available right now.</p>
+            ) : !underReview ? (
+              <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
+                {closedInspectionSentence(status, detail.handedOnAt ?? null)}
+              </p>
+            ) : (
+              <>
+                <Toggle
+                  label="Checked, no corrections"
+                  description={myNotesThisRound ? "You've filed notes on this round." : "Shown to the approving authority."}
+                  status={detail.myClearedAt ? `Since ${formatDate(detail.myClearedAt)}` : undefined}
+                  checked={Boolean(detail.myClearedAt)}
+                  onChange={(next) => void setCleared(next)}
+                  busy={busy === "clear"}
+                  busyLabel="Saving…"
+                  disabled={myNotesThisRound && !detail.myClearedAt}
+                />
+                <ActionGroup>
+                  <button type="button" className="field-button-secondary" onClick={() => setComposing({ stageKey: active ?? "", fieldKey: null })}>
+                    <MessageSquarePlus className="h-4 w-4" aria-hidden />
+                    Add a note
+                  </button>
+                </ActionGroup>
+                <p className="text-xs leading-5 text-ink-500">Or use Flag beside any field.</p>
+              </>
+            )}
+            <div
+              role="alert"
+              className={problem ? "rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700" : "sr-only"}
+            >
+              {problem}
+            </div>
+            <p
+              role="status"
+              className={outcome ? "rounded-md border border-success-600/25 bg-success-100 px-3 py-2 text-sm leading-6 text-success-600" : "sr-only"}
+            >
+              {outcome}
+            </p>
+          </section>
+
+          {canWrite ? (
+            <NoteTray
+              actions={
+                <>
+                  <button type="button" className="field-button-secondary" disabled={busy !== null} onClick={() => void send("file")}>
+                    {busy === "file" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
+                    {fileLabel(tray.drafts.length)}
+                  </button>
+                  <button type="button" className="field-button" disabled={busy !== null} onClick={() => void send("send")}>
+                    {busy === "send" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Undo2 className="h-4 w-4" aria-hidden />}
+                    {sendBackLabel(tray.drafts.length)}
+                  </button>
+                </>
+              }
+              drafts={tray.drafts}
+              footnote="Sending back moves it to Needs revision. Neither can be undone."
+              onRemove={tray.remove}
+              stages={stages}
+            />
+          ) : null}
+
+          <NoteRegister notes={notes} stages={stages} truncated={detail.inspectionFeedbackTruncated} />
 
           <ReaderFilesPanel failure={media.failure} list={media.list} onRetry={media.retry} state={media.state} />
 
+          <RoundCompareControls compare={compare} />
+
           {registry === null ? (
-            registryError ? null : (
-              <section className="panel p-4 text-sm text-ink-700">Loading the form…</section>
-            )
+            registryError ? null : <section className="panel p-4 text-sm text-ink-700">Loading the form…</section>
           ) : (
             <ReaderMediaProvider list={media.list} state={media.state}>
-              <div className="grid gap-4">
+              <ReviewLayout active={active} changes={compare.changes} completeness={detail.completeness} stages={stages}>
                 {stages.map((stage) => (
-                  <ReadStage
+                  <ReviewReadStage
+                    changes={compare.changes?.[stage.key]}
                     data={detail.stages?.[stage.key]}
-                    definition={detail.customSections}
+                    definition={detail.customSections ?? null}
                     key={stage.key}
+                    notes={notes.filter((note) => note.stageKey === stage.key)}
+                    onFlag={canWrite ? setComposing : undefined}
+                    onlyChanges={compare.onlyChanges && compare.changes !== null}
                     registry={registry}
                     score={detail.completeness?.[stage.key]}
                     stage={stage}
                   />
                 ))}
-              </div>
+              </ReviewLayout>
             </ReaderMediaProvider>
           )}
+
+          <NoteComposer onAdd={tray.add} onClose={() => setComposing(null)} stages={stages} target={composing} />
+
+          {canWrite ? (
+            <ReviewDecisionBar stage={activeStage}>
+              <button type="button" className="field-button-secondary" onClick={() => setComposing({ stageKey: active ?? "", fieldKey: null })}>
+                <MessageSquarePlus className="h-4 w-4" aria-hidden />
+                Note
+              </button>
+              <button
+                type="button"
+                className="field-button"
+                disabled={busy !== null}
+                onClick={() =>
+                  tray.drafts.length ? void send("send") : setComposing({ stageKey: active ?? "", fieldKey: null })
+                }
+              >
+                <Undo2 className="h-4 w-4" aria-hidden />
+                {sendBackLabel(tray.drafts.length)}
+              </button>
+            </ReviewDecisionBar>
+          ) : null}
         </>
       ) : null}
     </div>

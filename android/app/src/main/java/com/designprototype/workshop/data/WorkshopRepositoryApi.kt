@@ -2022,6 +2022,14 @@ interface WorkshopRepositoryApi {
         @Body body: DwInspectionFeedbackBody
     ): DwInspectionFeedbackAnswerDto
 
+    // "Checked, no corrections" on the current round (2026-10-17): a verdict, never content. Online
+    // only — it is one row the server keeps per inspector per round.
+    @POST("design-workshop-inspections/{id}/clearance")
+    suspend fun clearInspectionRound(@Path("id") id: String): DwInspectionFeedbackAnswerDto
+
+    @DELETE("design-workshop-inspections/{id}/clearance")
+    suspend fun withdrawInspectionClearance(@Path("id") id: String): DwInspectionFeedbackAnswerDto
+
     // --- The DESIGNER tier: the roster that gates sign-in, and the profile a report prints ---
     //
     // Two groups of routes under one prefix, and they are gated differently on the server: the roster

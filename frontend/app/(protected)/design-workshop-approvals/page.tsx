@@ -24,6 +24,12 @@ import { useEffect, useRef, useState } from "react";
 import { Stamp } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import {
+  CLEARED_FILTER_OPTIONS,
+  QUEUE_SORT_OPTIONS,
+  QueueReadiness
+} from "@/components/designworkshop/review/QueueReadiness";
+import { Dropdown } from "@/components/ui/Dropdown";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
@@ -40,6 +46,7 @@ import {
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canApproveDesignWorkshops } from "@/lib/permissions";
+import type { DwClearedFilter, DwQueueSort } from "@/lib/reviewAids";
 import type { PageResult } from "@/lib/types";
 
 const PAGE_SIZE = 20;
@@ -75,6 +82,9 @@ export default function ReportsToApprovePage() {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
+  /** B4 / C5: the queue's order and the inspectors' verdict filter. Empty means the tab's own. */
+  const [sort, setSort] = useState("");
+  const [cleared, setCleared] = useState("");
   const [data, setData] = useState<PageResult<DwApprovalRow> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,7 +107,14 @@ export default function ReportsToApprovePage() {
     if (loading || !canApproveDesignWorkshops(user)) return;
     const current = generation.current + 1;
     generation.current = current;
-    listReportsForApproval({ state, page, pageSize: PAGE_SIZE, search: applied || undefined })
+    listReportsForApproval({
+      state,
+      page,
+      pageSize: PAGE_SIZE,
+      search: applied || undefined,
+      sort: (sort || "default") as DwQueueSort,
+      cleared: cleared as DwClearedFilter
+    })
       .then((result) => {
         if (generation.current !== current) return;
         setData(result);
@@ -107,7 +124,7 @@ export default function ReportsToApprovePage() {
         if (generation.current !== current) return;
         setError(describeFailure(err));
       });
-  }, [state, applied, page, loading, user]);
+  }, [state, applied, page, loading, user, sort, cleared]);
 
   const tab = APPROVAL_QUEUE_TABS.find((candidate) => candidate.value === state) ?? APPROVAL_QUEUE_TABS[0];
   const rows = data?.items ?? [];
@@ -158,6 +175,29 @@ export default function ReportsToApprovePage() {
         />
       </div>
 
+      <div className="mb-4 grid gap-2 sm:grid-cols-2" role="group" aria-label="Order and filter">
+        <Dropdown
+          value={sort}
+          onChange={(next) => {
+            setSort(next);
+            setPage(1);
+          }}
+          options={[...QUEUE_SORT_OPTIONS]}
+          ariaLabel="Order"
+          advanceOnSelect={false}
+        />
+        <Dropdown
+          value={cleared}
+          onChange={(next) => {
+            setCleared(next);
+            setPage(1);
+          }}
+          options={[...CLEARED_FILTER_OPTIONS]}
+          ariaLabel="Inspector verdict"
+          advanceOnSelect={false}
+        />
+      </div>
+
       <section className="panel overflow-hidden" aria-label={tab.label}>
         {data === null ? (
           <div className="p-4 text-sm text-ink-700">Loading…</div>
@@ -180,7 +220,7 @@ export default function ReportsToApprovePage() {
                   className="flex flex-col gap-2 px-4 py-3 transition hover:bg-surface-50 sm:flex-row sm:items-center sm:gap-4"
                   href={`/design-workshop-approvals/${workshop.id}`}
                 >
-                  <span className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-ink-900">
                       {workshop.title?.trim() || "Untitled design workshop"}
                     </span>
@@ -191,7 +231,8 @@ export default function ReportsToApprovePage() {
                       {workshop.clusterName ? ` · ${workshop.clusterName}` : ""}
                     </span>
                     <span className="mt-0.5 block text-xs text-ink-700">{standingLine(workshop, state)}</span>
-                  </span>
+                    <QueueReadiness readiness={workshop.readiness} row={workshop} />
+                  </div>
                   <span className="shrink-0">
                     <StatusBadge status={workshop.status} />
                   </span>
@@ -200,6 +241,9 @@ export default function ReportsToApprovePage() {
             ))}
           </ul>
         )}
+        {data && (data as { candidatesTruncated?: boolean }).candidatesTruncated ? (
+          <p className="border-t border-line-200 px-4 py-2 text-xs text-ink-500">Ranked from the first 300 in this list.</p>
+        ) : null}
         {data ? <Pagination onPage={setPage} page={data.page} pages={data.pages} total={data.total} /> : null}
       </section>
     </div>

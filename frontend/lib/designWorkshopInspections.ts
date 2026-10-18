@@ -110,6 +110,7 @@ import type { DwCustomDefinition } from "@/lib/customSections";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, isInspectorTier } from "@/lib/permissions";
 import { richSummary } from "@/lib/richText";
+import type { DwReadiness } from "@/lib/reviewAids";
 import type { PageResult, User, UserRole } from "@/lib/types";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -319,6 +320,27 @@ export type DwInspectableListParams = {
   /** The first and last day (YYYY-MM-DD, inclusive) the workshop may have STARTED on. */
   dateFrom?: string | null;
   dateTo?: string | null;
+  /** Android's three groups (B4): waiting for you, with the designers, everything else. */
+  group?: DwInspectionGroup | null;
+  sort?: string | null;
+};
+
+export type DwInspectionGroup = "awaiting" | "withDesigners" | "other";
+
+/** The groups as tabs, in Android's order and words. */
+export const INSPECTION_GROUPS: ReadonlyArray<{ value: DwInspectionGroup | ""; label: string }> = [
+  { value: "awaiting", label: "Waiting for you" },
+  { value: "withDesigners", label: "With the designers" },
+  { value: "other", label: "Not handed in or closed" },
+  { value: "", label: "All" }
+];
+
+/** A row of the inspector's list, with its readiness (absent from older servers). */
+export type DwInspectableRow = DwSummary & { readiness?: DwReadiness | null };
+
+export type DwInspectablePage = PageResult<DwInspectableRow> & {
+  groupCounts?: Partial<Record<DwInspectionGroup, number>>;
+  candidatesTruncated?: boolean;
 };
 
 /** The filters a reader has set, as the query the list read takes. Blank values are left out. */
@@ -333,7 +355,9 @@ export function inspectableListQuery(params: DwInspectableListParams): string {
     state: text(params.state),
     workshopKind: text(params.workshopKind),
     dateFrom: text(params.dateFrom),
-    dateTo: text(params.dateTo)
+    dateTo: text(params.dateTo),
+    group: text(params.group),
+    sort: text(params.sort)
   });
 }
 
@@ -369,7 +393,7 @@ export function inspectableFilterCount(params: DwInspectableListParams): number 
  * and a soft-deleted workshop is a 404 for everyone but an admin.
  */
 export function listInspectableDesignWorkshops(params: DwInspectableListParams) {
-  return apiFetch<PageResult<DwSummary>>(`/design-workshop-inspections${inspectableListQuery(params)}`);
+  return apiFetch<DwInspectablePage>(`/design-workshop-inspections${inspectableListQuery(params)}`);
 }
 
 /** One workshop under inspection, read-only, every stage and its completeness. */

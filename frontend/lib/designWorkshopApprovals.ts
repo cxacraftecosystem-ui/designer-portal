@@ -30,6 +30,7 @@ import {
   type DwSummary
 } from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
+import type { DwClearedFilter, DwQueueSort, DwReadiness, DwReviewAidKeys } from "@/lib/reviewAids";
 import type { PageResult } from "@/lib/types";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -49,6 +50,8 @@ export type DwApprovalVerb = "approve" | "revise" | "handOn";
 export type DwApprovalRow = DwSummary & {
   approvedByName?: string | null;
   handedOnByName?: string | null;
+  /** B4: completeness, this round's notes and inspectors cleared. Absent from older servers. */
+  readiness?: DwReadiness | null;
 };
 
 /** An account holding a post on the report — an inspector, or one of its two directors. */
@@ -60,6 +63,8 @@ export type DwApprovalPerson = {
   assignedAt?: string | null;
   /** On an oversight row only: ASSISTANT_DIRECTOR or REGIONAL_DIRECTOR. */
   capacity?: string;
+  /** On an inspector row: their "Checked, no corrections" on the current round, or null (C5). */
+  clearedAt?: string | null;
 };
 
 /** The newest exported file of the report — what a hand-on can name as the file the office received. */
@@ -80,7 +85,8 @@ export type DwApprovalExport = {
  * server refuses the approval if the report changed after it was opened.
  */
 export type DwApprovalDetail = DwSummary &
-  DwInspectionFeedbackKeys & {
+  DwInspectionFeedbackKeys &
+  DwReviewAidKeys & {
     stages: Record<string, DwStageData>;
     completeness: Record<string, DwStageCompleteness>;
     schemaVersion: string;
@@ -228,6 +234,8 @@ export type DwApprovalQueueParams = {
   search?: string | null;
   page?: number;
   pageSize?: number;
+  sort?: DwQueueSort;
+  cleared?: DwClearedFilter;
 };
 
 /** How many reports wait for a decision, and how many approved ones wait to be handed on. */
@@ -241,7 +249,9 @@ export function listReportsForApproval(params: DwApprovalQueueParams) {
       state: params.state,
       search: params.search?.trim() || undefined,
       page: params.page,
-      pageSize: params.pageSize
+      pageSize: params.pageSize,
+      sort: params.sort && params.sort !== "default" ? params.sort : undefined,
+      cleared: params.cleared || undefined
     })}`
   );
 }
@@ -264,7 +274,13 @@ export function approveReport(workshopId: string, body: { note?: string | null; 
 /** Send the report back without approving it, withdraw its approval, or return it from the office. */
 export function reviseReport(
   workshopId: string,
-  body: { note: string; stageKey?: string | null; fieldKey?: string | null }
+  body: {
+    note: string | null;
+    stageKey?: string | null;
+    fieldKey?: string | null;
+    /** The reader's tray of field notes (B2). With notes, `note` is an optional covering sentence. */
+    notes?: Array<{ note: string; stageKey?: string | null; fieldKey?: string | null }>;
+  }
 ) {
   return apiFetch<DwApprovalDetail>(`/design-workshop-approvals/${workshopId}/revise`, {
     method: "POST",

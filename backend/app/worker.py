@@ -45,6 +45,7 @@ from contextlib import suppress
 
 from app.core.config import get_settings
 from app.core.db import connect_db, disconnect_db, ensure_db_connected
+from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 
@@ -89,6 +90,8 @@ async def _run() -> None:
                 await process_next_email_jobs(worker_id="queue-service", settings=settings)
             except Exception:
                 logger.exception("E-mail outbox iteration failed; backing off")
+            # Round snapshots of workshops deleted over a year ago (throttled; never raises).
+            await purge_expired_snapshots()
             # Sleep for the interval but wake immediately on shutdown.
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval)

@@ -87,7 +87,14 @@ import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { fetchFile } from "@/lib/fileDownload";
 import type { DwCustomDefinition } from "@/lib/customSections";
 import { designerCreateFields } from "@/lib/designWorkshops";
-import type { DwDecision, DwStageCompleteness, DwStageData, DwSummary } from "@/lib/designWorkshops";
+import type {
+  DwDecision,
+  DwInspectionFeedbackKeys,
+  DwStageCompleteness,
+  DwStageData,
+  DwSummary
+} from "@/lib/designWorkshops";
+import type { DwReadiness, DwReviewAidKeys } from "@/lib/reviewAids";
 import { listDesignWorkshopInspectors, type DwInspector } from "@/lib/designWorkshopInspections";
 import {
   canAssignWorkshopOversight,
@@ -245,7 +252,11 @@ export type DwArtisanImport = {
 export type DwArtisanImportList = { imports: DwArtisanImport[] };
 
 /** The officer's read of one workshop — the designer's payload minus everything that writes. */
-export type DwOversightDetail = DwSummary & {
+export type DwOversightDetail = DwSummary &
+  DwInspectionFeedbackKeys &
+  DwReviewAidKeys & {
+  /** The inspectors, each with their "Checked, no corrections" on the current round (C5). */
+  inspectors?: Array<{ userId: string; name: string; email?: string; clearedAt?: string | null }>;
   /** Keyed by stage key, exactly as the designer's read groups them — same serialiser, not a copy. */
   stages: Record<string, DwStageData>;
   completeness: Record<string, DwStageCompleteness>;
@@ -628,12 +639,15 @@ export function listOverseenWorkshops(params: {
   page?: number;
   pageSize?: number;
   search?: string;
+  /** B4: oldest / newest by hand-in, or most complete first. */
+  sort?: string;
 }) {
-  return apiFetch<PageResult<DwSummary>>(
+  return apiFetch<PageResult<DwSummary & { readiness?: DwReadiness | null }> & { candidatesTruncated?: boolean }>(
     `/design-workshop-oversight/assigned${buildQuery({
       page: params.page,
       pageSize: params.pageSize,
-      search: params.search || undefined
+      search: params.search || undefined,
+      sort: params.sort || undefined
     })}`
   );
 }

@@ -88,6 +88,8 @@ data class DwInspectionFeedbackAnswerDto(
     val inspectionFeedback: List<DwInspectionFeedbackDto> = emptyList(),
     val inspectionFeedbackTruncated: Boolean = false,
     val mayRecordFeedback: Boolean = false,
+    /** Absent from an older server, which also has no verdicts: null. */
+    val myClearedAt: String? = null,
 )
 
 /** The read, with the register and the header replaced by what a write just answered. */
@@ -101,7 +103,35 @@ fun DwInspectionDetailDto.withFeedbackAnswer(answer: DwInspectionFeedbackAnswerD
         inspectionFeedback = answer.inspectionFeedback,
         inspectionFeedbackTruncated = answer.inspectionFeedbackTruncated,
         mayRecordFeedback = answer.mayRecordFeedback,
+        myClearedAt = answer.myClearedAt,
     )
+
+// --------------------------------------------------------------------------------------
+// "Checked, no corrections" (C5, 2026-10-17) — the web's verdict, on the handset
+// --------------------------------------------------------------------------------------
+
+/** The switch's label, word for word the web's. */
+const val DW_CLEARANCE_LABEL = "Checked, no corrections"
+
+/**
+ * Whether this inspector may NOT mark the round cleared: they have filed notes on it. The server
+ * refuses it then (a note and "no corrections" cannot both stand); already cleared stays switchable
+ * so it can be taken back.
+ */
+fun dwClearanceBlocked(record: DwInspectionDetailDto, userId: String?): Boolean =
+    record.myClearedAt == null &&
+        !userId.isNullOrBlank() &&
+        record.inspectionFeedback.any { it.actorId == userId && it.round == record.submissionRound }
+
+/** The line under the switch. */
+fun dwClearanceDescription(record: DwInspectionDetailDto, userId: String?): String =
+    if (dwClearanceBlocked(record, userId)) "You've filed notes on this round." else "Shown to the approving authority."
+
+/**
+ * The switch's status line, "Since 17 Oct 2026" — the web's `Since ${formatDate(...)}`. A stamp this
+ * build cannot read prints nothing rather than raw ISO.
+ */
+fun dwClearanceStatus(clearedAt: String?): String? = usageDay(clearedAt)?.let { "Since $it" }
 
 /** The server's `MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS`. Over it, the note is refused. */
 const val DW_INSPECTION_NOTE_MAX = 4000

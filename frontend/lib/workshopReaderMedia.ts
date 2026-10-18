@@ -40,10 +40,11 @@ export type ReaderMediaFile = {
 export type ReaderMediaList = { items: ReaderMediaFile[]; truncated: boolean };
 
 /** Which surface is reading — the two routes differ only in their prefix. */
-export type ReaderSurface = "inspection" | "oversight";
+export type ReaderSurface = "inspection" | "oversight" | "approval";
 
 export function readerMediaPath(surface: ReaderSurface, workshopId: string): string {
   const id = encodeURIComponent(workshopId);
+  if (surface === "approval") return `/design-workshop-approvals/${id}/media`;
   return surface === "inspection"
     ? `/design-workshop-inspections/${id}/media`
     : `/design-workshop-oversight/assigned/${id}/media`;

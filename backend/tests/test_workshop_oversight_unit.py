@@ -365,6 +365,28 @@ def test_every_route_on_this_prefix_stands_behind_one_of_the_two_doors():
         )
 
 
+#: The officer's note doors (C16) — the whole list.
+OFFICER_NOTE_DOORS = {
+    "/design-workshop-oversight/assigned/{workshop_id}/feedback",
+    "/design-workshop-oversight/assigned/{workshop_id}/feedback/batch",
+}
+
+
+def test_the_officer_note_doors_exist_and_write_only_feedback():
+    import inspect
+
+    live = {
+        route.path
+        for route in routes.router.routes
+        if "require_officer" in _dependency_names(route) and set(route.methods) != {"GET"}
+    }
+    assert live == OFFICER_NOTE_DOORS
+    source = inspect.getsource(routes._file_officer_notes)
+    assert "tx.dwinspectionfeedback.create" in source
+    for table in ("dwstageentry", "designworkshop.update", "reviewlog"):
+        assert table not in source, table
+
+
 def test_every_route_an_officer_can_reach_is_a_get():
     """**THE ASSERTION THAT SURVIVES A NEW ROUTE.**
 
@@ -374,6 +396,12 @@ def test_every_route_an_officer_can_reach_is_a_get():
     """
     for route in routes.router.routes:
         if "require_officer" in _dependency_names(route):
+            # THE ONE EXCEPTION, BY OWNER DECISION (C16, 2026-10-17): an Assistant or Regional
+            # Director may file NOTES. Those two doors write one row of DwInspectionFeedback each and
+            # nothing else; every other officer route is still a read.
+            if route.path in OFFICER_NOTE_DOORS:
+                assert set(route.methods) == {"POST"}, route.path
+                continue
             assert set(route.methods) == {"GET"}, (
                 f"{route.methods} {route.path} is reachable by an officer and is not a GET. Read "
                 f"the header of app/services/design_workshop_oversight.py before changing this "
