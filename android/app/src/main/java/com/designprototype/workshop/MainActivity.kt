@@ -86,6 +86,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Timeline
 import com.designprototype.workshop.ui.CachedCopyNote
+import com.designprototype.workshop.ui.FormDraftHandle
 import com.designprototype.workshop.ui.FormDraftRestoredNote
 import com.designprototype.workshop.ui.draftDate
 import com.designprototype.workshop.ui.draftList
@@ -5569,7 +5570,7 @@ private fun HomeScreen(
                                 TextButton(onClick = { pendingExit = null }) { Text("Keep editing") }
                                 TextButton(onClick = {
                                     pendingExit = null
-                                    unsavedGuard.clear()
+                                    unsavedGuard.discard()
                                     exit()
                                 }) { Text("Discard", color = MaterialTheme.colorScheme.error) }
                             }
@@ -7653,15 +7654,27 @@ private val genderOptions = StandardValues.GENDER_LABELS
  * record and its in-progress recordings. Exactly one form registers at a time (see
  * [RegisterUnsavedGuard]); it clears itself when the form leaves composition.
  */
-private class UnsavedGuard {
+internal class UnsavedGuard {
     /** Whether the active form currently has unsaved changes worth prompting about. */
     var dirty by mutableStateOf(false)
     /** Runs the active form's own validated save (same as its Save button) — null when no form is shown. */
     var onSave: (() -> Unit)? = null
+    /**
+     * Drops the active form's on-disk draft. Without it "Discard" only left the screen: the form's
+     * flush on the way out wrote the typing back to disk, and the next visit restored it.
+     */
+    var onDiscard: (() -> Unit)? = null
 
     fun clear() {
         dirty = false
         onSave = null
+        onDiscard = null
+    }
+
+    /** "Discard": forget the draft first, so the form's flush as it leaves writes nothing. */
+    fun discard() {
+        runCatching { onDiscard?.invoke() }
+        clear()
     }
 }
 
@@ -7681,12 +7694,14 @@ private val LocalUnsavedGuard = staticCompositionLocalOf<UnsavedGuard?> { null }
  * dialog, one wording.
  */
 @Composable
-internal fun RegisterUnsavedGuard(dirty: Boolean, onSave: () -> Unit) {
+internal fun RegisterUnsavedGuard(dirty: Boolean, draft: FormDraftHandle?, onSave: () -> Unit) {
     val guard = LocalUnsavedGuard.current ?: return
     val currentSave by rememberUpdatedState(onSave)
+    val currentDraft by rememberUpdatedState(draft)
     LaunchedEffect(dirty) { guard.dirty = dirty }
     DisposableEffect(Unit) {
         guard.onSave = { currentSave() }
+        guard.onDiscard = { currentDraft?.discard() }
         onDispose { guard.clear() }
     }
 }
@@ -11366,7 +11381,7 @@ private fun CraftForm(
     )
 
     RecordCard(title = if (isEdit) "Update craft" else "Add craft") {
-        RegisterUnsavedGuard(dirty = dirty) { submit() }
+        RegisterUnsavedGuard(dirty = dirty, draft = draft) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -12018,7 +12033,7 @@ private fun ArtisanForm(
 
     RecordCard(title = if (isEdit) "Update artisan" else "Add artisan") {
         liveCompleteness?.let { LiveCompletenessLine(it) }
-        RegisterUnsavedGuard(dirty = dirty) { submit() }
+        RegisterUnsavedGuard(dirty = dirty, draft = draft) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -12609,7 +12624,7 @@ private fun WorkshopForm(
 
     RecordCard(title = if (isEdit) "Update workshop" else "Add workshop") {
         liveCompleteness?.let { LiveCompletenessLine(it) }
-        RegisterUnsavedGuard(dirty = dirty) { submit() }
+        RegisterUnsavedGuard(dirty = dirty, draft = draft) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -13014,7 +13029,7 @@ private fun ProductForm(
 
     RecordCard(title = if (isEdit) "Update product" else "Add product") {
         liveCompleteness?.let { LiveCompletenessLine(it) }
-        RegisterUnsavedGuard(dirty = dirty) { submit() }
+        RegisterUnsavedGuard(dirty = dirty, draft = draft) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -13845,7 +13860,7 @@ private fun ToolForm(
 
     RecordCard(title = if (isEdit) "Update tool" else "Add tool") {
         liveCompleteness?.let { LiveCompletenessLine(it) }
-        RegisterUnsavedGuard(dirty = dirty) { submit() }
+        RegisterUnsavedGuard(dirty = dirty, draft = draft) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -14648,7 +14663,7 @@ private fun ProcessForm(
     )
 
     RecordCard(title = if (isEdit) "Update process" else "Document process") {
-        RegisterUnsavedGuard(dirty = dirty) { submit() }
+        RegisterUnsavedGuard(dirty = dirty, draft = draft) { submit() }
         FormDraftRestoredNote(draft)
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
@@ -21333,7 +21348,7 @@ private fun QuestionnaireForm(
         // Any changed field, an unsaved general attachment, or an unsaved recorded clip makes the
         // interview "dirty" so an accidental Back offers to save it (including in-progress recordings).
         val dirty = qSig() != initialSig || link.isDirty() || qMedia.uris.isNotEmpty() || media.uris.isNotEmpty()
-        RegisterUnsavedGuard(dirty = dirty) { submit() }
+        RegisterUnsavedGuard(dirty = dirty, draft = draft) { submit() }
         FormDraftRestoredNote(draft)
         SaveButton(
             state = saveState,

@@ -50,7 +50,7 @@ class FormDraftHandle internal constructor(
     private val owner: String?,
     private val key: String?,
 ) {
-    internal val finished = AtomicBoolean(false)
+    internal val gate = DraftDiscardGate()
 
     /**
      * Every write and every clear of this form's file runs under this, in order. Without it a save
@@ -59,13 +59,6 @@ class FormDraftHandle internal constructor(
      */
     internal val io = kotlinx.coroutines.sync.Mutex()
 
-    /**
-     * The values the form settled on after [discard] (it usually resets itself). Typing anything
-     * different from them re-arms the draft, so a screen that stays open after a save — the media
-     * upload screen, feedback — keeps protecting the next thing typed into it.
-     */
-    @Volatile
-    internal var valuesAtDiscard: Map<String, String>? = null
     internal var baseline: Map<String, String> = emptyMap()
     internal var restoreFn: (Map<String, String>) -> Unit = {}
 
@@ -78,8 +71,7 @@ class FormDraftHandle internal constructor(
 
     /** The work is safe elsewhere: forget the draft, and stop writing it until something new is typed. */
     fun discard() {
-        valuesAtDiscard = null
-        finished.set(true)
+        gate.close()
         restoredAt = null
         val k = key ?: return
         AppScope.io.launch { io.withLock { runCatching { FormDraftStore.clear(context, owner, k) } } }
@@ -92,6 +84,42 @@ class FormDraftHandle internal constructor(
         restoreFn(baseline)
         val k = key ?: return
         AppScope.io.launch { io.withLock { runCatching { FormDraftStore.clear(context, owner, k) } } }
+    }
+}
+
+/**
+ * Whether a draft write may still land after the form said its work is safe — saved, queued, or
+ * thrown away with "Discard".
+ *
+ * The first write after [close] is the form's own flush on the way out (or the debounce catching up)
+ * and carries the values the form settled on, so it is swallowed and remembered. Anything different
+ * typed after that re-opens the gate, so a screen that stays open after a save — the media upload
+ * screen, feedback — keeps protecting the next thing typed into it.
+ */
+internal class DraftDiscardGate {
+    private val closed = AtomicBoolean(false)
+
+    @Volatile
+    private var settled: Map<String, String>? = null
+
+    val isClosed: Boolean get() = closed.get()
+
+    fun close() {
+        settled = null
+        closed.set(true)
+    }
+
+    fun admits(values: Map<String, String>): Boolean {
+        if (!closed.get()) return true
+        val at = settled
+        if (at == null) {
+            settled = values
+            return false
+        }
+        if (values == at) return false
+        settled = null
+        closed.set(false)
+        return true
     }
 }
 
@@ -186,17 +214,8 @@ private suspend fun persist(
     values: Map<String, String>,
     baseline: Map<String, String>,
 ) = withContext(Dispatchers.IO) { handle.io.withLock {
-    if (handle.finished.get()) {
-        val settled = handle.valuesAtDiscard
-        if (settled == null) {
-            handle.valuesAtDiscard = values
-            return@withLock
-        }
-        if (values == settled) return@withLock
-        // Something new was typed after the save: protect it like anything else.
-        handle.finished.set(false)
-        handle.valuesAtDiscard = null
-    }
+    // Closed by a save or a Discard: the flush on the way out must not write the form back.
+    if (!handle.gate.admits(values)) return@withLock
     runCatching {
         if (!formDraftIsWorthKeeping(values, baseline)) {
             FormDraftStore.clear(context, owner, key)
@@ -213,7 +232,7 @@ private suspend fun persist(
             }
         }
         // Re-checked after the copy: a Save that landed while a video was copying wins.
-        if (handle.finished.get()) return@runCatching
+        if (handle.gate.isClosed) return@runCatching
         FormDraftStore.save(context, owner, key, durable)
     }
     Unit
