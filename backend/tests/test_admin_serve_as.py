@@ -663,11 +663,11 @@ def test_a_holder_changes_nothing_on_a_record_filed_under_their_workshop(monkeyp
 def test_off_their_workshop_a_holders_record_forms_are_answered_exactly_as_before(monkeypatch):
     """The same administrator, on records filed nowhere or under a workshop they hold nothing on:
     a PATCH that does not mention the workshop asks nothing, re-sending the workshop the row names
-    goes to the destination's loader alone as it always did, and unfiles and moves are free."""
+    is not a filing and asks nothing either (2026-10-19), and unfiles and moves are free."""
     _serving(monkeypatch, {"w1": {"u-ADMIN": {"INSPECTOR"}}})
     holder = _account("ADMIN")
     assert _file(monkeypatch, {"notes": "Re-measured."}, holder, filed_under="w3") == (None, [])
-    assert _file(monkeypatch, {"designWorkshopId": "w3"}, holder, filed_under="w3") == (None, ["w3"])
+    assert _file(monkeypatch, {"designWorkshopId": "w3"}, holder, filed_under="w3") == (None, [])
     assert _file(monkeypatch, {"designWorkshopId": None}, holder, filed_under=None) == (None, [])
     assert _file(monkeypatch, {"designWorkshopId": "w2"}, holder, filed_under=None) == (None, ["w2"])
     assert _file(monkeypatch, {"designWorkshopId": None}, holder, filed_under="w3") == (None, [])

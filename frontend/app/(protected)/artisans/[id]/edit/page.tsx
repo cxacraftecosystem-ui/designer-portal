@@ -11,7 +11,8 @@ import { ArtisanQuestionnairePanel } from "@/components/ArtisanQuestionnairePane
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { PageHeader } from "@/components/PageHeader";
 import { RecordCodeCard } from "@/components/RecordCode";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
+import { recordLoadFailure } from "@/lib/recordView";
 import type { Artisan } from "@/lib/types";
 
 export default function EditArtisanPage() {
@@ -23,7 +24,9 @@ export default function EditArtisanPage() {
   useEffect(() => {
     apiFetch<Artisan>(`/artisans/${params.id}`)
       .then(setRecord)
-      .catch((err) => setError(err instanceof Error ? err.message : "Unable to load artisan"));
+      .catch((err) =>
+        setError(recordLoadFailure("artisan", err instanceof ApiError ? err.status : null, err instanceof Error ? err.message : null))
+      );
   }, [params.id]);
 
   return (

@@ -17,7 +17,7 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { downloadMediaUrl } from "@/lib/localMediaDownload";
 import { isCompletenessKind, type CompletenessBlock } from "@/lib/completenessCore";
-import { canUpdateRecord, recordUpdateHref, type ViewableRecord } from "@/lib/recordView";
+import { canUpdateRecord, recordLoadFailure, recordUpdateHref, type ViewableRecord } from "@/lib/recordView";
 import type { MediaFile, RecordStatus } from "@/lib/types";
 
 /**
@@ -80,13 +80,7 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
       .catch((err) => {
         if (cancelled) return;
         if (onLoadErrorRef.current?.(err)) return;
-        if (err instanceof ApiError && err.status === 404) {
-          setError(`This ${noun} could not be found. It may have been deleted, or it is not shared with your account.`);
-        } else if (err instanceof ApiError && err.status === 403) {
-          setError(`Your account cannot open this ${noun}.`);
-        } else {
-          setError(err instanceof Error ? err.message : `Unable to load this ${noun}.`);
-        }
+        setError(recordLoadFailure(noun, err instanceof ApiError ? err.status : null, err instanceof Error ? err.message : null));
       });
     return () => {
       cancelled = true;

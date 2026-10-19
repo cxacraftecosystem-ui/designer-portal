@@ -9,6 +9,7 @@ import {
   canUpdateRecord,
   RECORD_UPDATE_HREF,
   RECORD_VIEW_HREF,
+  recordLoadFailure,
   recordUpdateHref,
   reviewRecordViewHref,
   rowClickIntent,
@@ -333,4 +334,23 @@ test.describe("every record list opens its rows read-only", () => {
     expect(dashboard).toContain("<OpenableRow");
     expect(read("components/map/types.ts")).toContain("artisans: RECORD_VIEW_HREF.artisan");
   });
+});
+
+test("a record that did not open says gone or not yours, never the server's bare words", () => {
+  expect(recordLoadFailure("artisan", 404, "Record not found")).toBe("This artisan could not be found. It may have been deleted.");
+  expect(recordLoadFailure("artisan", 403, "Forbidden")).toBe("Your account can't open this artisan.");
+  // A 404 is about the record only: nothing in it suggests a permission the reader lacks.
+  expect(recordLoadFailure("artisan", 404, null)).not.toMatch(/shared|access|permission/i);
+  expect(recordLoadFailure("artisan", 500, "The server couldn't respond.")).toBe("The server couldn't respond.");
+  expect(recordLoadFailure("artisan", null, "Record not found")).toBe("Unable to load this artisan.");
+  expect(recordLoadFailure("artisan", null, "")).toBe("Unable to load this artisan.");
+});
+
+test("the artisan edit form explains a failed load the way the read-only page does", () => {
+  const edit = readFileSync(join(ROOT, "app/(protected)/artisans/[id]/edit/page.tsx"), "utf8");
+  const view = readFileSync(join(ROOT, "components/records/RecordView.tsx"), "utf8");
+  for (const source of [edit, view]) {
+    expect(source).toContain("recordLoadFailure(");
+    expect(source).not.toMatch(/setError\(err instanceof Error \? err\.message/);
+  }
 });

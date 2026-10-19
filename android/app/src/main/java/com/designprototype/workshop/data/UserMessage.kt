@@ -32,6 +32,22 @@ fun Throwable.userMessage(fallback: String): String {
     return if (said.readsAsSentenceForPeople()) said else fallback
 }
 
+/**
+ * Why a record did not open, in the web's words (`lib/recordView.ts` `recordLoadFailure`). A 404 is
+ * "gone" and only gone; reading is open to every signed-in account, so a record this account may not
+ * read is a 403 and says so. The server's bare "Record not found" is never printed over a record the
+ * person just opened. Anything else (no signal, a 500) is [userMessage]'s.
+ */
+fun Throwable.recordLoadFailure(noun: String): String {
+    if (this is HttpException) {
+        when (code()) {
+            404 -> return "This $noun could not be found. It may have been deleted."
+            403 -> return "Your account can't open this $noun."
+        }
+    }
+    return userMessage("Unable to load this $noun.")
+}
+
 /** A plain sentence for a status code whose answer carried nothing readable, or null to keep the caller's. */
 internal fun statusSentence(code: Int): String? = when (code) {
     401 -> "Your sign-in expired. Sign in again."

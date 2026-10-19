@@ -22,6 +22,20 @@
 import { canManageCrafts, canManageWorkshops } from "@/lib/permissions";
 import type { User } from "@/lib/types";
 
+/**
+ * WHY A RECORD DID NOT OPEN, in one sentence — the read-only page and the edit form say the same.
+ *
+ * A 404 is "gone", and only gone: reading is open to every signed-in account, so a record the caller
+ * may not read is a 403 and says so instead. The server's own "Record not found" was printed raw on
+ * the edit form, where it reads as an accusation about a record the designer just opened.
+ */
+export function recordLoadFailure(noun: string, status: number | null | undefined, message?: string | null): string {
+  if (status === 404) return `This ${noun} could not be found. It may have been deleted.`;
+  if (status === 403) return `Your account can't open this ${noun}.`;
+  const said = (message ?? "").trim();
+  return said && said.toLowerCase() !== "record not found" ? said : `Unable to load this ${noun}.`;
+}
+
 /** The record kinds that have a read-only page of their own. */
 export type ViewableRecord = "artisan" | "product" | "tool" | "process" | "craft" | "workshop" | "interview" | "media";
 

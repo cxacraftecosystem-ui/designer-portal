@@ -55,8 +55,10 @@ so it is exactly as hard as editing one of its stages: creator, admin, or grant-
 
 Two behaviours come with the helper and both are wanted:
 
-* **404, never 403**, for a workshop the caller may not see — "a 403 would confirm that the id exists
-  to precisely the caller being turned away."
+* **One refusal for a workshop the caller may not see and for one that does not exist** — the
+  loader answers both with the same 404 so the id is never confirmed. :func:`assert_may_file_under`
+  turns that into :data:`NOT_ON_WORKSHOP` (403), still one answer for both, because on a record form
+  "Record not found" reads as the RECORD being gone when it is the chosen workshop (2026-10-19).
 * **409 for a soft-deleted workshop**, with "Restore it before editing", rather than a 404. Every
   read in the design-workshop family filters ``deletedAt: null``, so filing a record under a deleted
   workshop would file it under something none of its own surfaces can show; the admin who can still
@@ -109,6 +111,11 @@ from app.services import design_workshop_posts
 #: The column name, spelled once. Every schema, route and test that names it reads this.
 DESIGN_WORKSHOP_KEY = "designWorkshopId"
 
+#: What a record form is told when it names a design workshop the caller is not on — or one that does
+#: not exist, which gets the same words so the answer confirms nothing. It replaces the loader's
+#: "Record not found", which on an artisan's Save reads as the artisan being gone.
+NOT_ON_WORKSHOP = "You're not on that design workshop, so records can't be filed under it. Choose one you're on."
+
 
 async def assert_may_file_under(workshop_id: str | None, user: Any) -> None:
     """Refuse unless ``user`` may file a record under ``workshop_id``.
@@ -129,9 +136,18 @@ async def assert_may_file_under(workshop_id: str | None, user: Any) -> None:
     if not workshop_id:
         return
 
+    from fastapi import HTTPException, status
+
     from app.services.design_workshops import load_workshop_or_404
 
-    await load_workshop_or_404(workshop_id, user, for_edit=True)
+    try:
+        await load_workshop_or_404(workshop_id, user, for_edit=True)
+    except HTTPException as refusal:
+        # Only the loader's 404 is reworded; its 403 for a post holder and its 409 for a deleted
+        # workshop already say what to do.
+        if refusal.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_ON_WORKSHOP) from None
 
 
 async def assert_may_write_a_record_filed_under(workshop_id: str | None, user: Any) -> None:
@@ -161,11 +177,13 @@ async def assert_payload_workshop(
     PATCH carries, because the holder it refuses may not change ANY of the record (2026-10-09), and
     first, so a holder moving the record is told about their post rather than about the destination.
 
-    THE DESTINATION IS KEYED ON PRESENCE. ``exclude_unset=True`` means the key is present only when
-    the caller actually sent it, so an UPDATE that does not mention the workshop is not re-validated
-    — which matters because a record filed under a workshop a designer has since been removed from
-    must still be editable. Only a caller who SENDS the link has to hold it, and re-sending the id
-    the row already holds is asked about exactly as it always was.
+    THE DESTINATION IS ASKED ONLY WHEN IT CHANGES. ``exclude_unset=True`` means the key is present
+    only when the caller actually sent it, and both clients send it on every save — so re-sending the
+    id the row already holds is not a filing and is not asked about (2026-10-19). Asking it was the
+    defect: anybody who may edit the record but is not on the workshop it is filed under — an admin, a
+    professor, the designer who filed it and was later removed — got the loader's 404 "Record not
+    found" for an artisan that was on their screen. Only a caller who MOVES the record has to hold
+    the destination.
 
     An explicit ``None`` unfiles the record and is allowed to everybody but the workshop's inspector
     and its two directors: taking your own record out of a workshop needs no permission on that
@@ -175,4 +193,7 @@ async def assert_payload_workshop(
     await assert_may_write_a_record_filed_under(filed_under, user)
     if DESIGN_WORKSHOP_KEY not in data:
         return
-    await assert_may_file_under(data.get(DESIGN_WORKSHOP_KEY), user)
+    destination = data.get(DESIGN_WORKSHOP_KEY)
+    if filed_under and (destination or "").strip() == filed_under:
+        return
+    await assert_may_file_under(destination, user)
