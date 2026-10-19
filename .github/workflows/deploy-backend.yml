@@ -74,9 +74,10 @@ permissions:
 
 # cancel-in-progress is deliberately OFF. This workflow now starts on every push to main,
 # so overlapping runs are far more likely than they were with the old paths filter — and
-# cancelling mid-deploy is destructive here: the remote script stops the fieldrepo service
-# before running `prisma migrate deploy`, so a run killed in that window can leave the API
-# down with no restart step to come. Queueing is slower and safe; cancelling is not.
+# cancelling mid-deploy is unsafe here: backend/deploy/blue_green.sh pauses the queue, migrates
+# and starts the new release on the idle port before switching nginx, and on its fallback (three
+# failed migrations) stops the live API, so a run killed in that window can leave the queue or the
+# API down with nothing left to restart it. Queueing is slower and safe; cancelling is not.
 concurrency:
   group: deploy-backend
   cancel-in-progress: false
@@ -832,17 +833,19 @@ jobs:
       # WHAT IT IS NOW.
       #
       #   /home/ubuntu/app/releases/<sha>-<run>.<n>/backend/   one directory per deploy ATTEMPT, venv inside
-      #   /home/ubuntu/app/current -> releases/<sha>-<run>.<n>  the symlink both systemd units point through
+      #   /home/ubuntu/app/current -> releases/<sha>-<run>.<n>  the live release; the queue unit runs through it
+      #   /home/ubuntu/app/slot-<port> -> releases/<...>        what fieldrepo-api@8000 / @8001 run (since 2026-10-19)
       #   /home/ubuntu/app/backend                              the LEGACY tree, left alone; see the shim below
       #
       # THE DIRECTORY IS NAMED FOR THE RUN AND NOT FOR THE COMMIT, since 2026-09-17 — see the "Name
       # this deploy's release directory" step above for the live-tree rsync that forced it.
       #
-      # Rolling back is now `ln -sfn releases/<older-release> current && systemctl restart fieldrepo
-      # fieldrepo-queue`, by hand over SSM, in seconds, with no build and no network. `ls -lt
-      # /home/ubuntu/app/releases` names the candidates newest-first. The last three
+      # Rolling back is `bash /home/ubuntu/app/current/backend/deploy/blue_green.sh rollback
+      # [release]`, by hand over SSM, with no build and no network: since 2026-10-19 it starts the
+      # previous release (the idle port's, by default) beside the live one and switches nginx when it
+      # answers /health. `ls -lt /home/ubuntu/app/releases` names the candidates newest-first. The last three
       # releases are kept, so "the one before this one" is always there. NOTE THE ONE THING A
-      # SYMLINK FLIP CANNOT UNDO: a migration that has already been applied. The schema only ever
+      # ROLLBACK CANNOT UNDO: a migration that has already been applied. The schema only ever
       # moves forward, so rolling the CODE back is only safe while the older code tolerates the
       # newer schema — which is why the migrate branch below refuses to flip forward on failure
       # rather than trying to be clever about going backwards.
@@ -2919,10 +2922,11 @@ jobs:
       # on disk" and "the deployed code" were the same directory either way. Its one path reference
       # moved to `current/` with everything else. It is deliberately still the LAST gate before the
       # SSH window closes: if it fails the run is red, the previous release is still on disk, and the
-      # rollback is `ln -sfn releases/<older-release> current && sudo systemctl restart fieldrepo
-      # fieldrepo-queue` over SSM — seconds, no build, no network. Since 2026-09-17 release
-      # directories are named `<sha>-<run_id>.<attempt>`, so `ls -lt /home/ubuntu/app/releases` is
-      # how you read the name off; the one below the current one is the target.
+      # rollback is `bash /home/ubuntu/app/current/backend/deploy/blue_green.sh rollback` over SSM —
+      # no build, no network: the previous release starts on the idle port and nginx switches to it
+      # once it answers /health. Since 2026-09-17 release directories are named
+      # `<sha>-<run_id>.<attempt>`; to name an older one, read it off `ls -lt
+      # /home/ubuntu/app/releases` and pass it: `blue_green.sh rollback <release>`.
       - name: Assert the API is ready AND answers CORS for the production origin
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
