@@ -1,0 +1,201 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=1.5cm,footskip=0.7cm]{geometry}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{parskip}
+\PassOptionsToPackage{hyphens}{url}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  pdftitle={Design Prototype Workshop: monthly progress report, 9 September - 9 October 2026},
+  pdfauthor={Indian Institute of Technology Kharagpur},
+  pdfsubject={Submitted to the Office of the Development Commissioner (Handicrafts), Ministry of Textiles},
+}
+
+\definecolor{accent}{HTML}{1F3A5F}
+\definecolor{muted}{HTML}{555555}
+
+% Items still moving on 9 October 2026; a later pass replaces each with one or two sentences.
+\newcommand{\placeholder}[1]{\textcolor{red}{[#1]}}
+
+% Section headings without titlesec (not in this TeX installation).
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}%
+  {-1.2ex \@plus -0.3ex \@minus -0.2ex}{0.3ex \@plus 0.1ex}%
+  {\normalfont\large\bfseries\color{accent}}}
+\makeatother
+
+\setlist{itemsep=0.5pt,topsep=1pt,parsep=0pt,partopsep=0pt,leftmargin=1.2em}
+\setlength{\parskip}{2.5pt plus 1pt}
+\setlength{\emergencystretch}{2em}
+\urlstyle{same}
+
+\begin{document}
+
+\noindent{\color{accent}\rule{\linewidth}{1.2pt}}\par\vspace{3pt}
+\noindent{\LARGE\bfseries\color{accent}Design Prototype Workshop}\par\vspace{1pt}
+\noindent{\small\color{muted}Web and Android application for recording craft and textile design \&
+prototype development workshops, with report generation}\par\vspace{5pt}
+\noindent{\large\bfseries Monthly progress report, 9 September -- 9 October 2026}\hfill
+{\small\textbf{Date}\enspace 10 October 2026}\par\vspace{3pt}
+{\small\noindent\begin{tabularx}{\linewidth}{@{}>{\bfseries}l>{\raggedright\arraybackslash}X@{}}
+Submitted to & Office of the Development Commissioner (Handicrafts), Ministry of Textiles, Government of India \\
+Prepared by & Indian Institute of Technology Kharagpur \\
+ & Centre of Excellence for unified AI-enabled craft ecosystem platform \\
+\end{tabularx}}\par\vspace{-2pt}
+\noindent{\color{accent}\rule{\linewidth}{0.4pt}}
+
+\section*{Executive summary}
+This month the platform gained the ministry's own working screens: three official roles (Assistant
+Director, Regional Director and Ministry Admin), a sanction register, an annual plan, workshop
+oversight, inspection of reports and a dashboard of every workshop. Record forms now begin with the
+type of workshop, two standard interview instruments were published and interview editing was made
+reliable. Most of this went live between 14 and 20 September 2026, with seven Android versions. A
+release prepared on 9 October adds password accounts, enforced temporary passwords and per-workshop
+appointments, and closes a high-severity security weakness; it went live on 9 October. On 10 October
+approval of finished reports, e-mail notices and further features followed (Section 6). The features are
+live but not yet in real use; onboarding the Office's accounts comes next.
+
+\section*{Key figures {\normalsize\mdseries\color{muted}(as of 9 October 2026)}}
+{\small\renewcommand{\arraystretch}{1.08}%
+\noindent\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.12\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Live address & \url{https://designer-repository.vercel.app}, answering normally on 9 October 2026. Server in
+  Mumbai (Amazon Web Services); web on Vercel; database (PostgreSQL, Supabase) in the same region. \\
+Releases & Updates went live on 14, 15, 17 and 20 September 2026; Android 0.0.9 to 0.0.15 released 14--20 September. \\
+Accounts & 20 accounts (15 Designer, 3 Admin, 2 Master Admin; 4 new this month); none yet in ministry roles. \\
+Records & 36 empanelled designers (4 added); 2 workshops, both test entries; no artisans, interviews, sanction
+  orders or annual plan rows yet. Published for use: 6 workshop types and 2 standard interview instruments. \\
+Server use & 5,634 requests to its functions this month (setup and testing); 20 server errors, all on 14--15 September. \\
+Safeguards & Daily database backup: 31 of 31 runs succeeded. Automatic uptime check: 181 of 182 passed. \\
+\bottomrule
+\end{tabularx}}
+
+\section{What users can now do}
+\emph{Ministry screens are web-only, by the decision of 15 September; record forms are on web and phone.}
+\begin{itemize}
+\item \textbf{Three official roles} (14 September): Assistant Director, Regional Director and Ministry Admin
+  (a ministry role, not a system administrator). They can read every design workshop and may also work
+  inside one as a designer does.
+\item \textbf{Sanction register}: one sanction order, recorded by an Assistant Director or above, empanels the
+  designer, creates the account if needed, opens the workshop and issues a one-time sign-in link for the
+  officer to pass on, in one step instead of five screens. Since 17 September an order can name several
+  designers, and orders can be imported from a spreadsheet, every row checked before saving.
+\item \textbf{Annual plan}: the year's planned workshops (number, dates, state, district, venue, implementing
+  agency, sponsor), uploaded as one spreadsheet; a row can be opened into a workshop, withdrawn or reinstated.
+  Ministry Admins manage it.
+\item \textbf{Workshop oversight}: a Ministry Admin names each workshop's designers, supervising Assistant and
+  Regional Directors and inspectors, and uploads its artisan roster from the pro-forma Excel workbook.
+  \emph{Workshops I monitor} gives directors a read-only view of every stage, showing who wrote each field.
+\item \textbf{Inspection}: the assigned inspectors, who cannot edit the workshop, read the report a designer has
+  handed in, file correction suggestions under their own name and can send it back for revision.
+\item \textbf{Ministry dashboard} (20 September): a register of every workshop (newly registered, ongoing,
+  completed) with its designer, number of artisans, progress and last change, refreshed every 30
+  seconds; a director's register shows only the workshops they supervise. It also lists designers, directors
+  and inspectors, and says how many empanelled designers have not yet created an account. \emph{Download workshops} and \emph{Download beneficiaries} produce spreadsheets.
+\item A \textbf{ministry desk} card gathers these screens, and the in-app guide opens on the walkthrough for the
+  reader's role. Since 17 September workshops are opened by the ministry and administrators, not by designers.
+\end{itemize}
+
+\section{Data quality and field work}
+\begin{itemize}
+\item \textbf{Every record form starts with the workshop}: \emph{Type of workshop}, then \emph{Workshop}, on the
+  five record forms, on web and phone (15--17 September). Administrators manage the six types; existing
+  records kept their links.
+\item \textbf{Tool record form rebuilt} (16--17 September): several crafts and artisans per tool; centimetre and inch
+  boxes convert automatically, but only when edited, so older entries are never altered.
+\item \textbf{Standard instruments} (20 September): the 2nd and 3rd Craft Toolkit Workshop artisan-interview
+  instruments (284 and 81 questions) are published to every designer, to answer as they stand or adapt.
+\item \textbf{Interview editing} (20 September): \emph{Edit} opens the interview itself, not a blank form; saved
+  answers and recordings show while editing, and a would-be duplicate is offered as an explicit merge, with
+  conflicting answers left to a person (on phones from the next build). Two workshops interviewing the same
+  artisans now keep separate interviews.
+\end{itemize}
+
+\section{Security and data protection}
+\begin{itemize}
+\item \textbf{14 September}: all 31 open security alerts on third-party web software cleared (4 critical, 20 high, 7 medium).
+\item \textbf{Separation of duties}: an officer may not name themselves on a sanction order, nor write in a
+  workshop their own order opened. Downloads show only the last four characters of Aadhaar numbers. By the
+  owner's decision, the three ministry roles also have the Aadhaar card reader (the photograph is read by an
+  external AI service, and the designer chooses whether it is kept).
+\item \textbf{Release of 9 October}: closes a high-severity weakness present in the live system: an administrator
+  could take over the Master Admin's or another administrator's account with a password link. Further work
+  keeps sign-in link codes and tokens out of the application's own logs (link codes can still reach the log
+  of the web server in front of it; a fix is planned for the next release). 31 problems found while preparing
+  and reviewing it are recorded as fixed (2~high, 12~medium, 17~low).
+\end{itemize}
+
+\section{Reliability, operations and cost}
+\begin{itemize}
+\item \textbf{Disruption, 14--15 September}: a server-update defect left an out-of-date database component:
+  from about 22:30 the workshop list and sanction register failed, and the service was down for a period
+  during the repair, fully restored by about 02:30 IST. New versions now go live only once proven to load
+  their data definitions and reach the database.
+\item \textbf{Publishing}: on 15--17 September the live site went about 46 hours without updates while publishing
+  reported success, and on 20 September three dashboard functions were briefly missing; publishing now
+  checks what is live. Since 21 September the full browser test suite runs on request instead of weekly.
+\item \textbf{Bigger server} (17 September): memory doubled to 2 GiB (about US\$16 a month); the service starts in
+  under 25 seconds instead of about six minutes. Updates are prepared separately; earlier versions are
+  kept for rollback.
+\item \textbf{Cost}: a monthly AWS expenditure e-mail was set up for the 3rd of each month. August 2026 came to
+  US\$36.45 gross, fully covered by promotional credits (whole AWS account, shared with two sibling
+  services). No recipient has yet confirmed the subscription, so the 3 October report reached nobody.
+\item \textbf{Database} (9 October): stays on Supabase; a move to Amazon's own database service (RDS) was
+  evaluated and not adopted, and its trial resources were removed the same day.
+\end{itemize}
+
+\section{\texorpdfstring{Mobile app releases {\normalsize\mdseries\color{muted}(Android app ``Design Workshop'')}}{Mobile app releases (Android app "Design Workshop")}}
+{\small\renewcommand{\arraystretch}{1.05}%
+\noindent\begin{tabularx}{\linewidth}{@{}lp{0.105\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Version} & \textbf{Released} & \textbf{What reached the phone} \\
+\midrule
+0.0.9  & 14 September & Assistant and Regional Directors and Ministry Admins can work inside a design workshop. \\
+0.0.10 & 15 September & No change on the phone (server and web changes only). \\
+0.0.11 & 15 September & \emph{Type of workshop} first on the six phone record forms; designer and inspector walkthroughs. \\
+0.0.12 & 16 September & The new tool record form. \\
+0.0.13 & 17 September & Two-box workshop choice on every record form; allotted workshops kept for use without signal. \\
+0.0.14 & 20 September & Editing an interview can no longer silently create a second interview. \\
+0.0.15 & 20 September & Dashboard sections as colour-coded cards, matching the web. \\
+\bottomrule
+\end{tabularx}}\par
+Each version is signed and offered to installed phones by the app's own updater. Version 0.0.16 followed on
+9 October with the password-account and temporary-password screens.
+
+\section{Completed on 9--10 October 2026}
+\begin{itemize}
+\item \textbf{Release of 9 October}: password accounts for people without Google sign-in, temporary passwords
+  changed at first sign-in, sign-out everywhere on a password change, and per-workshop appointments under
+  separation-of-duties rules. All automated checks passed and it went live on 9 October; Android 0.0.16 was published.
+\item \textbf{Requested accounts created}: the Assistant Director (Design) mailbox as Assistant Director (temporary
+  password) and the Design Section mailbox as Ministry Admin (Google sign-in).
+\item \textbf{Approval of finished reports}: the Ministry Admin can approve a workshop report, send it back or
+  withdraw an approval with a reason, and hand it on to the Office; an approved report is locked.
+\item \textbf{New features}: e-mail notices to designers when an inspector suggests a correction or sends a report back;
+  sign-in with Microsoft and Yahoo accounts; inspectors and supervising officers can see a workshop's photographs
+  and files; filters on the inspection list; reports can be previewed and downloaded without a connection;
+  workshop join cards on the web; 3D models viewable on web and phone; inspection on the phone without signal.
+\item \textbf{Plain wording}: every screen on web and phone was rewritten to tell officials what to do, without
+  technical language.
+\item \textbf{Platform}: the server was rebuilt on Ubuntu 26.04 with twice the memory and Python 3.14.8; Node.js 24 and
+  the latest libraries throughout; database on PostgreSQL 17.11; all automated dependency updates applied.
+\end{itemize}
+
+\section{Next steps}
+\begin{enumerate}[leftmargin=1.5em]
+\item Onboard the Office's accounts, upload the annual plan, record sanction orders and begin fieldwork.
+\item Make photographs and recordings private before real fieldwork; today anyone holding a file's link can open it.
+\item Publish the next Android version with the 10 October features; e-mail delivery starts once Amazon approves
+  the sending account (requested 10 October).
+\item Owner decisions pending: whether a partial save of a workshop's first stage may clear details of a
+  workshop opened from the annual plan, and whether the dashboard should name administrators holding
+  workshop posts.
+\end{enumerate}
+
+\end{document}

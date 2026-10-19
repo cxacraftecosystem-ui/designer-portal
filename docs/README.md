@@ -165,6 +165,19 @@ Three documents about one capability, split by which half of it they specify.
 | [STALE-IMAGE-TRAP.md](STALE-IMAGE-TRAP.md) | Two incidents in one day where the code was correct and the running container was not. Written down because the third will look different and cost the same hour |
 | [MARKET_RESEARCH.md](MARKET_RESEARCH.md) | The fourth, **dormant** capability of `backend/app/ai_features/`: finding what comparable products cost and who sells them. Off by default; a fresh clone behaves exactly as it did before it existed |
 
+### Aadhaar go-live pack, user guides and the update report
+
+Kept in sub-folders, moved here on 2026-10-19 from the IIT workspace's shared `docs/` because they concern this portal only.
+
+| Document | Answers |
+|---|---|
+| [aadhaar/GO_LIVE_CHECKLIST.md](aadhaar/GO_LIVE_CHECKLIST.md) | What must be true before either Aadhaar switch goes on in production: the open blockers with UIDAI, and the steps in order |
+| [aadhaar/QUESTIONS_FOR_UIDAI.md](aadhaar/QUESTIONS_FOR_UIDAI.md) | The questions the Ministry puts to UIDAI before applying |
+| [aadhaar/REQUEST_LETTER_DRAFT.md](aadhaar/REQUEST_LETTER_DRAFT.md) | The draft AUA/KUA request letter, with the gaps the owner fills before it is sent |
+| [guides/designer-guide.md](guides/designer-guide.md) | The one-page guide for designers (a PDF of it sits beside it) |
+| [guides/officials-guide.md](guides/officials-guide.md) | The one-page guide for inspectors, approvers and the ministry desk (PDF beside it) |
+| `reports/designer-portal-update-report.tex` | The LaTeX source of the update report for the Ministry, with its rendered PDF beside it |
+
 ### Reference, not specification
 
 These two describe something other than this checkout's current behaviour, and each says so in its
