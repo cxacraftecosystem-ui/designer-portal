@@ -1334,6 +1334,11 @@ def test_each_verb_gate_refuses_with_a_sentence_about_that_verb_and_not_about_di
         return {}
 
     monkeypatch.setattr(routes.dictation_consent.ledger, "current_states", _no_ledger_rows)
+
+    async def _no_linked_artisans(_workshop_ids):
+        return []
+
+    monkeypatch.setattr(routes.dictation_consent, "workshop_artisan_ids", _no_linked_artisans)
     for name in ("proofread_text", "expand_text", "translate_text", "caption_image_bytes",
                  "transcribe_timed_bytes"):
         monkeypatch.setattr(routes.ai, name, _never)

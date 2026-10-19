@@ -397,12 +397,18 @@ and when (`backend/app/transcription/ledger.py`, byte-identical in both portals;
 subject is the view `consent_current_v`). **An artisan has one record, used by both portals**: this
 portal reads and writes `ARTISAN` rows through `GET`/`POST /api/artisans/{id}/consent` and the
 artisan form's "Recordings may be transcribed" switch, exactly as the Field Repository does. Before
-anything is sent to an outside service (transcription, refinement, summaries, answer drafting),
-`transcription_verdict` in `backend/app/services/dictation_consent.py` reads the recording's own row
-first — a refusal there always refuses — then decides with the shared rule over every workshop that
-names the file and every artisan of it who has an answer on record. **A recording with no workshop and
-no consent row at all (a designer's own dictation, for example) is sent as before**; once anyone
-records an answer for it or one of its artisans, the rule decides it.
+anything is sent to an outside service (transcription, refinement, summaries, answer drafting,
+subtitles, captions, search embeddings), `transcription_verdict` in
+`backend/app/services/dictation_consent.py` reads the recording's own row first — a refusal there
+always refuses — then decides with the shared rule over every workshop that names the file and every
+artisan of it who has an answer on record: its `artisanId`, its interview's participants and the
+artisans linked to those workshops (`Artisan.designWorkshopId`, which is how a stage clip reaches its
+artisan). Dictation and the AI verbs over pasted text ask `workshop_verdict` (the workshop and its
+linked artisans); a verb over a stored file or a layer made from one asks about that file as well.
+**A recording with no workshop and no consent row at all (a designer's own dictation, for example) is
+sent as before**; once anyone records an answer for it or one of its artisans, the rule decides it. A
+route answers a refusal with 409 and a consent store it cannot read with 503
+(`backend/app/api/consent_http.py`).
 
 ---
 

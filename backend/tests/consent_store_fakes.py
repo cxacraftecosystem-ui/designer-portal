@@ -19,9 +19,23 @@ class LedgerDb:
         self.participants: dict[str, list[str]] = {}
         self.interviews: dict[str, Any] = {}
         self.workshops: dict[str, Any] = {}
+        #: Artisans linked to a design workshop (``Artisan.designWorkshopId``), per workshop.
+        self.workshop_artisans: dict[str, list[str]] = {}
+        self.media: dict[str, Any] = {}
+        self.layers: dict[str, Any] = {}
+        #: Set to make every ledger read raise, as a database that cannot be reached does.
+        self.broken = False
         self.appended: list[tuple[Any, ...]] = []
         self.questionnaireinterview = SimpleNamespace(find_unique=self._interview)
         self.designworkshop = SimpleNamespace(find_unique=self._workshop)
+        self.mediafile = SimpleNamespace(find_unique=self._media)
+        self.dwailayer = SimpleNamespace(find_unique=self._layer)
+
+    async def _media(self, where: dict[str, Any]) -> Any:
+        return self.media.get(where["id"])
+
+    async def _layer(self, where: dict[str, Any]) -> Any:
+        return self.layers.get(where["id"])
 
     async def _interview(self, where: dict[str, Any]) -> Any:
         return self.interviews.get(where["id"])
@@ -30,6 +44,8 @@ class LedgerDb:
         return self.workshops.get(where["id"])
 
     async def query_raw(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+        if self.broken:
+            raise ConnectionError("the database cannot be reached")
         if "consent_current_v" in sql:
             subject_type, _purpose, ids = args
             known = self.rows.get(subject_type, {})
@@ -38,6 +54,8 @@ class LedgerDb:
             return [{"a": a} for a in self.media_artisans.get(args[0], [])]
         if '"QuestionnaireInterviewArtisan"' in sql:
             return [{"artisanId": a} for a in self.participants.get(args[0], [])]
+        if 'FROM "Artisan"' in sql:
+            return [{"a": a} for w in args[0] for a in self.workshop_artisans.get(w, [])]
         if '"DwStageEntry"' in sql:
             return []
         raise AssertionError(f"unexpected statement: {sql[:80]}")

@@ -1190,6 +1190,12 @@ def dictation(monkeypatch):
         return {}
 
     monkeypatch.setattr(routes.dictation_consent.ledger, "current_states", _no_ledger_rows)
+
+    async def _no_linked_artisans(_workshop_ids):
+        """No artisan is linked to the workshop, so its own answer decides (one consent store)."""
+        return []
+
+    monkeypatch.setattr(routes.dictation_consent, "workshop_artisan_ids", _no_linked_artisans)
     monkeypatch.setattr(routes, "transcribe_audio_bytes", _transcribe)
     monkeypatch.setattr(routes, "get_settings", SimpleNamespace)
     monkeypatch.setattr(routes.dictation_cap, "load_allowance", _load_allowance)

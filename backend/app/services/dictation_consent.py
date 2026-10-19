@@ -32,10 +32,19 @@ puts them together with the shared rule (``ledger.decide``) in this order:
 
 1. the recording's own row is read FIRST, and a refusal there always refuses;
 2. the subjects are every workshop that names the file, plus every artisan of the file (its
-   ``artisanId`` and its interview's participants) WHO HAS AN ANSWER ON RECORD. An artisan with no row
-   is not a subject here: a workshop's answer speaks for the artisans it was asked of, as it always
-   has;
+   ``artisanId``, its interview's participants, and the artisans linked to any of those workshops,
+   ``Artisan.designWorkshopId``, since a stage clip such as ``artisanAudio`` names no artisan of its
+   own) WHO HAS AN ANSWER ON RECORD. An artisan with no row is not a subject here: a workshop's answer
+   speaks for the artisans it was asked of, as it always has;
 3. one refusal refuses; every subject granted allows; a workshop with no answer waits.
+
+A send about a workshop and no one stored file (dictation, the AI verbs over pasted text) asks
+:func:`workshop_verdict`: the workshop's answer and its linked artisans' answers, under the same rule.
+A verb over a stored file (a caption, subtitles, a layer made from a recording) asks
+:func:`transcription_verdict` for that file as well, so a refusal recorded for the recording reaches
+it. A route a person is waiting on asks through ``app/api/consent_http.py``, which answers a refusal
+with a 409 and its sentence, and a consent store that cannot be read with a 503 and :data:`UNREADABLE`
+instead of a 500 (the queue asks directly, so a failed read there stays a retry).
 
 A recording with no workshop and no row at all (no recording row, no artisan row) is sent as before:
 :data:`SendDecision.NOT_WORKSHOP_MATERIAL`, a designer's own dictation, for example. Once anyone records
@@ -462,6 +471,16 @@ DRAFTING = Send(
     destination="the AI language model",
     consequence="no answers can be drafted from it there",
     alternative="Nothing was sent; type the answers in instead. ",
+)
+
+#: A document's text on its way to the search embedding provider (``services/search_indexer``). No
+#: person reads this refusal (the indexer marks the document and moves on); it exists because every
+#: refused verdict carries a sentence, and this one is true about what was not done.
+EMBEDDING = Send(
+    material="transcripts",
+    destination="the search embedding service",
+    consequence="this text cannot be indexed for meaning there",
+    alternative="It can still be found by its words. ",
 )
 
 #: What an unrecognised verb is described as. Vague on purpose and false about nothing.
@@ -1226,7 +1245,11 @@ async def transcription_verdict(
         candidates.append(interview_workshop)
     if not candidates and resolve_from_stages:
         candidates = await stage_attached_workshop_ids(about)
-    artisans = await artisan_rows(await recording_artisan_ids(media)) if about else {}
+    artisan_ids = await recording_artisan_ids(media) if about else []
+    # THE WORKSHOP'S OWN ARTISANS TOO: a stage clip (``artisanAudio``) carries no ``artisanId``, so
+    # without them an artisan's refusal would never reach the recordings made of them in a workshop.
+    artisan_ids = sorted({*artisan_ids, *await workshop_artisan_ids(candidates)})
+    artisans = await artisan_rows(artisan_ids) if artisan_ids else {}
     return await _subjects_verdict(own, candidates, artisans, send=send, about=about)
 
 
@@ -1237,17 +1260,21 @@ async def _subjects_verdict(
     *,
     send: Send,
     about: Any,
+    records: Mapping[str, Any] | None = None,
 ) -> SendVerdict:
     """The shared rule (``ledger.decide``, the same function documentation-portal's gate calls) over
     the recording's own row, every workshop that names it and every artisan of it with an answer on
-    record. One refusal is the answer; every subject has to permit the send."""
+    record. One refusal is the answer; every subject has to permit the send. ``records`` are workshop
+    rows the caller already holds, so they are not read twice."""
     if not candidates and own is None and not artisans:
         return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
     first = candidates[0] if candidates else None
     try:
         rows: list[Any] = []
         for workshop_id in candidates:
-            record = await db.designworkshop.find_unique(where={"id": workshop_id})
+            record = (records or {}).get(workshop_id)
+            if record is None:
+                record = await db.designworkshop.find_unique(where={"id": workshop_id})
             # A workshop that cannot be found has no answer on record: it refuses (``verdict_for``).
             rows.append(await current_row(workshop_id, record) if record is not None else None)
     except Exception as exc:  # noqa: BLE001 — a failed read refuses, never raises.
@@ -1288,6 +1315,42 @@ async def recording_artisan_ids(media: Any) -> list[str]:
     return sorted({str(row["a"]) for row in rows if row.get("a")})
 
 
+async def workshop_artisan_ids(workshop_ids: list[str]) -> list[str]:
+    """The artisans linked to any of these design workshops (``DesignWorkshop.artisansLinked``,
+    i.e. ``Artisan.designWorkshopId``). One indexed statement; none when no workshop is named."""
+    ids = sorted({str(w).strip() for w in workshop_ids if str(w or "").strip()})
+    if not ids:
+        return []
+    rows = await db.query_raw(
+        'SELECT "id" AS a FROM "Artisan" WHERE "designWorkshopId" = ANY($1::text[])', ids
+    )
+    return sorted({str(row["a"]) for row in rows if row.get("a")})
+
+
+async def workshop_verdict(
+    workshop_id: str, *, send: Send = DICTATION, record: Any = None
+) -> SendVerdict:
+    """May material of this workshop that is no one stored file be sent (a dictation, an AI verb over
+    pasted text)? The workshop's answer and its linked artisans' answers, under the shared rule: one
+    refusal refuses, a workshop with no answer waits. A workshop refusal reads exactly as
+    :func:`gate_refusal` always has; an artisan's reads as :func:`subject_refusal`. ``record`` is the
+    workshop row when the caller already holds it."""
+    workshop_id = str(workshop_id or "").strip()
+    artisans = await artisan_rows(await workshop_artisan_ids([workshop_id]))
+    return await _subjects_verdict(
+        None, [workshop_id], artisans, send=send, about=workshop_id,
+        records={workshop_id: record} if record is not None else None,
+    )
+
+
+#: What a person waiting on a send is told when the consent store cannot be read (a 503 from
+#: ``app/api/consent_http.py``). Nothing was sent; the read is what failed, so asking again is the
+#: right next move, unlike a refusal.
+UNREADABLE = (
+    "The consent record could not be read just now, so nothing was sent. Try again in a minute."
+)
+
+
 async def artisan_rows(artisan_ids: list[str], *, client: Any = None) -> dict[str, dict[str, Any]]:
     """The newest ARTISAN row per artisan that HAS one, from the ledger both portals share."""
     return await ledger.current_states(client if client is not None else db, ledger.ARTISAN, artisan_ids)
@@ -1301,7 +1364,8 @@ async def interview_verdict(interview: Any, *, send: Send = DRAFTING) -> SendVer
     rows = await db.query_raw(
         'SELECT "artisanId" FROM "QuestionnaireInterviewArtisan" WHERE "interviewId" = $1', interview_id
     )
-    artisans = await artisan_rows([str(row["artisanId"]) for row in rows])
+    linked = await workshop_artisan_ids([workshop]) if workshop else []
+    artisans = await artisan_rows(sorted({*(str(row["artisanId"]) for row in rows), *linked}))
     return await _subjects_verdict(None, [workshop] if workshop else [], artisans, send=send, about=interview_id)
 
 

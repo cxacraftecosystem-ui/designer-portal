@@ -182,6 +182,7 @@ from app.services import (
     email_outbox,
     naming,
 )
+from app.api.consent_http import require_send
 from app.services.ai import transcribe_audio_bytes
 from app.services.concurrency import gather_reads
 from app.services.cost_integrity import analyse_cost_integrity, cost_findings_payload
@@ -1620,11 +1621,10 @@ async def dictate_for_workshop(
     """
     _require_designer(current_user)
     record = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
-    refusal = dictation_consent.gate_refusal(
-        await dictation_consent.current_consent(workshop_id, record)
-    )
-    if refusal is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
+    # THE ONE CONSENT STORE (19 Oct 2026): the workshop's answer AND the answers of the artisans
+    # linked to it (``dictation_consent.workshop_verdict``), so one artisan's refusal stops it too.
+    # A workshop refusal reads exactly as it always has; an unreadable store is a 503, not a 500.
+    await require_send(dictation_consent.workshop_verdict(workshop_id, record=record))
     # The Request is handed down so the size cap can be answered off the declared `Content-Length`
     # before the body is read. Nothing else in this handler needs it.
     return await _transcribe_one_dictation(file, languageHint, current_user, request)
@@ -3860,16 +3860,17 @@ async def _verb_gate(workshop_id: str, current_user: Any, verb: ai_verbs.Verb) -
     """
     _require_designer(current_user)
     record = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
-    refusal = dictation_consent.gate_refusal(
-        await dictation_consent.current_consent(workshop_id, record),
-        dictation_consent.send_for(verb.value),
+    # A 409 AND NOT A 403, for the reason `dictate_for_workshop` states: a 403 is about the CALLER,
+    # and would be wrong in both directions here — this designer is entitled to run the verb, and a
+    # colleague of the same rank would be refused identically. What is not in a state to permit the
+    # send is the WORKSHOP, or one of its artisans (the one consent store: the workshop's answer and
+    # its linked artisans' answers). A verb over a stored file asks for that file as well, in
+    # `_verb_media_gate` / `_verb_layer_gate`, so a refusal recorded for the recording reaches it.
+    await require_send(
+        dictation_consent.workshop_verdict(
+            workshop_id, send=dictation_consent.send_for(verb.value), record=record
+        )
     )
-    if refusal is not None:
-        # A 409 AND NOT A 403, for the reason `dictate_for_workshop` states: a 403 is about the
-        # CALLER, and would be wrong in both directions here — this designer is entitled to run the
-        # verb, and a colleague of the same rank would be refused identically. What is not in a state
-        # to permit the send is the WORKSHOP.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
     allowance = await ai_verb_cap.load_allowance(current_user.id)
     spent = ai_verb_cap.cap_refusal(allowance)
     if spent is not None:
@@ -3881,6 +3882,44 @@ async def _verb_gate(workshop_id: str, current_user: Any, verb: ai_verbs.Verb) -
             detail=spent,
         )
     return allowance
+
+
+async def _verb_media_gate(workshop_id: str, media: Any, verb: ai_verbs.Verb) -> None:
+    """A verb over a STORED file (a caption, subtitles) asks the one consent store about that file:
+    its own recording row, every workshop that names it and every artisan of it or of those
+    workshops (``dictation_consent.transcription_verdict``). The workshop gate alone would let a
+    refusal recorded for this recording, or by an artisan, pass. A refusal is a 409; an unreadable
+    store is a 503. Before any byte is downloaded and before anything is counted."""
+    await require_send(
+        dictation_consent.transcription_verdict(
+            media, design_workshop_id=workshop_id, send=dictation_consent.send_for(verb.value)
+        )
+    )
+
+
+async def _layer_root_verdict(workshop_id: str, row: Any, verb: ai_verbs.Verb) -> Any:
+    """The verdict for the recording or photograph a layer chain was made from, if any."""
+    seen: set[str] = set()
+    while row is not None and str(getattr(row, "id", "")) not in seen:
+        seen.add(str(getattr(row, "id", "")))
+        media_id = str(getattr(row, "sourceMediaId", "") or "").strip()
+        if media_id:
+            media = await db.mediafile.find_unique(where={"id": media_id})
+            if media is None:
+                break
+            return await dictation_consent.transcription_verdict(
+                media, design_workshop_id=workshop_id, send=dictation_consent.send_for(verb.value)
+            )
+        parent = str(getattr(row, "sourceLayerId", "") or "").strip()
+        row = await db.dwailayer.find_unique(where={"id": parent}) if parent else None
+    # Rooted in text a person supplied, not in a file: the workshop gate has already answered.
+    return dictation_consent.SendVerdict(dictation_consent.SendDecision.NOT_WORKSHOP_MATERIAL)
+
+
+async def _verb_layer_gate(workshop_id: str, row: Any, verb: ai_verbs.Verb) -> None:
+    """A verb over a stored LAYER (a transcript of a recording, or anything derived from one) asks
+    about the file at the root of its chain, as :func:`_verb_media_gate` does for a file."""
+    await require_send(_layer_root_verdict(workshop_id, row, verb))
 
 
 async def _verb_source_layer(workshop_id: str, layer_id: str, current_user: Any) -> Any:
@@ -4161,6 +4200,7 @@ async def proofread_ai_layer(
         language = ai_verbs.clean_language(payload.language, what="the passage")
         if payload.sourceLayerId:
             row = await _verb_source_layer(workshop_id, payload.sourceLayerId, current_user)
+            await _verb_layer_gate(workshop_id, row, ai_verbs.Verb.PROOFREAD)
             text = str(getattr(row, "text", "") or "")
             source = ai_layers.LayerSource.layer(row.id, _verb_layer_kind(row))
             # The parent's own language, when it recorded one, rather than the body's: the verb does
@@ -4290,6 +4330,7 @@ async def translate_ai_layer(
         stated_source = ai_verbs.clean_language(payload.sourceLanguage, what="the source language")
         if payload.sourceLayerId:
             row = await _verb_source_layer(workshop_id, payload.sourceLayerId, current_user)
+            await _verb_layer_gate(workshop_id, row, ai_verbs.Verb.TRANSLATE)
             text = str(getattr(row, "text", "") or "")
             source = ai_layers.LayerSource.layer(row.id, _verb_layer_kind(row))
             # The stored language wins over the body's: the row is a record of what the run detected
@@ -4412,6 +4453,7 @@ async def caption_ai_layer(
     media = await _verb_source_media(
         workshop_id, payload.sourceMediaId, current_user, verb=ai_verbs.Verb.CAPTION
     )
+    await _verb_media_gate(workshop_id, media, ai_verbs.Verb.CAPTION)
     # SIZE, WHICH `_verb_source_media` DOES NOT CHECK — see `MAX_CAPTION_BYTES`. Before the try, so
     # a refusal never reaches `_count_refused_run`: nothing was sent, so nothing was spent, and
     # counting it against the workshop's allowance would charge for a request that never left.
@@ -4521,6 +4563,7 @@ async def subtitle_ai_layer(
     media = await _verb_source_media(
         workshop_id, payload.sourceMediaId, current_user, verb=ai_verbs.Verb.SUBTITLES
     )
+    await _verb_media_gate(workshop_id, media, ai_verbs.Verb.SUBTITLES)
     # SIZE, WHICH `_verb_source_media` DOES NOT CHECK — see `MAX_SUBTITLE_FETCH_BYTES`. This verb
     # takes VIDEO as well as AUDIO, so it is the one most likely to be pointed at the 668 MiB object.
     await _refuse_oversize_verb_source(media, MAX_SUBTITLE_FETCH_BYTES, what="subtitle")

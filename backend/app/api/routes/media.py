@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from prisma.errors import UniqueViolationError
 
+from app.api.consent_http import require_send
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import get_current_user, is_admin, require_admin, require_record_creator
@@ -1657,11 +1658,10 @@ async def refine_media_transcript(
     # material — a clip a stage NAMES but whose upload carried no tag was measured leaving here for
     # OpenAI with HTTP 200, on a workshop whose answer on record is REFUSED, at DESIGNER rank rather
     # than admin. See ``dictation_consent.stage_attached_workshop_ids``.
-    verdict = await dictation_consent.transcription_verdict(
+    # A refusal answers 409 with its sentence; a consent store that cannot be read answers 503.
+    await require_send(dictation_consent.transcription_verdict(
         media, send=dictation_consent.REFINEMENT, resolve_from_stages=True
-    )
-    if not verdict.may_send:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=verdict.refusal)
+    ))
     transcript = getattr(media, "transcriptText", None)
     return await refine_transcript_text(transcript, payload.translate, get_settings())
 
@@ -1686,6 +1686,9 @@ async def transcribe_media_now_route(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only audio files can be transcribed.",
         )
+    # Asked here as well as inside ``transcribe_media_now`` so a consent store that cannot be read
+    # answers a plain 503 rather than a 500 (``app/api/consent_http.py``); a refusal is a 409.
+    await require_send(dictation_consent.transcription_verdict(media, resolve_from_stages=True))
     try:
         await transcribe_media_now(media, get_settings())
     except transcription_jobs.TranscriptionPaused as exc:

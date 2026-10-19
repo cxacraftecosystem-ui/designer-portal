@@ -24,6 +24,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.consent_http import require_send
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import get_current_user, get_value, is_admin, may_edit_lower_ranked_record
@@ -169,14 +170,13 @@ async def draft_section(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="There's no transcript to draft from yet.",
         )
+    # A refusal answers 409 with its sentence; a consent store that cannot be read answers 503.
     if media is not None:
-        verdict = await dictation_consent.transcription_verdict(
+        await require_send(dictation_consent.transcription_verdict(
             media, send=dictation_consent.DRAFTING, resolve_from_stages=True
-        )
+        ))
     else:
-        verdict = await dictation_consent.interview_verdict(interview, send=dictation_consent.DRAFTING)
-    if not verdict.may_send:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=verdict.refusal)
+        await require_send(dictation_consent.interview_verdict(interview, send=dictation_consent.DRAFTING))
 
     questions = await db.questionnairequestion.find_many(
         where={"sectionId": section.id, "isActive": True}, order={"sortOrder": "asc"}
