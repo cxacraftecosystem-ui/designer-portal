@@ -356,7 +356,7 @@ class DwStageAuthorityDeviceTest {
         assertEquals("the deletion is counted", 1, status.unsentDeletions)
         assertFalse("THE ASSERTION THE DEFECT FAILED", status.isFullySynced)
         assertEquals(
-            "1 stage with a deletion not sent — the rest is backed up",
+            "1 stage with a deletion not sent — the rest is saved online",
             status.summary,
         )
         // And the sentence tells the designer what to do about it, naming the stage.
