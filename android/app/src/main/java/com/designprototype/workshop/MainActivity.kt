@@ -11827,7 +11827,7 @@ private fun ArtisanForm(
                             craftId = craftId.ifBlank { null },
                             craftName = if (craftId.isBlank()) newCraftName.blankToNull() else null,
                             aadhaar = if (keepsStoredAadhaar) null else aadhaar.blankToNull(),
-                            pehchanCardNumber = if (pehchanAvailable) pehchanNumber.blankToNull() else null,
+                            pehchanCardNumber = if (pehchanAvailable == true) pehchanNumber.blankToNull() else null,
                         )
                     )
                 }.getOrNull().orEmpty()
