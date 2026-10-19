@@ -1,45 +1,36 @@
 import { expect, test } from "@playwright/test";
 
-import { API, apiToken, bearer, CREDENTIALS_MISSING, signIn } from "./support/session";
+import { focusField } from "@/lib/forms";
 
-/**
- * A meter pill on an artisan's page opens the edit form AT the missing field (2026-10-18).
- *
- * READ-ONLY: the dev server may point at real data, so nothing is written. A real artisan is read,
- * and its GET is answered with that artisan minus its craft start date and with the block the server
- * would then send — the page under test is the client's, not the server's arithmetic (which
- * `backend/tests/test_record_completeness.py` holds).
- */
+// THE ONE COMPLETENESS CHECK THAT NEEDS A BROWSER: focusField scrolls and focuses a real DOM node.
+// Kept out of record-completeness-unit.spec.ts because a `*-unit.spec.ts` runs with no browser
+// installed (checks.yml, "Unit specs"); this one runs with the full e2e suite. It needs no server.
 
-test.skip(Boolean(CREDENTIALS_MISSING), CREDENTIALS_MISSING || "");
-
-test("clicking the craft start date pill focuses that field on the edit form", async ({ page, request }) => {
-  const token = await apiToken(request);
-  const list = await request.get(`${API}/api/artisans?pageSize=1`, { headers: bearer(token) });
-  const artisan = (await list.json()).items?.[0];
-  test.skip(!artisan, "no artisan visible to this account");
-
-  const block = {
-    rulesVersion: 1,
-    filled: 6,
-    total: 7,
-    percent: 85,
-    requiredMissing: 1,
-    missing: [{ key: "craftStartDate", label: "Craft start date", words: "craft start date", level: "required" }]
-  };
-  await page.route(new RegExp(`/api/artisans/${artisan.id}$`), async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
-    await route.fulfill({ response, json: { ...body, craftStartDate: null, completeness: block } });
-  });
-
-  await signIn(page);
-  await page.goto(`/artisans/${artisan.id}`);
-  const meter = page.locator("[data-completeness-meter]");
-  await expect(meter).toContainText("1 field left: craft start date");
-  await meter.getByRole("link", { name: "Craft start date" }).click();
-  await expect(page).toHaveURL(new RegExp(`/artisans/${artisan.id}/edit\?focus=craftStartDate`));
+test("focusField scrolls to and focuses the anchored field, skipping a mirror twin", async ({ page }) => {
+  await page.setContent(`
+    <div style="height:2400px"></div>
+    <div data-field="craftStartDate">
+      <input tabindex="-1" aria-hidden="true" name="mirror" />
+      <input id="typed" name="craftStartDate" />
+    </div>
+    <div style="height:2400px"></div>`);
+  const source = focusField.toString();
+  const found = await page.evaluate(([src, key]) => {
+    const fn = new Function(`return (${src})`)() as (k: string, r?: ParentNode) => boolean;
+    return fn(key, document);
+  }, [source, "craftStartDate"] as const);
+  expect(found).toBe(true);
+  await expect(page.locator("#typed")).toBeFocused();
+  await expect(page.locator('[data-field="craftStartDate"]')).toHaveAttribute("data-flash", "true");
+  // Smooth scrolling (no reduced motion here) lands over a few frames, so poll for it.
   await expect
-    .poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[data-field="craftStartDate"]'))), { timeout: 15_000 })
+    .poll(() =>
+      page.locator("#typed").evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        return box.top >= 0 && box.bottom <= window.innerHeight;
+      })
+    )
     .toBe(true);
+  const missing = await page.evaluate(([src]) => (new Function(`return (${src})`)() as (k: string) => boolean)("nowhere"), [source] as const);
+  expect(missing).toBe(false);
 });
