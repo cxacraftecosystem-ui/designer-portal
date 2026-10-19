@@ -356,14 +356,14 @@ class DwStageAuthorityDeviceTest {
         assertEquals("the deletion is counted", 1, status.unsentDeletions)
         assertFalse("THE ASSERTION THE DEFECT FAILED", status.isFullySynced)
         assertEquals(
-            "1 stage with a deletion not sent — the rest is backed up",
+            "1 stage with a deletion not sent — the rest is saved online",
             status.summary,
         )
         // And the sentence tells the designer what to do about it, naming the stage.
         val problem = status.problems.single()
         assertTrue(problem, problem.contains("Cluster profile"))
         assertTrue(problem, problem.contains("you deleted everything in tool"))
-        assertTrue(problem, problem.contains("Open the stage once with a connection"))
+        assertTrue(problem, problem.contains("Open the stage online"))
     }
 
     /**
