@@ -46,4 +46,6 @@ def test_the_shared_module_names_no_portal_specific_module(name):
                 "app.core.config",
                 "app.core.db",
                 "app.services",
+                # Itself the same file in both portals (with app/data/standard_values.json).
+                "app.services.standard_values",
             }, line

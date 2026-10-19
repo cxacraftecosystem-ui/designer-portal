@@ -49,6 +49,8 @@ def test_while_paused_the_drain_never_selects_a_transcription_job(monkeypatch) -
     monkeypatch.setattr(media_queue, "load_app_settings", _row)
     monkeypatch.setattr(media_queue, "recover_stale_processing_jobs", _recover)
     monkeypatch.setattr(requests, "post", _never)
+    # Insights on, so the only job type held back is the one the pause decides.
+    monkeypatch.setattr(media_queue.transcript_insights, "enabled", lambda: True)
     asyncio.run(
         media_queue.process_next_media_jobs(
             limit=5, settings=SimpleNamespace(media_queue_batch_size=5)
@@ -75,6 +77,8 @@ def test_unpaused_and_inside_the_window_transcription_is_selected(monkeypatch) -
     monkeypatch.setattr(media_queue, "load_app_settings", _row)
     monkeypatch.setattr(media_queue, "recover_stale_processing_jobs", _recover)
     monkeypatch.setattr(media_queue, "_rate_limit_cooldown_until", None)
+    # Insights on, so the only job type held back is the one the pause decides.
+    monkeypatch.setattr(media_queue.transcript_insights, "enabled", lambda: True)
     asyncio.run(
         media_queue.process_next_media_jobs(
             limit=5, settings=SimpleNamespace(media_queue_batch_size=5)
