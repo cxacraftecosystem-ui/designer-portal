@@ -8,9 +8,10 @@ WHAT IT WRITES, PER WORKSHOP WHOSE ANSWER IS NOT GRANTED AND THAT HOLDS AT LEAST
 
 * ``DesignWorkshop.dictationConsent = GRANTED``, ``dictationConsentAt = 2026-10-18``,
   ``dictationConsentById = <the owner's account>``;
-* one ``DwWorkshopConsentDecision`` (GRANTED, the attestation note, ``source = 'owner attestation'``,
-  ``recordedAt = 2026-10-18``), built by ``dictation_consent.decision_plans`` so the rule has one
-  implementation;
+* one ``Consent`` ledger row (``WORKSHOP``, GRANTED, basis ``OWNER_ATTESTATION``, the attestation
+  note, ``source = 'owner attestation'``, ``recordedAt = 2026-10-18``) — the one consent store both
+  portals share — built by ``dictation_consent.decision_plans`` so the rule has one implementation,
+  and written with the cached columns above in one transaction;
 * on that workshop's recordings, the consent-refusal note the gate wrote (``transcriptStatus``
   FAILED with the refusal sentence and no transcript) is cleared, so nothing reads as flagged.
 
@@ -46,6 +47,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.core.db import connect_db, db, disconnect_db  # noqa: E402
 from app.services import dictation_consent  # noqa: E402
+from app.transcription import ledger  # noqa: E402
 from app.transcription.consent import OWNER_ATTESTATION_NOTE, OWNER_ATTESTATION_SOURCE  # noqa: E402
 
 #: 18 Oct 2026, midday India time, so the date reads as the 18th in every timezone a screen uses.
@@ -86,7 +88,7 @@ async def build_plan(*, keep_refused: bool = False) -> Plan:
     plan = Plan(kept_refused=keep_refused)
     sentences = _refusal_sentences()
     for workshop in await db.designworkshop.find_many(order={"createdAt": "asc"}):
-        consent = dictation_consent.consent_of(workshop)
+        consent = await dictation_consent.current_consent(workshop.id, workshop)
         if consent is dictation_consent.DictationConsent.GRANTED:
             continue
         media_ids = set(await dictation_consent.workshop_audio_media_ids(workshop.id))
@@ -119,7 +121,12 @@ async def apply(plan: Plan, owner_id: str) -> None:
             note=OWNER_ATTESTATION_NOTE,
         )
         decision = replace(
-            plans.decision, data={**plans.decision.data, "source": OWNER_ATTESTATION_SOURCE}
+            plans.decision,
+            data={
+                **plans.decision.data,
+                "source": OWNER_ATTESTATION_SOURCE,
+                "basis": ledger.OWNER_ATTESTATION,
+            },
         )
         await dictation_consent.apply_decision(replace(plans, decision=decision))
     if plan.refusal_notes:

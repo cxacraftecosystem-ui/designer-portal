@@ -15,7 +15,16 @@ it is a checkbox with somebody else's name on it.
 WHERE IT LIVES, AND WHY IT IS NOT A FIELD IN THE REGISTRY
 ================================================================================================
 
-Three columns on ``DesignWorkshop`` plus an append-only ``DwWorkshopConsentDecision`` log. A consent
+THE ONE CONSENT STORE (owner decision, 19 Oct 2026). Every answer is a ``WORKSHOP`` row in the
+``Consent`` ledger, the same table, migration and rule as documentation-portal's
+(``app/transcription/ledger.py``, byte-identical in both portals), and the gate reads the ledger.
+The three columns on ``DesignWorkshop`` are a cache of the newest row, written in the same
+transaction, for the screens that list workshops. The older ``DwWorkshopConsentDecision`` log is no
+longer written: ``scripts/migrate_workshop_consent_to_ledger.py`` copies it into the ledger (dry run
+first), and until it has run the history read folds in the rows not yet copied and the gate falls
+back to the cached columns for a workshop with no ledger row.
+
+Originally: three columns on ``DesignWorkshop`` plus an append-only ``DwWorkshopConsentDecision`` log. A consent
 question added to stage 1 as a ``FieldSpec`` was the obvious-looking home and it is wrong five
 independent ways, any one of them sufficient:
 
@@ -99,6 +108,7 @@ from enum import Enum
 from typing import Any
 
 from app.core.db import db
+from app.transcription import ledger
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +154,12 @@ MAX_DEVICE_CLOCK_SKEW = timedelta(minutes=15)
 #: absent, and :class:`ConsentWritePlan` refuses to name a table that is not in this set. There is no
 #: expressible write from this module into a stage row, which is what stops the registry temptation
 #: from arriving as a quiet new call site.
-WRITABLE_TABLES: frozenset[str] = frozenset({"DesignWorkshop", "DwWorkshopConsentDecision"})
+WRITABLE_TABLES: frozenset[str] = frozenset({"DesignWorkshop", "Consent"})
+
+#: The ledger table every decision is appended to, and the older log it replaced (read only, as a
+#: fallback, until ``scripts/migrate_workshop_consent_to_ledger.py`` has copied it).
+LEDGER_TABLE = "Consent"
+LEGACY_TABLE = "DwWorkshopConsentDecision"
 
 #: Named so the refusal can name it, and so a reader grepping for the stage table finds this note.
 STAGE_TABLE = "DwStageEntry"
@@ -850,17 +865,20 @@ def decision_plans(
             },
         ),
         decision=ConsentWritePlan(
-            table="DwWorkshopConsentDecision",
+            table=LEDGER_TABLE,
             operation=Operation.CREATE,
+            # ``ledger.append``'s own arguments. ``recorded_at`` is the moment the artisan answered
+            # (the device's when it reported one); the row's ``createdAt`` is when the server heard it.
             data={
-                "designWorkshopId": workshop,
-                "decision": decision.value,
+                "subject_type": ledger.WORKSHOP,
+                "subject_id": workshop,
+                "purpose": ledger.EXTERNAL_PROCESSING,
+                "state": decision.value,
+                "basis": ledger.VERBAL_RECORDED,
+                "source": ledger.SOURCE_RESEARCHER,
                 "note": (note or "").strip() or None,
-                "actorId": actor,
-                # Only what the DEVICE said. Null when the answer was recorded straight against the
-                # server, where `createdAt` is the same moment and repeating it would add nothing —
-                # and where a copy would later read as "a device reported this", which is false.
-                "recordedAt": recorded_at,
+                "actor_id": actor,
+                "recorded_at": answered_at,
             },
         ),
     )
@@ -916,6 +934,33 @@ def consent_keys(record: Any) -> dict[str, Any]:
 
 
 def decision_payload(row: Any) -> dict[str, Any]:
+    """One recorded consent answer as the clients read it: a ledger row, or a row of the older log."""
+    if isinstance(row, Mapping) and "subjectId" in row:
+        return {
+            "id": row.get("id"),
+            "designWorkshopId": row.get("subjectId"),
+            "decision": _enum_str(row.get("state")),
+            "note": row.get("note"),
+            "actorId": row.get("actorId"),
+            "recordedAt": _iso(_moment(row.get("recordedAt"))),
+            "createdAt": _iso(_moment(row.get("createdAt"))),
+        }
+    return _legacy_decision_payload(row)
+
+
+def _moment(value: Any) -> datetime | None:
+    """A raw-query timestamp (a string, or a naive datetime, both UTC) as an aware datetime."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _legacy_decision_payload(row: Any) -> dict[str, Any]:
     """One recorded consent answer as the clients read it.
 
     Both moments are carried, and that is the point of the pair rather than a duplication:
@@ -969,35 +1014,31 @@ def _writable_model(table: str) -> Any:
             f"There is no consent writer for {table}. A consent is three columns on the workshop and "
             f"a row in its decision log: {', '.join(sorted(WRITABLE_TABLES))}."
         )
-    return {
-        "DesignWorkshop": db.designworkshop,
-        "DwWorkshopConsentDecision": db.dwworkshopconsentdecision,
-    }[table]
+    return {"DesignWorkshop": "designworkshop", LEDGER_TABLE: LEDGER_TABLE}[table]
 
 
-async def apply_plan(plan: ConsentWritePlan) -> Any:
+async def apply_plan(plan: ConsentWritePlan, client: Any = None) -> Any:
     """Perform one planned write. The only place this module touches the database with intent."""
+    target = client if client is not None else db
     model = _writable_model(plan.table)
+    if plan.table == LEDGER_TABLE:
+        return await ledger.append(target, **dict(plan.data))
+    model = getattr(target, model)
     if plan.operation is Operation.CREATE:
         return await model.create(data=dict(plan.data))
     return await model.update(where=dict(plan.where or {}), data=dict(plan.data))
 
 
 async def apply_decision(plans: ConsentDecisionPlans) -> Any:
-    """Apply a decision's two writes: the workshop's answer first, then the log entry.
+    """Apply a decision's two writes in ONE transaction: the ledger row, then the cached columns.
 
-    NOT IN A TRANSACTION, and the order is chosen for the failure that leaves — the same reasoning
-    ``ai_layers.apply_decision`` records, with one difference that decides it the same way. If the log
-    write fails after the workshop write, the workshop carries a correctly attributed answer with one
-    missing history row: recoverable, and the gate is right. The other order would leave a log saying
-    somebody cleared this workshop while the gate still refuses — or, far worse on a REFUSED, a log
-    saying consent was withdrawn while the column still says GRANTED and sends continue. Prisma's
-    Python client does expose an interactive transaction; using one here is a reasonable later change,
-    and this ordering makes the worst case survivable rather than dangerous in the meantime.
+    The ledger is what the gate reads, so it is written first; the transaction means the workshop's
+    cached answer can never disagree with it. (Before the ledger the two writes were untransacted and
+    ordered so the worse failure was survivable; one transaction removes that failure altogether.)
     """
-    workshop = await apply_plan(plans.workshop)
-    await apply_plan(plans.decision)
-    return workshop
+    async with db.tx() as tx:
+        await apply_plan(plans.decision, tx)
+        return await apply_plan(plans.workshop, tx)
 
 
 async def stage_attached_workshop_ids(media_id: str) -> list[str]:
@@ -1129,13 +1170,32 @@ async def transcription_verdict(
         candidates = await stage_attached_workshop_ids(str(about or ""))
     if not candidates:
         return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
-    permitted: SendVerdict | None = None
-    for workshop_id in candidates:
-        verdict = await workshop_send_verdict(workshop_id, send=send, about=about)
-        if not verdict.may_send:
-            return verdict
-        permitted = permitted or verdict
-    return permitted or SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
+    # THE SHARED RULE (``ledger.decide``, the same function documentation-portal's gate calls): the
+    # recording's own row, if one was ever written, then every workshop that names the file. One
+    # refusal is the answer; every workshop has to permit the send.
+    try:
+        own = (await ledger.current_states(db, ledger.RECORDING, [str(about or "")])).get(str(about or ""))
+        rows: list[Any] = []
+        for workshop_id in candidates:
+            record = await db.designworkshop.find_unique(where={"id": workshop_id})
+            # A workshop that cannot be found has no answer on record: it refuses (``verdict_for``).
+            rows.append(await current_row(workshop_id, record) if record is not None else None)
+    except Exception as exc:  # noqa: BLE001 — a failed read refuses, never raises.
+        logger.warning(
+            "dictation_consent: could not read the consent of %s (%s); refusing the send", about, exc
+        )
+        return verdict_for(None, workshop_id=candidates[0], send=send)
+    decided = ledger.decide(own, rows)
+    if decided == ledger.ALLOW:
+        return SendVerdict(SendDecision.GRANTED, workshop_id=candidates[0])
+    for workshop_id, row in zip(candidates, rows, strict=True):
+        consent = _consent_token(row)
+        if decided == ledger.REFUSED and consent is DictationConsent.REFUSED:
+            return verdict_for(consent, workshop_id=workshop_id, send=send)
+        if decided == ledger.AWAITING and consent is not DictationConsent.GRANTED:
+            return verdict_for(consent, workshop_id=workshop_id, send=send)
+    # Refused by the recording's own row while every workshop granted: the REFUSED sentence.
+    return verdict_for(DictationConsent.REFUSED, workshop_id=candidates[0], send=send)
 
 
 async def workshop_send_verdict(
@@ -1158,6 +1218,7 @@ async def workshop_send_verdict(
         return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
     try:
         row = await db.designworkshop.find_unique(where={"id": workshop_id})
+        current = await current_row(workshop_id, row) if row is not None else None
     except Exception as exc:  # noqa: BLE001 — see the docstring: a failed read refuses, never raises.
         logger.warning(
             "dictation_consent: could not read the consent of workshop %s (subject %s): %s; "
@@ -1168,8 +1229,58 @@ async def workshop_send_verdict(
         )
         return verdict_for(None, workshop_id=workshop_id, send=send)
     return verdict_for(
-        consent_of(row) if row is not None else None, workshop_id=workshop_id, send=send
+        _consent_token(current) if row is not None else None, workshop_id=workshop_id, send=send
     )
+
+
+def _consent_token(row: Mapping[str, Any] | None) -> DictationConsent:
+    """A current ledger row's state as the three-state vocabulary, failing closed."""
+    try:
+        return DictationConsent(str((row or {}).get("state") or ""))
+    except ValueError:
+        return DictationConsent.NOT_RECORDED
+
+
+async def current_row(
+    workshop_id: str, record: Any = None, *, client: Any = None
+) -> dict[str, Any] | None:
+    """The workshop's current consent row: the ledger's newest WORKSHOP row, else the cached columns.
+
+    THE FALLBACK IS FOR THE WINDOW BEFORE ``scripts/migrate_workshop_consent_to_ledger.py`` HAS RUN.
+    A workshop answered before the ledger existed has its answer only in the cached columns (and the
+    older log); once the script has copied it, the ledger answers and the columns are never read for
+    the gate. ``record`` is the workshop row when the caller already holds it.
+    """
+    target = client if client is not None else db
+    rows = await ledger.current_states(target, ledger.WORKSHOP, [workshop_id])
+    if workshop_id in rows:
+        return rows[workshop_id]
+    if record is None:
+        record = await target.designworkshop.find_unique(where={"id": workshop_id})
+    if record is None:
+        return None
+    cached = consent_of(record)
+    if cached is DictationConsent.NOT_RECORDED:
+        return None
+    return {
+        "subjectId": workshop_id,
+        "state": cached.value,
+        "recordedAt": getattr(record, "dictationConsentAt", None),
+        "actorId": getattr(record, "dictationConsentById", None),
+    }
+
+
+async def current_consent(workshop_id: str, record: Any = None) -> DictationConsent:
+    """The workshop's answer as the gate reads it (:func:`current_row`), FAILING CLOSED on a failed read."""
+    try:
+        return _consent_token(await current_row(workshop_id, record))
+    except Exception as exc:  # noqa: BLE001 — an unreadable consent is no consent.
+        logger.warning(
+            "dictation_consent: could not read the consent of workshop %s (%s); refusing the send",
+            workshop_id,
+            exc,
+        )
+        return DictationConsent.NOT_RECORDED
 
 
 async def workshop_audio_media_ids(workshop_id: str) -> list[str]:
@@ -1309,10 +1420,23 @@ async def cancel_pending_transcriptions(workshop_id: str) -> int:
 
 
 async def workshop_decisions(workshop_id: str) -> list[Any]:
-    """The consent history of one workshop, oldest first."""
-    return await db.dwworkshopconsentdecision.find_many(
+    """The consent history of one workshop, oldest first: the ledger's WORKSHOP rows, plus the rows
+    of the older log that ``scripts/migrate_workshop_consent_to_ledger.py`` has not copied yet."""
+    rows: list[Any] = list(await ledger.history(db, ledger.WORKSHOP, workshop_id))
+    copied = {row.get("migratedFrom") for row in rows if row.get("migratedFrom")}
+    legacy = await db.dwworkshopconsentdecision.find_many(
         where={"designWorkshopId": workshop_id}, order={"createdAt": "asc"}
     )
+    rows += [row for row in legacy if ledger.legacy_key(LEGACY_TABLE, row.id) not in copied]
+
+    def _when(row: Any) -> datetime:
+        if isinstance(row, Mapping):
+            moment = _moment(row.get("recordedAt")) or _moment(row.get("createdAt"))
+        else:
+            moment = _as_utc(getattr(row, "recordedAt", None) or getattr(row, "createdAt", None))
+        return moment or datetime.min.replace(tzinfo=UTC)
+
+    return sorted(rows, key=_when)
 
 
 async def actor_name(user_id: str | None) -> str | None:

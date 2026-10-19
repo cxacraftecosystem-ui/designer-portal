@@ -1620,7 +1620,9 @@ async def dictate_for_workshop(
     """
     _require_designer(current_user)
     record = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
-    refusal = dictation_consent.gate_refusal(dictation_consent.consent_of(record))
+    refusal = dictation_consent.gate_refusal(
+        await dictation_consent.current_consent(workshop_id, record)
+    )
     if refusal is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
     # The Request is handed down so the size cap can be answered off the declared `Content-Length`
@@ -1646,8 +1648,9 @@ async def record_dictation_consent(
     moment, which is the same defect that rules a registry field out (see
     ``services/dictation_consent.py``).
 
-    **TWO WRITES, AND BOTH COME BACK.** The three columns on the workshop are the current answer the
-    gate reads; the ``DwWorkshopConsentDecision`` row is the history, which is what keeps "who cleared
+    **TWO WRITES, ONE TRANSACTION, AND BOTH COME BACK.** The ``Consent`` ledger row (the one consent
+    store both portals share) is the answer the gate reads and the history; the three columns on the
+    workshop are its cache for the list screens. The history is what keeps "who cleared
     this workshop's recordings on the 3rd" answerable after a withdrawal on the 9th — by which time
     transcripts made under the grant are already in the record. Returning the log as well as the
     answer is what stops a client rendering this as a checkbox, exactly as ``accept_ai_layer`` argues
@@ -3858,7 +3861,8 @@ async def _verb_gate(workshop_id: str, current_user: Any, verb: ai_verbs.Verb) -
     _require_designer(current_user)
     record = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
     refusal = dictation_consent.gate_refusal(
-        dictation_consent.consent_of(record), dictation_consent.send_for(verb.value)
+        await dictation_consent.current_consent(workshop_id, record),
+        dictation_consent.send_for(verb.value),
     )
     if refusal is not None:
         # A 409 AND NOT A 403, for the reason `dictate_for_workshop` states: a 403 is about the

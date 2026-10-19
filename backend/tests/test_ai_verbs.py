@@ -1328,6 +1328,12 @@ def test_each_verb_gate_refuses_with_a_sentence_about_that_verb_and_not_about_di
         raise AssertionError("the gate let the material reach a provider")
 
     monkeypatch.setattr(routes, "load_workshop_or_404", _workshop)
+
+    async def _no_ledger_rows(*_a, **_k):
+        """The consent ledger holds no row yet, so the workshop answers from its cached column."""
+        return {}
+
+    monkeypatch.setattr(routes.dictation_consent.ledger, "current_states", _no_ledger_rows)
     for name in ("proofread_text", "expand_text", "translate_text", "caption_image_bytes",
                  "transcribe_timed_bytes"):
         monkeypatch.setattr(routes.ai, name, _never)

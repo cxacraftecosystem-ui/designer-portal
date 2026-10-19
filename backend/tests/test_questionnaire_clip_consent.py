@@ -50,6 +50,10 @@ class _FakeDb:
         self.interview_lookups.append(where["id"])
         return self._interviews.get(where["id"])
 
+    async def query_raw(self, *_args):
+        """The consent ledger: empty, so each workshop answers from its cached columns."""
+        return []
+
     async def _workshop(self, where):
         self.workshop_lookups.append(where["id"])
         return self._workshops.get(where["id"])
