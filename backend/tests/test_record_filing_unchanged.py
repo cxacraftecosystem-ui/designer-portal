@@ -16,12 +16,17 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from app.services import design_workshop_posts as posts, design_workshops
-from app.services import record_design_workshop as filing
+from app.services import (
+    design_workshop_posts as posts,
+    design_workshops,
+    record_design_workshop as filing,
+)
 
 
 def _account(role: str) -> SimpleNamespace:
-    return SimpleNamespace(id=f"u-{role}", name=role.title(), email=f"{role.lower()}@x.test", role=role)
+    return SimpleNamespace(
+        id=f"u-{role}", name=role.title(), email=f"{role.lower()}@x.test", role=role
+    )
 
 
 @pytest.fixture
@@ -90,7 +95,9 @@ def test_a_missing_workshop_and_a_hidden_one_get_the_same_answer(loader):
 @pytest.mark.parametrize(
     "refusal",
     [
-        HTTPException(status_code=409, detail="This workshop is deleted. Restore it before editing."),
+        HTTPException(
+            status_code=409, detail="This workshop is deleted. Restore it before editing."
+        ),
         HTTPException(status_code=403, detail="You inspect this workshop."),
     ],
 )

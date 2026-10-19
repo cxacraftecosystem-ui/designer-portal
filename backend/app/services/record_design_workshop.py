@@ -114,7 +114,9 @@ DESIGN_WORKSHOP_KEY = "designWorkshopId"
 #: What a record form is told when it names a design workshop the caller is not on — or one that does
 #: not exist, which gets the same words so the answer confirms nothing. It replaces the loader's
 #: "Record not found", which on an artisan's Save reads as the artisan being gone.
-NOT_ON_WORKSHOP = "You're not on that design workshop, so records can't be filed under it. Choose one you're on."
+NOT_ON_WORKSHOP = (
+    "You're not on that design workshop, so records can't be filed under it. Choose one you're on."
+)
 
 
 async def assert_may_file_under(workshop_id: str | None, user: Any) -> None:
