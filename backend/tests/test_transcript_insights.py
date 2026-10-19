@@ -866,3 +866,124 @@ def test_execute_queues_only_eligible_media_at_priority_90_and_is_idempotent(
     done.transcriptText = "Something else entirely."
     assert asyncio.run(backfill.run(["--execute", "--include-stale"])) == 0
     assert {j.mediaFileId for j in _insight_jobs(fake)} == {wanted.id, done.id}
+
+
+# --------------------------------------------------------------------------------------------
+# Verifier findings, 2026-10-18
+# --------------------------------------------------------------------------------------------
+
+
+def _automatic_job(fake, media, status="QUEUED"):
+    row = Row(id=f"auto_{media.id}", mediaFileId=media.id, jobType="TRANSCRIPT_INSIGHTS",
+              status=status, attempts=0, maxAttempts=3, requestedById=None, error=None,
+              createdAt=datetime.now(UTC))
+    fake.mediaprocessingjob.rows.append(row)
+    return row
+
+
+@pytest.mark.parametrize("status", ["QUEUED", "PROCESSING"])
+def test_regenerate_on_an_edited_summary_claims_the_active_automatic_job(fake, provider, status):
+    from app.services import media_queue
+
+    media = _ready(fake, provider)
+    fake.transcriptinsight.rows[0].editedAt = datetime.now(UTC)
+    auto = _automatic_job(fake, media, status)
+    client = _client(OWNER)
+    refused = client.post(f"/api/media/{media.id}/insights/regenerate", json={"discardEdits": False})
+    assert refused.status_code == 409 and refused.json()["code"] == "EDITS_WOULD_BE_REPLACED"
+    assert auto.requestedById is None
+
+    accepted = client.post(f"/api/media/{media.id}/insights/regenerate", json={"discardEdits": True})
+    assert accepted.status_code == 202 and accepted.json()["state"] == status
+    jobs = [j for j in fake.mediaprocessingjob.rows if j.jobType == "TRANSCRIPT_INSIGHTS"]
+    assert jobs == [auto] and auto.requestedById == "usr_owner"
+
+    # The worker reads the requester fresh, so the claimed job runs instead of being skipped, on
+    # the requester's key and allowance.
+    provider.replies = [summary_reply("en", quotes=[])]
+    asyncio.run(media_queue._process_job(Row(**{**auto.__dict__, "requestedById": None,
+                                                "mediaFile": media}), SimpleNamespace()))
+    assert auto.status == "COMPLETED" and auto.result["status"] == "COMPLETED"
+    current = asyncio.run(ti.current_insight(media.id))
+    assert current.version == 2 and current.editedAt is None
+    assert provider.calls[-1][1] == "usr_owner"
+    assert fake.spent == [("usr_owner", "TRANSCRIPT_INSIGHTS")]
+
+
+def test_claiming_an_automatic_job_still_checks_consent_and_the_allowance(fake, provider):
+    media = _ready(fake, provider)
+    fake.transcriptinsight.rows[0].editedAt = datetime.now(UTC)
+    auto = _automatic_job(fake, media)
+    client = _client(OWNER)
+    fake.cap.limit, fake.cap.used = 1, 1
+    spent = client.post(f"/api/media/{media.id}/insights/regenerate", json={"discardEdits": True})
+    assert spent.status_code == 429 and auto.requestedById is None
+    fake.cap.limit = None
+    fake.consent = SendVerdict(SendDecision.REFUSED, workshop_id="dw_1", refusal=REFUSAL)
+    refused = client.post(f"/api/media/{media.id}/insights/regenerate", json={"discardEdits": True})
+    assert refused.status_code == 409 and auto.requestedById is None
+
+
+def test_regenerate_while_a_requested_job_is_active_queues_nothing_more(fake, provider):
+    media = _ready(fake, provider)
+    fake.transcriptinsight.rows[0].editedAt = datetime.now(UTC)
+    asked = _automatic_job(fake, media)
+    asked.requestedById = "usr_admin"
+    response = _client(OWNER).post(f"/api/media/{media.id}/insights/regenerate", json={})
+    assert response.status_code == 202 and response.json()["state"] == "QUEUED"
+    assert asked.requestedById == "usr_admin"
+    assert len([j for j in fake.mediaprocessingjob.rows if j.jobType == "TRANSCRIPT_INSIGHTS"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("fault", "sentence"),
+    [
+        ("the service did not accept the key", ti.KEY_REFUSED),
+        ("the service turned the request down", ti.REQUEST_REFUSED),
+        ("the file was too large for the service", ti.REQUEST_REFUSED),
+    ],
+)
+def test_a_refused_key_or_request_spends_once_and_closes_the_job(fake, provider, fault, sentence):
+    from app.services import media_queue
+
+    provider.fail_on = {1: fault}
+    media = fake.add_media(transcriptText=ENGLISH, transcriptStatus="COMPLETED")
+    job = _insights_job(fake, media, requested_by="usr_owner")
+    asyncio.run(media_queue._process_job(job, SimpleNamespace()))  # does not raise: no retry
+    stored = fake.mediaprocessingjob.get(job.id)
+    assert stored.status == "FAILED" and stored.error == sentence
+    assert fake.spent == [("usr_owner", "TRANSCRIPT_INSIGHTS")]
+    assert len(provider.calls) == 1
+
+
+def test_a_declined_summary_is_not_retried(fake, provider, monkeypatch):
+    from app.services import ai, media_queue
+
+    async def refused(**_kwargs):
+        return {"available": True, "status": "REFUSED", "text": None, "message": "declined"}
+
+    monkeypatch.setattr(ai, "_run_chat_verb", refused)
+    media = fake.add_media(transcriptText=ENGLISH, transcriptStatus="COMPLETED")
+    job = _insights_job(fake, media, requested_by="usr_owner")
+    asyncio.run(media_queue._process_job(job, SimpleNamespace()))
+    stored = fake.mediaprocessingjob.get(job.id)
+    assert stored.status == "FAILED" and stored.error == ti.MODEL_DECLINED
+    assert fake.spent == [("usr_owner", "TRANSCRIPT_INSIGHTS")]
+
+
+@pytest.mark.parametrize("fault", ["the service was busy", "the service had a problem",
+                                   "the service could not be reached"])
+def test_a_retried_failure_spends_nothing(fake, provider, fault):
+    from app.services import media_queue
+
+    provider.fail_on = {1: fault}
+    media = fake.add_media(transcriptText=ENGLISH, transcriptStatus="COMPLETED")
+    job = _insights_job(fake, media, requested_by="usr_owner")
+    with pytest.raises(RuntimeError):
+        asyncio.run(media_queue._process_job(job, SimpleNamespace()))
+    assert fake.spent == []
+
+
+def test_the_failed_translation_note_names_no_action_a_reader_may_not_have():
+    assert ti.TRANSLATION_FAILED_NOTE == "The translation couldn't be finished."
+    assert "egenerate" not in ti.TRANSLATION_FAILED_NOTE

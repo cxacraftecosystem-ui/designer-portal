@@ -70,7 +70,8 @@ PARTIAL = "PARTIAL"
 FAILED = "FAILED"
 
 ALREADY_ENGLISH_NOTE = "The transcript is already in English."
-TRANSLATION_FAILED_NOTE = "The translation couldn't be finished. Regenerate to try again."
+#: Shown to every reader, including read-only viewers and the Android app, so it names no action.
+TRANSLATION_FAILED_NOTE = "The translation couldn't be finished."
 
 UNRECORDED = "UNRECORDED"
 
@@ -119,7 +120,22 @@ class InsightsUnavailable(RuntimeError):
 
 
 class InsightsFailed(RuntimeError):
-    """A provider call failed or returned nothing usable. The message is a sentence; it retries."""
+    """A provider call failed or returned nothing usable. The message is a sentence.
+
+    ``retry`` is False when asking again cannot help: the provider refused the key, turned the
+    request down, or the model declined. The queue then closes the job at once instead of spending
+    every attempt (and, on designer-portal, the requester's allowance) on the same answer.
+    """
+
+    def __init__(self, message: str, *, retry: bool = True) -> None:
+        super().__init__(message)
+        self.retry = retry
+
+
+#: The sentences for a failure that will not clear by itself.
+KEY_REFUSED = "The AI provider didn't accept the key. An administrator can check it in Settings."
+REQUEST_REFUSED = "The AI provider turned this transcript down."
+MODEL_DECLINED = "The AI model declined to summarise this transcript."
 
 
 # --- Switch and sources -----------------------------------------------------------------------
@@ -330,10 +346,18 @@ async def _chat(
             "Summaries aren't set up. An administrator can add an AI key in Settings."
         )
     if status == "REFUSED":
-        raise InsightsFailed("The AI model declined to summarise this transcript.")
+        raise InsightsFailed(MODEL_DECLINED, retry=False)
     if status == "FAILED":
         if "busy" in str(result.get("message") or ""):
             raise InsightsFailed("The AI provider is busy. This will retry shortly.")
+        # ``ai._fault`` names the provider's answer in these words; neither clears by itself.
+        if "did not accept the key" in str(result.get("message") or ""):
+            raise InsightsFailed(KEY_REFUSED, retry=False)
+        if any(
+            phrase in str(result.get("message") or "")
+            for phrase in ("turned the request down", "too large for the service")
+        ):
+            raise InsightsFailed(REQUEST_REFUSED, retry=False)
         raise InsightsFailed("The summary couldn't be written. Try again.")
     return {
         "text": result.get("text"),
@@ -444,6 +468,27 @@ async def active_job(media_id: str) -> Any | None:
             "status": {"in": list(ACTIVE_JOB_STATUSES)},
         }
     )
+
+
+async def claim_for_requester(job_id: str, user_id: str) -> bool:
+    """Make a queued or running automatic job a researcher's Regenerate. True when it was claimed.
+
+    Without this, Regenerate on an edited summary while an automatic job was active queued nothing
+    (one active job per media), and the worker then skipped that automatic job because the summary
+    was edited: the researcher's explicit ask was dropped. Conditional on the job still being
+    active and unclaimed, so a job that finished in between is not touched.
+    """
+    claimed = await db.mediaprocessingjob.update_many(
+        where={"id": job_id, "status": {"in": list(ACTIVE_JOB_STATUSES)}, "requestedById": None},
+        data={"requestedById": user_id},
+    )
+    return claimed == 1
+
+
+async def job_requester(job: Any) -> str | None:
+    """Who asked for ``job``, read fresh: :func:`claim_for_requester` can set it after the claim."""
+    fresh = await db.mediaprocessingjob.find_unique(where={"id": job.id})
+    return getattr(fresh if fresh is not None else job, "requestedById", None)
 
 
 # --- Enqueueing -------------------------------------------------------------------------------

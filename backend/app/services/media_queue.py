@@ -1192,10 +1192,14 @@ async def _process_insights_job(job: Any, media: Any) -> None:
     sends nothing.
 
     The requester's own key when a person asked (Regenerate), and only then is a run counted
-    against that person's daily AI allowance — once per attempt that reached a provider. Automatic
-    runs and the backfill carry no requester: the deployment's key, and nobody's allowance.
+    against that person's daily AI allowance: once for a run that got an answer, which is a stored
+    version or a refusal that closes the job (a key the provider refused, a declined request). A
+    busy or unreachable provider retries and spends nothing, so one Regenerate never costs more
+    than one. Automatic runs and the backfill carry no requester: the deployment's key, and
+    nobody's allowance.
     """
-    requested_by = getattr(job, "requestedById", None)
+    # Read fresh: a Regenerate can claim an automatic job after it was queued or picked up.
+    requested_by = await transcript_insights.job_requester(job)
     if requested_by is None:
         # An automatic run never replaces a researcher's edits, even if they edited after it was
         # queued.
@@ -1220,8 +1224,13 @@ async def _process_insights_job(job: Any, media: Any) -> None:
         await _finalize_unavailable_job(job.id, {"status": UNAVAILABLE}, str(exc))
         return
     except transcript_insights.InsightsFailed as exc:
+        if exc.retry:
+            raise RuntimeError(str(exc)) from None
+        # A refused key or a declined request gives the same answer every time: spend once and
+        # close it now rather than once per attempt.
         await _spend_insights_allowance(requested_by)
-        raise RuntimeError(str(exc)) from None
+        await _finalize_unavailable_job(job.id, {"status": FAILED}, str(exc))
+        return
     await _spend_insights_allowance(requested_by)
     await _complete_job(job.id, outcome)
 
