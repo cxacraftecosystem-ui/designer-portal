@@ -612,7 +612,11 @@ def _file(monkeypatch, data: dict[str, Any], user: Any, *, filed_under: str | No
     async def _destination(workshop_id, _user, **_kwargs):
         asked.append(workshop_id)
 
+    async def _never_deleted(_workshop_id):
+        return None
+
     monkeypatch.setattr(design_workshops, "load_workshop_or_404", _destination)
+    monkeypatch.setattr(filing, "refuse_if_the_workshop_is_deleted", _never_deleted)
     try:
         asyncio.run(filing.assert_payload_workshop(data, user, filed_under=filed_under))
     except HTTPException as refusal:

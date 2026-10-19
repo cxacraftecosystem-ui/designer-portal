@@ -11,6 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
+import java.io.File
 import java.io.IOException
 
 /**
@@ -156,6 +157,34 @@ class OutboxDanglingReferenceTest {
         // And the two shapes that never carry a status at all.
         assertFalse(isMissingReferenceRefusal(IOException("Unable to resolve host")))
         assertFalse(isMissingReferenceRefusal(IllegalStateException("Unknown offline entry type: wat")))
+    }
+
+    @Test
+    fun `a queued save naming a workshop the designer is not on, or one that is gone, still offers a re-pick`() {
+        // 2026-10-19: the filing gate swapped the loader's "Record not found" for a sentence, and must
+        // keep the 404 it rewords. A 403 would park a queued artisan naming a deleted workshop, or one
+        // its designer was removed from, behind a retry that can never work.
+        val root = generateSequence(File("").absoluteFile) { it.parentFile }.first { File(it, "backend").isDirectory }
+        val gate = File(root, "backend/app/services/record_design_workshop.py").readText()
+        val said = Regex("""NOT_ON_WORKSHOP = \(\s*"([^"]+)"\s*\)""").find(gate)?.groupValues?.get(1)
+        assertTrue("NOT_ON_WORKSHOP is one string literal", said != null)
+        assertTrue(gate.contains("status_code=status.HTTP_404_NOT_FOUND, detail=NOT_ON_WORKSHOP"))
+        assertFalse(gate.contains("HTTP_403_FORBIDDEN, detail=NOT_ON_WORKSHOP"))
+
+        val body = """{"detail":"$said"}"""
+        assertTrue(isMissingReferenceRefusal(http(404, body)))
+        assertEquals(listOf("designWorkshopId"), danglingReferenceCandidates(payload = oneLink))
+        val sentence = outboxDanglingSentence(
+            said = http(404, body).apiRefusal("The server rejected this record.").message,
+            nouns = listOf(referenceFieldNoun("designWorkshopId", recordNoun = outboxRecordNoun("artisan"))),
+            files = 2,
+            isCorrection = false,
+        )
+        assertTrue(sentence, sentence.startsWith("This record points at a design & prototype workshop"))
+        // The server's own words are printed, never summarised.
+        assertTrue(sentence, sentence.contains(said!!))
+        // And the same words on a 403 are not a missing reference: the reason the status must stay.
+        assertFalse(isMissingReferenceRefusal(http(403, body)))
     }
 
     @Test
