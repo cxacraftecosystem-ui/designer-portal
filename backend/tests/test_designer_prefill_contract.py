@@ -86,6 +86,10 @@ from app.services.stage_schema import (
 #: today. Nothing is lost — the value is on the profile row and is copied nowhere — but nothing is
 #: gained downstream either, and a reader who assumes the months reach the .docx will be wrong.
 PREFILL_EXEMPT: dict[str, str] = {
+    "phoneCountryCode": (
+        "not a box of its own: the prefill folds it into designerPhone as \"+91 9876543210\" "
+        "(services/standard_values.compose_phone), the one-string shape the stage box carries."
+    ),
     "experienceMonths": (
         "stage 3 has no designerExperienceMonths box yet; adding one moves registry_version(), "
         "owes a re-dump of the bundled Android asset and a re-cut APK, and decides how the report "
@@ -327,6 +331,7 @@ _PROFILE_VALUES: dict[str, object] = {
     # test_the_stage_three_designer_boxes_refuse_what_the_designer_page_refuses in
     # test_stage_schema.py for what happens to the shapes that are not accepted.
     "phone": "+91 9876500001",
+    "phoneCountryCode": "+91",
     "email": "latha.nayak@nift.ac.in",
     "website": "https://nift.ac.in/bhubaneswar",
     "addressLine": "Plot 3, IDCO Institutional Area, Chandaka",

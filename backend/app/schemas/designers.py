@@ -205,6 +205,7 @@ class DesignerProfileUpdate(APIModel):
     experienceMonths: int | None = Field(default=None, ge=0, le=11)
     biography: str | None = Field(default=None, max_length=20000)
     phone: str | None = Field(default=None, max_length=40)
+    phoneCountryCode: str | None = Field(default=None, max_length=8)
     email: EmailStr | None = None
     website: str | None = Field(default=None, max_length=300)
     # ── THE ONE RICH-TEXT COLUMN ON THIS PROFILE, AND THE ONLY FIELD HERE WITH TWO CEILINGS ─────

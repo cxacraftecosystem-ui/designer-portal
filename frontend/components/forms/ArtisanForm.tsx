@@ -22,6 +22,7 @@ import type { InlineHostSeed, InlineRecordSurfaceProps, UseExistingArtisan } fro
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
+import { GENDER_OPTIONS } from "@/lib/standardValues";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
@@ -75,8 +76,8 @@ import {
 import type { StatedPrefill } from "@/components/forms/statedPrefill";
 import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 
-// Android parity (MainActivity.kt genderOptions).
-const genderOptions = ["Male", "Female", "Transgender", "Other"];
+// The shared gender list (lib/standardValues, the same file in both portals and on Android).
+const genderOptions = GENDER_OPTIONS;
 
 /*
  * THE EXPERIENCE PAIR IS THE DOCUMENTATION PORTAL'S (owner decision, 2026-10-17): a number box,
@@ -227,14 +228,20 @@ function PehchanFields({
   initialNumber,
   onDirty
 }: {
-  initialAvailable: boolean;
+  /**
+   * `null` = not answered yet. A NEW artisan starts here, as in the documentation portal (the shared
+   * artisan form contract), so the answer is always a choice and never a pre-filled Yes that makes
+   * the card number silently required for somebody nobody asked. An edit opens on the stored answer.
+   */
+  initialAvailable: boolean | null;
   initialNumber?: string | null;
   onDirty: () => void;
 }) {
   const baseId = useId();
   const numberId = `${baseId}-pehchan-number`;
   const hintId = `${baseId}-pehchan-hint`;
-  const [available, setAvailable] = useState(initialAvailable);
+  const [answer, setAnswer] = useState<boolean | null>(initialAvailable);
+  const available = answer === true;
   const storedMask = isMaskedIdentityNumber(initialNumber) ? String(initialNumber).trim() : null;
   // Set when the editor chooses to type a new card number over one they were never shown.
   const [replacing, setReplacing] = useState(false);
@@ -247,20 +254,25 @@ function PehchanFields({
   return (
     <>
       <div className="grid content-start gap-1">
-        <span className="field-label">Artisan Pehchan Card available</span>
+        <span className="field-label">
+          Artisan Pehchan Card available
+          <RequiredMark when />
+        </span>
         <Select
           name="pehchanCardAvailable"
-          value={available ? PEHCHAN_YES : PEHCHAN_NO}
+          value={answer === null ? "" : answer ? PEHCHAN_YES : PEHCHAN_NO}
           aria-label="Artisan Pehchan Card available"
+          required
           onChange={(event) => {
             const next = event.target.value === PEHCHAN_YES;
-            setAvailable(next);
+            setAnswer(event.target.value === "" ? null : next);
             if (!next) setNumber("");
             // The themed Dropdown is a button, so it fires no native input event for the form's
             // onInput to catch: the dirty flag has to be raised by hand.
             onDirty();
           }}
         >
+          <option value="">Select…</option>
           <option value={PEHCHAN_YES}>Yes</option>
           <option value={PEHCHAN_NO}>No</option>
         </Select>
@@ -275,7 +287,7 @@ function PehchanFields({
           className="field-input read-only:bg-surface-50 read-only:text-ink-500 disabled:cursor-not-allowed disabled:bg-surface-50 disabled:text-ink-500"
           type="text"
           autoComplete="off"
-          placeholder={available ? "As printed on the card" : "No card on record"}
+          placeholder={available ? "As printed on the card" : answer === null ? "Answer the card question first" : "No card on record"}
           value={keptMask ?? number}
           // A read-only box is exempt from constraint validation, which is the right answer here:
           // `required` must not demand a number the editor is not permitted to read.
@@ -294,7 +306,9 @@ function PehchanFields({
           }}
         />
         <p id={hintId} className="text-xs text-ink-muted">
-          {!available
+          {answer === null
+            ? "Has the artisan a Pehchan card?"
+            : !available
             ? 'No Pehchan card. Switch "available" to Yes to enter one.'
             : keptMask
               ? "On file but hidden. Saving leaves it unchanged."
@@ -1058,6 +1072,7 @@ export function ArtisanForm({
           ? Number(textValue(form, "experienceMonths"))
           : null,
         phone: textValue(form, "phone"),
+        phoneCountryCode: textValue(form, "phoneCountryCode"),
         email: textValue(form, "email"),
         place: requiredText(form, "place"),
         address: textValue(form, "address"),
@@ -1652,6 +1667,8 @@ export function ArtisanForm({
             <PhoneField
               key={`phone-${prefillKey}`}
               name="phone"
+              countryCodeName="phoneCountryCode"
+              countryCode={prefill.phone ? null : initial?.phoneCountryCode}
               defaultValue={prefill.phone ?? initial?.phone}
               onValueChange={markDirty}
             />
@@ -1753,7 +1770,7 @@ export function ArtisanForm({
             />
             <PehchanFields
               key={`pehchan-${prefillKey}`}
-              initialAvailable={prefill.pehchanCardAvailable ?? initial?.pehchanCardAvailable ?? true}
+              initialAvailable={prefill.pehchanCardAvailable ?? (initial ? (initial.pehchanCardAvailable ?? true) : null)}
               initialNumber={prefill.pehchanCardNumber ?? initial?.pehchanCardNumber}
               onDirty={markDirty}
             />

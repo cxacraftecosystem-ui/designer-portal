@@ -58,6 +58,11 @@ from app.services.records import (
     take_expected_updated_at,
     viewable_where,
 )
+from app.services.standard_values import (
+    StandardValueError,
+    apply_tool_values,
+    retired_tradition_codes,
+)
 from app.services.workshop_access import (
     enforce_workshop_submission,
     pin_pending_if_late,
@@ -144,6 +149,7 @@ _LINK_RELATIONS = tuple(rel for rel in RELATIONS if rel.field in ("artisanLinks"
 # (``craftId``, ``craftName``, ``artisanId``) are ordinary NOT-NULL-or-global scalars and are
 # deliberately absent from this tuple for the reasons already given two paragraphs up.
 _CLEARABLE_COLUMNS = (
+    "materialFamily",
     "localName",
     "englishName",
     "processUsedIn",
@@ -812,7 +818,11 @@ async def list_tools(
     if maker:
         where["maker"] = maker
     if traditionType:
-        where["traditionType"] = traditionType
+        # A tool still holding a retired code (MODERN, HYBRID) is the same answer as its successor.
+        same = [traditionType] + [
+            old for old, new in retired_tradition_codes().items() if new == traditionType
+        ]
+        where["traditionType"] = same[0] if len(same) == 1 else {"in": same}
     if statusFilter:
         where["status"] = enum_filter_or_422(statusFilter, RECORD_STATUSES)
     if createdBy:
@@ -877,6 +887,7 @@ async def create_tool(
     # A queued or stale write that still names a merged artisan lands on the survivor
     # (services/artisan_merge.redirect_payload) instead of a dangling-reference 422.
     await redirect_payload(data)
+    _standardise(apply_tool_values, data)
     # THE TWO LINK LISTS COME OUT HERE, before ``attach_location`` and long before Prisma sees
     # ``data``: neither names a column, so either one left in the dict is an unknown-argument error
     # on the create below. Resolving them here also means ``craftId``/``craftName``/``artisanId`` are
@@ -970,6 +981,7 @@ async def update_tool(
         clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     )
     await redirect_payload(data)
+    _standardise(apply_tool_values, data, tool)
     # The precondition is a question, not a column — taken out of the body here, asked inside the
     # transaction below. See ``records.take_expected_updated_at``.
     expected_updated_at = take_expected_updated_at(data)
@@ -1310,3 +1322,11 @@ async def _may_manage_tool_links(tool: Any, tool_id: str, current_user: Any) -> 
         return True
     tier = await effective_tier_for_record(current_user, owner_id, "tool", tool_id)
     return tier == "EDIT"
+
+
+def _standardise(apply: Any, data: dict[str, Any], stored: Any = None) -> None:
+    """The shared standard values (``services/standard_values``): a value off its list is a 422."""
+    try:
+        apply(data, stored)
+    except StandardValueError as exc:
+        raise HTTPException(status_code=422, detail=exc.message) from exc

@@ -51,6 +51,13 @@ from app.services import aadhaar_fingerprint, naming
 from app.services.artisan_identity import mask_aadhaar
 from app.services.records import derive_age, derive_experience_years
 from app.services.rich_text import plain_from_stored
+from app.services.standard_values import (
+    TRADITION_UNANSWERED,
+    language_name,
+    material_family_label,
+    phone_of,
+    tradition_label,
+)
 
 # ---------------------------------------------------------------------------
 # Value coercion
@@ -90,6 +97,15 @@ def date_str(value: Any) -> str | None:
         return value.strftime("%d %b %Y")
     except (AttributeError, ValueError):
         return str(value)
+
+
+def tradition_text(value: Any) -> str | None:
+    """A tool's tradition in the shared wording ("Transitional (Hybrid)"); a retired code reads as
+    its successor, and the unanswered default prints nothing, as ``enum_label`` does for it."""
+    raw = str(ev(value) or "").strip()
+    if not raw or raw == TRADITION_UNANSWERED:
+        return None
+    return tradition_label(raw) or enum_label(raw)
 
 
 def enum_label(value: Any) -> str | None:
@@ -423,7 +439,7 @@ ARTISAN = RecordSpec(
                 or meta_val(meta_of(a), "pincode", "pinCode", "postalCode")
             ),
         ),
-        _f("Phone", lambda a: a.phone),
+        _f("Phone", phone_of),
         _f("Email", lambda a: a.email),
         # Aadhaar and the Pehchan (PM Vishwakarma) card are regulated personal data and this spec
         # feeds every SHARED surface — the data browser, the .xlsx workbook, generated details.txt,
@@ -549,6 +565,7 @@ TOOL = RecordSpec(
         _f("Place", lambda t: t.place),
         _f("Usage", lambda t: t.processUsedIn),
         _f("Material", lambda t: t.material),
+        _f("Material type", lambda t: material_family_label(t.materialFamily)),
         _f("Years in use", lambda t: t.yearsInUse),
         _f(
             "Dimensions (LxBxH in)",
@@ -605,7 +622,7 @@ TOOL = RecordSpec(
         _f("Radius", lambda t: num(t.radius)),
         _f("Cost", lambda t: money(t.replacementCost)),
         _f("Maker", lambda t: enum_label(t.maker)),
-        _f("Tradition", lambda t: enum_label(t.traditionType)),
+        _f("Tradition", lambda t: tradition_text(t.traditionType)),
         _f("Improvement suggestions", lambda t: t.suggestionsForToolImprovement),
         _f("Remarks", lambda t: t.remarks),
     ),
@@ -639,7 +656,7 @@ INTERVIEW = RecordSpec(
     fields=(
         _f("Artisans", lambda i: ", ".join(artisan_names(i)) or None),
         _f("Location", lambda i: i.place),
-        _f("Language", lambda i: i.language),
+        _f("Language", lambda i: language_name(i.language)),
         _f("Recorded at", lambda i: date_str(i.interviewDate or i.recordedAt)),
         _f("Notes", lambda i: i.notes),
     ),

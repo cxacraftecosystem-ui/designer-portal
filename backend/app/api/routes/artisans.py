@@ -15,7 +15,7 @@ from app.core.deps import (
 from app.schemas.records import ArtisanCreate, ArtisanUpdate, drop_masked_identity_numbers
 from app.services import aadhaar_fingerprint, artisan_card, artisan_duplicates, artisan_merge
 from app.services.access import guard_record_edit
-from app.services.artisan_form_contract import assert_required_dates, take_form_contract
+from app.services.artisan_form_contract import assert_form_contract, take_form_contract
 from app.services.artisan_identity import aadhaar_error, mask_aadhaar, normalize_aadhaar
 from app.services.completeness import (
     attach as attach_completeness,
@@ -54,6 +54,7 @@ from app.services.records import (
     take_expected_updated_at,
     viewable_where,
 )
+from app.services.standard_values import StandardValueError, apply_artisan_values
 from app.services.workshop_access import (
     enforce_workshop_submission,
     link_workshop_artisan,
@@ -221,6 +222,7 @@ _CLEARABLE_COLUMNS = (
     "localName",
     "gender",
     "phone",
+    "phoneCountryCode",
     "email",
     "address",
     "notes",
@@ -658,8 +660,9 @@ async def create_artisan(
     # The typed Aadhaar becomes its fingerprint and last four here, before anything else reads the
     # payload; ``aadhaar`` is held only for the duplicate check below.
     aadhaar = _seal_aadhaar(data)
+    _standardise(apply_artisan_values, data)
     # The artisan form contract: both dates required on a save made under it, the old shape accepted.
-    assert_required_dates(take_form_contract(data), data)
+    assert_form_contract(take_form_contract(data), data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
@@ -756,6 +759,7 @@ async def update_artisan(
     # makes a present key mean "the caller sent this". Drop it and every optional the client left
     # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
     data = clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
+    _standardise(apply_artisan_values, data, artisan)
     # The precondition is a question, not a column — taken out of the body here, asked inside the
     # transaction below. Popped BEFORE ``drop_masked_identity_numbers`` and everything after it, for
     # the reason ``records.take_expected_updated_at`` gives: every helper between here and the write
@@ -764,7 +768,7 @@ async def update_artisan(
     expected_updated_at = take_expected_updated_at(data)
     # Checked against the row as it will be after this write: a date the body leaves out keeps the
     # stored value, so a record saved before the contract must gain both. Old shape: unchanged.
-    assert_required_dates(take_form_contract(data), data, stored=artisan)
+    assert_form_contract(take_form_contract(data), data, stored=artisan)
     # A caller shown a masked number who saves without touching it means "leave it alone" — for the
     # Pehchan card as much as for the Aadhaar, since both are masked on the way out to them.
     data = drop_masked_identity_numbers(data)
@@ -1020,3 +1024,11 @@ async def delete_artisan(artisan_id: str, current_user: Any = Depends(get_curren
     # records are its content (``services/record_design_workshop``, 2026-10-09).
     await assert_may_write_a_record_filed_under(artisan.designWorkshopId, current_user)
     await db.artisan.delete(where={"id": artisan_id})
+
+
+def _standardise(apply: Any, data: dict[str, Any], stored: Any = None) -> None:
+    """The shared standard values (``services/standard_values``): a value off its list is a 422."""
+    try:
+        apply(data, stored)
+    except StandardValueError as exc:
+        raise HTTPException(status_code=422, detail=exc.message) from exc

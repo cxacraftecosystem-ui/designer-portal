@@ -530,7 +530,8 @@ async def test_re_pointing_at_a_thinly_documented_artisan_clears_what_it_cannot_
     _save(client, linked, STAGE_3, "participant",
           [{"_clientKey": "p1", "artisanRef": world["latha"].id}])
     filled = _read(client, linked, STAGE_3, "participant")[0]
-    assert filled["phone"] == "9876500001", "the fixture has to start fully hydrated"
+    # Hydration composes the stage box's one-string form from the digits and the country code.
+    assert filled["phone"] == "+91 9876500001", "the fixture has to start fully hydrated"
     assert filled["photo"]
 
     re_pointed = {k: v for k, v in filled.items() if not k.startswith("_")}

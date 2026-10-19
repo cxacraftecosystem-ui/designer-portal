@@ -22,6 +22,7 @@
 import type { ProcessRecord } from "@/components/forms/ProcessForm";
 import { bytes, formatDate } from "@/lib/format";
 import type { Artisan, Craft, MediaFile, ProductDocumentation, QuestionnaireInterview, ToolDocumentation, Workshop } from "@/lib/types";
+import { languageName, phoneOf, traditionLabel } from "@/lib/standardValues";
 
 /** One printed line: a label and its value, already in words. */
 export type RecordFieldRow = { label: string; value: string };
@@ -76,7 +77,7 @@ export function artisanFields(artisan: Artisan): RecordFieldRow[] {
     ["Place", artisan.place],
     ["Address", artisan.address],
     ["Gender", plainWords(artisan.gender)],
-    ["Phone", artisan.phone],
+    ["Phone", phoneOf(artisan)],
     ["Email", artisan.email],
     ["Date of birth", artisan.dateOfBirth ? formatDate(artisan.dateOfBirth) : null],
     ["Practising since", artisan.craftStartDate ? formatDate(artisan.craftStartDate) : null],
@@ -135,7 +136,7 @@ export function toolFields(tool: ToolDocumentation): RecordFieldRow[] {
     ["Weight", measure(tool.weight)],
     ["Radius", measure(tool.radius)],
     ["Maker", plainWords(tool.maker)],
-    ["Tradition type", plainWords(tool.traditionType)],
+    ["Tradition type", traditionLabel(tool.traditionType)],
     ["Replacement cost", measure(tool.replacementCost)],
     ["Suggestions for improvement", tool.suggestionsForToolImprovement],
     ["Remarks", tool.remarks],
@@ -189,7 +190,7 @@ export function interviewFields(interview: QuestionnaireInterview): RecordFieldR
     ["Artisans", artisans.length ? artisans.join(", ") : null],
     ["Date", when ? formatDate(when) : null],
     ["Place", interview.place],
-    ["Language", interview.language],
+    ["Language", languageName(interview.language)],
     ["Notes", interview.notes],
     ["Workshop", interview.workshop?.title],
     ["Recorded", createdLine(interview.createdAt, interview.createdBy)]

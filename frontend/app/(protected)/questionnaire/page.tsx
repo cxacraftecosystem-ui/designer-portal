@@ -88,6 +88,7 @@ import { Toggle } from "@/components/ui/Toggle";
 import { AnswerDraftsPanel, isMachineSuggested, MachineSuggestedBadge } from "@/components/questionnaire/AnswerDraftsPanel";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { LiveCompleteness } from "@/components/records/LiveCompleteness";
+import { phoneOf } from "@/lib/standardValues";
 
 /** Section ids the two questionnaire upload paths publish under, for the page-level tray. */
 const INTERVIEW_SECTION = "interview-audio";
@@ -1178,7 +1179,7 @@ function QuestionnairePageBody() {
         else if (prompt.includes("craft")) respondentAnswers[question.id] = selectedArtisan.craft?.name ?? "";
         else if (prompt.includes("state") || prompt.includes("district") || prompt.includes("village")) respondentAnswers[question.id] = selectedArtisan.place;
         else if (prompt.includes("gender")) respondentAnswers[question.id] = selectedArtisan.gender ?? "";
-        else if (prompt.includes("contact")) respondentAnswers[question.id] = selectedArtisan.phone ?? selectedArtisan.email ?? "";
+        else if (prompt.includes("contact")) respondentAnswers[question.id] = phoneOf(selectedArtisan) ?? selectedArtisan.email ?? "";
         else if (prompt.includes("date")) respondentAnswers[question.id] = new Date().toLocaleDateString("en-IN");
         else if (prompt.includes("interviewer")) respondentAnswers[question.id] = user?.name ?? user?.email ?? "";
       });
@@ -2803,7 +2804,7 @@ function QuestionnairePageBody() {
               <div><span className="font-medium text-ink">Craft:</span> {selectedArtisan.craft?.name ?? "-"}</div>
               <div><span className="font-medium text-ink">Place:</span> {selectedArtisan.place}</div>
               <div><span className="font-medium text-ink">Gender:</span> {selectedArtisan.gender ?? "-"}</div>
-              <div><span className="font-medium text-ink">Contact:</span> {selectedArtisan.phone || selectedArtisan.email || "-"}</div>
+              <div><span className="font-medium text-ink">Contact:</span> {phoneOf(selectedArtisan) || selectedArtisan.email || "-"}</div>
             </div>
           </section>
         ) : null}

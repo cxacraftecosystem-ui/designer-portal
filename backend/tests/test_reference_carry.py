@@ -262,6 +262,8 @@ ARTISAN_CARRIED = {
     "localName": "participant.localName",
     "gender": "participant.gender",
     "phone": "participant.phone",
+    # Folded into the same box: hydration composes "+91 9876543210" from the two columns.
+    "phoneCountryCode": "participant.phone",
     "email": "participant.email",
     "place": "participant.village",            # the fallback when Location.village is empty
     "pehchanCardAvailable": "participant.pehchanCardAvailable",
@@ -519,6 +521,10 @@ TOOL_CARRIED = {
     ),
 }
 TOOL_NOT_CARRIED = {
+    "materialFamily": (
+        "the shared material-family code (services/standard_values); the stage asks its own "
+        "MATERIAL_FAMILY question, and the free `material` text is what the tool carries"
+    ),
     "measurementImageId": (
         "a working image from the measurement pipeline; see the product note, including why that "
         "note's claim about _reference_photos was false until the MEASUREMENT_GRID marker existed"
@@ -1274,11 +1280,23 @@ def test_the_mirrored_registry_lists_match_their_prisma_enums(prisma_enum, regis
     assert set(ENUMS[registry_enum]) == _enum_members(prisma_enum)
 
 
+def test_the_registry_tradition_list_is_the_tool_forms_shared_list():
+    """One wording for the tradition question (owner decision, 2026-10-19): the registry's
+    TRADITION_TYPE and the tool form's list in app/data/standard_values.json offer the same three
+    answers, with the same codes and the same labels."""
+    from app.services import standard_values as sv
+
+    assert dict(ENUMS["TRADITION_TYPE"]) == {
+        option["code"]: option["label"] for option in sv.tradition_options()
+    }
+
+
 def test_every_translated_target_can_actually_hold_what_the_table_produces():
     """The other end of the same check: a translation is useless if ``coerce_value`` refuses it.
 
-    ``TraditionType.MODERN`` -> ``CONTEMPORARY`` is a translation and not a passthrough precisely
-    because the raw token is not in ``TRADITION_TYPE``; this asserts the translated one is.
+    ``TraditionType.MODERN`` (a retired code) -> ``CONTEMPORARY`` is a translation and not a
+    passthrough precisely because the raw token is not in ``TRADITION_TYPE``; this asserts the
+    translated one is.
     """
     for table, registry_enum in (
         (dw._PRODUCT_TYPE_TO_CATEGORY, "PRODUCT_CATEGORY"),

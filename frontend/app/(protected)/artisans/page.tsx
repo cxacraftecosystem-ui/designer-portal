@@ -27,6 +27,7 @@ import { parseCompletenessFilter, type CompletenessFilter as CompletenessValue }
 import { formatDate } from "@/lib/format";
 import { RECORD_UPDATE_HREF, RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { Artisan, PageResult } from "@/lib/types";
+import { phoneOf } from "@/lib/standardValues";
 
 export default function ArtisansPage() {
   const { adminMode } = useAdminView();
@@ -302,7 +303,7 @@ export default function ArtisansPage() {
                     </td>
                     <td className="px-4 py-3 text-ink-700">{artisan.craft?.name ?? "-"}</td>
                     <td className="px-4 py-3 text-ink-700">{artisan.place}</td>
-                    <td className="px-4 py-3 text-ink-700">{artisan.phone || artisan.email || "-"}</td>
+                    <td className="px-4 py-3 text-ink-700">{phoneOf(artisan) || artisan.email || "-"}</td>
                     <td className="px-4 py-3">
                       <StatusBadge status={artisan.status} />
                     </td>

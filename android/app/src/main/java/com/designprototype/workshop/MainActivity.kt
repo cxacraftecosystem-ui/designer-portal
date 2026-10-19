@@ -705,6 +705,7 @@ import com.designprototype.workshop.data.WorkshopAccessLevelDto
 import com.designprototype.workshop.data.WorkshopAssignmentDto
 import com.designprototype.workshop.data.DW_INTERVIEW_LANGUAGE_PLACEHOLDER
 import com.designprototype.workshop.data.DW_INTERVIEW_LANGUAGES
+import com.designprototype.workshop.data.StandardValues
 import com.designprototype.workshop.data.dwInterviewLanguageOptions
 import com.designprototype.workshop.data.WorkshopMappingRowDto
 import com.designprototype.workshop.data.WorkshopMappingWindowDto
@@ -7452,7 +7453,6 @@ private fun Stat(
 private val productTypeOptions = listOf("FINISHED_GOOD", "SAMPLE", "RAW_MATERIAL", "COMPONENT", "PACKAGING", "OTHER")
 private val marketDemandOptions = listOf("LOW", "MEDIUM", "HIGH", "SEASONAL", "UNKNOWN")
 private val makerOptions = listOf("ARTISAN", "LOCAL_BLACKSMITH", "CARPENTER", "WORKSHOP", "FACTORY", "UNKNOWN", "OTHER")
-private val traditionOptions = listOf("TRADITIONAL", "MODERN", "HYBRID", "UNKNOWN")
 private val statusOptions = listOf("DRAFT", "PENDING", "APPROVED", "REJECTED")
 
 /**
@@ -7643,7 +7643,8 @@ private fun UserDto.canManageUsers(): Boolean = roleRank(role) >= RANK_PROFESSOR
 
 /** The status a NEW record defaults to for the given role: APPROVED for professor+, PENDING below. */
 private fun defaultCreateStatus(role: String?): String = if (canSetRecordStatus(role)) "APPROVED" else "PENDING"
-private val genderOptions = listOf("Male", "Female", "Transgender", "Other")
+/** The shared gender list (StandardValues; the same in both portals and on the web). */
+private val genderOptions = StandardValues.GENDER_LABELS
 
 /**
  * App-level controller that lets a record form tell the back navigation "I have unsaved work, and
@@ -11509,14 +11510,13 @@ private fun ArtisanForm(
     // No pre-selected gender (UX audit 2026-10-16, DW-09 [both]): a box nobody touched used to save
     // "Male" as a claim about a person. Unanswered stays unanswered, and saves as null.
     var gender by remember(editing) { mutableStateOf(editing?.gender?.takeIf { it.isNotBlank() } ?: "") }
-    var phone by remember(editing) { mutableStateOf(editing?.phone ?: "") }
+    var phone by remember(editing) { mutableStateOf(StandardValues.phoneForEditing(editing?.phoneCountryCode, editing?.phone)) }
     var email by remember(editing) { mutableStateOf(editing?.email ?: "") }
     var place by remember(editing) { mutableStateOf(editing?.place ?: prefill?.place ?: "") }
     var address by remember(editing) { mutableStateOf(editing?.address ?: "") }
     var notes by remember(editing) { mutableStateOf(editing?.notes ?: "") }
     // Identity. `aadhaar` holds BARE digits — the 4-4-4 grouping is a visual transformation on the
-    // field, never part of the value. The Pehchan card defaults to "available", matching the API's
-    // default and the common case, which is why its number is effectively required on create.
+    // field, never part of the value.
     //
     // THE SERVER SENDS THE MASK, NEVER THE NUMBER (2026-10-17): the register keeps a fingerprint and the
     // last four digits. So an edit starts with the box EMPTY and the mask shown beside it, and an empty
@@ -11526,7 +11526,10 @@ private fun ArtisanForm(
     var aadhaar by remember(editing) {
         mutableStateOf(editing?.aadhaarNumber?.takeIf { ArtisanIdentity.isAadhaar(it) }.orEmpty())
     }
-    var pehchanAvailable by remember(editing) { mutableStateOf(editing?.pehchanCardAvailable ?: true) }
+    // The shared artisan form contract (the documentation portal's rule): a NEW artisan's Pehchan card
+    // starts UNANSWERED and has to be answered. "Yes" used to be pre-answered, which made the card
+    // number silently required for somebody nobody had asked. An edit opens on the stored answer.
+    var pehchanAvailable by remember(editing) { mutableStateOf<Boolean?>(editing?.pehchanCardAvailable) }
     var pehchanNumber by remember(editing) { mutableStateOf(editing?.pehchanCardNumber.orEmpty()) }
     // C27: the Field Repository record this new artisan was filled from, linked after the save.
     var crossMatch by remember(editing) { mutableStateOf<CrossPortalMatchDto?>(null) }
@@ -11666,7 +11669,7 @@ private fun ArtisanForm(
             address = v["address"] ?: address
             notes = v["notes"] ?: notes
             aadhaar = v["aadhaar"] ?: aadhaar
-            pehchanAvailable = v["pehchanAvailable"]?.toBooleanStrictOrNull() ?: pehchanAvailable
+            v["pehchanAvailable"]?.let { pehchanAvailable = it.toBooleanStrictOrNull() }
             pehchanNumber = v["pehchanNumber"] ?: pehchanNumber
             v["dateOfBirth"]?.let { dateOfBirth = draftDate(it) }
             v["craftStartDate"]?.let { craftStartDate = draftDate(it) }
@@ -11787,8 +11790,14 @@ private fun ArtisanForm(
             onError("Fix the Aadhaar number highlighted above."); return
         }
         aadhaarError = null
+        // The card question has to be answered, one way or the other.
+        if (pehchanAvailable == null) {
+            pehchanError = "Answer whether the artisan has a Pehchan card."
+            runCatching { pehchanFocus.requestFocus() }
+            onError("Answer the Pehchan card question."); return
+        }
         // "Card available = Yes" without a number is the one combination the API refuses outright.
-        if (pehchanAvailable && pehchanNumber.isBlank()) {
+        if (pehchanAvailable == true && pehchanNumber.isBlank()) {
             pehchanError = "Enter the Pehchan Card number, or set the card to 'No'."
             runCatching { pehchanFocus.requestFocus() }
             onError("Fix the highlighted Pehchan Card details."); return
@@ -11836,7 +11845,10 @@ private fun ArtisanForm(
                 name = name.trim(),
                 localName = localName.blankToNull(),
                 gender = gender.blankToNull(),
-                phone = phone.blankToNull(),
+                // The two columns the server stores: digits and the code beside them. A value the
+                // rule cannot read goes as typed, and the server says why.
+                phone = StandardValues.normalizePhone(null, phone).digits ?: phone.blankToNull(),
+                phoneCountryCode = StandardValues.normalizePhone(null, phone).code,
                 email = email.blankToNull(),
                 place = place.trim(),
                 address = address.blankToNull(),
@@ -11850,7 +11862,7 @@ private fun ArtisanForm(
                 // Always sent explicitly, both ways: the API clears a stale card number when this is
                 // false, and only an explicit true can move a record back off "No".
                 pehchanCardAvailable = pehchanAvailable,
-                pehchanCardNumber = if (pehchanAvailable) pehchanNumber.blankToNull() else null,
+                pehchanCardNumber = if (pehchanAvailable == true) pehchanNumber.blankToNull() else null,
                 // EMPTYING ONE OF THESE REALLY DOES CLEAR THE COLUMN, and it does not happen here.
                 // A null in this object would be dropped by the encoder (`explicitNulls = false`)
                 // and an absent key means "leave it alone" to the PATCH, so the clear buttons on
@@ -12194,15 +12206,17 @@ private fun ArtisanForm(
             )
         }
         DropdownField(
-            label = "Artisan Pehchan Card available",
+            label = "Artisan Pehchan Card available *",
             options = listOf("yes" to "Yes", "no" to "No"),
-            selectedValue = if (pehchanAvailable) "yes" else "no",
+            selectedValue = when (pehchanAvailable) { true -> "yes"; false -> "no"; null -> "" },
+            placeholder = "Has the artisan a Pehchan card?",
             includeNone = false
         ) { choice ->
             pehchanAvailable = choice == "yes"
+            pehchanError = null
             // Answering No retires the number with the answer, so a disabled box can never leave a
             // card number stranded on a record that says the artisan holds no card.
-            if (!pehchanAvailable) { pehchanNumber = ""; pehchanError = null }
+            if (pehchanAvailable == false) pehchanNumber = ""
         }
         OutlinedTextField(
             value = pehchanNumber,
@@ -12212,16 +12226,16 @@ private fun ArtisanForm(
             label = {
                 Text(
                     requiredMarked(
-                        if (pehchanAvailable) "Artisan Pehchan Card number *" else "Artisan Pehchan Card number"
+                        if (pehchanAvailable == true) "Artisan Pehchan Card number *" else "Artisan Pehchan Card number"
                     )
                 )
             },
-            placeholder = { Text(if (pehchanAvailable) "As printed on the card" else "No card on record") },
-            enabled = pehchanAvailable,
+            placeholder = { Text(if (pehchanAvailable == true) "As printed on the card" else "No card on record") },
+            enabled = pehchanAvailable == true,
             isError = pehchanError != null,
             supportingText = {
                 val hint = pehchanError
-                    ?: if (pehchanAvailable) {
+                    ?: if (pehchanAvailable == true) {
                         "The PM Vishwakarma artisan ID printed on the card."
                     } else {
                         "Set \"available\" to Yes to enter a number."
@@ -12237,7 +12251,7 @@ private fun ArtisanForm(
         // a document the record has just said does not exist is an invitation to photograph
         // SOMETHING — and for this class of data the wrong photograph being taken at all is the
         // incident, not the wrong value being stored.
-        if (canReadIdentityCards && pehchanAvailable) {
+        if (canReadIdentityCards && pehchanAvailable == true) {
             DwIdentityCardControl(
                 targetLabel = "the Pehchan card number",
                 kind = DwIdentityKind.PEHCHAN,
@@ -13237,6 +13251,7 @@ private fun ToolForm(
     val artisanId = artisanIds.firstOrNull().orEmpty()
     var processUsedIn by remember(editing) { mutableStateOf(editing?.processUsedIn ?: "") }
     var material by remember(editing) { mutableStateOf(editing?.material ?: "") }
+    var materialFamily by remember(editing) { mutableStateOf(editing?.materialFamily.orEmpty()) }
     var yearsInUse by remember(editing) { mutableStateOf(editing?.yearsInUse?.toString() ?: "") }
     /*
      * THE FIVE DIMENSION BOXES, AND THE TWO PAIRS AMONG THEM.
@@ -13280,7 +13295,9 @@ private fun ToolForm(
     var weight by remember(editing) { mutableStateOf(numToText(editing?.weight)) }
     var radius by remember(editing) { mutableStateOf(numToText(editing?.radius)) }
     var maker by remember(editing) { mutableStateOf(editing?.maker ?: "UNKNOWN") }
-    var traditionType by remember(editing) { mutableStateOf(editing?.traditionType ?: "UNKNOWN") }
+    // "" until answered: the dropdown offers the three shared answers, and a retired code an older
+    // row holds (MODERN, HYBRID) opens as its successor. Saved as UNKNOWN when left unanswered.
+    var traditionType by remember(editing) { mutableStateOf(StandardValues.traditionChoice(editing?.traditionType)) }
     var replacementCost by remember(editing) { mutableStateOf(numToText(editing?.replacementCost)) }
     var suggestions by remember(editing) { mutableStateOf(editing?.suggestionsForToolImprovement ?: "") }
     var remarks by remember(editing) { mutableStateOf(editing?.remarks ?: "") }
@@ -13619,6 +13636,7 @@ private fun ToolForm(
                 place = place.trim(),
                 processUsedIn = processUsedIn.blankToNull(),
                 material = material.blankToNull(),
+                materialFamily = materialFamily.blankToNull(),
                 yearsInUse = yearsInUse.toIntOrNull(),
                 height = height.toDoubleOrNull(),
                 width = width.toDoubleOrNull(),
@@ -13639,7 +13657,7 @@ private fun ToolForm(
                 weight = weight.toDoubleOrNull(),
                 radius = radius.toDoubleOrNull(),
                 maker = maker,
-                traditionType = traditionType,
+                traditionType = traditionType.ifBlank { StandardValues.TRADITION_UNANSWERED },
                 replacementCost = replacementCost.toDoubleOrNull(),
                 suggestionsForToolImprovement = suggestions.blankToNull(),
                 remarks = remarks.blankToNull(),
@@ -13913,6 +13931,8 @@ private fun ToolForm(
         CompletenessAnchor("material") {
             TextInput("Material", material) { material = it }
         }
+        // The material FAMILY from the shared list; the box above stays the free description.
+        DropdownField("Material type", StandardValues.MATERIAL_FAMILY_OPTIONS, materialFamily, placeholder = "Select material type") { materialFamily = it }
         TextInput("Years in use", yearsInUse, keyboardType = KeyboardType.Number, dictate = false) { yearsInUse = it }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.weight(1f)) { TextInput("Height (cm)", height, keyboardType = KeyboardType.Decimal, dictate = false) { height = it; propagateDimension(it, ::inchesTextFromCm) { v -> heightInches = v } } }
@@ -14026,7 +14046,7 @@ private fun ToolForm(
             DropdownField("Maker", makerOptions.map { it to it }, maker, includeNone = false) { maker = it }
         }
         CompletenessAnchor("traditionType") {
-            DropdownField("Tradition type", traditionOptions.map { it to it }, traditionType, includeNone = false) { traditionType = it }
+            DropdownField("Tradition type", StandardValues.TRADITION_OPTIONS, traditionType, placeholder = "Select tradition type") { traditionType = it }
         }
         CompletenessAnchor("replacementCost") {
             TextInput("Replacement cost", replacementCost, keyboardType = KeyboardType.Decimal, dictate = false) { replacementCost = it }
@@ -18132,7 +18152,7 @@ private fun ViewDataDetail(
                 DetailRow("Craft", v.craft?.name)
                 DetailRow("Place", v.place)
                 DetailRow("Gender", v.gender)
-                DetailRow("Phone", v.phone)
+                DetailRow("Phone", StandardValues.formatPhone(v.phoneCountryCode, v.phone))
                 DetailRow("Email", v.email)
                 DetailRow("Address", v.address)
                 DetailRow("Notes", v.notes)
@@ -18191,8 +18211,9 @@ private fun ViewDataDetail(
                 DetailRow("Artisan", v.artisanName)
                 DetailRow("Place", v.place)
                 DetailRow("Material", v.material)
+                DetailRow("Material type", StandardValues.materialFamilyLabel(v.materialFamily))
                 DetailRow("Maker", v.maker)
-                DetailRow("Tradition", v.traditionType)
+                DetailRow("Tradition", StandardValues.traditionLabel(v.traditionType))
                 DetailRow("Used in", v.processUsedIn)
                 DetailRow("Remarks", v.remarks)
                 DetailRow("Status", v.status)
@@ -18259,7 +18280,7 @@ private fun ViewDataDetail(
                 if (showProvenance) ProvenanceSection(meta = rep.extraMetadata, createdByName = rep.createdBy?.name)
                 DetailRow("Artisans", rep.artisans.mapNotNull { it.artisan?.name }.joinToString(", ").ifBlank { null })
                 DetailRow("Place", rep.place)
-                DetailRow("Language", rep.language)
+                DetailRow("Language", StandardValues.languageName(rep.language))
                 DetailRow("Notes", rep.notes)
                 DetailRow("Status", rep.status)
                 val researchers = g.mapNotNull { it.createdBy?.name }.distinct().joinToString(", ")

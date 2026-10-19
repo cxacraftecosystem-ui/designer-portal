@@ -52,7 +52,8 @@ import { recordingFilename, splitExtension } from "@/lib/naming";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
-import { makerOptions, traditionOptions } from "@/lib/types";
+import { MATERIAL_FAMILY_OPTIONS, TRADITION_OPTIONS, traditionChoice } from "@/lib/standardValues";
+import { makerOptions } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 
@@ -1229,6 +1230,7 @@ export function ToolForm({
         englishName: textValue(form, "englishName"),
         processUsedIn: textValue(form, "processUsedIn"),
         material: textValue(form, "material"),
+        materialFamily: textValue(form, "materialFamily"),
         yearsInUse: numericValue(form, "yearsInUse"),
         height: toNum(height),
         // FROM STATE AND NOT FROM `FormData`, since the centimetre boxes became controlled: this box
@@ -1830,6 +1832,18 @@ export function ToolForm({
               }}
             />
           </div>
+          {/* The material FAMILY from the shared list (lib/standardValues, both portals and both apps);
+              the box above stays the free description ("mango wood with an iron collar"). */}
+          <Field label="Material type">
+            <Select name="materialFamily" defaultValue={initial?.materialFamily ?? ""} onChange={markDirty}>
+              <option value="">Select material type</option>
+              {MATERIAL_FAMILY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
           {/* ── `min={0}` ON EVERY NUMBER ON THIS FORM, AND THE SAME BOUND ON THE SCHEMA ──────
               `yearsInUse` has carried this pair since it was added — `min={0}` here and `ge=0` on
               both `ToolCreate` and `ToolUpdate` — and it was the ONLY number on this form that did.
@@ -2111,9 +2125,12 @@ export function ToolForm({
             </Select>
           </Field>
           <Field label="Tradition type" fieldKey="traditionType">
-            <Select name="traditionType" defaultValue={initial?.traditionType ?? "UNKNOWN"} onChange={markDirty}>
-              {traditionOptions.map((option) => (
-                <option key={option}>{option}</option>
+            <Select name="traditionType" defaultValue={traditionChoice(initial?.traditionType)} onChange={markDirty}>
+              <option value="">Select tradition type</option>
+              {TRADITION_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
               ))}
             </Select>
           </Field>

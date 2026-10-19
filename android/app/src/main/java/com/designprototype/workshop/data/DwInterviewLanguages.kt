@@ -31,12 +31,7 @@ package com.designprototype.workshop.data
  * and is deliberately a REAL answer rather than an escape hatch — an interview conducted in a
  * language this list does not name is a fact, and recording it as blank would lose it.
  */
-val DW_INTERVIEW_LANGUAGES: List<String> = listOf(
-    "Hindi", "English", "Bengali", "Marathi", "Telugu", "Tamil", "Gujarati", "Urdu",
-    "Kannada", "Odia", "Malayalam", "Punjabi", "Assamese", "Maithili", "Sanskrit",
-    "Konkani", "Nepali", "Manipuri (Meitei)", "Bodo", "Dogri", "Kashmiri", "Santali",
-    "Sindhi", "Other",
-)
+val DW_INTERVIEW_LANGUAGES: List<String> = StandardValues.LANGUAGES.map { it.label }
 
 /**
  * What the trigger reads while nothing is chosen.
@@ -70,13 +65,7 @@ const val DW_INTERVIEW_LANGUAGE_PLACEHOLDER: String = "Select language"
  *
  * @param current the language already on the record, or null/blank for a new one.
  */
-fun dwInterviewLanguageOptions(current: String?): List<Pair<String, String>> {
-    val base = DW_INTERVIEW_LANGUAGES.map { it to it }
-    // Whitespace-only is "not answered", the same as empty — trimmed for the TEST but never for the
-    // VALUE: prepending the trimmed form would make the option and the stored string different
-    // strings, and the control would go back to matching nothing.
-    val existing = current.orEmpty()
-    if (existing.isBlank()) return base
-    if (DW_INTERVIEW_LANGUAGES.any { it == existing }) return base
-    return listOf(existing to existing) + base
-}
+fun dwInterviewLanguageOptions(current: String?): List<Pair<String, String>> =
+    // SINCE CONVERGENCE POINT 10 the value is the shared standard CODE ("bn") and the label its name
+    // ("Bengali"), from [StandardValues]; a free-text value stored before the list stays first.
+    StandardValues.languageOptions(current)
