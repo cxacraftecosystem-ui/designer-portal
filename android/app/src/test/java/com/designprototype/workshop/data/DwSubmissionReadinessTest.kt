@@ -441,6 +441,15 @@ class DwSubmissionReadinessTest {
         )
     }
 
+    @Test
+    fun `the stage index header and the summary count stages with one rule`() {
+        val header = dwStageProgress(computeWorkshopCompleteness(registry, draft, null))
+        assertEquals(readiness.stagesComplete, header.stagesComplete)
+        assertEquals(readiness.stagesTotal, header.stagesTotal)
+        assertEquals(readiness.blocking.size, header.requiredLeft)
+        assertEquals("1 of 3 stages complete · 3 required fields left", dwStageProgressLine(header))
+    }
+
     // ── Saying it honestly ───────────────────────────────────────────────────────────────────────
 
     @Test

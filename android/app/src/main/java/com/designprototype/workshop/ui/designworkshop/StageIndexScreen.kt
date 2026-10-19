@@ -102,10 +102,11 @@ import com.designprototype.workshop.data.dwConsentMerge
 import com.designprototype.workshop.data.dwConsentRecordedNote
 import com.designprototype.workshop.data.dwConsentStateSentence
 import com.designprototype.workshop.data.dwFrozenSentence
+import com.designprototype.workshop.data.dwStageProgress
+import com.designprototype.workshop.data.dwStageProgressLine
 import com.designprototype.workshop.data.dwTier3ConsentOf
 import com.designprototype.workshop.data.dwTier3ConsentToken
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
-import com.designprototype.workshop.data.overallPercent
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
@@ -455,8 +456,11 @@ fun StageIndexScreen(
             return@Column
         }
 
-        val overall = remember(stages) { overallPercent(stages) }
-        val done = remember(stages) { stages.count { it.isComplete } }
+        // ONE RULE, COUNTED IN STAGES. This line printed overallPercent (required FIELDS filled)
+        // beside the stage count — "0% overall · 9 of 22 stages complete" in the 0.0.19 smoke —
+        // two true numbers that read together as a bug. The bar and the headline now come from
+        // dwStageProgress, the call the readiness summary and the web overview card count with.
+        val stageProgress = remember(stages) { dwStageProgress(stages) }
 
         Text(
             title.ifBlank { "Design workshop" },
@@ -464,9 +468,9 @@ fun StageIndexScreen(
             color = MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.typography.headlineSmall
         )
-        FieldLinearProgressIndicator(progress = { overall / 100f }, modifier = Modifier.fillMaxWidth())
+        FieldLinearProgressIndicator(progress = { stageProgress.percent / 100f }, modifier = Modifier.fillMaxWidth())
         Text(
-            "$overall% overall · $done of ${stages.size} stages complete",
+            dwStageProgressLine(stageProgress),
             color = MaterialTheme.field.muted,
             style = MaterialTheme.typography.bodySmall
         )

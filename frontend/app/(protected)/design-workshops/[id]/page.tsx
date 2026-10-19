@@ -61,6 +61,7 @@ import {
   dwPatchableFrom,
   getDesignWorkshop,
   patchDesignWorkshop,
+  stageProgressPercent,
   type DwDecision,
   type DwInspectionFeedback,
   type DwRegistry,
@@ -1731,7 +1732,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
             </div>
             <ProgressBar
               percent={
-                readiness && readiness.stagesTotal ? Math.round((100 * readiness.stagesComplete) / readiness.stagesTotal) : 0
+                readiness ? stageProgressPercent(readiness.stagesComplete, readiness.stagesTotal) : 0
               }
               className="mt-1.5 h-2"
               role="progressbar"

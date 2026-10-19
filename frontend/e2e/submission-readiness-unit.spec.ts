@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { localCompleteness, type DwDraft } from "@/lib/designWorkshopStore";
-import type { DwRegistry } from "@/lib/designWorkshops";
+import { stageProgress, stageProgressPercent, type DwRegistry, type DwStageCompleteness } from "@/lib/designWorkshops";
 import { itemFieldName, readinessSummary, workshopReadiness } from "@/lib/submissionReadiness";
 
 /**
@@ -336,6 +336,26 @@ test("the summary counts stages and fields rather than printing a percentage", (
   // and NOT an obstacle — the same rule `stage_completeness` applies.
   expect(done.isSubmittable).toBe(true);
   expect(readinessSummary(done)).toBe("3 of 3 stages complete; no required fields remain.");
+});
+
+test("the overview bar, the readiness count and the stage rule are one number", () => {
+  const scores = Object.values(localCompleteness(REGISTRY, DRAFT));
+  const header = stageProgress(scores, REGISTRY.stages.length);
+  expect(header.stagesComplete).toBe(READINESS.stagesComplete);
+  expect(header.stagesTotal).toBe(READINESS.stagesTotal);
+  expect(header.requiredLeft).toBe(READINESS.blocking.length);
+  expect(header.percent).toBe(stageProgressPercent(READINESS.stagesComplete, READINESS.stagesTotal));
+});
+
+test("nine empty stages complete and nothing else filled reads 41%, never 0% (the 0.0.19 smoke)", () => {
+  const score = (missing: string[]): Pick<DwStageCompleteness, "isComplete" | "missing"> => ({
+    isComplete: missing.length === 0,
+    missing
+  });
+  const smoke = [...Array.from({ length: 9 }, () => score([])), ...Array.from({ length: 13 }, () => score(["A", "B", "C"]))];
+  expect(stageProgress(smoke)).toEqual({ stagesComplete: 9, stagesTotal: 22, percent: 41, requiredLeft: 39 });
+  expect(stageProgressPercent(0, 0)).toBe(0);
+  expect(stageProgressPercent(5, 4)).toBe(100);
 });
 
 test("one outstanding field is worded in the singular", () => {

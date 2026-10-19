@@ -3706,6 +3706,44 @@ export function overallPercent(completeness: Record<string, DwStageCompleteness>
   return Math.round((100 * filled) / required);
 }
 
+/**
+ * A workshop's headline progress, counted in stages. The one rule every screen that prints
+ * "N of M stages complete" draws its bar and percentage from.
+ *
+ * `overallPercent` is required FIELDS filled, a different and equally true number. Printed beside
+ * the stage count it read as a bug ("0% overall · 9 of 22 stages complete": nine stages with nothing
+ * required are complete while 0 of the remaining fields are filled), so a screen that leads with the
+ * stage count takes its percentage from here and nowhere else. Android's `dwStageProgress` is the twin.
+ */
+export type StageProgress = {
+  stagesComplete: number;
+  stagesTotal: number;
+  /** `stagesComplete` over `stagesTotal`, rounded; 0 when there are no stages to count. */
+  percent: number;
+  /** Required fields still empty across every stage — the same count the readiness checklist lists. */
+  requiredLeft: number;
+};
+
+/** The headline percentage: stages complete over stages total, 0 when nothing is counted. */
+export function stageProgressPercent(stagesComplete: number, stagesTotal: number): number {
+  if (stagesTotal <= 0) return 0;
+  return Math.round((100 * Math.min(stagesComplete, stagesTotal)) / stagesTotal);
+}
+
+/** Roll per-stage scores into the headline. `stagesTotal` defaults to the number of scores. */
+export function stageProgress(
+  scores: readonly Pick<DwStageCompleteness, "isComplete" | "missing">[],
+  stagesTotal: number = scores.length
+): StageProgress {
+  let stagesComplete = 0;
+  let requiredLeft = 0;
+  for (const score of scores) {
+    if (score.isComplete) stagesComplete += 1;
+    requiredLeft += score.missing.length;
+  }
+  return { stagesComplete, stagesTotal, percent: stageProgressPercent(stagesComplete, stagesTotal), requiredLeft };
+}
+
 /** The plain text of a run sequence — for a heading's anchor text and an image's alt attribute. */
 export function runsText(runs: DwRun[] | undefined): string {
   return (runs ?? []).map((run) => run.text).join("");
