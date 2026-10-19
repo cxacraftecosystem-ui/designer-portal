@@ -624,8 +624,30 @@ def transcriptions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         sent.append(file.filename)
         return {"available": True, "status": "COMPLETED", "text": "dabu resist printing"}
 
+    async def _unpaused() -> bool:
+        return False
+
+    # Transcription ships PAUSED (owner hold, 18 Oct 2026); these tests are about who may send once on.
+    monkeypatch.setattr(media.app_settings, "load_transcription_paused", _unpaused)
     monkeypatch.setattr(media, "transcribe_audio", _transcribe)
     return sent
+
+
+@pytest.mark.parametrize("role", ("ADMIN", "MASTER_ADMIN"))
+def test_the_pause_holds_a_clip_that_is_not_a_media_row(
+    api: _Api, transcriptions: list[str], monkeypatch: pytest.MonkeyPatch, role: str
+) -> None:
+    """While transcription is paused even an admin's POST (the live smoke's) reaches no provider."""
+
+    async def _paused() -> bool:
+        return True
+
+    monkeypatch.setattr(media.app_settings, "load_transcription_paused", _paused)
+    outcome = api.as_(_user(role)).call("POST", "/media/transcribe", files=TRANSCRIBE_CLIP)
+
+    assert outcome.status_code == 200, outcome
+    assert "'paused': True" in outcome.detail, outcome
+    assert transcriptions == []
 
 
 @pytest.mark.parametrize("role", BELOW_ADMIN)

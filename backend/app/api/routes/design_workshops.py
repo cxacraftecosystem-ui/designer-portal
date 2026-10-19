@@ -174,6 +174,7 @@ from app.services import (
     ai_layers,
     ai_verb_cap,
     ai_verbs,
+    app_settings,
     design_workshop_approvals,
     design_workshop_posts,
     dictation_cap,
@@ -296,6 +297,7 @@ from app.services.stage_schema import (
 # before anything asks how big it was. See A30-10 and the helper's own docstring. (2026-09-03)
 from app.services.uploads import read_upload_bounded
 from app.services.workshop_transcripts import load_transcript_items
+from app.transcription.schedule import PAUSED_MESSAGE
 
 router = APIRouter(prefix="/design-workshops", tags=["design-workshops"])
 
@@ -1353,6 +1355,12 @@ async def _transcribe_one_dictation(
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No audio was uploaded."
+        )
+    # THE OWNER'S HOLD (18 Oct 2026), after every other refusal and before any provider is
+    # touched: 503, nothing counted, and the dictation ladder falls through to the on-device rungs.
+    if await app_settings.load_transcription_paused():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=PAUSED_MESSAGE
         )
     result = await transcribe_audio_bytes(
         content,
@@ -4512,6 +4520,10 @@ async def subtitle_ai_layer(
     # SIZE, WHICH `_verb_source_media` DOES NOT CHECK — see `MAX_SUBTITLE_FETCH_BYTES`. This verb
     # takes VIDEO as well as AUDIO, so it is the one most likely to be pointed at the 668 MiB object.
     await _refuse_oversize_verb_source(media, MAX_SUBTITLE_FETCH_BYTES, what="subtitle")
+    # Subtitles send the audio to a provider again, so the owner's hold applies (18 Oct 2026),
+    # after every refusal about the caller and the file and before a byte is downloaded.
+    if await app_settings.load_transcription_paused():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=PAUSED_MESSAGE)
     answer: Mapping[str, Any] | None = None
     source_path: str | None = None
     try:
