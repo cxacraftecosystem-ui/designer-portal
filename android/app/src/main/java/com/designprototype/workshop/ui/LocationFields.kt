@@ -323,11 +323,16 @@ private const val REFERENCE_CACHE_STAMP_FILE = "address-reference-fetched-at.txt
  * somebody chases. [INDIAN_STATES_AND_UNION_TERRITORIES] is that table read out. One list on this
  * client, not two.
  *
- * ── AND WHY THE DISTRICTS ARE NOT HERE, WHICH IS NOT AN OVERSIGHT ───────────────────
+ * ── THE DISTRICTS NOW HAVE A FLOOR TOO: [AddressReferenceBaseline] ───────────────────
  *
- * 795 names, revised several times a year, meaningful only per state. The web makes the same split
- * for the same reason and stands the district DOWN from required instead. The states change on the
- * order of once a decade, which is what makes bundling them honest.
+ * This paragraph used to argue that 795 districts could not be compiled in, because they move
+ * several times a year. The 0.0.19 emulator smoke showed what that cost: a fresh install that went
+ * offline before its first sync had states and no districts, `artisanLocationRequirementError`
+ * refused every new artisan, and the researcher could not record the person in front of them. The
+ * baseline is the server's whole `/reference/address` payload, dumped into the APK and held equal
+ * to `address_reference()` by `test_the_bundled_android_address_reference_is_the_served_one`. A
+ * district list one release old is far better than none, and the server copy replaces it the first
+ * time the phone connects.
  *
  * THE SERVED LIST STILL WINS WHENEVER IT EXISTS ([stateOptions] prefers it), so the day the register
  * changes the deployed API is the authority and no APK needs shipping.
@@ -416,6 +421,70 @@ internal object AddressReferenceCache {
     }
 }
 
+/** The asset the build dumps `address_reference()` into; regenerate with the command below. */
+internal const val ADDRESS_REFERENCE_ASSET = "address-reference.json"
+
+/**
+ * The address reference compiled into the APK: every state AND every district, as the server
+ * served them on the day this build was cut.
+ *
+ * IT IS THE FLOOR, NEVER THE AUTHORITY. [chooseAddressReference] prefers the device's cache, and the
+ * served payload replaces both on the first successful fetch. The only job of this copy is that a
+ * handset set up at the office and first opened in a cluster with no signal can still answer the
+ * two questions a new artisan cannot be saved without.
+ *
+ * Regenerate `app/src/main/assets/address-reference.json` whenever `services/address.py` moves:
+ *
+ *     cd backend && python -c "import json,pathlib;\
+ *       from app.services.address import address_reference;\
+ *       pathlib.Path('../android/app/src/main/assets/address-reference.json')\
+ *         .write_text(json.dumps(address_reference(),ensure_ascii=False,separators=(',',':')),\
+ *                     encoding='utf-8')"
+ *
+ * `backend/tests/test_address_districts.py` fails until it is, so a stale baseline cannot ship.
+ */
+internal object AddressReferenceBaseline {
+
+    @Volatile
+    private var loaded: AddressReferenceDto? = null
+
+    fun read(context: Context): AddressReferenceDto? = loaded ?: runCatching {
+        context.assets.open(ADDRESS_REFERENCE_ASSET).bufferedReader(Charsets.UTF_8).use { decode(it.readText()) }
+    }.getOrNull()?.also { loaded = it }
+
+    /** Null for a document that is not a usable reference, so a broken asset reads as "no floor". */
+    fun decode(text: String): AddressReferenceDto? = runCatching {
+        referenceJson.decodeFromString(AddressReferenceDto.serializer(), text)
+    }.getOrNull()?.takeIf { it.statesAndUnionTerritories.isNotEmpty() || it.states.isNotEmpty() }
+}
+
+/** Which copy of the reference a device starts from, and whether that copy is the APK's own. */
+internal data class StartingReference(val reference: AddressReferenceDto, val bundled: Boolean)
+
+/**
+ * The cache when it is at least as good as the APK's baseline, the baseline otherwise.
+ *
+ * "At least as good" is two checks. A higher `version` wins, so a phone that cached a payload under
+ * an older server never sits on it once a newer APK lands. And a cache with no districts loses to a
+ * baseline that has them at the same version, because that cache is exactly the state the emulator
+ * smoke caught: states and no districts, and no new artisan can be saved.
+ */
+internal fun chooseAddressReference(
+    cached: AddressReferenceDto?,
+    bundled: AddressReferenceDto?
+): StartingReference? {
+    if (bundled == null) return cached?.let { StartingReference(it, bundled = false) }
+    if (cached == null) return StartingReference(bundled, bundled = true)
+    val cachedHasDistricts = !cached.districts?.byState.isNullOrEmpty()
+    val bundledHasDistricts = !bundled.districts?.byState.isNullOrEmpty()
+    return when {
+        bundled.version > cached.version -> StartingReference(bundled, bundled = true)
+        bundled.version == cached.version && bundledHasDistricts && !cachedHasDistricts ->
+            StartingReference(bundled, bundled = true)
+        else -> StartingReference(cached, bundled = false)
+    }
+}
+
 /**
  * The address reference AS THIS DEVICE ACTUALLY HAS IT - the lists, plus the four facts a picker
  * needs in order to say which of docs/archive/DROPDOWN_DESIGN.md 3.5's states it is in.
@@ -447,7 +516,12 @@ data class AddressReferenceState(
      * not a network probe: a second idea of what "offline" means is how one screen comes to call a
      * dead tunnel a server fault while the queue behind it calls the same throwable worth retrying.
      */
-    val online: Boolean = false
+    val online: Boolean = false,
+    /**
+     * [reference] is [AddressReferenceBaseline]'s copy, not a served or cached one. A list compiled
+     * into the APK has no date to print and nothing to apologise for.
+     */
+    val bundled: Boolean = false
 )
 
 /**
@@ -485,7 +559,16 @@ fun rememberAddressReference(repository: WorkshopRepository): AddressReferenceSt
         // with the lists AND with the date that lets its holder judge them.
         val cached = withContext(Dispatchers.IO) { AddressReferenceCache.read(context) }
         val stamp = withContext(Dispatchers.IO) { AddressReferenceCache.readFetchedAt(context) }
-        if (cached != null) state = state.copy(reference = cached, fetchedAt = stamp)
+        val bundled = withContext(Dispatchers.IO) { AddressReferenceBaseline.read(context) }
+        // The baseline under the cache: a fresh install with no signal still has every district.
+        chooseAddressReference(cached, bundled)?.let { start ->
+            state = state.copy(
+                reference = start.reference,
+                // The stamp dates the CACHE. Over the APK's copy it would date a list nobody sees.
+                fetchedAt = if (start.bundled) null else stamp,
+                bundled = start.bundled
+            )
+        }
         val fresh = runCatching { repository.addressReference() }
         val payload = fresh.getOrNull()
         if (payload == null) {
@@ -572,10 +655,9 @@ internal fun addressListNotice(
     /**
      * These rows are [BUNDLED_STATES], not a served or cached list — so there is nothing to report.
      *
-     * PASSED IN RATHER THAN DERIVED, because this one function serves both pickers and only one of
-     * them has a floor: 795 districts genuinely cannot be compiled in, and a bundled arm that
-     * guessed from a row count would eventually claim a district list was compiled in because a
-     * state happened to have 36 of them.
+     * PASSED IN RATHER THAN DERIVED, because this one function serves both pickers and a bundled
+     * arm that guessed from a row count would eventually call a served district list compiled in
+     * because a state happened to have 36 of them. [AddressReferenceState.bundled] says which.
      */
     bundled: Boolean = false
 ): String? = when {
@@ -1283,21 +1365,23 @@ fun LocationFieldsSection(
         // The rows are the compiled-in floor exactly when neither served list arrived, which is what
         // [stateOptions]'s `ifEmpty` chain falls through to. Derived from the same condition rather
         // than from a count, so the two cannot disagree about which list is on screen.
-        bundled = referenceState.reference.statesAndUnionTerritories.isEmpty() &&
-            referenceState.reference.states.isEmpty()
+        bundled = referenceState.bundled || (
+            referenceState.reference.statesAndUnionTerritories.isEmpty() &&
+                referenceState.reference.states.isEmpty()
+            )
     )
     val districtNotice = when {
         // NOT AN EMPTY-LIST CLAIM AT ALL. With no state chosen there is no list to be empty; the
         // placeholder below says what to do and this must not talk over it with a sentence about
         // a district register that was never consulted.
         place.state.isBlank() -> null
-        districtRows.isNotEmpty() -> addressListNotice("districts", districtRows.size, referenceState)
+        districtRows.isNotEmpty() ->
+            addressListNotice("districts", districtRows.size, referenceState, bundled = referenceState.bundled)
         /*
          * THE REFERENCE ARRIVED AND CARRIES NO DISTRICTS FOR THIS STATE. That is a different fact
-         * from "this phone has not been given the list", and it needs a different sentence: 795
-         * districts genuinely cannot be bundled into an APK, and a deployment whose reference
-         * payload stops at the state level is a real and supported configuration rather than a
-         * fault. The operational half is only true where a create is actually being refused, so it
+         * from "this phone has not been given the list", and it needs a different sentence: the
+         * APK's baseline covers every state, so this is a served payload that stops at the state
+         * level, a real and supported configuration rather than a fault. The operational half is only true where a create is actually being refused, so it
          * is said only there — on an edit, and on the designer's own profile, the record saves
          * perfectly well without a district and promising otherwise would send somebody hunting
          * for a signal they do not need.

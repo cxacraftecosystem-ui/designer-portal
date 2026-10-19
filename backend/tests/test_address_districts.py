@@ -8,6 +8,9 @@ exception, so each one is asserted here rather than left to be noticed in a spre
 
 from __future__ import annotations
 
+import json
+import pathlib
+
 import pytest
 
 from app.services.address import (
@@ -256,3 +259,29 @@ def test_balotra_is_present() -> None:
     and absent from any list compiled before then."""
     assert "Balotra" in DISTRICTS_BY_STATE["Rajasthan"]
     assert validate_district("Rajasthan", "balotra") == "Balotra"
+
+
+ANDROID_ADDRESS_ASSET = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "android" / "app" / "src" / "main" / "assets" / "address-reference.json"
+)
+
+
+def test_the_bundled_android_address_reference_is_the_served_one() -> None:
+    """The APK carries ``address_reference()`` as its offline floor, so the two must be equal.
+
+    A fresh install that has never reached the server still has to save a new artisan, and the
+    server refuses one without a state and a district. The phone reads both lists off this asset
+    until its first fetch. A district added here without regenerating the asset would ship a
+    handset that offers last release's list, so this fails until the asset is dumped again with the
+    command in ``AddressReferenceBaseline`` (android/.../ui/LocationFields.kt).
+    """
+    assert ANDROID_ADDRESS_ASSET.exists(), f"the bundled reference is missing: {ANDROID_ADDRESS_ASSET}"
+    bundled = json.loads(ANDROID_ADDRESS_ASSET.read_text(encoding="utf-8"))
+    live = address_reference()
+    assert bundled["version"] == live["version"], "the asset's version is not the served one"
+    assert bundled["statesAndUnionTerritories"] == live["statesAndUnionTerritories"]
+    assert bundled["districts"]["byState"] == live["districts"]["byState"], (
+        "the asset's districts are not the served ones; regenerate it"
+    )
+    assert bundled == live, "the asset differs from address_reference(); regenerate it"
