@@ -6354,11 +6354,20 @@ async def save_stage(
     #
     # ASKED ONLY WHEN THIS STAGE ACTUALLY HOLDS AUDIO, so no read is spent on the twenty stages that
     # carry none, and no message is shown to a designer who was not trying to transcribe anything.
+    #
+    # THE SAME QUESTION THE QUEUE ASKS, the workshop AND its artisans' own answers under the shared
+    # rule, so an artisan's refusal (or a withdrawal) is explained here too rather than only the
+    # workshop's. A store that cannot be read says so; the save itself never fails on it.
     consent_note = ""
     if audio_references(rows):
-        verdict = await dictation_consent.workshop_send_verdict(workshop_id, about=spec.key)
-        if not verdict.may_send:
-            consent_note = verdict.refusal or ""
+        try:
+            verdict = await dictation_consent.workshop_verdict(workshop_id, send=dictation_consent.MEDIA)
+        except Exception as exc:  # noqa: BLE001 - the note is advisory; the queue gate fails closed.
+            logger.warning("save_stage: consent read for %s failed (%s)", spec.key, exc)
+            consent_note = dictation_consent.UNREADABLE
+        else:
+            if not verdict.may_send:
+                consent_note = verdict.refusal or ""
     return {
         "stageKey": spec.key,
         "saved": len(creates) + len(updates),

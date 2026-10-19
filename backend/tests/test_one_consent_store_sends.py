@@ -4,8 +4,9 @@ The rule (``app/transcription/ledger.py``'s ``decide``, the same function docume
 calls) over this portal's subjects (``services/dictation_consent.py``):
 
 * the recording's own row is read FIRST, and a refusal there always refuses, workshop or not;
-* the subjects are every workshop that names the file plus every artisan of it with an answer on
-  record (the artisan's own row, the record both portals read and write);
+* the subjects are every workshop that names the file plus every artisan of it (the artisan's own
+  row, the record both portals read and write); an artisan with no row is "no answer yet", unless a
+  workshop names the material, whose answer speaks for them (the owner decision in DATA_MODEL.md);
 * a recording with no workshop and no row at all is sent as before (a designer's own dictation).
 
 No database and no provider: ``dictation_consent.db`` is ``consent_store_fakes.LedgerDb``.
@@ -93,6 +94,52 @@ async def test_an_artisan_refusal_stops_a_granted_workshops_recording(ledger_db)
     assert (await transcription_verdict(clip)).may_send, "an artisan with no row: the workshop speaks"
     ledger_db.rows["ARTISAN"]["a2"] = "REFUSED"
     assert not (await transcription_verdict(clip)).may_send
+
+
+async def test_one_artisans_grant_does_not_carry_an_unanswered_artisans_voice_out(ledger_db):
+    """No workshop, no recording row: A granted, B never answered. B has not said yes, so it waits,
+    the answer documentation-portal gives over the same ARTISAN rows; B's grant lets it go and B's
+    withdrawal stops it again."""
+    ledger_db.media_artisans["m1"] = ["a1", "a2"]
+    ledger_db.rows["ARTISAN"]["a1"] = "GRANTED"
+    verdict = await transcription_verdict(_dictation(artisanId="a1"), resolve_from_stages=True)
+    assert verdict.decision is SendDecision.REFUSED and verdict.refusal
+    ledger_db.rows["ARTISAN"]["a2"] = "GRANTED"
+    assert (await transcription_verdict(_dictation(artisanId="a1"))).may_send
+    ledger_db.rows["ARTISAN"]["a2"] = "REFUSED"
+    assert not (await transcription_verdict(_dictation(artisanId="a1"))).may_send
+
+
+async def test_an_interviews_pasted_words_wait_for_every_participant(ledger_db):
+    interview = SimpleNamespace(id="i1", designWorkshopId=None)
+    ledger_db.participants["i1"] = ["a1", "a2"]
+    ledger_db.rows["ARTISAN"]["a1"] = "GRANTED"
+    assert not (await dictation_consent.interview_verdict(interview)).may_send
+    ledger_db.rows["ARTISAN"]["a2"] = "GRANTED"
+    assert (await dictation_consent.interview_verdict(interview)).may_send
+    ledger_db.rows["ARTISAN"]["a1"] = "REFUSED"
+    assert not (await dictation_consent.interview_verdict(interview)).may_send
+
+
+async def test_a_workshop_with_no_answer_waits_whatever_one_linked_artisan_said(ledger_db):
+    ledger_db.workshops["ws-1"] = workshop("ws-1", "NOT_RECORDED")
+    ledger_db.workshop_artisans["ws-1"] = ["a1", "a2"]
+    ledger_db.rows["ARTISAN"]["a1"] = "GRANTED"
+    assert not (await dictation_consent.workshop_verdict("ws-1")).may_send
+
+
+async def test_a_granted_workshop_speaks_for_its_unanswered_artisans_and_not_over_a_refusal(ledger_db):
+    """The owner decision recorded in DATA_MODEL.md: the workshop's grant was asked of its artisans,
+    so it covers the ones with no answer of their own; one artisan's refusal still stops it, and the
+    stage-save note (``send=MEDIA``) carries that refusal's sentence."""
+    ledger_db.workshops["ws-1"] = workshop("ws-1", "GRANTED")
+    ledger_db.rows["WORKSHOP"]["ws-1"] = "GRANTED"
+    ledger_db.workshop_artisans["ws-1"] = ["a1", "a2"]
+    ledger_db.rows["ARTISAN"]["a1"] = "GRANTED"
+    assert (await dictation_consent.workshop_verdict("ws-1", send=dictation_consent.MEDIA)).may_send
+    ledger_db.rows["ARTISAN"]["a2"] = "REFUSED"
+    verdict = await dictation_consent.workshop_verdict("ws-1", send=dictation_consent.MEDIA)
+    assert not verdict.may_send and verdict.refusal
 
 
 async def test_the_insights_and_drafting_sends_ask_the_same_rule(ledger_db):

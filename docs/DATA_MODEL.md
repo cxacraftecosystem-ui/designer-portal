@@ -401,14 +401,32 @@ anything is sent to an outside service (transcription, refinement, summaries, an
 subtitles, captions, search embeddings), `transcription_verdict` in
 `backend/app/services/dictation_consent.py` reads the recording's own row first — a refusal there
 always refuses — then decides with the shared rule over every workshop that names the file and every
-artisan of it who has an answer on record: its `artisanId`, its interview's participants and the
-artisans linked to those workshops (`Artisan.designWorkshopId`, which is how a stage clip reaches its
-artisan). Dictation and the AI verbs over pasted text ask `workshop_verdict` (the workshop and its
-linked artisans); a verb over a stored file or a layer made from one asks about that file as well.
-**A recording with no workshop and no consent row at all (a designer's own dictation, for example) is
-sent as before**; once anyone records an answer for it or one of its artisans, the rule decides it. A
-route answers a refusal with 409 and a consent store it cannot read with 503
-(`backend/app/api/consent_http.py`).
+artisan of it: its `artisanId`, its interview's participants and the artisans linked to those
+workshops (`Artisan.designWorkshopId`, which is how a stage clip reaches its artisan). **An artisan
+with no answer counts as "no answer yet"**, so one artisan's grant never sends another artisan's
+words; with no workshop involved this is the answer the Field Repository gives over the same rows.
+Dictation and the AI verbs over pasted text ask `workshop_verdict` (the workshop and its linked
+artisans); a verb over a stored file or a layer made from one asks about that file as well, and the
+stage save's "why nothing was queued" note asks `workshop_verdict` too, so an artisan's refusal is
+explained there. **A recording with no workshop and no consent row at all (a designer's own
+dictation, for example) is sent as before**; once anyone records an answer for it or one of its
+artisans, the rule decides it. A route answers a refusal with 409 and a consent store it cannot read
+with 503 (`backend/app/api/consent_http.py`).
+
+**Owner decisions still open, recorded as the code behaves today (2026-10-19):**
+
+- *A workshop's grant speaks for its artisans who have not answered themselves.* Where a workshop
+  names the material, its `WORKSHOP` row is a subject and an artisan with no `ARTISAN` row is not
+  counted against it, because the workshop question was asked of those artisans. Any artisan's own
+  refusal still stops the send. If the owner decides each artisan must answer, `_subjects_verdict`
+  counts them as "no answer yet" in that case too (one branch).
+- *Not gated by the consent store, deliberately:* the artisan identity-card read
+  (`POST /api/design-workshops/ocr/identity`, a photo of an artisan's Aadhaar or Pehchan card to
+  Gemini or OpenAI through `identity_ocr.read_identity_card`). It names no artisan, usually because
+  the artisan is being registered from that card, so there is no record to ask; it is designer-only,
+  stores nothing and keeps the photo only as `retention` says. Also outside the store: search-query
+  embeddings (the searcher's own words), grid measurement photos, background removal and
+  vectorising, shopping lookups, sign-in (OIDC) and Aadhaar online verification (behind flags).
 
 ---
 

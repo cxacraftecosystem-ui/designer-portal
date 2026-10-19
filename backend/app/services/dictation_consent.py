@@ -34,9 +34,11 @@ puts them together with the shared rule (``ledger.decide``) in this order:
 2. the subjects are every workshop that names the file, plus every artisan of the file (its
    ``artisanId``, its interview's participants, and the artisans linked to any of those workshops,
    ``Artisan.designWorkshopId``, since a stage clip such as ``artisanAudio`` names no artisan of its
-   own) WHO HAS AN ANSWER ON RECORD. An artisan with no row is not a subject here: a workshop's answer
-   speaks for the artisans it was asked of, as it always has;
-3. one refusal refuses; every subject granted allows; a workshop with no answer waits.
+   own). An artisan with no row is a subject with NO ANSWER YET, exactly as documentation-portal
+   counts them over the same rows, with one exception (OWNER DECISION PENDING, recorded in
+   ``docs/DATA_MODEL.md``): where a workshop names the file, that workshop's answer speaks for the
+   artisans who have not answered themselves, as it always has, since it was asked of them;
+3. one refusal refuses; every subject granted allows; a subject with no answer waits.
 
 A send about a workshop and no one stored file (dictation, the AI verbs over pasted text) asks
 :func:`workshop_verdict`: the workshop's answer and its linked artisans' answers, under the same rule.
@@ -1250,7 +1252,7 @@ async def transcription_verdict(
     # without them an artisan's refusal would never reach the recordings made of them in a workshop.
     artisan_ids = sorted({*artisan_ids, *await workshop_artisan_ids(candidates)})
     artisans = await artisan_rows(artisan_ids) if artisan_ids else {}
-    return await _subjects_verdict(own, candidates, artisans, send=send, about=about)
+    return await _subjects_verdict(own, candidates, artisans, send=send, about=about, artisan_ids=artisan_ids)
 
 
 async def _subjects_verdict(
@@ -1261,11 +1263,18 @@ async def _subjects_verdict(
     send: Send,
     about: Any,
     records: Mapping[str, Any] | None = None,
+    artisan_ids: list[str] | None = None,
 ) -> SendVerdict:
     """The shared rule (``ledger.decide``, the same function documentation-portal's gate calls) over
     the recording's own row, every workshop that names it and every artisan of it with an answer on
     record. One refusal is the answer; every subject has to permit the send. ``records`` are workshop
-    rows the caller already holds, so they are not read twice."""
+    rows the caller already holds, so they are not read twice.
+
+    ``artisan_ids`` is EVERY artisan of the subject, answered or not. One with no row is passed to the
+    rule as None, "no answer yet", so artisan A's grant can never carry artisan B's voice out: the
+    same answer documentation-portal's gate gives over the same rows. Where a workshop names the
+    material, its row is a subject too and speaks for the artisans with no answer of their own (the
+    owner decision recorded in ``docs/DATA_MODEL.md``), so only their answered rows are added."""
     if not candidates and own is None and not artisans:
         return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
     first = candidates[0] if candidates else None
@@ -1284,7 +1293,13 @@ async def _subjects_verdict(
         return verdict_for(None, workshop_id=first, send=send) if first else SendVerdict(
             SendDecision.REFUSED, refusal=subject_refusal(DictationConsent.NOT_RECORDED, send)
         )
-    decided = ledger.decide(own, [*rows, *artisans.values()])
+    if candidates:
+        # The workshop's own row (already in ``rows``) speaks for an artisan who has not answered.
+        artisan_subjects = list(artisans.values())
+    else:
+        ids = sorted({*(artisan_ids or ()), *artisans})
+        artisan_subjects = [artisans.get(artisan_id) for artisan_id in ids]
+    decided = ledger.decide(own, [*rows, *artisan_subjects])
     if decided == ledger.ALLOW:
         return SendVerdict(SendDecision.GRANTED, workshop_id=first)
     for workshop_id, row in zip(candidates, rows, strict=True):
@@ -1336,10 +1351,11 @@ async def workshop_verdict(
     :func:`gate_refusal` always has; an artisan's reads as :func:`subject_refusal`. ``record`` is the
     workshop row when the caller already holds it."""
     workshop_id = str(workshop_id or "").strip()
-    artisans = await artisan_rows(await workshop_artisan_ids([workshop_id]))
+    artisan_ids = await workshop_artisan_ids([workshop_id])
+    artisans = await artisan_rows(artisan_ids)
     return await _subjects_verdict(
         None, [workshop_id], artisans, send=send, about=workshop_id,
-        records={workshop_id: record} if record is not None else None,
+        records={workshop_id: record} if record is not None else None, artisan_ids=artisan_ids,
     )
 
 
@@ -1365,8 +1381,12 @@ async def interview_verdict(interview: Any, *, send: Send = DRAFTING) -> SendVer
         'SELECT "artisanId" FROM "QuestionnaireInterviewArtisan" WHERE "interviewId" = $1', interview_id
     )
     linked = await workshop_artisan_ids([workshop]) if workshop else []
-    artisans = await artisan_rows(sorted({*(str(row["artisanId"]) for row in rows), *linked}))
-    return await _subjects_verdict(None, [workshop] if workshop else [], artisans, send=send, about=interview_id)
+    artisan_ids = sorted({*(str(row["artisanId"]) for row in rows), *linked})
+    artisans = await artisan_rows(artisan_ids)
+    return await _subjects_verdict(
+        None, [workshop] if workshop else [], artisans, send=send, about=interview_id,
+        artisan_ids=artisan_ids,
+    )
 
 
 async def record_artisan_consent(
@@ -1385,41 +1405,6 @@ async def record_artisan_consent(
         state=state, basis=basis, actor_id=actor_id, note=note, recorded_at=recorded_at,
     )
     return written or {}
-
-
-async def workshop_send_verdict(
-    workshop_id: str | None,
-    *,
-    send: Send = MEDIA,
-    about: Any = None,
-) -> SendVerdict:
-    """One workshop's verdict, read from the database. ``about`` names the subject in the log only.
-
-    Separate from :func:`transcription_verdict` so a caller that is holding a workshop and NO file can
-    ask the same question and get the same sentence — ``save_stage`` wants to tell a designer why their
-    recordings were not queued, and it has the workshop id but no single clip to name. Two spellings of
-    this read would be two chances for the screen's explanation and the queue's decision to disagree,
-    which is worse than no explanation at all: a designer told transcription is running while it is
-    refused stops trusting the message rather than the feature.
-    """
-    workshop_id = str(workshop_id or "").strip()
-    if not workshop_id:
-        return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
-    try:
-        row = await db.designworkshop.find_unique(where={"id": workshop_id})
-        current = await current_row(workshop_id, row) if row is not None else None
-    except Exception as exc:  # noqa: BLE001 — see the docstring: a failed read refuses, never raises.
-        logger.warning(
-            "dictation_consent: could not read the consent of workshop %s (subject %s): %s; "
-            "refusing the send",
-            workshop_id,
-            about,
-            exc,
-        )
-        return verdict_for(None, workshop_id=workshop_id, send=send)
-    return verdict_for(
-        _consent_token(current) if row is not None else None, workshop_id=workshop_id, send=send
-    )
 
 
 def _consent_token(row: Mapping[str, Any] | None) -> DictationConsent:

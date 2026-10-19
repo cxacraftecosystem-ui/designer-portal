@@ -1013,6 +1013,12 @@ async def scan_identity_card(
     the digits to the card is standing right there; this endpoint's whole job is to save them the
     typing, not the checking.
 
+    NOT ASKED OF THE CONSENT STORE, AND THAT IS A RECORDED EXEMPTION, NOT A GAP. The card is an
+    artisan's and it goes to Gemini or OpenAI, but the request names no artisan (usually the artisan
+    is being registered from this very card), so there is no record to ask. Designer-only, nothing
+    stored, the photo kept only as ``retention`` says. Listed with the other exemptions as an open
+    owner decision in ``docs/DATA_MODEL.md`` ("the one consent store").
+
     Every 12-digit candidate has already been through the UIDAI Verhoeff checksum in
     :mod:`app.services.identity_ocr` — the read is the failure mode, and the checksum is what
     catches it. Pehchan numbers are normalised through ``artisan_identity.normalize_pehchan`` so an
