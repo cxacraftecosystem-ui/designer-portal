@@ -205,6 +205,11 @@ def world(monkeypatch):
         return {1: "Since my grandfather", 2: "My mother"}, "anthropic", "claude-sonnet-5"
 
     monkeypatch.setattr(routes.ad, "draft_answers", fake_draft)
+    # The consent store: nothing recorded, and the interview names no workshop, so the drafts here
+    # are sent as before (``test_one_consent_store_sends.py`` withdraws consent and is refused).
+    from consent_store_fakes import LedgerDb
+
+    monkeypatch.setattr(routes.dictation_consent, "db", LedgerDb())
     return SimpleNamespace(db=fake, asked=asked)
 
 

@@ -452,15 +452,20 @@ def test_one_decision_makes_exactly_two_writes_and_names_one_row():
         "dictationConsentById": "usr_2",
     }
 
-    assert plans.decision.table == "DwWorkshopConsentDecision"
+    # The one consent store (19 Oct 2026): the decision is a WORKSHOP row in the shared ledger.
+    assert plans.decision.table == "Consent"
     assert plans.decision.operation is Operation.CREATE
     assert plans.decision.where is None
     assert plans.decision.data == {
-        "designWorkshopId": "wsp_1",
-        "decision": "GRANTED",
+        "subject_type": "WORKSHOP",
+        "subject_id": "wsp_1",
+        "purpose": "EXTERNAL_PROCESSING",
+        "state": "GRANTED",
+        "basis": "VERBAL_RECORDED",
+        "source": "researcher",
         "note": None,
-        "actorId": "usr_2",
-        "recordedAt": None,
+        "actor_id": "usr_2",
+        "recorded_at": AT,
     }
 
 
@@ -494,19 +499,19 @@ def test_the_courtyard_moment_is_what_lands_on_the_workshop():
         recorded_at=in_a_courtyard,
     )
     assert plans.workshop.data["dictationConsentAt"] == in_a_courtyard
-    assert plans.decision.data["recordedAt"] == in_a_courtyard
+    assert plans.decision.data["recorded_at"] == in_a_courtyard
     # The server's clock is NOT copied into the log row: `createdAt` is that table's own default, and a
     # copy here would be a second place for it to be wrong.
     assert "createdAt" not in plans.decision.data
 
 
-def test_a_consent_recorded_against_the_server_leaves_the_device_moment_null():
-    """Null and not a copy of ``at``. A copy would later read as "a device reported this", which is
-    false, and would make the two columns indistinguishable for every consent recorded in an office."""
+def test_a_consent_recorded_against_the_server_is_dated_to_that_moment():
+    """The ledger's ``recordedAt`` is when the person answered, which for an answer taken straight
+    against the server is the server's moment; the row's own ``createdAt`` says when it was heard."""
     plans = decision_plans(
         workshop_id="wsp_1", decision=DictationConsent.GRANTED, actor_id="usr_2", at=AT
     )
-    assert plans.decision.data["recordedAt"] is None
+    assert plans.decision.data["recorded_at"] == AT
     assert plans.workshop.data["dictationConsentAt"] == AT
 
 
@@ -709,7 +714,7 @@ def test_the_executor_has_no_writer_for_the_stage_table_either():
 def test_the_writable_set_is_the_two_tables_and_nothing_else():
     from app.services import dictation_consent as module
 
-    assert sorted(module.WRITABLE_TABLES) == ["DesignWorkshop", "DwWorkshopConsentDecision"]
+    assert sorted(module.WRITABLE_TABLES) == ["Consent", "DesignWorkshop"]
 
 
 def test_an_update_must_name_one_row_and_a_create_must_name_none():
@@ -717,7 +722,7 @@ def test_an_update_must_name_one_row_and_a_create_must_name_none():
         ConsentWritePlan(table="DesignWorkshop", operation=Operation.UPDATE, data={})
     with pytest.raises(ConsentRuleViolation):
         ConsentWritePlan(
-            table="DwWorkshopConsentDecision",
+            table="Consent",
             operation=Operation.CREATE,
             data={},
             where={"id": "x"},
@@ -1179,6 +1184,18 @@ def dictation(monkeypatch):
     )
 
     monkeypatch.setattr(routes, "load_workshop_or_404", _workshop)
+
+    async def _no_ledger_rows(*_a, **_k):
+        """The consent ledger holds no row yet, so the workshop answers from its cached column."""
+        return {}
+
+    monkeypatch.setattr(routes.dictation_consent.ledger, "current_states", _no_ledger_rows)
+
+    async def _no_linked_artisans(_workshop_ids):
+        """No artisan is linked to the workshop, so its own answer decides (one consent store)."""
+        return []
+
+    monkeypatch.setattr(routes.dictation_consent, "workshop_artisan_ids", _no_linked_artisans)
     monkeypatch.setattr(routes, "transcribe_audio_bytes", _transcribe)
     monkeypatch.setattr(routes, "get_settings", SimpleNamespace)
     monkeypatch.setattr(routes.dictation_cap, "load_allowance", _load_allowance)

@@ -29,6 +29,9 @@ SHARED_FILES_EXTRA = (
     "frontend/components/settings/TranscriptionPanel.tsx",
     "backend/tests/test_transcription_service.py",
     "backend/tests/test_transcription_parity.py",
+    # The one consent store (19 Oct 2026): its migration and its tests, beside the rule in the package.
+    "backend/prisma/migrations/20261103090000_one_consent_store/migration.sql",
+    "backend/tests/test_consent_ledger.py",
 )
 
 

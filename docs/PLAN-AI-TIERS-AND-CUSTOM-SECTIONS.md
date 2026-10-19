@@ -22,7 +22,7 @@ transcription, **ElevenLabs Scribe v2**, **Deepgram Nova-3**, and Gemini with mu
 So **Tier 3 diarization already exists and works.** What we are deferring is *offline* diarization,
 not diarization. That distinction should be in the UI, not just in this document.
 
-There is also `refine_transcript_text` and `analyze_measurement_image` (`api/routes/media.py:27`),
+There is also `refine_transcript_text` and `analyze_measurement_image` (`api/routes/media.py:38`),
 and server-side identity-card OCR (`services/identity_ocr.py`). Several Tier 2 verbs — proofreading,
 transcript cleanup — have a cloud implementation today. Tier 2 is therefore not "add a capability";
 it is **"move an existing capability offline, and keep the two agreeing about what they mean".**

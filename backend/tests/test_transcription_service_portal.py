@@ -324,8 +324,12 @@ def test_the_consent_backfill_grants_once_and_then_finds_nothing(monkeypatch) ->
     monkeypatch.setattr(
         backfill, "db", SimpleNamespace(designworkshop=_Workshops(), mediafile=_Media())
     )
+    async def _current(workshop_id: str, record: Any = None) -> Any:
+        return consent.consent_of(record or workshops[workshop_id])
+
     monkeypatch.setattr(consent, "workshop_audio_media_ids", _audio)
     monkeypatch.setattr(consent, "apply_decision", _apply)
+    monkeypatch.setattr(consent, "current_consent", _current)
     monkeypatch.setattr(requests, "post", _never)
 
     # --keep-refused leaves an explicit refusal alone and lists it.
@@ -341,6 +345,8 @@ def test_the_consent_backfill_grants_once_and_then_finds_nothing(monkeypatch) ->
     asyncio.run(backfill.apply(plan, "owner-1"))
     decision = writes[0][1]
     assert decision.decision.data["source"] == "owner attestation"
+    assert decision.decision.data["basis"] == "OWNER_ATTESTATION"
+    assert decision.decision.table == "Consent"
     assert decision.workshop.data["dictationConsent"] == "GRANTED"
     assert decision.workshop.data["dictationConsentById"] == "owner-1"
     assert writes[2][1]["data"] == {"transcriptStatus": None, "transcriptError": None}

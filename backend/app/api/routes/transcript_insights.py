@@ -27,6 +27,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
+from app.api.consent_http import require_send
 from app.core.db import db
 from app.core.deps import get_current_user, is_admin
 from app.schemas.transcript_insights import TranscriptInsightPatch, TranscriptInsightRegenerate
@@ -218,11 +219,10 @@ async def regenerate_insight(
         return await _view(media, current_user)
     if edited and not payload.discardEdits:
         return _conflict("Regenerating replaces your edits.", "EDITS_WOULD_BE_REPLACED")
-    verdict = await dictation_consent.transcription_verdict(
+    # A refusal answers 409 with its sentence; a consent store that cannot be read answers 503.
+    await require_send(dictation_consent.transcription_verdict(
         media, send=dictation_consent.INSIGHTS, resolve_from_stages=True
-    )
-    if not verdict.may_send:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=verdict.refusal)
+    ))
     spent = ai_verb_cap.cap_refusal(await ai_verb_cap.load_allowance(current_user.id))
     if spent is not None:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=spent)

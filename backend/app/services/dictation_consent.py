@@ -15,7 +15,44 @@ it is a checkbox with somebody else's name on it.
 WHERE IT LIVES, AND WHY IT IS NOT A FIELD IN THE REGISTRY
 ================================================================================================
 
-Three columns on ``DesignWorkshop`` plus an append-only ``DwWorkshopConsentDecision`` log. A consent
+THE ONE CONSENT STORE (owner decision, 19 Oct 2026). Every answer is a ``WORKSHOP`` row in the
+``Consent`` ledger, the same table, migration and rule as documentation-portal's
+(``app/transcription/ledger.py``, byte-identical in both portals), and the gate reads the ledger.
+The three columns on ``DesignWorkshop`` are a cache of the newest row, written in the same
+transaction, for the screens that list workshops. The older ``DwWorkshopConsentDecision`` log is no
+longer written: ``scripts/migrate_workshop_consent_to_ledger.py`` copies it into the ledger (dry run
+first), and until it has run the history read folds in the rows not yet copied and the gate falls
+back to the cached columns for a workshop with no ledger row.
+
+ONE RECORD PER ARTISAN, THE SAME IN BOTH PORTALS. An artisan's own answer is an ``ARTISAN`` row in
+the same ledger, written here by ``POST /artisans/{id}/consent`` (:func:`record_artisan_consent`) and
+read with :func:`artisan_rows`, exactly the row documentation-portal writes and reads for that person.
+A RECORDING row is an answer about one recording. Every send asks :func:`transcription_verdict`, which
+puts them together with the shared rule (``ledger.decide``) in this order:
+
+1. the recording's own row is read FIRST, and a refusal there always refuses;
+2. the subjects are every workshop that names the file, plus every artisan of the file (its
+   ``artisanId``, its interview's participants, and the artisans linked to any of those workshops,
+   ``Artisan.designWorkshopId``, since a stage clip such as ``artisanAudio`` names no artisan of its
+   own). An artisan with no row is a subject with NO ANSWER YET, exactly as documentation-portal
+   counts them over the same rows, with one exception (OWNER DECISION PENDING, recorded in
+   ``docs/DATA_MODEL.md``): where a workshop names the file, that workshop's answer speaks for the
+   artisans who have not answered themselves, as it always has, since it was asked of them;
+3. one refusal refuses; every subject granted allows; a subject with no answer waits.
+
+A send about a workshop and no one stored file (dictation, the AI verbs over pasted text) asks
+:func:`workshop_verdict`: the workshop's answer and its linked artisans' answers, under the same rule.
+A verb over a stored file (a caption, subtitles, a layer made from a recording) asks
+:func:`transcription_verdict` for that file as well, so a refusal recorded for the recording reaches
+it. A route a person is waiting on asks through ``app/api/consent_http.py``, which answers a refusal
+with a 409 and its sentence, and a consent store that cannot be read with a 503 and :data:`UNREADABLE`
+instead of a 500 (the queue asks directly, so a failed read there stays a retry).
+
+A recording with no workshop and no row at all (no recording row, no artisan row) is sent as before:
+:data:`SendDecision.NOT_WORKSHOP_MATERIAL`, a designer's own dictation, for example. Once anyone records
+an answer for that recording or one of its artisans, the rule above decides it.
+
+Originally: three columns on ``DesignWorkshop`` plus an append-only ``DwWorkshopConsentDecision`` log. A consent
 question added to stage 1 as a ``FieldSpec`` was the obvious-looking home and it is wrong five
 independent ways, any one of them sufficient:
 
@@ -99,6 +136,7 @@ from enum import Enum
 from typing import Any
 
 from app.core.db import db
+from app.transcription import ledger
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +182,12 @@ MAX_DEVICE_CLOCK_SKEW = timedelta(minutes=15)
 #: absent, and :class:`ConsentWritePlan` refuses to name a table that is not in this set. There is no
 #: expressible write from this module into a stage row, which is what stops the registry temptation
 #: from arriving as a quiet new call site.
-WRITABLE_TABLES: frozenset[str] = frozenset({"DesignWorkshop", "DwWorkshopConsentDecision"})
+WRITABLE_TABLES: frozenset[str] = frozenset({"DesignWorkshop", "Consent"})
+
+#: The ledger table every decision is appended to, and the older log it replaced (read only, as a
+#: fallback, until ``scripts/migrate_workshop_consent_to_ledger.py`` has copied it).
+LEDGER_TABLE = "Consent"
+LEGACY_TABLE = "DwWorkshopConsentDecision"
 
 #: Named so the refusal can name it, and so a reader grepping for the stage table finds this note.
 STAGE_TABLE = "DwStageEntry"
@@ -422,6 +465,26 @@ INSIGHTS = Send(
     alternative="Nothing was sent, and the transcript is unchanged. ",
 )
 
+#: The transcript of an interview recording, or text pasted into an interview, on its way to answer
+#: drafting (``POST /questionnaire/interviews/{id}/drafts``). The same material and the same rule as
+#: :data:`INSIGHTS`.
+DRAFTING = Send(
+    material="transcripts",
+    destination="the AI language model",
+    consequence="no answers can be drafted from it there",
+    alternative="Nothing was sent; type the answers in instead. ",
+)
+
+#: A document's text on its way to the search embedding provider (``services/search_indexer``). No
+#: person reads this refusal (the indexer marks the document and moves on); it exists because every
+#: refused verdict carries a sentence, and this one is true about what was not done.
+EMBEDDING = Send(
+    material="transcripts",
+    destination="the search embedding service",
+    consequence="this text cannot be indexed for meaning there",
+    alternative="It can still be found by its words. ",
+)
+
 #: What an unrecognised verb is described as. Vague on purpose and false about nothing.
 #:
 #: A sixth verb added without copy is caught by a test that walks ``ai_verbs.Verb`` against
@@ -485,6 +548,21 @@ def gate_refusal(consent: DictationConsent, send: Send = DICTATION) -> str | Non
         f"{send.destination}, so {send.consequence}. {send.alternative}Open the workshop's own screen "
         f"and record the artisan's answer to that question — until somebody does, this stays "
         f"unavailable."
+    )
+
+
+def subject_refusal(consent: DictationConsent, send: Send = MEDIA) -> str:
+    """The sentence for a send refused by an answer that is not a workshop's: the recording's own
+    row or an artisan's. Two sentences for the two next moves, as :func:`gate_refusal` keeps them."""
+    if consent is DictationConsent.REFUSED:
+        return (
+            f"Consent to send these {send.material} to {send.destination} was refused, so "
+            f"{send.consequence}. {send.alternative}If the artisan has since agreed, record that on "
+            f"the artisan's own record."
+        )
+    return (
+        f"Nobody has recorded yet whether these {send.material} may be sent to {send.destination}, "
+        f"so {send.consequence}. {send.alternative}Record the artisan's answer on their own record."
     )
 
 
@@ -850,17 +928,20 @@ def decision_plans(
             },
         ),
         decision=ConsentWritePlan(
-            table="DwWorkshopConsentDecision",
+            table=LEDGER_TABLE,
             operation=Operation.CREATE,
+            # ``ledger.append``'s own arguments. ``recorded_at`` is the moment the artisan answered
+            # (the device's when it reported one); the row's ``createdAt`` is when the server heard it.
             data={
-                "designWorkshopId": workshop,
-                "decision": decision.value,
+                "subject_type": ledger.WORKSHOP,
+                "subject_id": workshop,
+                "purpose": ledger.EXTERNAL_PROCESSING,
+                "state": decision.value,
+                "basis": ledger.VERBAL_RECORDED,
+                "source": ledger.SOURCE_RESEARCHER,
                 "note": (note or "").strip() or None,
-                "actorId": actor,
-                # Only what the DEVICE said. Null when the answer was recorded straight against the
-                # server, where `createdAt` is the same moment and repeating it would add nothing —
-                # and where a copy would later read as "a device reported this", which is false.
-                "recordedAt": recorded_at,
+                "actor_id": actor,
+                "recorded_at": answered_at,
             },
         ),
     )
@@ -916,6 +997,33 @@ def consent_keys(record: Any) -> dict[str, Any]:
 
 
 def decision_payload(row: Any) -> dict[str, Any]:
+    """One recorded consent answer as the clients read it: a ledger row, or a row of the older log."""
+    if isinstance(row, Mapping) and "subjectId" in row:
+        return {
+            "id": row.get("id"),
+            "designWorkshopId": row.get("subjectId"),
+            "decision": _enum_str(row.get("state")),
+            "note": row.get("note"),
+            "actorId": row.get("actorId"),
+            "recordedAt": _iso(_moment(row.get("recordedAt"))),
+            "createdAt": _iso(_moment(row.get("createdAt"))),
+        }
+    return _legacy_decision_payload(row)
+
+
+def _moment(value: Any) -> datetime | None:
+    """A raw-query timestamp (a string, or a naive datetime, both UTC) as an aware datetime."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _legacy_decision_payload(row: Any) -> dict[str, Any]:
     """One recorded consent answer as the clients read it.
 
     Both moments are carried, and that is the point of the pair rather than a duplication:
@@ -969,35 +1077,31 @@ def _writable_model(table: str) -> Any:
             f"There is no consent writer for {table}. A consent is three columns on the workshop and "
             f"a row in its decision log: {', '.join(sorted(WRITABLE_TABLES))}."
         )
-    return {
-        "DesignWorkshop": db.designworkshop,
-        "DwWorkshopConsentDecision": db.dwworkshopconsentdecision,
-    }[table]
+    return {"DesignWorkshop": "designworkshop", LEDGER_TABLE: LEDGER_TABLE}[table]
 
 
-async def apply_plan(plan: ConsentWritePlan) -> Any:
+async def apply_plan(plan: ConsentWritePlan, client: Any = None) -> Any:
     """Perform one planned write. The only place this module touches the database with intent."""
+    target = client if client is not None else db
     model = _writable_model(plan.table)
+    if plan.table == LEDGER_TABLE:
+        return await ledger.append(target, **dict(plan.data))
+    model = getattr(target, model)
     if plan.operation is Operation.CREATE:
         return await model.create(data=dict(plan.data))
     return await model.update(where=dict(plan.where or {}), data=dict(plan.data))
 
 
 async def apply_decision(plans: ConsentDecisionPlans) -> Any:
-    """Apply a decision's two writes: the workshop's answer first, then the log entry.
+    """Apply a decision's two writes in ONE transaction: the ledger row, then the cached columns.
 
-    NOT IN A TRANSACTION, and the order is chosen for the failure that leaves — the same reasoning
-    ``ai_layers.apply_decision`` records, with one difference that decides it the same way. If the log
-    write fails after the workshop write, the workshop carries a correctly attributed answer with one
-    missing history row: recoverable, and the gate is right. The other order would leave a log saying
-    somebody cleared this workshop while the gate still refuses — or, far worse on a REFUSED, a log
-    saying consent was withdrawn while the column still says GRANTED and sends continue. Prisma's
-    Python client does expose an interactive transaction; using one here is a reasonable later change,
-    and this ordering makes the worst case survivable rather than dangerous in the meantime.
+    The ledger is what the gate reads, so it is written first; the transaction means the workshop's
+    cached answer can never disagree with it. (Before the ledger the two writes were untransacted and
+    ordered so the worse failure was survivable; one transaction removes that failure altogether.)
     """
-    workshop = await apply_plan(plans.workshop)
-    await apply_plan(plans.decision)
-    return workshop
+    async with db.tx() as tx:
+        await apply_plan(plans.decision, tx)
+        return await apply_plan(plans.workshop, tx)
 
 
 async def stage_attached_workshop_ids(media_id: str) -> list[str]:
@@ -1102,7 +1206,13 @@ async def transcription_verdict(
     affordable in the place it has to be affordable — the queue drain, once per job, and the stage save,
     once per clip. In the overwhelmingly common case there is exactly one candidate.
 
-    **A FAILED CONSENT READ REFUSES, and it is a ``return`` rather than a raise.** The queue's callers
+    THE RECORDING'S OWN ROW IS READ BEFORE ANY OF THAT, and a refusal recorded for this recording
+    refuses whatever else is true of it (module docstring, "one record per artisan"). That read and
+    the artisans' rows are read before anything says whether the file is workshop material, so a
+    failure there RAISES, for the reason :func:`interview_workshop_id` gives: refusing would be
+    terminal for a file this consent may say nothing about, and sending would guess.
+
+    **A FAILED WORKSHOP CONSENT READ REFUSES, and it is a ``return`` rather than a raise.** The queue's callers
     are a background worker and a designer's stage save; an exception in either becomes a lost job or a
     failed save, and neither is the right answer to "the database blinked". The refusal is the right
     answer: nothing is sent, the clip stays a candidate for the next pass, and no consent was guessed.
@@ -1110,7 +1220,17 @@ async def transcription_verdict(
     reading it is how a recording in a deleted workshop stays refused rather than becoming unreadable
     and therefore, under the rule above, refused for the wrong reason.
     """
-    about = _attr(media, "id")
+    about = str(_attr(media, "id") or "").strip()
+    # THE RECORDING'S OWN ROW FIRST: a refusal recorded for this recording refuses whatever else is
+    # true of it, workshop material or not. A failed read raises, as interview_workshop_id's does:
+    # the question is left unanswered for the caller's retry, and nothing is sent either way.
+    own = (await ledger.current_states(db, ledger.RECORDING, [about])).get(about) if about else None
+    if _consent_token(own) is DictationConsent.REFUSED:
+        return SendVerdict(
+            SendDecision.REFUSED,
+            workshop_id=str(design_workshop_id or "").strip() or tagged_workshop_id(media),
+            refusal=subject_refusal(DictationConsent.REFUSED, send),
+        )
     candidates: list[str] = []
     for candidate in (str(design_workshop_id or "").strip(), tagged_workshop_id(media)):
         if candidate and candidate not in candidates:
@@ -1126,50 +1246,215 @@ async def transcription_verdict(
     if interview_workshop and interview_workshop not in candidates:
         candidates.append(interview_workshop)
     if not candidates and resolve_from_stages:
-        candidates = await stage_attached_workshop_ids(str(about or ""))
-    if not candidates:
-        return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
-    permitted: SendVerdict | None = None
-    for workshop_id in candidates:
-        verdict = await workshop_send_verdict(workshop_id, send=send, about=about)
-        if not verdict.may_send:
-            return verdict
-        permitted = permitted or verdict
-    return permitted or SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
+        candidates = await stage_attached_workshop_ids(about)
+    artisan_ids = await recording_artisan_ids(media) if about else []
+    # THE WORKSHOP'S OWN ARTISANS TOO: a stage clip (``artisanAudio``) carries no ``artisanId``, so
+    # without them an artisan's refusal would never reach the recordings made of them in a workshop.
+    artisan_ids = sorted({*artisan_ids, *await workshop_artisan_ids(candidates)})
+    artisans = await artisan_rows(artisan_ids) if artisan_ids else {}
+    return await _subjects_verdict(own, candidates, artisans, send=send, about=about, artisan_ids=artisan_ids)
 
 
-async def workshop_send_verdict(
-    workshop_id: str | None,
+async def _subjects_verdict(
+    own: Mapping[str, Any] | None,
+    candidates: list[str],
+    artisans: Mapping[str, Mapping[str, Any]],
     *,
-    send: Send = MEDIA,
-    about: Any = None,
+    send: Send,
+    about: Any,
+    records: Mapping[str, Any] | None = None,
+    artisan_ids: list[str] | None = None,
 ) -> SendVerdict:
-    """One workshop's verdict, read from the database. ``about`` names the subject in the log only.
+    """The shared rule (``ledger.decide``, the same function documentation-portal's gate calls) over
+    the recording's own row, every workshop that names it and every artisan of it with an answer on
+    record. One refusal is the answer; every subject has to permit the send. ``records`` are workshop
+    rows the caller already holds, so they are not read twice.
 
-    Separate from :func:`transcription_verdict` so a caller that is holding a workshop and NO file can
-    ask the same question and get the same sentence — ``save_stage`` wants to tell a designer why their
-    recordings were not queued, and it has the workshop id but no single clip to name. Two spellings of
-    this read would be two chances for the screen's explanation and the queue's decision to disagree,
-    which is worse than no explanation at all: a designer told transcription is running while it is
-    refused stops trusting the message rather than the feature.
-    """
-    workshop_id = str(workshop_id or "").strip()
-    if not workshop_id:
+    ``artisan_ids`` is EVERY artisan of the subject, answered or not. One with no row is passed to the
+    rule as None, "no answer yet", so artisan A's grant can never carry artisan B's voice out: the
+    same answer documentation-portal's gate gives over the same rows. Where a workshop names the
+    material, its row is a subject too and speaks for the artisans with no answer of their own (the
+    owner decision recorded in ``docs/DATA_MODEL.md``), so only their answered rows are added."""
+    if not candidates and own is None and not artisans:
         return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
+    first = candidates[0] if candidates else None
     try:
-        row = await db.designworkshop.find_unique(where={"id": workshop_id})
-    except Exception as exc:  # noqa: BLE001 — see the docstring: a failed read refuses, never raises.
+        rows: list[Any] = []
+        for workshop_id in candidates:
+            record = (records or {}).get(workshop_id)
+            if record is None:
+                record = await db.designworkshop.find_unique(where={"id": workshop_id})
+            # A workshop that cannot be found has no answer on record: it refuses (``verdict_for``).
+            rows.append(await current_row(workshop_id, record) if record is not None else None)
+    except Exception as exc:  # noqa: BLE001 — a failed read refuses, never raises.
         logger.warning(
-            "dictation_consent: could not read the consent of workshop %s (subject %s): %s; "
-            "refusing the send",
+            "dictation_consent: could not read the consent of %s (%s); refusing the send", about, exc
+        )
+        return verdict_for(None, workshop_id=first, send=send) if first else SendVerdict(
+            SendDecision.REFUSED, refusal=subject_refusal(DictationConsent.NOT_RECORDED, send)
+        )
+    if candidates:
+        # The workshop's own row (already in ``rows``) speaks for an artisan who has not answered.
+        artisan_subjects = list(artisans.values())
+    else:
+        ids = sorted({*(artisan_ids or ()), *artisans})
+        artisan_subjects = [artisans.get(artisan_id) for artisan_id in ids]
+    decided = ledger.decide(own, [*rows, *artisan_subjects])
+    if decided == ledger.ALLOW:
+        return SendVerdict(SendDecision.GRANTED, workshop_id=first)
+    for workshop_id, row in zip(candidates, rows, strict=True):
+        consent = _consent_token(row)
+        if decided == ledger.REFUSED and consent is DictationConsent.REFUSED:
+            return verdict_for(consent, workshop_id=workshop_id, send=send)
+        if decided == ledger.AWAITING and consent is not DictationConsent.GRANTED:
+            return verdict_for(consent, workshop_id=workshop_id, send=send)
+    # Refused by an artisan's own answer (or the recording's grant was withdrawn later by one).
+    consent = DictationConsent.REFUSED if decided == ledger.REFUSED else DictationConsent.NOT_RECORDED
+    return SendVerdict(SendDecision.REFUSED, workshop_id=first, refusal=subject_refusal(consent, send))
+
+
+async def recording_artisan_ids(media: Any) -> list[str]:
+    """The artisans a stored recording is about: its own ``artisanId`` and the participants of the
+    interview it was recorded in (the typed FK, else the questionnaire tag). One indexed statement."""
+    media_id = str(_attr(media, "id") or "").strip()
+    if not media_id:
+        return []
+    rows = await db.query_raw(
+        'SELECT m."artisanId" AS a FROM "MediaFile" m WHERE m."id" = $1 AND m."artisanId" IS NOT NULL '
+        'UNION SELECT qa."artisanId" FROM "MediaFile" m JOIN "QuestionnaireInterviewArtisan" qa '
+        '  ON qa."interviewId" = COALESCE(m."questionnaireInterviewId", '
+        "    CASE WHEN lower(m.\"linkedRecordType\") = 'questionnaire' THEN m.\"linkedRecordId\" END) "
+        'WHERE m."id" = $1',
+        media_id,
+    )
+    return sorted({str(row["a"]) for row in rows if row.get("a")})
+
+
+async def workshop_artisan_ids(workshop_ids: list[str]) -> list[str]:
+    """The artisans linked to any of these design workshops (``DesignWorkshop.artisansLinked``,
+    i.e. ``Artisan.designWorkshopId``). One indexed statement; none when no workshop is named."""
+    ids = sorted({str(w).strip() for w in workshop_ids if str(w or "").strip()})
+    if not ids:
+        return []
+    rows = await db.query_raw(
+        'SELECT "id" AS a FROM "Artisan" WHERE "designWorkshopId" = ANY($1::text[])', ids
+    )
+    return sorted({str(row["a"]) for row in rows if row.get("a")})
+
+
+async def workshop_verdict(
+    workshop_id: str, *, send: Send = DICTATION, record: Any = None
+) -> SendVerdict:
+    """May material of this workshop that is no one stored file be sent (a dictation, an AI verb over
+    pasted text)? The workshop's answer and its linked artisans' answers, under the shared rule: one
+    refusal refuses, a workshop with no answer waits. A workshop refusal reads exactly as
+    :func:`gate_refusal` always has; an artisan's reads as :func:`subject_refusal`. ``record`` is the
+    workshop row when the caller already holds it."""
+    workshop_id = str(workshop_id or "").strip()
+    artisan_ids = await workshop_artisan_ids([workshop_id])
+    artisans = await artisan_rows(artisan_ids)
+    return await _subjects_verdict(
+        None, [workshop_id], artisans, send=send, about=workshop_id,
+        records={workshop_id: record} if record is not None else None, artisan_ids=artisan_ids,
+    )
+
+
+#: What a person waiting on a send is told when the consent store cannot be read (a 503 from
+#: ``app/api/consent_http.py``). Nothing was sent; the read is what failed, so asking again is the
+#: right next move, unlike a refusal.
+UNREADABLE = (
+    "The consent record could not be read just now, so nothing was sent. Try again in a minute."
+)
+
+
+async def artisan_rows(artisan_ids: list[str], *, client: Any = None) -> dict[str, dict[str, Any]]:
+    """The newest ARTISAN row per artisan that HAS one, from the ledger both portals share."""
+    return await ledger.current_states(client if client is not None else db, ledger.ARTISAN, artisan_ids)
+
+
+async def interview_verdict(interview: Any, *, send: Send = DRAFTING) -> SendVerdict:
+    """May text that is an interview's words (pasted, so no one recording) be sent? The same rule
+    over the interview's design workshop and its participants' own answers."""
+    interview_id = str(_attr(interview, "id") or "").strip()
+    workshop = str(_attr(interview, "designWorkshopId") or "").strip()
+    rows = await db.query_raw(
+        'SELECT "artisanId" FROM "QuestionnaireInterviewArtisan" WHERE "interviewId" = $1', interview_id
+    )
+    linked = await workshop_artisan_ids([workshop]) if workshop else []
+    artisan_ids = sorted({*(str(row["artisanId"]) for row in rows), *linked})
+    artisans = await artisan_rows(artisan_ids)
+    return await _subjects_verdict(
+        None, [workshop] if workshop else [], artisans, send=send, about=interview_id,
+        artisan_ids=artisan_ids,
+    )
+
+
+async def record_artisan_consent(
+    artisan_id: str,
+    *,
+    state: str,
+    actor_id: str,
+    basis: str = ledger.VERBAL_RECORDED,
+    note: str | None = None,
+    recorded_at: datetime | None = None,
+    client: Any = None,
+) -> dict[str, Any]:
+    """Append one ARTISAN row: the artisan's own answer, the record documentation-portal reads too."""
+    written = await ledger.append(
+        client if client is not None else db, subject_type=ledger.ARTISAN, subject_id=artisan_id,
+        state=state, basis=basis, actor_id=actor_id, note=note, recorded_at=recorded_at,
+    )
+    return written or {}
+
+
+def _consent_token(row: Mapping[str, Any] | None) -> DictationConsent:
+    """A current ledger row's state as the three-state vocabulary, failing closed."""
+    try:
+        return DictationConsent(str((row or {}).get("state") or ""))
+    except ValueError:
+        return DictationConsent.NOT_RECORDED
+
+
+async def current_row(
+    workshop_id: str, record: Any = None, *, client: Any = None
+) -> dict[str, Any] | None:
+    """The workshop's current consent row: the ledger's newest WORKSHOP row, else the cached columns.
+
+    THE FALLBACK IS FOR THE WINDOW BEFORE ``scripts/migrate_workshop_consent_to_ledger.py`` HAS RUN.
+    A workshop answered before the ledger existed has its answer only in the cached columns (and the
+    older log); once the script has copied it, the ledger answers and the columns are never read for
+    the gate. ``record`` is the workshop row when the caller already holds it.
+    """
+    target = client if client is not None else db
+    rows = await ledger.current_states(target, ledger.WORKSHOP, [workshop_id])
+    if workshop_id in rows:
+        return rows[workshop_id]
+    if record is None:
+        record = await target.designworkshop.find_unique(where={"id": workshop_id})
+    if record is None:
+        return None
+    cached = consent_of(record)
+    if cached is DictationConsent.NOT_RECORDED:
+        return None
+    return {
+        "subjectId": workshop_id,
+        "state": cached.value,
+        "recordedAt": getattr(record, "dictationConsentAt", None),
+        "actorId": getattr(record, "dictationConsentById", None),
+    }
+
+
+async def current_consent(workshop_id: str, record: Any = None) -> DictationConsent:
+    """The workshop's answer as the gate reads it (:func:`current_row`), FAILING CLOSED on a failed read."""
+    try:
+        return _consent_token(await current_row(workshop_id, record))
+    except Exception as exc:  # noqa: BLE001 — an unreadable consent is no consent.
+        logger.warning(
+            "dictation_consent: could not read the consent of workshop %s (%s); refusing the send",
             workshop_id,
-            about,
             exc,
         )
-        return verdict_for(None, workshop_id=workshop_id, send=send)
-    return verdict_for(
-        consent_of(row) if row is not None else None, workshop_id=workshop_id, send=send
-    )
+        return DictationConsent.NOT_RECORDED
 
 
 async def workshop_audio_media_ids(workshop_id: str) -> list[str]:
@@ -1309,10 +1594,23 @@ async def cancel_pending_transcriptions(workshop_id: str) -> int:
 
 
 async def workshop_decisions(workshop_id: str) -> list[Any]:
-    """The consent history of one workshop, oldest first."""
-    return await db.dwworkshopconsentdecision.find_many(
+    """The consent history of one workshop, oldest first: the ledger's WORKSHOP rows, plus the rows
+    of the older log that ``scripts/migrate_workshop_consent_to_ledger.py`` has not copied yet."""
+    rows: list[Any] = list(await ledger.history(db, ledger.WORKSHOP, workshop_id))
+    copied = {row.get("migratedFrom") for row in rows if row.get("migratedFrom")}
+    legacy = await db.dwworkshopconsentdecision.find_many(
         where={"designWorkshopId": workshop_id}, order={"createdAt": "asc"}
     )
+    rows += [row for row in legacy if ledger.legacy_key(LEGACY_TABLE, row.id) not in copied]
+
+    def _when(row: Any) -> datetime:
+        if isinstance(row, Mapping):
+            moment = _moment(row.get("recordedAt")) or _moment(row.get("createdAt"))
+        else:
+            moment = _as_utc(getattr(row, "recordedAt", None) or getattr(row, "createdAt", None))
+        return moment or datetime.min.replace(tzinfo=UTC)
+
+    return sorted(rows, key=_when)
 
 
 async def actor_name(user_id: str | None) -> str | None:
