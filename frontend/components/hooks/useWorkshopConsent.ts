@@ -23,12 +23,12 @@
  * fact into a component that has one (`workshopId`) only because dictation cannot work without it.
  * `DictationButton` sets the precedent: it takes the id and fetches what it needs itself.
  *
- * ── THE FLOOR IS NOT_RECORDED AND THAT IS THE FAIL-CLOSED DIRECTION ─────────────────────────────
+ * ── THE FLOOR IS NOT_RECORDED, WHICH IS CONSENT ASSUMED BY DEFAULT ──────────────────────────────
  *
  * A draft this browser has never seen, a store that would not open, an id that matches nothing —
- * every one of them answers NOT_RECORDED, which is the same answer `dictation_consent.consent_of`
- * fails closed to. The cost of being wrong that way is a control disabled with a sentence saying how
- * to enable it; the cost of the other way is a control that promises to work and 409s.
+ * every one of them answers NOT_RECORDED, the same reading `dictation_consent.consent_of` gives. No
+ * answer is consent (owner decision, 19 Oct 2026); only a REFUSED on record stops a control, and the
+ * server still answers 409 if a refusal reached it that this device has not seen.
  */
 
 import { useEffect, useState } from "react";
@@ -41,9 +41,8 @@ export type WorkshopConsent = {
   /**
    * False while the draft is still being read.
    *
-   * A CALLER MUST NOT DRAW A REFUSAL BEFORE THIS IS TRUE. The floor answer is NOT_RECORDED, so a
-   * control rendered against the unsettled value would flash "nobody has been asked" on every
-   * workshop that has been asked — and a designer who reads that once stops trusting the sentence.
+   * A CALLER MUST NOT OFFER A CONTROL BEFORE THIS IS TRUE: a refusal on record may not have been read
+   * yet, and a control offered over it would press straight into the server's 409.
    */
   ready: boolean;
   /**

@@ -6336,9 +6336,9 @@ async def save_stage(
     # AND IT IS GATED ON THE ARTISAN'S CONSENT, which is what `design_workshop_id` is doing here. Until
     # this argument existed, this line reported `transcriptionsQueued: 1` on a workshop whose
     # `dictationConsent` was NOT_RECORDED — in the same minute that `POST /{id}/dictate` refused the
-    # same workshop with a 409 and the sentence "nobody has recorded yet whether recordings from this
-    # workshop may be sent". The id is right here in the path, so nothing needs resolving: it is handed
-    # down and `enqueue_media_processing_jobs` refuses any clip whose workshop has not answered GRANTED.
+    # same workshop with a 409. The id is right here in the path, so nothing needs resolving: it is
+    # handed down and `enqueue_media_processing_jobs` refuses any clip whose workshop (or one of whose
+    # artisans) has refused; no answer counts as agreeing (owner decision, 19 Oct 2026).
     queued = await enqueue_stage_transcriptions(
         rows, user.id, viewer=user, design_workshop_id=workshop_id
     )
@@ -6349,8 +6349,9 @@ async def save_stage(
     # cause is the consent gate: the recording sits on the transcripts screen with no text, and
     # `report_annexures.missing_transcript_note` counts it among the clips that "have no transcript
     # yet", so a designer waits for a night that never arrives and reports the feature as broken. It is
-    # not broken; nobody has asked the artisan. That is a sentence, and it belongs on the screen the
-    # designer is looking at when they attach the recording.
+    # not broken; somebody refused (consent is assumed by default, so only a recorded refusal stops a
+    # send). That is a sentence, and it belongs on the screen the designer is looking at when they
+    # attach the recording.
     #
     # ASKED ONLY WHEN THIS STAGE ACTUALLY HOLDS AUDIO, so no read is spent on the twenty stages that
     # carry none, and no message is shown to a designer who was not trying to transcribe anything.

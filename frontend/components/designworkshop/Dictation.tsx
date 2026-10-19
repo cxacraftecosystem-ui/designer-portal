@@ -406,7 +406,7 @@ export function DictationButton({
             THE SERVER'S OWN SENTENCE WINS, and for the consent and cap refusals it is the only thing
             that can be right.
 
-            A 409 from the per-workshop route means the artisan's consent is NOT_RECORDED or REFUSED,
+            A 409 from the per-workshop route means consent was REFUSED (no answer is consent),
             and a 429 means this designer's daily allowance for the transcription service is spent.
             Both arrive as a FastAPI `detail` that already names the next move — and for consent that
             move is a person deciding, never a retry, which is precisely what the old wording

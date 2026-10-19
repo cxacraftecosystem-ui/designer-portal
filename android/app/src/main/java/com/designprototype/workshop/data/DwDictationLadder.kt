@@ -515,7 +515,8 @@ fun dwDictationLadder(conditions: DwDictationConditions): DwDictationPlan {
     */
     val serverRung = conditions.online &&
         !conditions.serverRouteUnavailable &&
-        conditions.tier3Consent == DwTier3Consent.GRANTED &&
+        // Consent is assumed by default (owner decision, 19 Oct 2026): only a recorded refusal closes it.
+        conditions.tier3Consent != DwTier3Consent.REFUSED &&
         !conditions.dailyCapSpent &&
         conditions.workshopOnServer
 
@@ -590,10 +591,8 @@ private fun dwSuppressedServerRungSentence(conditions: DwDictationConditions): S
     if (!conditions.online || conditions.serverRouteUnavailable) return null
     return when {
         // CONSENT BEFORE THE CAP, always, for the reason [dwDictationNothingLeftSentence] gives at
-        // length: tomorrow's allowance cannot open a rung an unanswered consent question has closed.
-        conditions.tier3Consent == DwTier3Consent.NOT_RECORDED ->
-            "Nobody has recorded whether these recordings may be transcribed, so dictation uses the phone's recogniser (no craft words). Record the answer on the workshop's own screen."
-
+        // length: tomorrow's allowance cannot open a rung a refusal has closed. No answer is consent
+        // (assumed by default since 19 Oct 2026), so only the refusal is named.
         conditions.tier3Consent == DwTier3Consent.REFUSED ->
             "Transcription was declined (the answer on record), so dictation uses the phone's recogniser (no craft words)."
 
@@ -745,10 +744,6 @@ fun dwDictationNothingLeftSentence(conditions: DwDictationConditions): String {
           returns never. Naming the cap first would promise a designer that tomorrow fixes it, and
           tomorrow would arrive with the rung still closed.
         */
-        !conditions.serverRouteUnavailable &&
-            conditions.tier3Consent == DwTier3Consent.NOT_RECORDED ->
-            "Can't dictate $label: nobody has recorded whether recordings may be transcribed. Type the answer in, then record it on the workshop's own screen."
-
         // ANSWERED, AND THE ANSWER IS NO. The next move is A PERSON DECIDING and never a retry —
         // which is why this says nothing about trying again. It also does not say "ask the artisan",
         // because they have already been asked: telling somebody to go and ask a question that is on

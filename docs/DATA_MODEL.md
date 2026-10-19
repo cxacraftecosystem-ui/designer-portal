@@ -402,24 +402,25 @@ subtitles, captions, search embeddings), `transcription_verdict` in
 `backend/app/services/dictation_consent.py` reads the recording's own row first — a refusal there
 always refuses — then decides with the shared rule over every workshop that names the file and every
 artisan of it: its `artisanId`, its interview's participants and the artisans linked to those
-workshops (`Artisan.designWorkshopId`, which is how a stage clip reaches its artisan). **An artisan
-with no answer counts as "no answer yet"**, so one artisan's grant never sends another artisan's
-words; with no workshop involved this is the answer the Field Repository gives over the same rows.
+workshops (`Artisan.designWorkshopId`, which is how a stage clip reaches its artisan). **Consent is
+assumed by default and can be revoked** (owner decision, 2026-10-19): a subject with no answer counts
+as agreeing, any recorded refusal (the recording, an artisan, an interview participant or a workshop)
+stops the send, and a later grant after a refusal allows it again — the answer the Field Repository
+gives over the same rows.
 Dictation and the AI verbs over pasted text ask `workshop_verdict` (the workshop and its linked
 artisans); a verb over a stored file or a layer made from one asks about that file as well, and the
 stage save's "why nothing was queued" note asks `workshop_verdict` too, so an artisan's refusal is
-explained there. **A recording with no workshop and no consent row at all (a designer's own
-dictation, for example) is sent as before**; once anyone records an answer for it or one of its
-artisans, the rule decides it. A route answers a refusal with 409 and a consent store it cannot read
-with 503 (`backend/app/api/consent_http.py`).
+explained there. A recording with no workshop and no consent row at all (a designer's own
+dictation, for example) is sent; once anyone records a refusal for it or one of its artisans, that
+refusal stops it. A route answers a refusal with 409 and a consent store it cannot read with 503
+(`backend/app/api/consent_http.py`); a failed read never sends. The workshop and artisan switches
+("Recordings may be transcribed") are on by default and switching one off records `REFUSED`.
+`DesignWorkshop.dictationConsent` still defaults to `NOT_RECORDED`: no answer, which sends.
+Recordings refused before this rule changed carry the old "Nobody has recorded yet…" note;
+`scripts/backfill_consent_owner_attestation.py` recognises and clears it.
 
-**Owner decisions still open, recorded as the code behaves today (2026-10-19):**
+**Notes (2026-10-19):**
 
-- *A workshop's grant speaks for its artisans who have not answered themselves.* Where a workshop
-  names the material, its `WORKSHOP` row is a subject and an artisan with no `ARTISAN` row is not
-  counted against it, because the workshop question was asked of those artisans. Any artisan's own
-  refusal still stops the send. If the owner decides each artisan must answer, `_subjects_verdict`
-  counts them as "no answer yet" in that case too (one branch).
 - *Not gated by the consent store, deliberately:* the artisan identity-card read
   (`POST /api/design-workshops/ocr/identity`, a photo of an artisan's Aadhaar or Pehchan card to
   Gemini or OpenAI through `identity_ocr.read_identity_card`). It names no artisan, usually because

@@ -281,7 +281,7 @@ def _load_backfill():
 def test_the_consent_backfill_grants_once_and_then_finds_nothing(monkeypatch) -> None:
     backfill = _load_backfill()
     consent = backfill.dictation_consent
-    refusal = consent.gate_refusal(consent.DictationConsent.NOT_RECORDED, consent.MEDIA)
+    refusal = consent.legacy_waiting_sentence(consent.MEDIA)  # an older note still stored
     workshops = {
         "w-open": SimpleNamespace(id="w-open", title="Bagru", dictationConsent="NOT_RECORDED"),
         "w-done": SimpleNamespace(id="w-done", title="Majuli", dictationConsent="GRANTED"),

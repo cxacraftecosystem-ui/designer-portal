@@ -698,18 +698,17 @@ test("a workshop that exists only on this device refuses every verb, and says wh
   // AND THE ORDER, which is the half that is easy to get subtly wrong. The sync sentence promises the
   // verbs "become available" after the next sync; on a workshop whose recorded answer is REFUSED they
   // will not, so the consent rung has to be reached first. Every combination gets a true sentence.
-  for (const decision of ["REFUSED", "NOT_RECORDED"]) {
-    expect(
-      verbWorkshopRefusal({ ready: true, decision, serverId: null }),
-      `${decision} and unsynced must NOT promise that syncing makes the verbs available`
-    ).toBe(consentNotGranted(decision));
-  }
+  expect(
+    verbWorkshopRefusal({ ready: true, decision: "REFUSED", serverId: null }),
+    "REFUSED and unsynced must NOT promise that syncing makes the verbs available"
+  ).toBe(consentNotGranted("REFUSED"));
 
-  // A token from a server one release ahead is not GRANTED, so it closes the gate — the same
-  // fail-closed direction `dictation_consent.consent_of` takes.
-  expect(verbWorkshopRefusal({ ready: true, decision: "PENDING_REVIEW", serverId: "cmw1" })).toBe(
-    consentNotGranted("PENDING_REVIEW")
-  );
+  // Consent is assumed by default (owner decision, 19 Oct 2026): no answer on record, and a token
+  // nobody can read, are not refusals. Only the sync rung can then stand in the way.
+  expect(verbWorkshopRefusal({ ready: true, decision: "NOT_RECORDED", serverId: null })).toBe(WORKSHOP_NOT_ON_SERVER_YET);
+  expect(verbWorkshopRefusal({ ready: true, decision: "NOT_RECORDED", serverId: "cmw1" })).toBeNull();
+  expect(verbWorkshopRefusal({ ready: true, decision: "PENDING_REVIEW", serverId: "cmw1" })).toBeNull();
+  expect(verbWorkshopRefusal({ ready: true, decision: "REFUSED", serverId: "cmw1" })).toBe(consentNotGranted("REFUSED"));
 });
 
 test("the still-reading state is a refusal with nothing to say, and truthiness reads it as consent", () => {

@@ -71,6 +71,7 @@ import {
   verbAllowanceRefusal,
     verbWorkshopRefusal,
   CONSENT_LINK_LABEL,
+  consentRefused,
   type DwAiVerbAllowanceState,
   type DwAiVerbResult
 } from "@/lib/aiVerbs";
@@ -164,7 +165,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
 
   useEffect(loadSubtitled, [loadSubtitled]);
 
-  const granted = consent.decision.trim().toUpperCase() === "GRANTED";
+  const refused = consentRefused(consent.decision);
 
   /*
     THE FOUR RUNGS, ALL OF THEM SHARED. This surface has no selection, so its ladder is exactly
@@ -247,7 +248,7 @@ export function MediaAiVerbs({ workshopId, files, local, disabled }: MediaAiVerb
       {blocked ? (
         <p className="text-xs leading-5 text-ink-500">
           {blocked}
-          {consent.ready && !granted ? (
+          {consent.ready && refused ? (
             <>
               {" "}
               <Link href={`/design-workshops/${workshopId}#consent`} className="font-medium text-purple-700 dark:text-purple-300 underline">

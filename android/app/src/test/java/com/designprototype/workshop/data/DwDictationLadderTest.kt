@@ -386,54 +386,35 @@ class DwDictationLadderTest {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * AN UNANSWERED CONSENT QUESTION TAKES RUNG 2 AND LEAVES EVERY OTHER RUNG WHERE IT WAS.
-     *
-     * The headline case of the gate, on the fleet's own handset. Odia has no offline pack there, so the
-     * plan was [SERVER_DICTATE, NETWORK_RECOGNISER] and becomes Google's generic engine alone — which
-     * means the phone goes back to writing "double" where the artisan said "dabu". That cost is the
-     * whole reason the suppression has to be SAID: the dictation still succeeds, and nothing else on
-     * screen would differ.
+     * NO ANSWER ON RECORD IS CONSENT (owner decision, 19 Oct 2026): the craft-aware rung stays, exactly
+     * as on a workshop whose artisan agreed, and nothing is said about consent.
      */
     @Test
-    fun `an unanswered consent question withholds the craft-aware rung and says so`() {
-        val plan = dwDictationLadder(
-            conditions(odiaOnM32, tier3Consent = DwTier3Consent.NOT_RECORDED)
-        )
-        assertEquals(listOf(DwDictationRung.NETWORK_RECOGNISER), plan.rungs)
-        assertNull("Something still answers, so nothing is exhausted", plan.exhausted)
-        val note = assertSentence(plan.suppressed)
-        assertTrue(
-            "The one next move that can work is a person answering the question: $note",
-            note.contains("workshop's own screen")
-        )
+    fun `an unanswered consent keeps the craft-aware rung because consent is assumed by default`() {
+        val unanswered = dwDictationLadder(conditions(odiaOnM32, tier3Consent = DwTier3Consent.NOT_RECORDED))
+        val granted = dwDictationLadder(conditions(odiaOnM32, tier3Consent = DwTier3Consent.GRANTED))
+        assertEquals(granted.rungs, unanswered.rungs)
+        assertTrue(unanswered.rungs.contains(DwDictationRung.SERVER_DICTATE))
+        assertNull(unanswered.suppressed)
     }
 
     /**
-     * "NOBODY HAS ASKED" AND "THE ANSWER IS NO" GATE IDENTICALLY AND READ DIFFERENTLY.
+     * A REFUSAL ON RECORD TAKES RUNG 2 AND LEAVES EVERY OTHER RUNG WHERE IT WAS, AND SAYS SO.
      *
-     * The entire reason the input is three states rather than a boolean. Both stop the send; one is
-     * answered by asking the artisan and the other only by the artisan changing their mind, so a
-     * designer told the wrong one either goes to ask a question that is already on record or never
-     * learns there is a question at all.
+     * On the fleet's own handset Odia has no offline pack, so the plan becomes Google's generic engine
+     * alone — the phone goes back to writing "double" where the artisan said "dabu". That cost is why
+     * the suppression has to be SAID.
      */
     @Test
-    fun `a refusal on record does not read as a question nobody has asked`() {
-        val unasked = dwDictationLadder(
-            conditions(odiaOnM32, tier3Consent = DwTier3Consent.NOT_RECORDED)
-        )
+    fun `a refusal on record withholds the craft-aware rung and says so`() {
         val refused = dwDictationLadder(
             conditions(odiaOnM32, tier3Consent = DwTier3Consent.REFUSED)
         )
-        assertEquals(unasked.rungs, refused.rungs)
-        val a = assertSentence(unasked.suppressed)
+        assertEquals(listOf(DwDictationRung.NETWORK_RECOGNISER), refused.rungs)
+        assertNull("Something still answers, so nothing is exhausted", refused.exhausted)
         val b = assertSentence(refused.suppressed)
-        assertNotEquals("Two different facts must not share one sentence", a, b)
-        assertTrue("The unasked one asks for the answer: $a", a.contains("Nobody has recorded"))
         assertTrue("The refused one says it is on record: $b", b.contains("answer on record"))
-        // Neither may suggest a retry: no amount of tapping a microphone changes either fact.
-        listOf(a, b).forEach {
-            assertFalse("A consent note must not suggest trying again: $it", it.contains("try again"))
-        }
+        assertFalse("A consent note must not suggest trying again: $b", b.contains("try again"))
     }
 
     /**
@@ -520,21 +501,27 @@ class DwDictationLadderTest {
      * suppressor, and asserted because it is one `when` arm away from being lost in a tidy-up.
      */
     @Test
-    fun `an unasked artisan is named before a workshop that has not been sent up`() {
+    fun `a refusal is named before a workshop that has not been sent up`() {
         val both = conditions(
             odiaOnM32,
-            tier3Consent = DwTier3Consent.NOT_RECORDED,
+            tier3Consent = DwTier3Consent.REFUSED,
             workshopOnServer = false,
         )
         val note = assertSentence(dwDictationLadder(both).suppressed)
-        assertTrue("The artisan's answer comes first: $note", note.contains("Nobody has recorded"))
+        assertTrue("The artisan's answer comes first: $note", note.contains("answer on record"))
         assertFalse("One sentence, one next move: $note", note.lowercase().contains("upload the workshop"))
 
         val sentence = assertSentence(
             dwDictationLadder(both.copy(networkRecogniser = false)).exhausted
         )
-        assertTrue("And the same order with nothing left: $sentence", sentence.contains("nobody has recorded"))
+        assertTrue("And the same order with nothing left: $sentence", sentence.contains("answer on record"))
         assertFalse("Still one next move: $sentence", sentence.lowercase().contains("upload the workshop"))
+
+        // No answer on record is not a refusal: only the upload is named.
+        val unanswered = assertSentence(
+            dwDictationLadder(both.copy(tier3Consent = DwTier3Consent.NOT_RECORDED)).suppressed
+        )
+        assertTrue(unanswered.lowercase().contains("upload the workshop"))
     }
 
     // ---------------------------------------------------------------------------------------
@@ -748,7 +735,6 @@ class DwDictationLadderTest {
      * of adding it here rather than writing a sixth set of assertions.
      */
     private fun withheldStates(): List<DwDictationConditions> = listOf(
-        conditions(odiaOnM32, tier3Consent = DwTier3Consent.NOT_RECORDED),
         conditions(odiaOnM32, tier3Consent = DwTier3Consent.REFUSED),
         conditions(odiaOnM32, dailyCapSpent = true, dailyCapLimit = 40),
         conditions(odiaOnM32, dailyCapSpent = true, dailyCapLimit = null),
@@ -837,9 +823,9 @@ class DwDictationLadderTest {
                                                     "A server that said it is not configured is not asked again: $conditions",
                                                     serverUnavailable
                                                 )
-                                                assertEquals(
-                                                    "Nothing may be sent from a workshop that has not cleared it: $conditions",
-                                                    DwTier3Consent.GRANTED,
+                                                assertNotEquals(
+                                                    "Nothing may be sent from a workshop whose artisan refused: $conditions",
+                                                    DwTier3Consent.REFUSED,
                                                     consent
                                                 )
                                                 assertFalse(
@@ -1511,22 +1497,22 @@ class DwDictationLadderTest {
     @Test
     fun `a fixable cause is still named ahead of our model's unfixable refusal`() {
         /*
-         * ARM ORDER, AND IT IS THE ONE THAT COSTS A DESIGNER A WALK. An unanswered consent question
-         * re-opens a rung with one tap on the workshop screen; our model refusing re-opens nothing at
-         * all. Naming ours first would send somebody to report a bug when the fix was in their hands.
+         * ARM ORDER, AND IT IS THE ONE THAT COSTS A DESIGNER A WALK. A refused consent re-opens a rung
+         * with one switch on the workshop screen; our model refusing re-opens nothing at all. Naming
+         * ours first would send somebody to report a bug when the fix was in their hands.
          */
         val sentence = assertSentence(
             dwDictationLadder(
                 conditions(
                     odiaOnM32,
                     networkRecogniser = false,
-                    tier3Consent = DwTier3Consent.NOT_RECORDED,
+                    tier3Consent = DwTier3Consent.REFUSED,
                     appModelServesLanguage = true,
                     appModelRefusedLanguage = true,
                 )
             ).exhausted
         )
-        assertTrue(sentence.contains("nobody has recorded whether"))
+        assertTrue(sentence.contains("answer on record"))
     }
 
     /** Non-blank, a real sentence, and ending in a full stop. Returns it so callers can go on. */

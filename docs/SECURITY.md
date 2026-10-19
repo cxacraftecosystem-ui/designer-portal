@@ -1500,6 +1500,14 @@ practice, where the researcher was sitting. The stated-address group (`state`, `
 misrepresents the subject's location; publishing it at all discloses the researcher's. See
 [DATA_MODEL.md §2.4](DATA_MODEL.md).
 
+**Sending people's words to an outside service is opt-out (owner decision, 2026-10-19).** Consent is
+assumed by default and anyone can revoke it: before speech-to-text, AI summaries, translation, answer
+drafting or search embeddings, the shared rule (`backend/app/transcription/ledger.py`, the same file in
+both portals) refuses only when a refusal is on record for the recording, an artisan, an interview
+participant or the workshop. No answer sends; a later grant after a refusal sends again. A consent
+store that cannot be read sends nothing (the queue retries, a waiting request gets a 503). The
+"Recordings may be transcribed" switches are on by default; switching one off records the refusal.
+
 ---
 
 ## 5. Open risks, in priority order

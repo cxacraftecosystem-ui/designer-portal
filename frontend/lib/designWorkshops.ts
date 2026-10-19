@@ -3031,11 +3031,9 @@ export function dictationConsentSentence(consent: string | null | undefined): st
       "Nothing is sent out. Dictation and AI tools are off."
     );
   }
-  // NOT the same sentence as REFUSED, and the difference is the entire reason this is three states:
-  // one is an answer and the other is the absence of one. Both close the gate; only this one is
-  // answered by somebody asking.
+  // No answer on record is consent, assumed by default (owner decision, 19 Oct 2026).
   return (
-    "Not answered yet. Dictation and AI tools are off until you record the artisan's answer."
+    "On by default: material may be sent for transcription and AI tools until someone switches it off."
   );
 }
 
@@ -3058,27 +3056,15 @@ export function dictationConsentSentence(consent: string | null | undefined): st
  * record — the one claim a consent screen cannot afford to get wrong.
  */
 export const DW_CONSENT_QUESTION =
-  "May recordings and dictation be sent to an online transcription service? Dictated audio is not " +
-  "kept — only the words. Attached recordings stay with the workshop. Ask the artisan and record their answer.";
+  "On by default: recordings and dictation may be sent to an online transcription service. Dictated audio is " +
+  "not kept — only the words. Attached recordings stay with the workshop. Tell the artisan, and switch this " +
+  "off if they say no.";
+
+/** The switch's label, the same words as the artisan form's switch and the Android row's. */
+export const DW_CONSENT_SWITCH_LABEL = "Recordings may be transcribed";
 
 /** Android's `DW_CONSENT_ROW_TITLE`, so somebody told "it is on the workshop screen" can find it. */
 export const DW_CONSENT_ROW_TITLE = "Sending recordings out to be written down";
-
-/**
- * The two buttons, worded as the ARTISAN'S answer rather than as a setting the designer is choosing.
- *
- * `DW_CONSENT_YES_LABEL` is Android's string character for character. `DW_CONSENT_NO_LABEL` is
- * Android's with one substitution, the same one `DW_CONSENT_QUESTION` above makes and for the same
- * platform reason: the handset's reads *"They did not agree — keep it on the phone"*, and this runs
- * on a laptop. Nothing else about it moves.
- *
- * The distinction is worth the four lines because an earlier version of this comment claimed both
- * were verbatim, and a claim of verbatim is one a later reader checks by diffing rather than by
- * reading — so the one place the two clients legitimately differ has to be named where the strings
- * are, not left for that diff to look like drift.
- */
-export const DW_CONSENT_YES_LABEL = "They agreed — may be sent out";
-export const DW_CONSENT_NO_LABEL = "They did not agree — keep it on this device";
 
 /**
  * What `POST /design-workshops/dictate` actually returns — all NINE keys, and only those.

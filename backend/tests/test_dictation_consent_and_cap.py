@@ -16,13 +16,11 @@ three correct pieces together in the wrong order is exactly how a gate ends up m
 
 WHAT EACH GROUP WOULD COST IN THE FIELD IF IT STOPPED HOLDING:
 
-1. **Consent fails closed.** Anything unreadable as GRANTED must gate. If it resolved the other way —
-   which is how the neighbouring ``DwPackState`` rule resolves an unknown, deliberately — a null on a
-   restored row would send a named artisan's recorded voice to a third party. An unknown pack costs a
-   moment; an unknown consent costs somebody's voice.
-2. **The default is NOT_RECORDED and never GRANTED.** A migration defaulting the other way would
-   silently clear a third-party send for every workshop already in the database, which is precisely the
-   failure the plan rejects an account-level consent for.
+1. **Consent is assumed by default and only a refusal stops a send** (owner decision, 19 Oct 2026:
+   "the consent should be assumed by default, people can revoke it if required"). No answer, and a
+   stored token nobody can read, both send; a recorded REFUSED stops every outside send.
+2. **The stored default is NOT_RECORDED and never GRANTED.** "Nobody answered" and "the artisan
+   agreed" stay different facts on the record, even though both send.
 3. **Consent carries who and when, and the two clocks stay apart.** A consent recorded in a courtyard
    reaches the server on the next sync, a fortnight later; storing the sync moment would be a signature
    dated to the day it was filed.
@@ -74,6 +72,7 @@ from app.services.dictation_consent import (
     decision_payload,
     decision_plans,
     gate_refusal,
+    legacy_waiting_sentence,
     send_for,
 )
 
@@ -179,25 +178,15 @@ def test_an_enum_member_reads_back_as_well_as_a_plain_string():
 
 
 @pytest.mark.parametrize("stored", [None, "", "granted", "YES", "TRUE", "NOT_A_TOKEN", 1])
-def test_anything_unreadable_gates_rather_than_permitting(stored):
-    """**FAIL CLOSED, AND IT INVERTS A NEIGHBOURING RULE ON PURPOSE.**
-
-    ``packAllowsOnDevice`` on the handset resolves an UNKNOWN pack to *try it*, because "trying the
-    free engine first costs a moment, while skipping it costs money on a phone that could have done the
-    job". Consent resolves the unknown the other way, and this test is what stops somebody
-    "restoring consistency": an unknown pack costs a moment, and an unknown consent costs a named
-    artisan's recorded voice leaving the device for a third party.
-
-    Note ``"granted"`` in the list. A case-insensitive read would be a kindness that turns a token no
-    part of this system writes into a permission to send.
-    """
+def test_anything_unreadable_reads_as_no_answer_which_is_consent_by_default(stored):
+    """Consent is assumed by default (19 Oct 2026), so a token nobody can read is no answer: it is
+    never read as GRANTED (the record stays honest) and it does not stop a send. Only a refusal does."""
     assert consent_of(_workshop_row(dictationConsent=stored)) is DictationConsent.NOT_RECORDED
-    assert gate_refusal(consent_of(_workshop_row(dictationConsent=stored))) is not None
+    assert gate_refusal(consent_of(_workshop_row(dictationConsent=stored))) is None
 
 
-def test_a_row_with_no_consent_column_at_all_gates():
-    """A record from a client, a test double, or a database restored from before the column existed.
-    ``getattr`` finding nothing must not read as permission."""
+def test_a_row_with_no_consent_column_at_all_reads_as_no_answer():
+    """A record from a client, a test double, or a database restored from before the column existed."""
     assert consent_of(SimpleNamespace(id="wsp_1")) is DictationConsent.NOT_RECORDED
 
 
@@ -206,20 +195,18 @@ def test_a_row_with_no_consent_column_at_all_gates():
 # --------------------------------------------------------------------------------------
 
 
-def test_only_a_granted_workshop_passes_the_gate():
+def test_only_a_refusal_stops_the_gate():
+    """Consent is assumed by default and can be revoked (owner decision, 19 Oct 2026)."""
     assert gate_refusal(DictationConsent.GRANTED) is None
-    assert gate_refusal(DictationConsent.NOT_RECORDED) is not None
+    assert gate_refusal(DictationConsent.NOT_RECORDED) is None
     assert gate_refusal(DictationConsent.REFUSED) is not None
 
 
-def test_the_two_refusals_are_different_sentences_with_different_next_moves():
-    """NOT_RECORDED is answered by ASKING the artisan; REFUSED has already been asked and answered.
-
-    One parameterised string would have to tell a designer holding a recorded refusal to go and ask the
-    question again, which is the sort of instruction that teaches somebody to stop reading these
-    messages — and the next one that matters goes with it.
-    """
-    unasked = gate_refusal(DictationConsent.NOT_RECORDED)
+def test_the_old_waiting_sentence_is_kept_only_to_recognise_stored_notes():
+    """Before 19 Oct 2026 an unanswered workshop was refused with "Nobody has recorded yet…"; that
+    note is still stored on older recordings, so the sentence is kept (for the clean-up script) and
+    is never the refusal for anything new."""
+    unasked = legacy_waiting_sentence(DICTATION)
     refused = gate_refusal(DictationConsent.REFUSED)
     assert unasked != refused
     assert "record the artisan's answer" in unasked
@@ -227,16 +214,13 @@ def test_the_two_refusals_are_different_sentences_with_different_next_moves():
     assert "if the artisan has since agreed" in refused.lower()
 
 
-@pytest.mark.parametrize(
-    "consent", [DictationConsent.NOT_RECORDED, DictationConsent.REFUSED]
-)
-def test_neither_refusal_tells_a_designer_to_try_again(consent):
+def test_the_refusal_never_tells_a_designer_to_try_again():
     """Trying again is incapable of a different outcome: what changes a consent is a person deciding.
 
-    Both sentences instead name the keyboard as the move that works NOW — the same discipline
+    The sentence instead names the keyboard as the move that works NOW — the same discipline
     ``dwDictationNothingLeftSentence`` holds on the handset, where "type it in" is always the offer.
     """
-    sentence = gate_refusal(consent)
+    sentence = gate_refusal(DictationConsent.REFUSED)
     assert_sentence(sentence)
     assert "try again" not in sentence.lower()
     assert "type the words in" in sentence.lower()
@@ -263,7 +247,7 @@ def test_the_two_dictation_sentences_survive_this_refactor_byte_for_byte():
         "instead. If the artisan has since agreed, change that answer on the workshop's own "
         "screen; nothing on this field can change it."
     )
-    assert gate_refusal(DictationConsent.NOT_RECORDED) == (
+    assert legacy_waiting_sentence(DICTATION) == (
         "Nobody has recorded yet whether recordings from this workshop may be sent to the "
         "transcription service, so this dictation cannot be written down there. Type the words in "
         "instead. Open the workshop's own screen and record the artisan's answer to that question — "
@@ -275,8 +259,8 @@ def test_the_two_dictation_sentences_survive_this_refactor_byte_for_byte():
     )
 
 
-@pytest.mark.parametrize("consent", [DictationConsent.NOT_RECORDED, DictationConsent.REFUSED])
-def test_no_verb_but_dictation_is_refused_with_a_sentence_about_dictation(consent):
+@pytest.mark.parametrize("compose", [lambda d: gate_refusal(DictationConsent.REFUSED, d), legacy_waiting_sentence])
+def test_no_verb_but_dictation_is_refused_with_a_sentence_about_dictation(compose):
     """**THE DEFECT, IN THE FIELD, VERBATIM.** ``_verb_gate`` calls this for all five AI verbs, so a
     designer pressing "describe this photograph" on a workshop nobody had asked about was told:
     *"Nobody has recorded yet whether recordings from this workshop may be sent to the transcription
@@ -288,7 +272,7 @@ def test_no_verb_but_dictation_is_refused_with_a_sentence_about_dictation(consen
     field copy.
     """
     for verb, described in SENDS.items():
-        sentence = gate_refusal(consent, described)
+        sentence = compose(described)
         assert "dictation" not in sentence.lower(), f"{verb} is still told about dictation"
         assert "type the words in" not in sentence.lower(), f"{verb} offers a keyboard"
 
@@ -361,7 +345,8 @@ def test_both_consent_states_keep_their_distinct_next_moves_for_every_verb(verb)
     asking the artisan, and REFUSED has already been asked — telling somebody to go and ask again when
     the answer is on record teaches them to stop reading these messages. A parameterised sentence
     could easily have collapsed that distinction for the four verbs nobody was pinning."""
-    unasked = gate_refusal(DictationConsent.NOT_RECORDED, SENDS[verb])
+    assert gate_refusal(DictationConsent.NOT_RECORDED, SENDS[verb]) is None, "no answer sends"
+    unasked = legacy_waiting_sentence(SENDS[verb])
     refused = gate_refusal(DictationConsent.REFUSED, SENDS[verb])
     assert unasked != refused
     assert_sentence(unasked)
@@ -1203,14 +1188,26 @@ def dictation(monkeypatch):
     return SimpleNamespace(routes=routes, seen=seen, state=state)
 
 
-@pytest.mark.parametrize("consent", ["NOT_RECORDED", "REFUSED", None, "granted"])
-def test_the_workshop_scoped_route_refuses_an_unconsented_send_before_touching_a_provider(
+@pytest.mark.parametrize("consent", ["NOT_RECORDED", None, "granted"])
+def test_a_workshop_with_no_answer_dictates_because_consent_is_assumed_by_default(dictation, consent):
+    """Owner decision, 19 Oct 2026: no answer on record (or a token nobody can read) is consent."""
+    dictation.state.consent = consent
+    payload = asyncio.run(
+        dictation.routes.dictate_for_workshop(
+            "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+        )
+    )
+    assert payload["text"] == "dabu resist printing"
+    assert len(dictation.seen.provider_calls) == 1
+
+
+@pytest.mark.parametrize("consent", ["REFUSED"])
+def test_the_workshop_scoped_route_refuses_a_revoked_send_before_touching_a_provider(
     dictation, consent
 ):
     """**THE GATE, WIRED.** A 409 is not enough on its own: what makes this a gate rather than a
     message is that the provider was never called, so no credit was spent and no audio left this
-    server. ``None`` and ``"granted"`` are in the list because the fail-closed read is part of the
-    gate — a lower-case token no part of this system writes must not become a permission to send."""
+    server. A recorded refusal (the switch turned off) is the only answer that stops it."""
     dictation.state.consent = consent
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -1241,11 +1238,11 @@ def test_a_consented_workshop_reaches_the_provider_and_gets_its_words_back(dicta
 
 
 def test_the_consent_gate_is_checked_before_the_cap(dictation):
-    """A workshop with no consent is refused whatever the allowance says. Telling a designer their daily
-    allowance is spent when the real blocker is a question nobody has asked the artisan would send them
-    off to wait for midnight for nothing — the cap's refusal clears by itself, this one clears only when
-    somebody records an answer."""
-    dictation.state.consent = "NOT_RECORDED"
+    """A workshop whose consent was refused is refused whatever the allowance says. Telling a designer
+    their daily allowance is spent when the real blocker is a refusal would send them off to wait for
+    midnight for nothing — the cap's refusal clears by itself, this one clears only when somebody
+    records a new answer."""
+    dictation.state.consent = "REFUSED"
     dictation.state.allowance = Allowance(day="2026-08-12", limit=10, used=10)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -1904,15 +1901,21 @@ def test_a_recording_that_belongs_to_no_design_workshop_is_left_alone():
         assert verdict.refusal is None
 
 
-def test_an_unanswered_workshop_refuses_the_send_and_says_which_screen_answers_it():
+def test_an_unanswered_workshop_sends_because_consent_is_assumed_by_default():
     verdict = dictation_consent.verdict_for(
         dictation_consent.DictationConsent.NOT_RECORDED, workshop_id="ws-7"
     )
-    assert verdict.may_send is False
+    assert verdict.may_send is True
     assert verdict.workshop_id == "ws-7"
-    assert "Nobody has recorded yet" in verdict.refusal
+    assert verdict.refusal is None
+
+
+def test_a_refused_recording_says_the_audio_is_still_kept():
     # The alternative is true of THIS send and of no other: a refused transcription still leaves the
     # audio, because the consent question tells the artisan the recording is kept to be listened to.
+    verdict = dictation_consent.verdict_for(
+        dictation_consent.DictationConsent.REFUSED, workshop_id="ws-7"
+    )
     assert "still kept with the workshop" in verdict.refusal
 
 
@@ -1925,13 +1928,12 @@ def test_a_refusal_on_record_gets_the_other_sentence_and_never_says_ask_again():
     assert "Nobody has recorded yet" not in verdict.refusal
 
 
-def test_a_workshop_the_server_could_not_read_at_all_refuses():
-    """FAIL CLOSED, and this is the case the whole module docstring's asymmetry argument is about: a
-    workshop that does not exist, was deleted, or whose read raised. ``None`` is not "no opinion" —
-    it is "I cannot tell", and the only safe answer to that about somebody else's voice is no."""
+def test_a_workshop_whose_consent_could_not_be_read_refuses():
+    """A FAILED READ STILL FAILS CLOSED: ``None`` is not "no answer" — it is "I cannot tell", and the
+    store that failed may hold a refusal. Nothing is sent and the sentence says to ask again."""
     verdict = dictation_consent.verdict_for(None, workshop_id="ws-gone")
     assert verdict.may_send is False
-    assert "Nobody has recorded yet" in verdict.refusal
+    assert verdict.refusal == dictation_consent.UNREADABLE
 
 
 def test_a_granted_workshop_may_send_and_carries_no_sentence():
@@ -1971,7 +1973,7 @@ def test_a_transcript_on_its_way_to_openai_names_openai_and_not_the_transcriptio
     the one that produced them. A refusal naming the wrong recipient is the same defect in a smaller
     font — see ``dictation_consent.Send``."""
     refusal = dictation_consent.verdict_for(
-        dictation_consent.DictationConsent.NOT_RECORDED,
+        dictation_consent.DictationConsent.REFUSED,
         workshop_id="ws-7",
         send=dictation_consent.REFINEMENT,
     ).refusal

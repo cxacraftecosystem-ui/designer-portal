@@ -138,16 +138,27 @@ def client(env):
 
 
 @pytest.fixture
-def workshop(client):
-    """A workshop nobody has asked the consent question about. ``dictationConsent`` is NOT_RECORDED.
-
-    LEFT UNCONSENTED DELIBERATELY, so that the tests which need a grant have to ask for one. Making
-    this fixture consented would have been the smaller diff and would have deleted the only evidence
-    that the gate exists: every queue test would pass, and so would a build with the gate removed.
-    """
+def unanswered(client):
+    """A workshop nobody has recorded an answer for. ``dictationConsent`` is NOT_RECORDED, which is
+    consent assumed by default (owner decision, 19 Oct 2026)."""
     response = client.post("/api/design-workshops", json={"title": "Audio test workshop"})
     assert response.status_code == 201, response.text
     return response.json()["id"]
+
+
+@pytest.fixture
+def workshop(client, unanswered):
+    """A workshop whose artisan switched consent OFF: the answer on record is REFUSED.
+
+    REFUSED DELIBERATELY, so that the tests which need a grant have to record one and every test
+    below proves a refusal stops its send. Consent is assumed by default, so an unanswered workshop
+    would send, and a build with the gate removed would pass every queue test.
+    """
+    response = client.post(
+        f"/api/design-workshops/{unanswered}/dictation-consent", json={"decision": "REFUSED"}
+    )
+    assert response.status_code == 200, response.text
+    return unanswered
 
 
 def _grant(client, workshop_id):
@@ -486,7 +497,17 @@ def _jobs(media):
 # ---- the upload door -----------------------------------------------------------------
 
 
-async def test_an_unconsented_workshops_recording_is_stored_but_not_queued(env, workshop):
+async def test_a_workshop_with_no_answer_has_its_recording_queued_by_default(env, unanswered):
+    """Consent is assumed by default (owner decision, 19 Oct 2026): no answer on record is not a
+    refusal, so the recording is queued at upload exactly as a granted workshop's is."""
+    media = _upload_audio(
+        env["client"], env["user"], tag=DW_TAG, tag_id=unanswered, requests=["TRANSCRIPTION"]
+    )
+    assert len(_jobs(media)) == 1
+    assert media["transcriptStatus"] == "QUEUED"
+
+
+async def test_a_refused_workshops_recording_is_stored_but_not_queued(env, workshop):
     """THE DEFECT, ASSERTED AT THE DOOR THE FLEET ACTUALLY DRIVES THROUGH.
 
     Note ``requests=["TRANSCRIPTION"]``: the reported defect was the auto-enqueue for a body with no
@@ -503,9 +524,9 @@ async def test_an_unconsented_workshops_recording_is_stored_but_not_queued(env, 
     media = _upload_audio(
         env["client"], env["user"], tag=DW_TAG, tag_id=workshop, requests=["TRANSCRIPTION"]
     )
-    assert _jobs(media) == [], "an artisan nobody asked had their recording queued for a provider"
+    assert _jobs(media) == [], "an artisan who refused had their recording queued for a provider"
     assert media["transcriptStatus"] == "FAILED"
-    assert "Nobody has recorded yet" in (media["transcriptError"] or "")
+    assert "that is the answer on record" in (media["transcriptError"] or "")
 
 
 async def test_the_auto_enqueue_is_gated_too(env, workshop):
@@ -541,10 +562,9 @@ async def test_a_recording_that_is_not_workshop_material_is_still_transcribed(en
     assert media["transcriptStatus"] == "QUEUED"
 
 
-async def test_a_tag_naming_a_workshop_that_does_not_exist_refuses(env):
-    """FAIL CLOSED on a workshop the server cannot read. The tag is caller-supplied, so this is the
-    shape a typo or a stale offline id arrives in — and "I cannot tell whose workshop this is" must
-    not resolve to "send it"."""
+async def test_a_tag_naming_a_workshop_that_does_not_exist_holds_no_refusal(env):
+    """A typo or a stale offline id names no workshop and no refusal is on record for it, so under
+    consent assumed by default it is queued (a failed READ, unlike this, still refuses)."""
     media = _upload_audio(
         env["client"],
         env["user"],
@@ -552,8 +572,8 @@ async def test_a_tag_naming_a_workshop_that_does_not_exist_refuses(env):
         tag_id="no-such-workshop",
         requests=["TRANSCRIPTION"],
     )
-    assert _jobs(media) == []
-    assert media["transcriptStatus"] == "FAILED"
+    assert len(_jobs(media)) == 1
+    assert media["transcriptStatus"] == "QUEUED"
 
 
 # ---- the stage-save door -------------------------------------------------------------
@@ -565,7 +585,7 @@ async def test_the_stage_save_refuses_and_says_why_on_the_screen_being_looked_at
 
     ``transcriptionConsentRefusal`` exists because ``transcriptionsQueued: 0`` is ambiguous — it is
     also what a re-save reports — and silence here means the designer waits for a night that never
-    comes and reports the feature as broken. It is not broken; nobody has asked the artisan.
+    comes and reports the feature as broken. It is not broken; the artisan refused.
     """
     client = env["client"]
     media = _upload_audio(client, env["user"], requests=[])
@@ -573,7 +593,7 @@ async def test_the_stage_save_refuses_and_says_why_on_the_screen_being_looked_at
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["transcriptionsQueued"] == 0
-    assert "Nobody has recorded yet" in body["transcriptionConsentRefusal"]
+    assert "that is the answer on record" in body["transcriptionConsentRefusal"]
 
     # And the same workshop refuses a dictation, with the same reason — which is the pair that used
     # to disagree. One door was gated; this asserts they now answer alike.
@@ -648,7 +668,7 @@ async def test_withdrawing_consent_stops_a_transcription_already_queued(env, gra
 # ---- the doors that bypass the queue -------------------------------------------------
 
 
-async def test_the_admin_transcribe_now_button_is_refused_for_an_unasked_workshop(env, workshop):
+async def test_the_admin_transcribe_now_button_is_refused_for_a_refused_workshop(env, workshop):
     """``transcribe_media_now`` reaches ``transcribe_audio_bytes`` WITHOUT passing through
     ``_process_job``, which is the exact shape of the two doors this feature has already had to close.
 
@@ -662,7 +682,7 @@ async def test_the_admin_transcribe_now_button_is_refused_for_an_unasked_worksho
     )
     response = env["client"].post(f"/api/media/{media['id']}/transcribe-now")
     assert response.status_code == 409, response.text
-    assert "Nobody has recorded yet" in response.json()["detail"]
+    assert "that is the answer on record" in response.json()["detail"]
 
 
 async def test_refining_a_transcript_is_refused_too_and_names_openai(env, workshop):
@@ -732,7 +752,7 @@ async def test_a_clip_a_stage_names_is_refused_even_when_it_carries_no_tag(env, 
 
     now = client.post(f"/api/media/{media['id']}/transcribe-now")
     assert now.status_code == 409, now.text
-    assert "Nobody has recorded yet" in now.json()["detail"]
+    assert "that is the answer on record" in now.json()["detail"]
 
     assert client.post(
         f"/api/media/{media['id']}/transcript", json={"text": TRANSCRIPT}

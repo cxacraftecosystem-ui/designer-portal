@@ -3,7 +3,12 @@
 Plan ``docs/PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md`` §6 answer 3, in the user's own words: *"Consent
 for Tier 3. ANSWERED: per workshop, recorded, and it gates rung 2. A workshop carries an explicit
 answer to 'may recordings and dictation from this workshop leave the device for a third-party
-provider', with who set it and when. Until it is answered yes, rung 2 is unavailable and says why."*
+provider', with who set it and when."*
+
+**CONSENT IS ASSUMED BY DEFAULT, AND ANYONE CAN TAKE IT BACK** (owner decision, 19 Oct 2026: "the
+consent should be assumed by default, people can revoke it if required"). A workshop, artisan or
+recording with no answer on record is sent; a recorded refusal stops every outside send until a later
+grant replaces it. The rest of this module is about recording those answers and honouring a refusal.
 
 **WHY PER WORKSHOP AND NOT PER ACCOUNT, since that is the setting somebody will propose again.** A
 consent given for one cluster would silently cover the next one, and the artisan whose voice it is
@@ -34,11 +39,9 @@ puts them together with the shared rule (``ledger.decide``) in this order:
 2. the subjects are every workshop that names the file, plus every artisan of the file (its
    ``artisanId``, its interview's participants, and the artisans linked to any of those workshops,
    ``Artisan.designWorkshopId``, since a stage clip such as ``artisanAudio`` names no artisan of its
-   own). An artisan with no row is a subject with NO ANSWER YET, exactly as documentation-portal
-   counts them over the same rows, with one exception (OWNER DECISION PENDING, recorded in
-   ``docs/DATA_MODEL.md``): where a workshop names the file, that workshop's answer speaks for the
-   artisans who have not answered themselves, as it always has, since it was asked of them;
-3. one refusal refuses; every subject granted allows; a subject with no answer waits.
+   own). A subject with no row has NO ANSWER, which counts as agreeing, exactly as
+   documentation-portal counts the same rows;
+3. one refusal refuses; otherwise it is sent.
 
 A send about a workshop and no one stored file (dictation, the AI verbs over pasted text) asks
 :func:`workshop_verdict`: the workshop's answer and its linked artisans' answers, under the same rule.
@@ -48,9 +51,9 @@ it. A route a person is waiting on asks through ``app/api/consent_http.py``, whi
 with a 409 and its sentence, and a consent store that cannot be read with a 503 and :data:`UNREADABLE`
 instead of a 500 (the queue asks directly, so a failed read there stays a retry).
 
-A recording with no workshop and no row at all (no recording row, no artisan row) is sent as before:
-:data:`SendDecision.NOT_WORKSHOP_MATERIAL`, a designer's own dictation, for example. Once anyone records
-an answer for that recording or one of its artisans, the rule above decides it.
+A recording with no workshop and no row at all (no recording row, no artisan row) is
+:data:`SendDecision.NOT_WORKSHOP_MATERIAL`, a designer's own dictation, for example, and is sent. Once
+anyone records a refusal for that recording or one of its artisans, the rule above stops it.
 
 Originally: three columns on ``DesignWorkshop`` plus an append-only ``DwWorkshopConsentDecision`` log. A consent
 question added to stage 1 as a ``FieldSpec`` was the obvious-looking home and it is wrong five
@@ -109,16 +112,13 @@ A device clock that is WRONG is the price of trusting it, so a ``recorded_at`` i
 refused rather than stored — see :data:`MAX_DEVICE_CLOCK_SKEW`.
 
 ================================================================================================
-FAIL CLOSED, AND IT INVERTS A NEIGHBOURING RULE ON PURPOSE
+A FAILED READ STILL FAILS CLOSED
 ================================================================================================
 
-Anything this module cannot read as GRANTED gates the send: an unknown enum token, a null, a row
-restored from before the column existed. That is the opposite of ``DwPackState``'s honest-unknown
-resolution on the handset, where an UNKNOWN pack resolves to *try it* — *"trying the free engine
-first costs a moment, while skipping it costs money on a phone that could have done the job"*. The
-asymmetry is deliberate and is written here so that a later reader "restoring consistency" has to
-argue with it: **an unknown pack costs a moment; an unknown consent costs a named artisan's recorded
-voice leaving the device for a third party.** There is no symmetric version of that.
+No answer on record is consent (the owner's rule above), but a consent store that cannot be READ is
+not "no answer": a refusal may be sitting in it. So a failed read never sends — the queue retries and
+a person waiting is answered 503 with :data:`UNREADABLE`. A null or an unknown token on the cached
+workshop columns reads as no answer, which sends; only a REFUSED row stops a send.
 
 **AND CONSENT GATES RUNG 2 ONLY. IT NEVER GATES RUNG 1.** A phone with an installed on-device pack
 keeps dictating with no consent question at all, offline and for free, *because nothing leaves the
@@ -150,14 +150,12 @@ class DictationConsent(str, Enum):
     """Whether one workshop's recordings may be sent to a third-party provider.
 
     Mirrors the ``DwDictationConsent`` Postgres enum, and it is three states rather than a boolean
-    because the third one is a different fact with a different next move. "Nobody has asked the
-    artisan yet" and "the artisan said no" both stop a send; the first is answered by asking, and the
-    second only by the artisan changing their mind. A boolean would have had to default to false for
-    every workshop already in the database, making thirty thousand never-asked workshops
-    indistinguishable from thirty thousand refusals nobody ever made.
+    because "nobody has answered" and "the artisan agreed" are different facts on the record, even
+    though both send (consent is assumed by default). Only REFUSED stops a send.
     """
 
-    #: Nobody has been asked. Every workshop that predates the column, and the default for new ones.
+    #: No answer on record, which counts as agreeing. Every workshop that predates the column, and the
+    #: default for new ones.
     NOT_RECORDED = "NOT_RECORDED"
     GRANTED = "GRANTED"
     REFUSED = "REFUSED"
@@ -204,17 +202,12 @@ class ConsentRuleViolation(ValueError):
 
 
 def consent_of(row: Any) -> DictationConsent:
-    """One workshop's current answer, read from a stored row and FAILING CLOSED.
+    """One workshop's current answer, read from a stored (cached) row.
 
     Anything this cannot recognise — a null on a row restored from before the column existed, a token
-    a newer build wrote, a string with the wrong case — answers ``NOT_RECORDED``, which gates. It does
-    not raise, because a workshop nobody can read the consent of must still be openable, printable and
-    editable; the only thing that must not happen is a send.
-
-    Contrast ``ai_layers.source_of``, which raises on a shape it cannot read. That one is deciding
-    whether to PRINT a provenance record, where a wrong answer misinforms a reader and a refusal is
-    recoverable. This one is deciding whether to send an artisan's voice to a third party, where the
-    only safe answer to "I cannot tell" is no.
+    a newer build wrote, a string with the wrong case — answers ``NOT_RECORDED``: no answer, which
+    under the owner's opt-out rule sends. It does not raise, because a workshop must still be
+    openable, printable and editable. The gate reads the ledger first; these columns are its cache.
     """
     raw = getattr(row, "dictationConsent", None)
     token = str(getattr(raw, "value", raw) or "")
@@ -223,7 +216,7 @@ def consent_of(row: Any) -> DictationConsent:
     except ValueError:
         if token:
             # Logged rather than swallowed: a token outside the enum means either a newer build wrote
-            # it or somebody edited the row by hand, and both are worth finding. It still gates.
+            # it or somebody edited the row by hand, and both are worth finding.
             logger.warning(
                 "dictation_consent: workshop %s carries the unreadable consent %r; treating it as "
                 "NOT_RECORDED",
@@ -516,6 +509,11 @@ def send_for(verb: str | None) -> Send:
 def gate_refusal(consent: DictationConsent, send: Send = DICTATION) -> str | None:
     """Why this workshop's material may not be sent to a provider, or None when it may.
 
+    **ONLY A REFUSAL REFUSES** (owner decision, 19 Oct 2026: consent is assumed by default and can be
+    revoked). GRANTED and NOT_RECORDED both answer None. The older "nobody has recorded yet" sentence
+    is kept as :func:`legacy_waiting_sentence`, so notes already stored on recordings can be found and
+    cleared; nothing new is ever refused with it.
+
     **A SENTENCE AND NEVER A CODE, and every one of them names a next move that can actually work.**
     Both refusals are shown to the designer verbatim — the Android control prints the server's own
     detail string for every HTTP answer that is not the route's own 503 — so this is field copy and
@@ -534,15 +532,22 @@ def gate_refusal(consent: DictationConsent, send: Send = DICTATION) -> str | Non
     has read the dictation refusal a hundred times should not find it reworded today, and
     ``POST /{id}/dictate`` and the handset's copy both depend on it.
     """
-    if consent is DictationConsent.GRANTED:
+    if consent is not DictationConsent.REFUSED:
         return None
-    if consent is DictationConsent.REFUSED:
-        return (
-            f"This workshop's {send.material} may not be sent to {send.destination} — that is the "
-            f"answer on record — so {send.consequence}. {send.alternative}If the artisan has since "
-            f"agreed, change that answer on the workshop's own screen; nothing on this field can "
-            f"change it."
-        )
+    return (
+        f"This workshop's {send.material} may not be sent to {send.destination} — that is the "
+        f"answer on record — so {send.consequence}. {send.alternative}If the artisan has since "
+        f"agreed, change that answer on the workshop's own screen; nothing on this field can "
+        f"change it."
+    )
+
+
+def legacy_waiting_sentence(send: Send) -> str:
+    """The note the gate wrote, before 19 Oct 2026, on a recording whose workshop had no answer yet.
+
+    No send is refused with it any more (consent is assumed by default); it is kept so the notes
+    already stored on recordings can be recognised and cleared
+    (``scripts/backfill_consent_owner_attestation.py``)."""
     return (
         f"Nobody has recorded yet whether {send.material} from this workshop may be sent to "
         f"{send.destination}, so {send.consequence}. {send.alternative}Open the workshop's own screen "
@@ -553,17 +558,15 @@ def gate_refusal(consent: DictationConsent, send: Send = DICTATION) -> str | Non
 
 def subject_refusal(consent: DictationConsent, send: Send = MEDIA) -> str:
     """The sentence for a send refused by an answer that is not a workshop's: the recording's own
-    row or an artisan's. Two sentences for the two next moves, as :func:`gate_refusal` keeps them."""
+    row or an artisan's. REFUSED is the only answer that refuses; anything else here is a consent
+    store that could not be read (:data:`UNREADABLE`), whose next move is asking again."""
     if consent is DictationConsent.REFUSED:
         return (
             f"Consent to send these {send.material} to {send.destination} was refused, so "
             f"{send.consequence}. {send.alternative}If the artisan has since agreed, record that on "
             f"the artisan's own record."
         )
-    return (
-        f"Nobody has recorded yet whether these {send.material} may be sent to {send.destination}, "
-        f"so {send.consequence}. {send.alternative}Record the artisan's answer on their own record."
-    )
+    return UNREADABLE
 
 
 # --------------------------------------------------------------------------------------
@@ -764,20 +767,20 @@ def verdict_for(
     workshop_id: str | None,
     send: Send = MEDIA,
 ) -> SendVerdict:
-    """One file's verdict from a consent already read. Pure, and the fail-closed rule lives here.
+    """One file's verdict from a consent already read. Pure.
 
     ``workshop_id`` of None means no workshop was named — :data:`SendDecision.NOT_WORKSHOP_MATERIAL`,
     and the caller behaves as it always did.
 
-    ``consent`` of None means a workshop WAS named and could not be read: it does not exist, it is
-    deleted, or the read failed. **That refuses**, and it is the case the whole module docstring's
-    fail-closed argument is about — *"an unknown pack costs a moment; an unknown consent costs a named
-    artisan's recorded voice leaving the device for a third party"*. The sentence it produces is
-    NOT_RECORDED's, which is the true one: this server has no answer on record for that workshop.
+    ``consent`` of None means a workshop WAS named and its consent could not be READ. **That
+    refuses** with :data:`UNREADABLE` (module docstring, "a failed read still fails closed"): a refusal
+    may be sitting in the store that failed. NOT_RECORDED is no answer, which sends.
     """
     if not workshop_id:
         return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
-    refusal = gate_refusal(consent or DictationConsent.NOT_RECORDED, send)
+    if consent is None:
+        return SendVerdict(SendDecision.REFUSED, workshop_id=workshop_id, refusal=UNREADABLE)
+    refusal = gate_refusal(consent, send)
     if refusal is None:
         return SendVerdict(SendDecision.GRANTED, workshop_id=workshop_id)
     return SendVerdict(SendDecision.REFUSED, workshop_id=workshop_id, refusal=refusal)
@@ -873,9 +876,8 @@ def decision_plans(
 
     ``NOT_RECORDED`` IS REFUSED AS A DECISION, and that is not pedantry: it is the absence of an
     answer, and "somebody deliberately recorded that nobody has been asked" is not a state a person
-    can be in. A designer who wants to take an answer back records REFUSED, which is a decision with a
-    next move; unrecording one would leave a log saying an answer was un-given and a gate that cannot
-    tell that from a workshop nobody has opened.
+    can be in. A designer who wants to take an answer back records REFUSED (switching the consent
+    off), which is the decision that stops every send.
     """
     workshop = _require_text(
         workshop_id,
@@ -1252,7 +1254,7 @@ async def transcription_verdict(
     # without them an artisan's refusal would never reach the recordings made of them in a workshop.
     artisan_ids = sorted({*artisan_ids, *await workshop_artisan_ids(candidates)})
     artisans = await artisan_rows(artisan_ids) if artisan_ids else {}
-    return await _subjects_verdict(own, candidates, artisans, send=send, about=about, artisan_ids=artisan_ids)
+    return await _subjects_verdict(own, candidates, artisans, send=send, about=about)
 
 
 async def _subjects_verdict(
@@ -1263,18 +1265,12 @@ async def _subjects_verdict(
     send: Send,
     about: Any,
     records: Mapping[str, Any] | None = None,
-    artisan_ids: list[str] | None = None,
 ) -> SendVerdict:
     """The shared rule (``ledger.decide``, the same function documentation-portal's gate calls) over
     the recording's own row, every workshop that names it and every artisan of it with an answer on
-    record. One refusal is the answer; every subject has to permit the send. ``records`` are workshop
-    rows the caller already holds, so they are not read twice.
-
-    ``artisan_ids`` is EVERY artisan of the subject, answered or not. One with no row is passed to the
-    rule as None, "no answer yet", so artisan A's grant can never carry artisan B's voice out: the
-    same answer documentation-portal's gate gives over the same rows. Where a workshop names the
-    material, its row is a subject too and speaks for the artisans with no answer of their own (the
-    owner decision recorded in ``docs/DATA_MODEL.md``), so only their answered rows are added."""
+    record. One refusal is the answer; a subject with no answer counts as agreeing (owner decision,
+    19 Oct 2026), so an artisan with no row adds nothing. ``records`` are workshop rows the caller
+    already holds, so they are not read twice."""
     if not candidates and own is None and not artisans:
         return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
     first = candidates[0] if candidates else None
@@ -1284,33 +1280,27 @@ async def _subjects_verdict(
             record = (records or {}).get(workshop_id)
             if record is None:
                 record = await db.designworkshop.find_unique(where={"id": workshop_id})
-            # A workshop that cannot be found has no answer on record: it refuses (``verdict_for``).
-            rows.append(await current_row(workshop_id, record) if record is not None else None)
+            # A workshop that cannot be found is still asked of the ledger (a refusal recorded for it
+            # outlives the row); with nothing there it has no answer, which counts as agreeing.
+            rows.append(await current_row(workshop_id, record))
     except Exception as exc:  # noqa: BLE001 — a failed read refuses, never raises.
         logger.warning(
             "dictation_consent: could not read the consent of %s (%s); refusing the send", about, exc
         )
         return verdict_for(None, workshop_id=first, send=send) if first else SendVerdict(
-            SendDecision.REFUSED, refusal=subject_refusal(DictationConsent.NOT_RECORDED, send)
+            SendDecision.REFUSED, refusal=UNREADABLE
         )
-    if candidates:
-        # The workshop's own row (already in ``rows``) speaks for an artisan who has not answered.
-        artisan_subjects = list(artisans.values())
-    else:
-        ids = sorted({*(artisan_ids or ()), *artisans})
-        artisan_subjects = [artisans.get(artisan_id) for artisan_id in ids]
-    decided = ledger.decide(own, [*rows, *artisan_subjects])
-    if decided == ledger.ALLOW:
+    if ledger.decide(own, [*rows, *artisans.values()]) == ledger.ALLOW:
         return SendVerdict(SendDecision.GRANTED, workshop_id=first)
     for workshop_id, row in zip(candidates, rows, strict=True):
-        consent = _consent_token(row)
-        if decided == ledger.REFUSED and consent is DictationConsent.REFUSED:
-            return verdict_for(consent, workshop_id=workshop_id, send=send)
-        if decided == ledger.AWAITING and consent is not DictationConsent.GRANTED:
-            return verdict_for(consent, workshop_id=workshop_id, send=send)
+        if _consent_token(row) is DictationConsent.REFUSED:
+            return verdict_for(DictationConsent.REFUSED, workshop_id=workshop_id, send=send)
     # Refused by an artisan's own answer (or the recording's grant was withdrawn later by one).
-    consent = DictationConsent.REFUSED if decided == ledger.REFUSED else DictationConsent.NOT_RECORDED
-    return SendVerdict(SendDecision.REFUSED, workshop_id=first, refusal=subject_refusal(consent, send))
+    return SendVerdict(
+        SendDecision.REFUSED,
+        workshop_id=first,
+        refusal=subject_refusal(DictationConsent.REFUSED, send),
+    )
 
 
 async def recording_artisan_ids(media: Any) -> list[str]:
@@ -1347,7 +1337,7 @@ async def workshop_verdict(
 ) -> SendVerdict:
     """May material of this workshop that is no one stored file be sent (a dictation, an AI verb over
     pasted text)? The workshop's answer and its linked artisans' answers, under the shared rule: one
-    refusal refuses, a workshop with no answer waits. A workshop refusal reads exactly as
+    refusal refuses, no answer counts as agreeing. A workshop refusal reads exactly as
     :func:`gate_refusal` always has; an artisan's reads as :func:`subject_refusal`. ``record`` is the
     workshop row when the caller already holds it."""
     workshop_id = str(workshop_id or "").strip()
@@ -1355,7 +1345,7 @@ async def workshop_verdict(
     artisans = await artisan_rows(artisan_ids)
     return await _subjects_verdict(
         None, [workshop_id], artisans, send=send, about=workshop_id,
-        records={workshop_id: record} if record is not None else None, artisan_ids=artisan_ids,
+        records={workshop_id: record} if record is not None else None,
     )
 
 
@@ -1385,7 +1375,6 @@ async def interview_verdict(interview: Any, *, send: Send = DRAFTING) -> SendVer
     artisans = await artisan_rows(artisan_ids)
     return await _subjects_verdict(
         None, [workshop] if workshop else [], artisans, send=send, about=interview_id,
-        artisan_ids=artisan_ids,
     )
 
 
@@ -1445,16 +1434,9 @@ async def current_row(
 
 
 async def current_consent(workshop_id: str, record: Any = None) -> DictationConsent:
-    """The workshop's answer as the gate reads it (:func:`current_row`), FAILING CLOSED on a failed read."""
-    try:
-        return _consent_token(await current_row(workshop_id, record))
-    except Exception as exc:  # noqa: BLE001 — an unreadable consent is no consent.
-        logger.warning(
-            "dictation_consent: could not read the consent of workshop %s (%s); refusing the send",
-            workshop_id,
-            exc,
-        )
-        return DictationConsent.NOT_RECORDED
+    """The workshop's recorded answer (:func:`current_row`). A failed read raises: an unreadable
+    store is not "no answer", which would send (module docstring)."""
+    return _consent_token(await current_row(workshop_id, record))
 
 
 async def workshop_audio_media_ids(workshop_id: str) -> list[str]:
