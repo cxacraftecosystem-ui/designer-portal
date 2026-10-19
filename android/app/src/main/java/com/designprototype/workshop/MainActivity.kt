@@ -12648,6 +12648,7 @@ private fun WorkshopForm(
                 repository = repository
             ) { id ->
                 selectedArtisans = if (selectedArtisans.contains(id)) selectedArtisans - id else selectedArtisans + id
+            }
         }
         CompletenessAnchor("crafts") {
             CheckboxMultiSelectField(
