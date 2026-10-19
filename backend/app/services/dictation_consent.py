@@ -24,6 +24,23 @@ longer written: ``scripts/migrate_workshop_consent_to_ledger.py`` copies it into
 first), and until it has run the history read folds in the rows not yet copied and the gate falls
 back to the cached columns for a workshop with no ledger row.
 
+ONE RECORD PER ARTISAN, THE SAME IN BOTH PORTALS. An artisan's own answer is an ``ARTISAN`` row in
+the same ledger, written here by ``POST /artisans/{id}/consent`` (:func:`record_artisan_consent`) and
+read with :func:`artisan_rows`, exactly the row documentation-portal writes and reads for that person.
+A RECORDING row is an answer about one recording. Every send asks :func:`transcription_verdict`, which
+puts them together with the shared rule (``ledger.decide``) in this order:
+
+1. the recording's own row is read FIRST, and a refusal there always refuses;
+2. the subjects are every workshop that names the file, plus every artisan of the file (its
+   ``artisanId`` and its interview's participants) WHO HAS AN ANSWER ON RECORD. An artisan with no row
+   is not a subject here: a workshop's answer speaks for the artisans it was asked of, as it always
+   has;
+3. one refusal refuses; every subject granted allows; a workshop with no answer waits.
+
+A recording with no workshop and no row at all (no recording row, no artisan row) is sent as before:
+:data:`SendDecision.NOT_WORKSHOP_MATERIAL`, a designer's own dictation, for example. Once anyone records
+an answer for that recording or one of its artisans, the rule above decides it.
+
 Originally: three columns on ``DesignWorkshop`` plus an append-only ``DwWorkshopConsentDecision`` log. A consent
 question added to stage 1 as a ``FieldSpec`` was the obvious-looking home and it is wrong five
 independent ways, any one of them sufficient:
@@ -437,6 +454,16 @@ INSIGHTS = Send(
     alternative="Nothing was sent, and the transcript is unchanged. ",
 )
 
+#: The transcript of an interview recording, or text pasted into an interview, on its way to answer
+#: drafting (``POST /questionnaire/interviews/{id}/drafts``). The same material and the same rule as
+#: :data:`INSIGHTS`.
+DRAFTING = Send(
+    material="transcripts",
+    destination="the AI language model",
+    consequence="no answers can be drafted from it there",
+    alternative="Nothing was sent; type the answers in instead. ",
+)
+
 #: What an unrecognised verb is described as. Vague on purpose and false about nothing.
 #:
 #: A sixth verb added without copy is caught by a test that walks ``ai_verbs.Verb`` against
@@ -500,6 +527,21 @@ def gate_refusal(consent: DictationConsent, send: Send = DICTATION) -> str | Non
         f"{send.destination}, so {send.consequence}. {send.alternative}Open the workshop's own screen "
         f"and record the artisan's answer to that question — until somebody does, this stays "
         f"unavailable."
+    )
+
+
+def subject_refusal(consent: DictationConsent, send: Send = MEDIA) -> str:
+    """The sentence for a send refused by an answer that is not a workshop's: the recording's own
+    row or an artisan's. Two sentences for the two next moves, as :func:`gate_refusal` keeps them."""
+    if consent is DictationConsent.REFUSED:
+        return (
+            f"Consent to send these {send.material} to {send.destination} was refused, so "
+            f"{send.consequence}. {send.alternative}If the artisan has since agreed, record that on "
+            f"the artisan's own record."
+        )
+    return (
+        f"Nobody has recorded yet whether these {send.material} may be sent to {send.destination}, "
+        f"so {send.consequence}. {send.alternative}Record the artisan's answer on their own record."
     )
 
 
@@ -1143,7 +1185,13 @@ async def transcription_verdict(
     affordable in the place it has to be affordable — the queue drain, once per job, and the stage save,
     once per clip. In the overwhelmingly common case there is exactly one candidate.
 
-    **A FAILED CONSENT READ REFUSES, and it is a ``return`` rather than a raise.** The queue's callers
+    THE RECORDING'S OWN ROW IS READ BEFORE ANY OF THAT, and a refusal recorded for this recording
+    refuses whatever else is true of it (module docstring, "one record per artisan"). That read and
+    the artisans' rows are read before anything says whether the file is workshop material, so a
+    failure there RAISES, for the reason :func:`interview_workshop_id` gives: refusing would be
+    terminal for a file this consent may say nothing about, and sending would guess.
+
+    **A FAILED WORKSHOP CONSENT READ REFUSES, and it is a ``return`` rather than a raise.** The queue's callers
     are a background worker and a designer's stage save; an exception in either becomes a lost job or a
     failed save, and neither is the right answer to "the database blinked". The refusal is the right
     answer: nothing is sent, the clip stays a candidate for the next pass, and no consent was guessed.
@@ -1151,7 +1199,17 @@ async def transcription_verdict(
     reading it is how a recording in a deleted workshop stays refused rather than becoming unreadable
     and therefore, under the rule above, refused for the wrong reason.
     """
-    about = _attr(media, "id")
+    about = str(_attr(media, "id") or "").strip()
+    # THE RECORDING'S OWN ROW FIRST: a refusal recorded for this recording refuses whatever else is
+    # true of it, workshop material or not. A failed read raises, as interview_workshop_id's does:
+    # the question is left unanswered for the caller's retry, and nothing is sent either way.
+    own = (await ledger.current_states(db, ledger.RECORDING, [about])).get(about) if about else None
+    if _consent_token(own) is DictationConsent.REFUSED:
+        return SendVerdict(
+            SendDecision.REFUSED,
+            workshop_id=str(design_workshop_id or "").strip() or tagged_workshop_id(media),
+            refusal=subject_refusal(DictationConsent.REFUSED, send),
+        )
     candidates: list[str] = []
     for candidate in (str(design_workshop_id or "").strip(), tagged_workshop_id(media)):
         if candidate and candidate not in candidates:
@@ -1167,14 +1225,26 @@ async def transcription_verdict(
     if interview_workshop and interview_workshop not in candidates:
         candidates.append(interview_workshop)
     if not candidates and resolve_from_stages:
-        candidates = await stage_attached_workshop_ids(str(about or ""))
-    if not candidates:
+        candidates = await stage_attached_workshop_ids(about)
+    artisans = await artisan_rows(await recording_artisan_ids(media)) if about else {}
+    return await _subjects_verdict(own, candidates, artisans, send=send, about=about)
+
+
+async def _subjects_verdict(
+    own: Mapping[str, Any] | None,
+    candidates: list[str],
+    artisans: Mapping[str, Mapping[str, Any]],
+    *,
+    send: Send,
+    about: Any,
+) -> SendVerdict:
+    """The shared rule (``ledger.decide``, the same function documentation-portal's gate calls) over
+    the recording's own row, every workshop that names it and every artisan of it with an answer on
+    record. One refusal is the answer; every subject has to permit the send."""
+    if not candidates and own is None and not artisans:
         return SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
-    # THE SHARED RULE (``ledger.decide``, the same function documentation-portal's gate calls): the
-    # recording's own row, if one was ever written, then every workshop that names the file. One
-    # refusal is the answer; every workshop has to permit the send.
+    first = candidates[0] if candidates else None
     try:
-        own = (await ledger.current_states(db, ledger.RECORDING, [str(about or "")])).get(str(about or ""))
         rows: list[Any] = []
         for workshop_id in candidates:
             record = await db.designworkshop.find_unique(where={"id": workshop_id})
@@ -1184,18 +1254,73 @@ async def transcription_verdict(
         logger.warning(
             "dictation_consent: could not read the consent of %s (%s); refusing the send", about, exc
         )
-        return verdict_for(None, workshop_id=candidates[0], send=send)
-    decided = ledger.decide(own, rows)
+        return verdict_for(None, workshop_id=first, send=send) if first else SendVerdict(
+            SendDecision.REFUSED, refusal=subject_refusal(DictationConsent.NOT_RECORDED, send)
+        )
+    decided = ledger.decide(own, [*rows, *artisans.values()])
     if decided == ledger.ALLOW:
-        return SendVerdict(SendDecision.GRANTED, workshop_id=candidates[0])
+        return SendVerdict(SendDecision.GRANTED, workshop_id=first)
     for workshop_id, row in zip(candidates, rows, strict=True):
         consent = _consent_token(row)
         if decided == ledger.REFUSED and consent is DictationConsent.REFUSED:
             return verdict_for(consent, workshop_id=workshop_id, send=send)
         if decided == ledger.AWAITING and consent is not DictationConsent.GRANTED:
             return verdict_for(consent, workshop_id=workshop_id, send=send)
-    # Refused by the recording's own row while every workshop granted: the REFUSED sentence.
-    return verdict_for(DictationConsent.REFUSED, workshop_id=candidates[0], send=send)
+    # Refused by an artisan's own answer (or the recording's grant was withdrawn later by one).
+    consent = DictationConsent.REFUSED if decided == ledger.REFUSED else DictationConsent.NOT_RECORDED
+    return SendVerdict(SendDecision.REFUSED, workshop_id=first, refusal=subject_refusal(consent, send))
+
+
+async def recording_artisan_ids(media: Any) -> list[str]:
+    """The artisans a stored recording is about: its own ``artisanId`` and the participants of the
+    interview it was recorded in (the typed FK, else the questionnaire tag). One indexed statement."""
+    media_id = str(_attr(media, "id") or "").strip()
+    if not media_id:
+        return []
+    rows = await db.query_raw(
+        'SELECT m."artisanId" AS a FROM "MediaFile" m WHERE m."id" = $1 AND m."artisanId" IS NOT NULL '
+        'UNION SELECT qa."artisanId" FROM "MediaFile" m JOIN "QuestionnaireInterviewArtisan" qa '
+        '  ON qa."interviewId" = COALESCE(m."questionnaireInterviewId", '
+        "    CASE WHEN lower(m.\"linkedRecordType\") = 'questionnaire' THEN m.\"linkedRecordId\" END) "
+        'WHERE m."id" = $1',
+        media_id,
+    )
+    return sorted({str(row["a"]) for row in rows if row.get("a")})
+
+
+async def artisan_rows(artisan_ids: list[str], *, client: Any = None) -> dict[str, dict[str, Any]]:
+    """The newest ARTISAN row per artisan that HAS one, from the ledger both portals share."""
+    return await ledger.current_states(client if client is not None else db, ledger.ARTISAN, artisan_ids)
+
+
+async def interview_verdict(interview: Any, *, send: Send = DRAFTING) -> SendVerdict:
+    """May text that is an interview's words (pasted, so no one recording) be sent? The same rule
+    over the interview's design workshop and its participants' own answers."""
+    interview_id = str(_attr(interview, "id") or "").strip()
+    workshop = str(_attr(interview, "designWorkshopId") or "").strip()
+    rows = await db.query_raw(
+        'SELECT "artisanId" FROM "QuestionnaireInterviewArtisan" WHERE "interviewId" = $1', interview_id
+    )
+    artisans = await artisan_rows([str(row["artisanId"]) for row in rows])
+    return await _subjects_verdict(None, [workshop] if workshop else [], artisans, send=send, about=interview_id)
+
+
+async def record_artisan_consent(
+    artisan_id: str,
+    *,
+    state: str,
+    actor_id: str,
+    basis: str = ledger.VERBAL_RECORDED,
+    note: str | None = None,
+    recorded_at: datetime | None = None,
+    client: Any = None,
+) -> dict[str, Any]:
+    """Append one ARTISAN row: the artisan's own answer, the record documentation-portal reads too."""
+    written = await ledger.append(
+        client if client is not None else db, subject_type=ledger.ARTISAN, subject_id=artisan_id,
+        state=state, basis=basis, actor_id=actor_id, note=note, recorded_at=recorded_at,
+    )
+    return written or {}
 
 
 async def workshop_send_verdict(

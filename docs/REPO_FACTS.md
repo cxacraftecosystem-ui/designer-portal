@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**488 operations** in the working tree — 235 GET, 168 POST, 35 DELETE,
+**490 operations** in the working tree — 236 GET, 169 POST, 35 DELETE,
 25 PATCH, 25 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -46,13 +46,13 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `annual_plan.py` | 12 |
 | `data_access.py` | 12 |
 | `design_workshop_approvals.py` | 11 |
+| `artisans.py` | 10 |
 | `auth.py` | 10 |
 | `designers.py` | 10 |
 | `tasks.py` | 10 |
 | `feedback.py` | 9 |
 | `ministry_dashboard.py` | 9 |
 | `ministry_exports.py` | 9 |
-| `artisans.py` | 8 |
 | `tools.py` | 8 |
 | `artisan_duplicates.py` | 7 |
 | `design_workshop_access.py` | 7 |
@@ -143,7 +143,7 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 327 | 6100 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Backend unit (`backend/tests/`) | 328 | 6112 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 277 | 3188 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 312 | 3782 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 9 | 25 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
@@ -171,9 +171,9 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 320 | 195,992 | 320 | 195,992 |
+| `backend/app` | 320 | 196,198 | 320 | 196,198 |
 | `frontend/app` | 123 | 61,046 | 123 | 61,046 |
-| `frontend/components` | 386 | 145,656 | 386 | 145,656 |
+| `frontend/components` | 387 | 145,751 | 387 | 145,751 |
 | `frontend/lib` | 187 | 82,506 | 187 | 82,506 |
 | `android/app/src/main/java` | 355 | 254,315 | 355 | 254,315 |
 

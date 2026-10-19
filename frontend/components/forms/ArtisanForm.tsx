@@ -64,6 +64,7 @@ import { EMAIL_PATTERN, emailValidationError } from "@/lib/textFormats";
 import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
 import { RequiredMark } from "@/components/ui/RequiredMark";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { ArtisanConsentToggle } from "@/components/forms/ArtisanConsentToggle";
 import { CrossPortalFind, CrossPortalLinkPanel } from "@/components/forms/CrossPortalLookup";
 import {
   keepTypedPehchan,
@@ -1774,6 +1775,7 @@ export function ArtisanForm({
               initialNumber={prefill.pehchanCardNumber ?? initial?.pehchanCardNumber}
               onDirty={markDirty}
             />
+            {initial?.id ? <ArtisanConsentToggle artisanId={initial.id} /> : null}
             {initial?.id ? (
               <CrossPortalLinkPanel artisanId={initial.id} onRefreshed={takeRefreshedArtisan} />
             ) : (

@@ -1032,3 +1032,65 @@ def _standardise(apply: Any, data: dict[str, Any], stored: Any = None) -> None:
         apply(data, stored)
     except StandardValueError as exc:
         raise HTTPException(status_code=422, detail=exc.message) from exc
+
+
+# ── the artisan's own consent (the one consent store, both portals) ─────────────────────────────
+
+
+class ArtisanConsentIn(BaseModel):
+    """The artisan's answer to "may their recordings be sent to an outside service". GRANTED or
+    REFUSED only; taking a consent back is recording REFUSED. Who recorded it is the caller."""
+
+    state: str = Field(pattern="^(GRANTED|REFUSED)$")
+    note: str | None = Field(default=None, max_length=2000)
+
+
+async def _artisan_consent(artisan_id: str) -> dict[str, Any]:
+    from app.services import dictation_consent
+
+    row = (await dictation_consent.artisan_rows([artisan_id])).get(artisan_id) or {}
+    recorded_at = row.get("recordedAt")
+    return {
+        "artisanId": artisan_id,
+        "purpose": "EXTERNAL_PROCESSING",
+        "state": row.get("state") or "NOT_RECORDED",
+        "basis": row.get("basis"),
+        "source": row.get("source"),
+        "recordedAt": recorded_at.isoformat() if hasattr(recorded_at, "isoformat") else recorded_at,
+    }
+
+
+@router.get("/{artisan_id}/consent")
+async def get_artisan_consent(artisan_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    """The artisan's current answer in the ``Consent`` ledger: the same row documentation-portal reads."""
+    await require_record(db.artisan, artisan_id)
+    return await _artisan_consent(artisan_id)
+
+
+@router.post("/{artisan_id}/consent", status_code=status.HTTP_201_CREATED)
+async def record_artisan_consent(
+    artisan_id: str, payload: ArtisanConsentIn, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """Append the artisan's answer to the ledger (append-only: a change is a new row). It never blocks
+    recording; it decides only whether a recording of this artisan may be SENT outside, in both
+    portals. Needs the standing to edit the artisan."""
+    from app.core.deps import is_admin, may_edit_lower_ranked_record
+    from app.services import dictation_consent
+
+    artisan = await require_record(db.artisan, artisan_id)
+    await assert_may_write_a_record_filed_under(artisan.designWorkshopId, current_user)
+    owner_id = get_value(artisan, "createdById")
+    allowed = (
+        is_admin(current_user)
+        or (owner_id is not None and get_value(current_user, "id") == owner_id)
+        or await may_edit_lower_ranked_record(current_user, owner_id)
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only someone who may edit this artisan can record their consent.",
+        )
+    await dictation_consent.record_artisan_consent(
+        artisan_id, state=payload.state, actor_id=str(get_value(current_user, "id")), note=payload.note
+    )
+    return await _artisan_consent(artisan_id)

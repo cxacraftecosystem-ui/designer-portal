@@ -389,6 +389,21 @@ its recording goes. **`MediaFile.transcriptSummary` is not a summary** — the q
 provider text there — and nothing here writes to it. Not `DwAiLayer`: that table needs a design
 workshop, and most recordings have none. The Field Repository has the identical table.
 
+### `Consent` — the one consent store, added 2026-10-19
+
+Every consent either portal holds is an append-only row: who it is about (`subjectType` +
+`subjectId`: `ARTISAN`, `WORKSHOP`, `RECORDING` or `USER`), the answer, how and by whom it was given,
+and when (`backend/app/transcription/ledger.py`, byte-identical in both portals; the newest row per
+subject is the view `consent_current_v`). **An artisan has one record, used by both portals**: this
+portal reads and writes `ARTISAN` rows through `GET`/`POST /api/artisans/{id}/consent` and the
+artisan form's "Recordings may be transcribed" switch, exactly as the Field Repository does. Before
+anything is sent to an outside service (transcription, refinement, summaries, answer drafting),
+`transcription_verdict` in `backend/app/services/dictation_consent.py` reads the recording's own row
+first — a refusal there always refuses — then decides with the shared rule over every workshop that
+names the file and every artisan of it who has an answer on record. **A recording with no workshop and
+no consent row at all (a designer's own dictation, for example) is sent as before**; once anyone
+records an answer for it or one of its artisans, the rule decides it.
+
 ---
 
 ## 4. Questionnaire

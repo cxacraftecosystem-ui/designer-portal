@@ -11,6 +11,11 @@ the drafts need the standing to edit the interview: a pending draft is unfinishe
 people who may accept it. Anyone else, inside the interview read scope, is told there is nothing to
 show; outside it, the interview does not exist. Accepting is one transaction, and every question it
 writes must belong to the section it names.
+
+Drafting SENDS the transcript to an AI provider, so it asks the one consent store first
+(``services/dictation_consent``): a draft from a recording asks ``transcription_verdict`` for that
+recording, a draft from pasted text asks ``interview_verdict`` (the interview's workshop and its
+participants' own answers). A refusal answers 409 with the reason and sends nothing.
 """
 
 from datetime import UTC, datetime
@@ -22,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import get_current_user, get_value, is_admin, may_edit_lower_ranked_record
-from app.services import answer_drafts as ad
+from app.services import answer_drafts as ad, dictation_consent
 from app.services.access import effective_tier_for_record
 from app.services.record_design_workshop import assert_may_write_a_record_filed_under
 from app.services.records import public_encode, require_record, viewable_where
@@ -147,11 +152,12 @@ async def draft_section(
     interview_id: str, payload: DraftIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
     settings = _enabled_or_404()
-    await _editable_interview(interview_id, current_user)
+    interview = await _editable_interview(interview_id, current_user)
     section = await _section_or_404(payload.sectionId)
 
     transcript = (payload.transcript or "").strip()
     source_media_id = None
+    media = None
     if payload.mediaId:
         media = await db.mediafile.find_unique(where={"id": payload.mediaId})
         if media is None or media.questionnaireInterviewId != interview_id:
@@ -163,6 +169,14 @@ async def draft_section(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="There's no transcript to draft from yet.",
         )
+    if media is not None:
+        verdict = await dictation_consent.transcription_verdict(
+            media, send=dictation_consent.DRAFTING, resolve_from_stages=True
+        )
+    else:
+        verdict = await dictation_consent.interview_verdict(interview, send=dictation_consent.DRAFTING)
+    if not verdict.may_send:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=verdict.refusal)
 
     questions = await db.questionnairequestion.find_many(
         where={"sectionId": section.id, "isActive": True}, order={"sortOrder": "asc"}
