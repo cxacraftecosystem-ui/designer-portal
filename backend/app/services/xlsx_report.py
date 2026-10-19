@@ -42,19 +42,18 @@ entry point returns the finished workbook as ``bytes``.
 """
 
 import re
+from functools import cache
 from io import BytesIO
 from math import ceil
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 
 from fastapi import Response
-from openpyxl import Workbook
-from openpyxl.cell.cell import Cell
-from openpyxl.cell.rich_text import CellRichText, TextBlock
-from openpyxl.cell.text import InlineFont
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.hyperlink import Hyperlink
-from openpyxl.worksheet.worksheet import Worksheet
+
+if TYPE_CHECKING:
+    from openpyxl.cell.cell import Cell
+    from openpyxl.cell.rich_text import CellRichText
+    from openpyxl.worksheet.worksheet import Worksheet
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -106,11 +105,31 @@ _OVERVIEW_COLOR = "5B21B6"  # purple, matching the Workshops brand tone
 _WHITE = "FFFFFFFF"
 _HYPERLINK_BLUE = "FF1D4ED8"
 
-_THIN = Side(style="thin", color="FFBFBFBF")
-_HEADER_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
-_HEADER_ALIGN = Alignment(horizontal="left", vertical="center", wrap_text=False)
-_CELL_ALIGN = Alignment(horizontal="left", vertical="top", wrap_text=False)
-_WRAP_ALIGN = Alignment(horizontal="left", vertical="top", wrap_text=True)
+
+@cache
+def _styles() -> SimpleNamespace:
+    """The shared cell styles, built on first use so importing this module does not load openpyxl.
+
+    The worker and the API both import this module through the services that name its constants;
+    openpyxl, Pillow and lxml (which openpyxl pulls in) are paid for only by the process that
+    actually writes a workbook. Cached, so every cell still shares one object per style as it did
+    when these were module constants.
+    """
+    from openpyxl.cell.text import InlineFont
+    from openpyxl.styles import Alignment, Border, Side
+
+    thin = Side(style="thin", color="FFBFBFBF")
+    return SimpleNamespace(
+        header_border=Border(left=thin, right=thin, top=thin, bottom=thin),
+        header_align=Alignment(horizontal="left", vertical="center", wrap_text=False),
+        cell_align=Alignment(horizontal="left", vertical="top", wrap_text=False),
+        wrap_align=Alignment(horizontal="left", vertical="top", wrap_text=True),
+        # What a run falls back to when its font reference is missing or is not an InlineFont:
+        # plain text is a far better outcome than a 500 on the download.
+        plain_font=InlineFont(),
+    )
+
+
 # Left to auto-fit, a wrapped transcript grows a row hundreds of lines tall and the sheet stops
 # being scrollable. Size wrapped rows to their own text instead, up to a readable window; past
 # that the reader drags the row open.
@@ -136,9 +155,6 @@ _XML_UNSAFE_RE = re.compile(
     "\ufdd0-\ufdef\ufffe\uffff" + _NONCHARACTERS + "]"  # noncharacters in the BMP
 )
 
-# What a run falls back to when its font reference is missing or is not an InlineFont: plain
-# text is a far better outcome than a 500 on the download.
-_PLAIN_FONT = InlineFont()
 
 
 def _rgb(color: str | None) -> str:
@@ -171,6 +187,7 @@ def _sanitise(text: str) -> str:
 
 def _clean(value: Any) -> Any:
     """Make a value safe for an Excel cell: strip illegal codepoints, clip over-long text."""
+    from openpyxl.cell.rich_text import CellRichText
     if value is None:
         return None
     if isinstance(value, CellRichText):
@@ -191,6 +208,8 @@ def _clean_runs(value: CellRichText) -> CellRichText:
     empty one would otherwise be written out as ``<r><t/></r>``. A cell whose every run vanishes
     comes back as a plain empty string rather than an empty rich-text object.
     """
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
     cleaned = CellRichText()
     budget = _MAX_CELL_CHARS
     for run in value:
@@ -204,7 +223,7 @@ def _clean_runs(value: CellRichText) -> CellRichText:
         else:
             budget -= len(text)
         if block:
-            font = run.font if isinstance(run.font, InlineFont) else _PLAIN_FONT
+            font = run.font if isinstance(run.font, InlineFont) else _styles().plain_font
             cleaned.append(TextBlock(font, text))
         else:
             cleaned.append(text)
@@ -231,6 +250,7 @@ def _put(ws: Worksheet, row: int, column: int, value: Any) -> Cell:
 
 def _wraps(value: Any) -> bool:
     """Whether a cell holds prose: rich text, or text the author already broke into lines."""
+    from openpyxl.cell.rich_text import CellRichText
     if isinstance(value, CellRichText):
         return True
     return isinstance(value, str) and "\n" in value
@@ -273,6 +293,7 @@ def _sheet_ref(title: str) -> str:
 
 
 def _autosize(ws: Worksheet, columns: list[str], rows: list[list[Any]], wrapped: set[int]) -> None:
+    from openpyxl.utils import get_column_letter
     for idx, header in enumerate(columns):
         if idx in wrapped:
             # Prose is read down the column, not across it — always give it the full allowance.
@@ -290,6 +311,7 @@ def _autosize(ws: Worksheet, columns: list[str], rows: list[list[Any]], wrapped:
 
 
 def _write_sheet(ws: Worksheet, sheet: dict[str, Any]) -> None:
+    from openpyxl.styles import Font, PatternFill
     columns: list[str] = sheet.get("columns") or []
     rows: list[list[Any]] = sheet.get("rows") or []
     fill = PatternFill(fill_type="solid", start_color=_rgb(sheet.get("color")))
@@ -299,8 +321,8 @@ def _write_sheet(ws: Worksheet, sheet: dict[str, Any]) -> None:
         cell = _put(ws, 1, idx, label)
         cell.font = Font(bold=True, color=_WHITE)
         cell.fill = fill
-        cell.border = _HEADER_BORDER
-        cell.alignment = _HEADER_ALIGN
+        cell.border = _styles().header_border
+        cell.alignment = _styles().header_align
 
     wrapped: set[int] = set()
     for r, row in enumerate(rows, start=2):
@@ -308,11 +330,11 @@ def _write_sheet(ws: Worksheet, sheet: dict[str, Any]) -> None:
         for idx, value in enumerate(row):
             cell = _put(ws, r, idx + 1, value)
             if _wraps(cell.value):
-                cell.alignment = _WRAP_ALIGN
+                cell.alignment = _styles().wrap_align
                 wrapped.add(idx)
                 height = max(height, _wrap_height(str(cell.value)))
             else:
-                cell.alignment = _CELL_ALIGN
+                cell.alignment = _styles().cell_align
         if height:
             ws.row_dimensions[r].height = height
 
@@ -322,6 +344,8 @@ def _write_sheet(ws: Worksheet, sheet: dict[str, Any]) -> None:
 
 
 def _write_overview(ws: Worksheet, title: str, sheets: list[dict[str, Any]]) -> None:
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.worksheet.hyperlink import Hyperlink
     ws.sheet_properties.tabColor = _rgb(_OVERVIEW_COLOR)
 
     heading = _put(ws, 1, 1, title or "Report")
@@ -333,8 +357,8 @@ def _write_overview(ws: Worksheet, title: str, sheets: list[dict[str, Any]]) -> 
         cell = _put(ws, 3, idx, label)
         cell.font = Font(bold=True, color=_WHITE)
         cell.fill = fill
-        cell.border = _HEADER_BORDER
-        cell.alignment = _HEADER_ALIGN
+        cell.border = _styles().header_border
+        cell.alignment = _styles().header_align
 
     for offset, sheet in enumerate(sheets):
         r = 4 + offset
@@ -356,6 +380,7 @@ def build_report_workbook(sheets: list[dict[str, Any]], title: str, *, overview:
     ``{name, color (#hex), columns, rows}``. A leading Overview sheet is prepended unless
     ``overview`` is false, for a caller whose first sheet is its own summary (the Ministry pack).
     """
+    from openpyxl import Workbook
     wb = Workbook()
 
     used_titles: set[str] = {_OVERVIEW_NAME.lower()} if overview else set()

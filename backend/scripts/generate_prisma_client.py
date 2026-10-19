@@ -1,8 +1,8 @@
-"""Generate the Prisma client, then make its 80,000 TypedDicts cheap to import on Python 3.14.
+"""Generate the Prisma client, then keep its TypedDicts out of every process that imports it.
 
     cd backend
-    python scripts/generate_prisma_client.py          # prisma generate, then the one-line fix
-    python scripts/generate_prisma_client.py --check  # exit 1 unless the installed client has it
+    python scripts/generate_prisma_client.py          # prisma generate, the future import, the split
+    python scripts/generate_prisma_client.py --check  # exit 1 unless the installed client has both
 
 EVERY PLACE THAT GENERATES THE CLIENT FOR REAL RUNS THIS, NOT ``python -m prisma generate``: both
 backend jobs in .github/workflows/checks.yml, e2e-live.yml, the runner-side generator in
@@ -34,10 +34,31 @@ which the box's memory ceilings in deploy-backend.yml now account for in a comme
 Nothing at run time reads these annotations: the TypedDicts exist for type checkers, prisma's own
 ``actions.py`` and ``client.py`` already use the future import, and the app never introspects them.
 
+AND THEN THE TYPEDDICTS THEMSELVES LEAVE THE RUNTIME (2026-10-19). The schema has grown to 178,641
+of them, 62 MB of ``types.py``, and holding them was most of the memory of both units on the box:
+the API at 956 MB RSS plus 623 MB in swap and the queue at 802 MB plus 731 MB, idle. Measured in a
+``python:3.14.8`` container against the same lock and schema:
+
+    ``import prisma``                   full types.py  1,434 MiB      split  128 MiB
+    API (uvicorn app.main) after start  1,527 MiB RSS, 87 s to /health    248 MiB, 14 s
+    queue (python -m app.worker)        1,453 MiB RSS                     202 MiB
+
+So after the future import the whole generated file is moved, unchanged, to ``types.pyi`` beside
+it, and ``types.py`` becomes a shim: the template's own preamble (the imports and the handful of
+real aliases such as ``SortOrder`` and ``HttpConfig`` that ``client.py`` imports by name), then a
+module ``__getattr__`` that answers ``dict`` for every other name. Type checkers and editors read
+``types.pyi`` in preference to ``types.py``, so every declaration is still checked. At run time the
+generated modules use these names only inside string annotations and in ``cast(types.X, value)``,
+which returns ``value``; a Prisma query is built from plain dicts. ``recursive_type_depth`` in
+``schema.prisma`` was the other lever and is not enough: at -1 (its smallest output) the import is
+still 430 MiB, and it weakens the types editors see.
+
 THIS IS A PATCH TO GENERATED CODE AND IT IS KEPT HONEST BY REFUSING TO GUESS. It inserts one line
 before the first statement, only when every line above that statement is a comment or blank and the
-statement is an import — the shape 0.15.0 writes. Any other shape stops with an error naming the file
-rather than editing it. It is idempotent: a client that already has the import is left alone. The way
+statement is an import — the shape 0.15.0 writes. The split needs the template's
+``# -- template types.py.jinja --`` line and a preamble that defines every name ``client.py`` imports
+from it. Any other shape stops with an error naming the file rather than editing it. Both steps are
+idempotent: a client that already has them is left alone. The way
 out is the one docs/OPEN_FINDINGS.md gives for prisma-client-py as a whole (the project is archived):
 the data layer moving to a maintained async stack, after which this file is deleted.
 """
@@ -105,6 +126,89 @@ def add_future_import(path: Path) -> bool:
     return True
 
 
+#: The first line of the runtime ``types.py`` this script writes; how it recognises its own output.
+SHIM_MARKER = "# prisma.types runtime shim, written by backend/scripts/generate_prisma_client.py\n"
+#: Where the generated template's own runtime preamble starts. Everything from here to the first
+#: declaration is a handful of real aliases (``SortOrder``, ``HttpConfig``, ...) that ``client.py``
+#: imports by name, so the shim keeps them verbatim.
+TEMPLATE_MARKER = "# -- template types.py.jinja --"
+#: Names the generated ``client.py`` imports from ``.types`` at run time. The shim must define them.
+PREAMBLE_NAMES = ("SortMode", "SortOrder", "MetricsFormat", "DatasourceOverride", "HttpConfig")
+
+SHIM_TAIL = """
+# ---------------------------------------------------------------------------------------------
+# EVERY DECLARATION THAT USED TO FOLLOW IS IN types.pyi, BESIDE THIS FILE, FOR TYPE CHECKERS.
+#
+# prisma-client-py generates ~180,000 TypedDicts here for this schema, 62 MB of source that costs
+# every importing process about 1.3 GB of RAM on Python 3.14. Nothing at run time needs them: a
+# Prisma query is built from plain dicts, and the generated modules name them only in annotations
+# (strings, under the future import) and in ``cast(types.X, value)``, which returns ``value``. Type
+# checkers and editors read ``types.pyi`` in preference to this file, so they still see every
+# declaration. At run time any other name resolves to ``dict``, which is what a TypedDict is once
+# the type checker has gone home. Regenerate with backend/scripts/generate_prisma_client.py.
+# ---------------------------------------------------------------------------------------------
+
+
+def __getattr__(name: str) -> Any:
+    if name.startswith("__") and name.endswith("__"):
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return dict
+"""
+
+
+def is_runtime_shim(path: Path) -> bool:
+    with path.open(encoding="utf-8") as handle:
+        return handle.readline() == SHIM_MARKER
+
+
+def _preamble_end(lines: list[str], start: int) -> int:
+    """Index of the first line after the template's runtime preamble (imports, ``X = _types.X``)."""
+    index = start
+    while index < len(lines):
+        stripped = lines[index].strip()
+        name, _, value = stripped.partition(" = ")
+        if (
+            not stripped
+            or stripped.startswith(("#", "from ", "import "))
+            or (name.isidentifier() and value == f"_types.{name}")
+        ):
+            index += 1
+            continue
+        return index
+    raise SystemExit("generated types.py ends inside its preamble; refusing to split it")
+
+
+def split_types(types_py: Path) -> bool:
+    """Move the declarations to ``types.pyi`` and leave a small runtime ``types.py``.
+
+    True when the files changed; False when ``types.py`` is already the shim.
+    """
+    if is_runtime_shim(types_py):
+        return False
+    if not has_future_import(types_py):
+        raise SystemExit(f"{types_py}: add the future import before splitting")
+    text = types_py.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    try:
+        marker = next(i for i, line in enumerate(lines) if line.strip() == TEMPLATE_MARKER)
+    except StopIteration:
+        raise SystemExit(
+            f"{types_py}: no {TEMPLATE_MARKER!r} line, which is not the shape prisma-client-py "
+            "0.15.0 generates. Refusing to split a file this script does not recognise."
+        ) from None
+    end = _preamble_end(lines, marker + 1)
+    preamble = "".join(lines[:end])
+    missing = [name for name in PREAMBLE_NAMES if f"\n{name} = _types.{name}\n" not in preamble]
+    if missing:
+        raise SystemExit(
+            f"{types_py}: the preamble does not define {', '.join(missing)}, which client.py "
+            "imports at run time. Refusing to split a file this script does not recognise."
+        )
+    types_py.with_suffix(".pyi").write_text(text, encoding="utf-8")
+    types_py.write_text(SHIM_MARKER + preamble.rstrip("\n") + "\n\n" + SHIM_TAIL, encoding="utf-8")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA)
@@ -119,16 +223,24 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     types_py = installed_types_py()
+    types_pyi = types_py.with_suffix(".pyi")
     if not types_py.exists():
         print(f"{types_py} does not exist: the client has not been generated", file=sys.stderr)
         return 1
     if args.check:
-        patched = has_future_import(types_py)
-        print(f"{types_py}: {'has' if patched else 'LACKS'} `{FUTURE_IMPORT.strip()}`")
-        return 0 if patched else 1
+        shim = is_runtime_shim(types_py)
+        stub = types_pyi.exists() and has_future_import(types_pyi)
+        print(f"{types_py}: {'is' if shim else 'is NOT'} the runtime shim")
+        print(f"{types_pyi}: {'has' if stub else 'LACKS'} the declarations with the future import")
+        return 0 if shim and stub else 1
 
+    if is_runtime_shim(types_py):
+        print(f"{types_py}: already the runtime shim")
+        return 0
     changed = add_future_import(types_py)
     print(f"{types_py}: {'added' if changed else 'already has'} `{FUTURE_IMPORT.strip()}`")
+    split_types(types_py)
+    print(f"{types_py}: declarations moved to {types_pyi.name}; runtime shim written")
     return 0
 
 

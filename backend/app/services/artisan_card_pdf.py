@@ -24,15 +24,18 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from io import BytesIO
+from typing import TYPE_CHECKING
 
 import segno
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import mm
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase.pdfmetrics import stringWidth
-from reportlab.pdfgen import canvas as rl_canvas
+
+if TYPE_CHECKING:
+    from reportlab.pdfgen import canvas as rl_canvas
 
 logger = logging.getLogger(__name__)
+
+#: reportlab.lib.units.mm, computed the way reportlab computes it (inch = 72.0, cm = inch / 2.54,
+#: mm = cm * 0.1) so the module-level sizes below need no reportlab import at all.
+mm = 72.0 / 2.54 * 0.1
 
 ID1 = (85.6 * mm, 54 * mm)
 A6 = (105 * mm, 148 * mm)
@@ -195,6 +198,7 @@ class _Fonts:
         return [(span, self.set.pick_for(script, bold=bold)) for span, script in split_by_script(text)]
 
     def width(self, text: str, size: float, *, bold: bool) -> float:
+        from reportlab.pdfbase.pdfmetrics import stringWidth
         return sum(stringWidth(span, font, size) for span, font in self.runs(text, bold=bold))
 
     def fit(self, text: str, width: float, size: float, *, bold: bool, smallest: float) -> tuple[str, float]:
@@ -222,6 +226,7 @@ class _Fonts:
         centre: bool = False,
         colour: tuple[float, float, float] = _INK,
     ) -> None:
+        from reportlab.pdfbase.pdfmetrics import stringWidth
         if not text:
             return
         if width is not None:
@@ -243,6 +248,7 @@ def aadhaar_line(last4: str | None) -> str | None:
 
 
 def _photo(c: rl_canvas.Canvas, data: bytes | None, x: float, y: float) -> bool:
+    from reportlab.lib.utils import ImageReader
     if not data:
         return False
     try:
@@ -341,6 +347,7 @@ def _crop_marks(c: rl_canvas.Canvas, left: float, bottom: float, width: float, h
 
 
 def _canvas(buffer: BytesIO, pagesize: tuple[float, float]) -> rl_canvas.Canvas:
+    from reportlab.pdfgen import canvas as rl_canvas
     c = rl_canvas.Canvas(buffer, pagesize=pagesize, pageCompression=1)
     c.setTitle("Artisan card")
     c.setCreator("Design Prototype Workshop")
@@ -365,6 +372,7 @@ def render_cards(cards: Sequence[CardFace], size: str, portal: str, *, photo: bo
 
 def render_sheet(cards: Sequence[CardFace], portal: str, *, photo: bool = True) -> bytes:
     """ID-1 cards on A4 portrait, ``SHEET_PER_PAGE`` to a page, with crop marks."""
+    from reportlab.lib.pagesizes import A4
     buffer = BytesIO()
     c = _canvas(buffer, A4)
     fonts = _Fonts()

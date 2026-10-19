@@ -84,11 +84,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 from io import BytesIO
-from typing import Any
-
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.worksheet.worksheet import Worksheet
+from typing import TYPE_CHECKING, Any
 
 from app.services import naming
 from app.services.artisan_identity import (
@@ -116,6 +112,9 @@ from app.services.xlsx_table import (
     read_details,
     truthy,
 )
+
+if TYPE_CHECKING:
+    from openpyxl.worksheet.worksheet import Worksheet
 
 __all__ = [
     "ARTISAN_PRO_FORMA_FILENAME",
@@ -1082,6 +1081,7 @@ _REQUIRED = frozenset({"name", "craftName", "place", "aadhaarNumber", "dos", "do
 
 
 def _header(ws: Worksheet, row: int, labels: tuple[tuple[str, str], ...]) -> None:
+    from openpyxl.styles import Alignment, Font, PatternFill
     fill = PatternFill(fill_type="solid", start_color=f"FF{_BRAND}")
     required_fill = PatternFill(fill_type="solid", start_color="FF9A3412")
     for index, (key, label) in enumerate(labels, start=1):
@@ -1117,6 +1117,7 @@ def _details_sheet(ws: Worksheet, workshop: Any | None) -> None:
     Both features write a sheet called "Details" and read one back by matching column A. See
     :data:`_DETAIL_KEYS`.
     """
+    from openpyxl.styles import Alignment, Font
     ws.sheet_properties.tabColor = f"FF{_BRAND}"
     heading = _put(ws, 1, 1, "Artisan list details")
     heading.font = Font(bold=True, size=14, color=f"FF{_BRAND}")
@@ -1266,6 +1267,7 @@ def _help_sheet(ws: Worksheet) -> None:
     sheet it cannot be imported. The Aadhaar numbers in it are checksum-valid inventions, because an
     example number that the app would refuse teaches the wrong thing.
     """
+    from openpyxl.styles import Alignment, Font
     ws.sheet_properties.tabColor = "FF9CA3AF"
     row = 1
     for kind, text in _HELP_LINES:
@@ -1308,6 +1310,7 @@ def build_artisan_pro_forma(*, workshop: Any | None = None) -> bytes:
     field text made Excel open a download with "We found a problem with some content", and that door
     is what keeps them fixed.
     """
+    from openpyxl import Workbook
     wb = Workbook()
     used: set[str] = set()
     artisans = wb.active

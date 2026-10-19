@@ -67,11 +67,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from io import BytesIO
-from typing import Any
-
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.worksheet.worksheet import Worksheet
+from typing import TYPE_CHECKING, Any
 
 from app.services import naming
 
@@ -106,6 +102,9 @@ from app.services.xlsx_table import (
     read_details,
     truthy as _truthy,
 )
+
+if TYPE_CHECKING:
+    from openpyxl.worksheet.worksheet import Worksheet
 
 __all__ = [
     "PRO_FORMA_FILENAME",
@@ -640,6 +639,7 @@ class _StopReading(Exception):
 
 
 def _header(ws: Worksheet, row: int, labels: list[tuple[str, str]]) -> None:
+    from openpyxl.styles import Alignment, Font, PatternFill
     fill = PatternFill(fill_type="solid", start_color=f"FF{_BRAND}")
     for index, (key, label) in enumerate(labels, start=1):
         cell = _put(ws, row, index, label)
@@ -684,6 +684,7 @@ def _details_sheet(
     cannot land the paragraph on top of it. With the four base pairs it still lands on row 8, exactly
     where it always did.
     """
+    from openpyxl.styles import Alignment, Font
     ws.sheet_properties.tabColor = f"FF{_BRAND}"
     heading = _put(ws, 1, 1, "Questionnaire details")
     heading.font = Font(bold=True, size=14, color=f"FF{_BRAND}")
@@ -775,6 +776,7 @@ _HELP_EXAMPLE = [
 
 
 def _help_sheet(ws: Worksheet) -> None:
+    from openpyxl.styles import Alignment, Font
     ws.sheet_properties.tabColor = "FF9CA3AF"
     row = 1
     for kind, text in _HELP_LINES:
@@ -827,6 +829,7 @@ def _write_questions_sheet(
     sections: list[dict[str, Any]],
     entry_labels: list[str],
 ) -> None:
+    from openpyxl.styles import Alignment, Font
     ws.sheet_properties.tabColor = f"FF{_BRAND}"
     columns = _question_columns(entry_labels)
     _header(ws, 1, columns)
@@ -876,6 +879,7 @@ def build_pro_forma() -> bytes:
     "How long have you practised this craft?" and has to work out where they came from. The worked
     example lives on the instructions sheet, where it cannot be imported.
     """
+    from openpyxl import Workbook
     wb = Workbook()
     questions = wb.active
     questions.title = SHEET_QUESTIONS
@@ -910,6 +914,7 @@ def build_questionnaire_workbook(
     are written into the Question ID column, which is what makes a download-edit-upload round trip
     an EDIT of these questions rather than a second copy of them.
     """
+    from openpyxl import Workbook
     labels = list(entry_labels or [])
     wb = Workbook()
     questions = wb.active
@@ -987,6 +992,7 @@ def build_question_set_workbook(
     more — it is kept only because answers hang off it. Sending it would plant a question the sender
     deliberately replaced into the receiver's brand-new form, next to its replacement.
     """
+    from openpyxl import Workbook
     extra = [("Contents", QUESTION_SET_CONTENTS)]
     if source_title:
         extra.append(("Exported from", source_title))

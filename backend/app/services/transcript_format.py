@@ -26,11 +26,13 @@ Rich text needs openpyxl >= 3.1 (pyproject pins >= 3.1.2). The caller renders th
 """
 
 import re
+from functools import cache
 from itertools import pairwise
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from openpyxl.cell.rich_text import CellRichText, TextBlock
-from openpyxl.cell.text import InlineFont
+if TYPE_CHECKING:
+    from openpyxl.cell.text import InlineFont
+
 
 # A rule line stands in for a topic break; Markdown accepts all three fence characters.
 _RULE_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
@@ -52,8 +54,12 @@ _SPEAKER_RE = re.compile(r"\*\*[^*\n]{1,60}?:\*\*")
 # Bold before italic, so "**x**" is never read as an empty italic wrapping "*x*".
 _EMPHASIS_RE = re.compile(r"\*\*\s*([^*\n]+?)\s*\*\*|\*\s*([^*\n]+?)\s*\*")
 
-_BOLD = InlineFont(b=True)
-_ITALIC = InlineFont(i=True)
+
+@cache
+def _fonts() -> tuple[InlineFont, InlineFont]:
+    """Bold and italic, built on first use so importing this module does not load openpyxl."""
+    from openpyxl.cell.text import InlineFont
+    return InlineFont(b=True), InlineFont(i=True)
 
 
 def _display_lines(markdown: str) -> list[str]:
@@ -95,13 +101,14 @@ def _tidy(lines: list[str]) -> list[str]:
 
 def _runs(line: str) -> list[Any]:
     """One display line as plain and emphasised pieces, with the asterisks dropped."""
+    from openpyxl.cell.rich_text import TextBlock
     pieces: list[Any] = []
     pos = 0
     for match in _EMPHASIS_RE.finditer(line):
         if match.start() > pos:
             pieces.append(line[pos : match.start()])
         bold, italic = match.groups()
-        pieces.append(TextBlock(_BOLD, bold) if bold else TextBlock(_ITALIC, italic))
+        pieces.append(TextBlock(_fonts()[0], bold) if bold else TextBlock(_fonts()[1], italic))
         pos = match.end()
     if pos < len(line):
         pieces.append(line[pos:])
@@ -114,6 +121,7 @@ def transcript_cell(text: Any) -> Any:
     Returns ``""`` for an empty transcript so the cell stays a plain blank rather than an empty
     rich-text object.
     """
+    from openpyxl.cell.rich_text import CellRichText
     lines = _tidy(_display_lines(str(text or "")))
     if not lines:
         return ""

@@ -23,13 +23,15 @@ import copy
 import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from lxml import etree
+
+if TYPE_CHECKING:
+    from lxml import etree
 
 DS_NS = "http://www.w3.org/2000/09/xmldsig#"
 _DS = f"{{{DS_NS}}}"
@@ -78,6 +80,7 @@ class SignatureError(Exception):
 
 
 def safe_parser() -> etree.XMLParser:
+    from lxml import etree
     return etree.XMLParser(
         resolve_entities=False,
         no_network=True,
@@ -90,6 +93,7 @@ def safe_parser() -> etree.XMLParser:
 
 def parse(data: bytes) -> etree._Element:
     """Parse untrusted XML. A DOCTYPE is refused outright: UIDAI's documents carry none."""
+    from lxml import etree
     if b"<!DOCTYPE" in data[:4096].upper() or b"<!ENTITY" in data.upper():
         raise SignatureError("doctype", "the XML declares a DOCTYPE or an entity")
     try:
@@ -107,6 +111,7 @@ def canonicalize(element: etree._Element, algorithm: str) -> bytes:
     reject them. A copy carries its in-scope namespace declarations with it and canonicalizes to
     the bytes UIDAI signed.
     """
+    from lxml import etree
     if algorithm not in _C14N:
         raise SignatureError("c14n", f"unsupported canonicalization {algorithm}")
     exclusive, comments = _C14N[algorithm]
@@ -130,6 +135,7 @@ class VerifiedSignature:
 
 
 def _document_digest(root: etree._Element, signature: etree._Element, reference: etree._Element) -> bytes:
+    from lxml import etree
     transforms_parent = reference.find(f"{_DS}Transforms")
     transforms = (
         [t.get("Algorithm") for t in transforms_parent.findall(f"{_DS}Transform")]
@@ -210,6 +216,7 @@ def sign_enveloped(
     ``Signature`` is written with the XMLDSig namespace as its DEFAULT namespace and no prefix, the
     form UIDAI's own samples and its reference AUA client use.
     """
+    from lxml import etree
     for existing in root.findall(f"{_DS}Signature"):
         root.remove(existing)
     digest = _DIGEST[digest_method](canonicalize(root, c14n_method)).digest()

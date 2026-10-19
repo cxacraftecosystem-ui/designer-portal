@@ -12,12 +12,14 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-
-from lxml import etree
+from typing import TYPE_CHECKING
 
 from app.services.aadhaar import xmldsig
 from app.services.aadhaar.online.config import OnlineConfig
 from app.services.aadhaar.online.crypto import encrypt_pid
+
+if TYPE_CHECKING:
+    from lxml import etree
 
 IST = timezone(timedelta(hours=5, minutes=30))
 API_VERSION = "2.5"
@@ -34,11 +36,13 @@ def uid_type(uid: str) -> str:
 
 
 def _signed_bytes(root: etree._Element, config: OnlineConfig) -> bytes:
+    from lxml import etree
     xmldsig.sign_enveloped(root, config.signing_key, config.signing_certificate)
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
 def otp_request(uid: str, txn: str, ts: str, config: OnlineConfig) -> bytes:
+    from lxml import etree
     root = etree.Element(
         "Otp",
         uid=uid,
@@ -55,6 +59,7 @@ def otp_request(uid: str, txn: str, ts: str, config: OnlineConfig) -> bytes:
 
 
 def pid_block(otp: str, ts: str, name: str | None) -> bytes:
+    from lxml import etree
     pid = etree.Element("Pid", ts=ts, ver=PID_VERSION, wadh="")
     if name:
         demo = etree.SubElement(pid, "Demo")
@@ -67,6 +72,7 @@ def auth_request(
     uid: str, txn: str, otp: str, ts: str, config: OnlineConfig, *, name: str | None
 ) -> bytes:
     """The signed Auth XML. ``uses pi`` only when a name is sent for UIDAI to match."""
+    from lxml import etree
     pid = pid_block(otp, ts, name)
     encrypted = encrypt_pid(pid, ts, config.encryption_certificate)
     del pid
@@ -94,6 +100,7 @@ def auth_request(
 def kyc_request(signed_auth: bytes) -> bytes:
     """e-KYC wrapping the signed Auth XML. ``de="Y"``: the ASA decrypts the response — UIDAI has not
     published the byte layout of the KUA-key encryption, so this deployment does not guess it."""
+    from lxml import etree
     root = etree.Element("Kyc", ver=API_VERSION, ra="O", rc="Y", lr="N", de="Y", pfr="N")
     etree.SubElement(root, "Rad").text = base64.b64encode(signed_auth).decode()
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)

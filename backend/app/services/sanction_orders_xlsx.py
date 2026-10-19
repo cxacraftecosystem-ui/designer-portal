@@ -68,11 +68,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
-from typing import Any
-
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.worksheet.worksheet import Worksheet
+from typing import TYPE_CHECKING, Any
 
 from app.services import naming
 from app.services.annual_plan_xlsx import read_plan_date
@@ -88,6 +84,9 @@ from app.services.xlsx_table import (
     norm_header,
     pick_sheet,
 )
+
+if TYPE_CHECKING:
+    from openpyxl.worksheet.worksheet import Worksheet
 
 __all__ = [
     "MAX_SANCTION_ROWS",
@@ -922,6 +921,7 @@ def _header(ws: Worksheet, row: int, labels: tuple[tuple[str, str], ...]) -> Non
     than a formula. (The one call below that is NOT a write — ``.column_letter`` — reads a coordinate
     to set a column width, so it is outside that rule rather than an exception to it.)
     """
+    from openpyxl.styles import Alignment, Font, PatternFill
     fill = PatternFill(fill_type="solid", start_color=f"FF{_BRAND}")
     required_fill = PatternFill(fill_type="solid", start_color="FF7C2D12")
     for index, (key, label) in enumerate(labels, start=1):
@@ -1017,6 +1017,7 @@ _HELP_EXAMPLE: tuple[str, ...] = (
 
 def _help_sheet(ws: Worksheet) -> None:
     """The instructions, and the worked example that cannot be imported. See :data:`_HELP_EXAMPLE`."""
+    from openpyxl.styles import Alignment, Font
     ws.sheet_properties.tabColor = _GREY
     ws.column_dimensions["A"].width = 110
     row = 1
@@ -1052,6 +1053,7 @@ def build_sanction_pro_forma() -> bytes:
     ``xlsx_table.read_details`` aliases, and that helper's own warning block records what a
     decorative row costs when a parser starts STORING it.
     """
+    from openpyxl import Workbook
     wb = Workbook()
     orders = wb.active
     orders.title = SHEET_ORDERS

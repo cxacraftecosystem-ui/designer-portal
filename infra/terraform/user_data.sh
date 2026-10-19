@@ -153,6 +153,7 @@ User=ubuntu
 WorkingDirectory=/home/ubuntu/app/slot-%i/backend
 EnvironmentFile=/home/ubuntu/app/slot-%i/backend/.env
 Environment=MEDIA_QUEUE_WORKER_ENABLED=false
+Environment=MALLOC_ARENA_MAX=2
 ExecStart=/home/ubuntu/app/slot-%i/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port %i --workers 1
 MemoryAccounting=yes
 MemoryHigh=1000M
@@ -178,6 +179,7 @@ After=network.target
 User=ubuntu
 WorkingDirectory=/home/ubuntu/app/current/backend
 EnvironmentFile=/home/ubuntu/app/current/backend/.env
+Environment=MALLOC_ARENA_MAX=2
 ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
 # THE ONLY HARD MEMORY STOP ON THIS BOX, and it is on the queue rather than on the API for a reason.
 # This process runs ffmpeg and AI transcription; one large audio job can take it past what is left

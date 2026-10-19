@@ -48,11 +48,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
-
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfgen import canvas as rl_canvas
+from typing import TYPE_CHECKING
 
 from app.services.report_model import (
     HIGHLIGHT_FILL,
@@ -82,6 +78,9 @@ from app.services.report_model import (
     runs_text,
 )
 from app.services.report_raster import pixels_for_mm
+
+if TYPE_CHECKING:
+    from reportlab.lib.utils import ImageReader
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +281,7 @@ def _drawable(font_name: str, character: str) -> bool | None:
     UNKNOWN must never be reported as a missing glyph, or a deployment would be warned about
     characters that print perfectly.
     """
+    from reportlab.pdfbase import pdfmetrics
     try:
         face = pdfmetrics.getFont(font_name).face
     except Exception:  # noqa: BLE001 - an unregistered name is "cannot tell", not a failure
@@ -349,6 +349,8 @@ _BY_FILE: dict[tuple[str, int], str] = {}
 
 def _register_one(name: str, path: str, index: int) -> str | None:
     """Register one face under ``name``; return the name, or ``None`` if it cannot be used."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     already = _BY_FILE.get((path, index))
     if already is not None:
         return already
@@ -576,6 +578,7 @@ class PdfRenderer:
     # -- text measurement ------------------------------------------------------------
 
     def _string_width(self, text: str, font: str, size: float) -> float:
+        from reportlab.pdfbase import pdfmetrics
         try:
             return pdfmetrics.stringWidth(text, font, size)
         except Exception:  # noqa: BLE001 - an unmapped glyph must not abort the export
@@ -981,6 +984,7 @@ class PdfRenderer:
             self.y -= line.height
 
     def _image_reader(self, ref: ImageRef) -> ImageReader | None:
+        from reportlab.lib.utils import ImageReader
         if ref.source in self._image_cache:
             return self._image_cache[ref.source]
         data = self._figures.get(ref.source) or self.load_image(ref)
@@ -2024,6 +2028,7 @@ class PdfRenderer:
         # the PDF's own bookmark outline, built during the draw pass, was correct. An officer
         # using the contents page of a ministry submission landed ten pages short every time.
         # The carry-over below is what makes the three iterations do what this comment claims.
+        from reportlab.pdfgen import canvas as rl_canvas
         self.c = rl_canvas.Canvas(BytesIO(), pagesize=(self.page_w, self.page_h))
         previous: dict[str, int] = {}
         # Every layout already measured, as an order-independent signature. A repeat is an
