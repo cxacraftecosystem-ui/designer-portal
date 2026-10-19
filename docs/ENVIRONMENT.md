@@ -39,8 +39,8 @@ cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
    build time. Anyone can read them in devtools, and changing one requires a **rebuild/redeploy** to
    take effect. Never put a real secret behind that prefix.
 2. **The backend caches its settings.** `get_settings()` is `@lru_cache`d, so a running uvicorn
-   process never notices an edited `.env`. Always restart (`sudo systemctl restart fieldrepo
-   fieldrepo-queue`, or Ctrl-C the dev server) after a change.
+   process never notices an edited `.env`. Always restart (`bash /home/ubuntu/app/current/backend/deploy/blue_green.sh restart` on
+   the box, or Ctrl-C the dev server) after a change.
 3. **Several identifiers here still read `fieldrepo` / `design-workshop`, and that is correct — but
    READ THE NEXT RULE BEFORE ACTING ON IT.** The product was renamed to Design Prototype Workshop;
    the *things* were not. The systemd units (`fieldrepo`, `fieldrepo-queue`) are installed and enabled
@@ -69,13 +69,13 @@ cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
    | SSH key pair | `designrepo-deploy` | its own |
    | Vercel | `designer-repository.vercel.app` | its own project |
    | Google OAuth | its own web + Android clients (see `2696bfb`) | its own |
-   | systemd units | **`fieldrepo`, `fieldrepo-queue`** | **`fieldrepo`, `fieldrepo-queue`** |
+   | systemd units | **`fieldrepo-api@<port>`, `fieldrepo-queue`** | **`fieldrepo-api@<port>`, `fieldrepo-queue`** (each portal's blue/green change; `fieldrepo` before it) |
 
    **The last row is the one to remember.** The unit names are identical on both boxes because
-   `user_data.sh` writes `/etc/systemd/system/fieldrepo.service` as a literal string; they are shared
-   by hardcoding, not because the two deployments are coupled. So `systemctl restart fieldrepo` in
-   `deploy-backend.yml` is correct here, and correcting it to `designrepo` would break this portal's
-   deploy against a unit that does not exist.
+   `user_data.sh` and `backend/deploy/blue_green.sh` write `/etc/systemd/system/fieldrepo-api@.service`
+   as a literal string; they are shared by hardcoding, not because the two deployments are coupled.
+   So `fieldrepo-api@<port>` in `blue_green.sh` is correct here, and correcting it to `designrepo`
+   would break this portal's deploy against a unit that does not exist.
 
    **What must never be done: copying `EC2_HOST`, `EC2_SSH_KEY` or `BACKEND_ENV` between the two
    repositories.** Before 2026-08-16 this portal had no deploy secrets at all and its backend deploy

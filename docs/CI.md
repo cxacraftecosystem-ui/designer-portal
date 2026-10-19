@@ -128,7 +128,7 @@ Three properties of that wait are worth knowing before you rely on it:
 
 | # | Workflow | File | Trigger | What it does |
 |---|---|---|---|---|
-| 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>-<run_id>.<attempt>` (per deploy ATTEMPT, so a re-run never writes into the tree that is serving) → write that release's `.env` → build or reuse a venv from `requirements.lock` → `prisma migrate deploy` → **flip the `current` symlink** → restart `fieldrepo` + `fieldrepo-queue` → poll `/health`. See §1.2 for the release layout and the rollback command. |
+| 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>-<run_id>.<attempt>` (per deploy ATTEMPT, so a re-run never writes into the tree that is serving) → write that release's `.env` → build or reuse a venv from `requirements.lock` → `backend/deploy/blue_green.sh release`: `prisma migrate deploy` with the live API still serving → start the release on the idle loopback port → poll its `/health` (ten minutes) → **switch nginx** → stop the old port, **flip the `current` symlink**, restart `fieldrepo-queue`. See §1.2 for the release layout and the rollback command. |
 | 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** (and, since 2026-10-09, *warn* when the project's Node.js Version differs from the build's major or the pulled env holds a database credential) → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → `vercel alias set` onto the production alias → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 25 → `compileDebugKotlin` → `testDebugUnitTest` plus the four `:core-*` engine suites → `lintDebug` (advisory) → `assembleDebug` → upload APK |
 | — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Four independent jobs plus a packaging job. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is the fourth and is deliberately advisory** — a `postgres:17` service container (production's major), `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. |
@@ -369,8 +369,7 @@ leaves it pointing at an older release than the newest directories on disk.
 ```bash
 aws ssm start-session --target i-0e091ca8e6b417b52
 ls -lt /home/ubuntu/app/releases            # newest first; the one below `current` is the target
-ln -sfn /home/ubuntu/app/releases/<older-release> /home/ubuntu/app/current
-sudo systemctl restart fieldrepo fieldrepo-queue
+bash /home/ubuntu/app/current/backend/deploy/blue_green.sh rollback <older-release>   # starts it beside the live one, switches when healthy
 ```
 
 Seconds, no build, no network fetch. **The one thing a flip cannot undo is an applied migration.** If
@@ -1089,8 +1088,10 @@ install `platforms;android-37.2` and `build-tools;37.0.0` explicitly because run
 the JDK that runs Gradle, while the Java 17 bytecode level is set by `compileOptions` and
 `jvmTarget` in the build files and does not follow it.
 
-**A deploy hangs on the health poll.** Stage 1 polls `http://127.0.0.1:8000/health` 40 times at 2 s
-and dumps `journalctl -u fieldrepo -n 80` on failure. Read that output first; the usual causes are a
+**A deploy fails on the health poll.** The release script starts the new release on the idle loopback
+port (8000 or 8001), polls its `/health` for up to ten minutes and dumps `journalctl -u
+fieldrepo-api@<port> -n 80` on failure; the old release keeps serving throughout
+([backend/DEPLOY_AWS.md](../backend/DEPLOY_AWS.md) §3.2). Read that output first; the usual causes are a
 bad `BACKEND_ENV` value and database connection exhaustion — both covered in
 [QA_AUDIT.md](QA_AUDIT.md).
 

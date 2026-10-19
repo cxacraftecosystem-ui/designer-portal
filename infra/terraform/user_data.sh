@@ -41,8 +41,7 @@
 # drift is a rebuilt instance that behaves differently from the one it replaced, which is the
 # hardest kind of difference to see.
 #
-# nginx needs no change for any of this: it proxies to 127.0.0.1:8000 and knows nothing about where
-# on disk the process answering there was started from. Its site file below is unchanged.
+# nginx starts on 127.0.0.1:8000; each deploy moves its proxy_pass to the port it just started.
 set -euxo pipefail
 
 # --- swap (written for a 1 GiB box's pip/prisma installs; still a floor) -----
@@ -114,20 +113,11 @@ systemctl restart nginx
 # also defaults the flag to false since 2026-09-03, so an omitted key is off. The line below is
 # worth keeping as documentation and as the default for a `.env` that says nothing; it is not worth
 # relying on against a `.env` that says something.
-cat > /etc/systemd/system/fieldrepo.service <<'UNIT'
-[Unit]
-Description=Design Prototype Workshop API
-After=network.target
-
-[Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/app/current/backend
-EnvironmentFile=/home/ubuntu/app/current/backend/.env
+# Since 2026-10-19: fieldrepo-api@<port> (8000/8001), from /home/ubuntu/app/slot-<port>; nginx
+# proxies to one. backend/deploy/blue_green.sh installs the same template (its test compares them).
 # The web process must never run the queue. NOTE: EnvironmentFile= overrides Environment= whatever
 # the order (systemd.exec(5)), so this is the DEFAULT for a .env that omits the key, not an override
 # of one that sets it. The deploy workflow refuses a .env that sets it true.
-Environment=MEDIA_QUEUE_WORKER_ENABLED=false
-ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 # A SOFT CEILING AND DELIBERATELY NO HARD ONE. 4 GiB of RAM on the t3.medium main.tf declares (2 GiB
 # on the t3.small this was set on), shared with the queue worker, nginx and the kernel. Over
 # MemoryHigh the cgroup is throttled and reclaimed hard, so a heavy request gets slower instead of
@@ -147,14 +137,27 @@ ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:
 # otherwise. 634 MB does not fit in 911 MiB beside a queue worker, so the instance type moved too;
 # `instance_type` in main.tf carries the vmstat evidence. 1000M is ~1.6x the measured figure so
 # ordinary variation never touches the ceiling.
-MemoryHigh=1000M
-Restart=always
 # 10s (not 3s) between restarts so that IF the process ever does exit while the database's
 # pooler is at its client-connection ceiling, restarts don't hammer the pooler
 # faster than its connections can drain. (The app also now keeps serving and reconnects to
 # the DB in the background instead of exiting, so this is defense-in-depth.)
-RestartSec=10
 # Reap the whole control group on stop/restart so a Prisma query-engine is never left orphaned.
+cat > /etc/systemd/system/fieldrepo-api@.service <<'UNIT'
+# backend/deploy/blue_green.sh: one instance per loopback port; nginx proxies to one.
+[Unit]
+Description=Design Prototype Workshop API on port %i
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/app/slot-%i/backend
+EnvironmentFile=/home/ubuntu/app/slot-%i/backend/.env
+Environment=MEDIA_QUEUE_WORKER_ENABLED=false
+ExecStart=/home/ubuntu/app/slot-%i/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port %i --workers 1
+MemoryAccounting=yes
+MemoryHigh=1000M
+Restart=always
+RestartSec=10
 KillMode=control-group
 TimeoutStopSec=20
 
@@ -206,13 +209,8 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-# ENABLED, NOT STARTED, and on a fresh box `current` does not exist yet — so a start here would
-# fail on a WorkingDirectory that resolves to nothing. That is fine and is the intended order: the
-# deploy workflow creates `releases/<sha>-<run_id>.<attempt>/backend`, points `current` at it, and
-# restarts these
-# units as its last act. Until then the box has nginx answering 502, which is the honest state of a
-# machine that has been provisioned and not yet deployed to.
-systemctl enable fieldrepo || true
+# ENABLED, NOT STARTED: on a fresh box `current` does not exist yet. The first deploy starts the API
+# on its port and enables it, then starts the queue; until then nginx answers 502.
 systemctl enable fieldrepo-queue || true
 # `releases/` is created here as well as by the deploy, so a human looking at a freshly built box
 # can see the shape the units expect rather than having to infer it from a broken symlink.
