@@ -1,7 +1,9 @@
 package com.designprototype.workshop
 
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.designprototype.workshop.data.DW_ASR_MODELS
@@ -368,23 +370,40 @@ class DwAsrModelTransferProbeTest {
             refreshAndWait(controller)
         }
 
+        // EVERY PUBLISHED READOUT, NOT A POLL OF THEM. Sampling every 60 ms raced the hash: on a fast
+        // emulator a tick could move the VERIFYING readout past its zero before the first sample, and
+        // the test failed on 1,703,936 hashed bytes it had simply arrived too late to see (run
+        // 39214815959). A global write observer runs on the writing (main) thread right after each
+        // state write, so it sees the readout each write leaves behind, in order. A readout is
+        // filed under the phase in force when IT is written: the phase write that comes first in
+        // `startMeter` leaves the readout unchanged and adds nothing, so the copy's last reading is
+        // never filed as VERIFYING's first — unless the controller really publishes it there.
         val phasesSeen = linkedMapOf<DwTransferPhase, MutableList<DwTransferReadout>>()
-        onUi { controller.install() }
+        var lastFiled: DwTransferReadout? = null
+        val writes = Snapshot.registerGlobalWriteObserver {
+            if (Looper.myLooper() != Looper.getMainLooper()) return@registerGlobalWriteObserver
+            val readout = controller.readout
+            val phase = controller.phase
+            if (readout == null || phase == null || readout === lastFiled) return@registerGlobalWriteObserver
+            lastFiled = readout
+            phasesSeen.getOrPut(phase) { mutableListOf() } += readout
+        }
         val startedAt = SystemClock.elapsedRealtime()
-        var lastTickAt = 0L
-        while (SystemClock.elapsedRealtime() - startedAt < COPY_TIMEOUT_MS) {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastTickAt >= 1_000L) {
-                lastTickAt = now
-                onUi { controller.tick(SystemClock.elapsedRealtime()) }
+        try {
+            onUi { controller.install() }
+            var lastTickAt = 0L
+            while (SystemClock.elapsedRealtime() - startedAt < COPY_TIMEOUT_MS) {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastTickAt >= 1_000L) {
+                    lastTickAt = now
+                    onUi { controller.tick(SystemClock.elapsedRealtime()) }
+                }
+                if (readOnUi { controller.status.state } != DwAsrModelState.INSTALLING) break
+                Thread.sleep(60)
             }
-            val phase = readOnUi { controller.phase }
-            val readout = readOnUi { controller.readout }
-            if (phase != null && readout != null) {
-                phasesSeen.getOrPut(phase) { mutableListOf() } += readout
-            }
-            if (readOnUi { controller.status.state } != DwAsrModelState.INSTALLING) break
-            Thread.sleep(60)
+        } finally {
+            // Disposed on the main thread so no write is mid-observation when the map is read.
+            onUi { writes.dispose() }
         }
         Log.i(TAG, "copy install ended in ${SystemClock.elapsedRealtime() - startedAt} ms " +
             "state=${readOnUi { controller.status.state }}")
@@ -398,7 +417,12 @@ class DwAsrModelTransferProbeTest {
         )
 
         // THE FIX, ASSERTED: the verifying phase's readings are about the verifying, so the first one
-        // of them cannot be the previous phase's finished total.
+        // of them cannot be the previous phase's finished total. Every write is seen now, so a copy
+        // that verified without publishing a VERIFYING readout is a failure, not a skipped check.
+        assertNotNull(
+            "The copy verified without publishing a VERIFYING readout.",
+            phasesSeen[DwTransferPhase.VERIFYING],
+        )
         phasesSeen[DwTransferPhase.VERIFYING]?.let { verifying ->
             Log.i(TAG, "verifying readings: " + verifying.joinToString(" | ") { dwTransferLine(it) })
             assertEquals(
