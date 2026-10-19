@@ -1491,7 +1491,9 @@ fun DesignerProfileScreen(
                      * because both boxes on this one screen are asking about the same list and two
                      * spellings of one fact is two facts to whoever reads them.
                      */
-                    val stateNotice = addressListNotice("states", stateRows.size, referenceState)
+                    val stateNotice = addressListNotice(
+                        "states", stateRows.size, referenceState, bundled = referenceState.bundled
+                    )
                     SearchableSelectField(
                         label = "State / union territory",
                         options = stateRows,
