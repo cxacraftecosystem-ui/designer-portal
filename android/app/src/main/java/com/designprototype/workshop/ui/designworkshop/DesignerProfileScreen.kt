@@ -1024,7 +1024,7 @@ fun DesignerProfileScreen(
     // already disabled for a read-only viewer, so the diff cannot move; the clause is here so that a
     // future control that forgets `enabled = canEdit` cannot offer somebody a Save they will only be
     // refused.
-    RegisterUnsavedGuard(dirty = canEdit && designerProfileHasUnsavedEdits(form, saved)) { saveProfile() }
+    RegisterUnsavedGuard(dirty = canEdit && designerProfileHasUnsavedEdits(form, saved), draft = profileDraft) { saveProfile() }
 
     // ── Media capture ────────────────────────────────────────────────────────────────────────────
     //
