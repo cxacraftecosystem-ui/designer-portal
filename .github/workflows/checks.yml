@@ -126,6 +126,10 @@ jobs:
     # Postgres service container — a database here would silently promote twenty-six modules from
     # "skipped by design" to "running against whatever CI happens to have", which is a different
     # suite with different failure modes, unreviewed.
+    #
+    # THE DATABASE-BACKED MODULES RUN IN JOB 5 (`backend-integration`), NOT HERE. The split is the
+    # point: this job keeps proving the suite collects and passes with nothing to connect to, and job
+    # 5 runs the same suite against a throwaway, migrated Postgres service container on loopback.
     env:
       PYTHONUTF8: "1"
       DATABASE_URL: "postgresql://ci:ci@ci.invalid:5432/no_such_database"
