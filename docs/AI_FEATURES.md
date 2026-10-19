@@ -245,7 +245,7 @@ These three are flags, not secrets. When they are switched on they go in the box
 ## 4. Turning one on
 
 Nothing in these recipes affects a process that is already running: the settings are cached, so
-restart the API and the queue worker (`sudo systemctl restart fieldrepo fieldrepo-queue`) after any
+restart the API and the queue worker (`bash /home/ubuntu/app/current/backend/deploy/blue_green.sh restart`) after any
 change.
 
 ### Background removal, hosted — the one that fits on the production box

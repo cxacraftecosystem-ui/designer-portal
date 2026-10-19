@@ -423,8 +423,8 @@ live release's `.env`, and restart:
 ```bash
 aws ssm start-session --target i-0e091ca8e6b417b52
 sudo -u ubuntu nano /home/ubuntu/app/current/backend/.env
-sudo systemctl restart fieldrepo fieldrepo-queue
-curl -fsS http://127.0.0.1:8000/health/ready
+sudo -u ubuntu bash /home/ubuntu/app/current/backend/deploy/blue_green.sh restart
+curl -fsS http://127.0.0.1/health/ready      # through nginx, to whichever port is live
 ```
 
 **`current` is a symlink** to the live release, so an edit made this way lives in that release only

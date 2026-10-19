@@ -159,13 +159,16 @@ hour old. The deploy marks a release `.released` at the instant it flips onto it
 on that. `current` is never pruned whatever its age, because a deploy whose migration failed
 deliberately leaves it pointing at an older release than the newest directories on disk.
 
-**Rollback** is the symlink, not a build:
+**Since 2026-10-19 a release never stops the live API** (§3.2): it starts beside it on the other
+loopback port and nginx switches when it is healthy. **Rollback** is the same move backwards, no
+build:
 
 ```bash
 aws ssm start-session --target <INSTANCE_ID>       # there is no standing SSH access to this box
-ls -lt /home/ubuntu/app/releases                   # newest first; the one below `current` is the target
-ln -sfn /home/ubuntu/app/releases/<older-release> /home/ubuntu/app/current
-sudo systemctl restart fieldrepo fieldrepo-queue
+bash /home/ubuntu/app/current/backend/deploy/blue_green.sh status              # live port, each port's release
+bash /home/ubuntu/app/current/backend/deploy/blue_green.sh rollback            # back to the release behind the other port
+ls -lt /home/ubuntu/app/releases                   # or name an older one:
+bash /home/ubuntu/app/current/backend/deploy/blue_green.sh rollback <older-release>
 ```
 
 **Never past the Aadhaar fingerprint release once it has taken an artisan write.** That migration
@@ -192,11 +195,50 @@ not written for. That is a restore, not a rollback. It is also why a failed `pri
 does **not** flip: the box stays on code that matches the schema the database actually has.
 
 `.github/workflows/deploy-backend.yml` additionally installs systemd **drop-ins**
-(`/etc/systemd/system/fieldrepo{,-queue}.service.d/`) rather than replacing the units below, so a
+(`/etc/systemd/system/fieldrepo-queue.service.d/`, and `fieldrepo.service.d/` only while the old
+single-port API unit still exists) rather than replacing the units below, so a
 hand edit on a long-lived box is not silently discarded. Undo them with
 `rm -rf /etc/systemd/system/fieldrepo*.service.d && systemctl daemon-reload`. The drop-ins and the
 units in this section are deliberately redundant and are not allowed to disagree; `docs/CI.md` §1.2
 is the same story from the pipeline's side.
+
+### 3.2 Zero-downtime releases (2026-10-19)
+
+Until this date a deploy flipped `current` and restarted the API in place (stopping it first when a
+migration was pending), so every deploy spent the API's start-up answering 502. Now:
+
+| Path | What it is |
+|---|---|
+| `/home/ubuntu/app/slot-8000`, `slot-8001` | A link per loopback port to the release that port runs. |
+| `fieldrepo-api@8000`, `fieldrepo-api@8001` | The API on that port. One runs; it is the one enabled for boot. |
+| `/etc/nginx/sites-available/fieldrepo` | `proxy_pass http://127.0.0.1:<port>;` names the live port. nginx is the truth. |
+| `/home/ubuntu/app/current` | The live release, as before: the queue, the one-off scripts and this guide go through it. |
+
+`backend/deploy/blue_green.sh release <id>`, piped over ssh from the commit being deployed, points
+the idle port's slot at the new release, pauses the queue, runs `prisma migrate deploy` while the
+live port serves, starts the idle port, waits up to **ten minutes** for its `/health` (a line every
+twenty seconds), reloads nginx onto it and checks `/health` through nginx, and only then stops the
+old port, flips `current` (marking the release `.released`) and restarts the queue. Anything that
+fails before the switch stops the new port and leaves nginx on the old one, which never stopped. The
+prune never deletes a release a slot points at, and a directory it cannot delete (root-owned, say)
+is retried with sudo and otherwise left with a warning, never a red deploy.
+`backend/deploy/test_blue_green.sh` (Checks, "Deploy scripts") proves each path against stubs.
+
+**Migrations run while the old release serves,** so a release's migrations must keep the previous
+release working: add first, drop in a later release. If `prisma migrate deploy` fails three times
+with the queue stopped, **for any reason**, the script stops the live API and tries five more times,
+the one path that still has downtime, with a warning in the log. The fallback exists for a pooler
+with no session left for the schema engine (EMAXCONNSESSION), but the script does not read the
+error, so a migration that is simply wrong also takes the API down for the five further attempts
+(about a minute) before the old port is restarted and the run fails. Read the three attempts in the
+log to tell the two apart.
+
+```bash
+bash /home/ubuntu/app/current/backend/deploy/blue_green.sh status      # live port, each port's release
+bash /home/ubuntu/app/current/backend/deploy/blue_green.sh restart     # after a hand edit of the live .env: restarts in place, so it does stop the API
+bash /home/ubuntu/app/current/backend/deploy/blue_green.sh rollback    # start the other port's release and switch back to it
+sudo journalctl -u fieldrepo-api@8001 -n 80 --no-pager                 # the port status names
+```
 
 Smoke test, then run as a service:
 
@@ -228,23 +270,25 @@ Smoke test, then run as a service:
 > same names for the same reason. Renaming is a migration performed in one change — `systemctl
 > disable --now` the old units over SSH, install the new ones, and edit the workflow — not an edit.
 
-`/etc/systemd/system/fieldrepo.service`:
+`/etc/systemd/system/fieldrepo-api@.service`, since 2026-10-19 a template with one instance per
+loopback port (8000, 8001), each running the release its `/home/ubuntu/app/slot-<port>` link names
+(§3.2). `backend/deploy/blue_green.sh` installs it on every deploy and the first one removes the old
+single-port `fieldrepo.service` and its drop-ins; `infra/terraform/user_data.sh` writes the same file:
 
 ```ini
 [Unit]
-Description=Design Prototype Workshop API
+Description=Design Prototype Workshop API on port %i
 After=network.target
 
 [Service]
 User=ubuntu
-WorkingDirectory=/home/ubuntu/app/current/backend
-EnvironmentFile=/home/ubuntu/app/current/backend/.env
+WorkingDirectory=/home/ubuntu/app/slot-%i/backend
+EnvironmentFile=/home/ubuntu/app/slot-%i/backend/.env
 # ONE worker, bound to localhost (nginx fronts it). Two workers reintroduced the
 # SIGKILL/orphaned-Prisma-engine 500 outage (commit 44923bc); the media queue runs in its own
 # service below, so the web process must have MEDIA_QUEUE_WORKER_ENABLED=false in .env.
-# Applied AFTER EnvironmentFile so it always wins, whatever the .env grows.
 Environment=MEDIA_QUEUE_WORKER_ENABLED=false
-ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=/home/ubuntu/app/slot-%i/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port %i --workers 1
 # A SOFT ceiling only, and no MemoryMax: over it the cgroup is throttled and reclaimed hard, so a
 # heavy request gets slow instead of everything else getting killed. Killing uvicorn to save memory
 # is the outcome these limits exist to prevent — on a 1 GiB box the kernel's OOM killer picks by
@@ -255,9 +299,10 @@ ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:
 # variation never reaches the ceiling. See section 1.
 MemoryAccounting=yes
 MemoryHigh=1000M
-KillMode=control-group
 Restart=always
 RestartSec=10
+KillMode=control-group
+TimeoutStopSec=20
 
 [Install]
 WantedBy=multi-user.target
@@ -305,9 +350,11 @@ braces rather than the only guard; both stay exactly as they are, because a drop
 `EnvironmentFile=` moves it *after* the base unit's `Environment=` and a `.env` that ever gained the
 variable would otherwise win.
 
+By hand, point a slot at the release first (`ln -s releases/manual /home/ubuntu/app/slot-8000`):
+
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now fieldrepo fieldrepo-queue
-sudo systemctl status fieldrepo fieldrepo-queue
+sudo systemctl daemon-reload && sudo systemctl enable --now fieldrepo-api@8000 fieldrepo-queue
+sudo systemctl status fieldrepo-api@8000 fieldrepo-queue
 curl http://localhost:8000/health
 ```
 

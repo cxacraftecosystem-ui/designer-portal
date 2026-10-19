@@ -89,7 +89,8 @@ Verified on 2026-10-17 (status codes):
 
 Nothing else called the box directly: the web app, the Android app, `monitor.yml` and
 `publish-android.yml` use the CloudFront URL, and the deploy's health checks run on the box against
-`127.0.0.1:8000`, which skips nginx. The API was not restarted for any of this; nginx was reloaded.
+the API's loopback port (`127.0.0.1:8000` or `:8001`), and through nginx from `127.0.0.1`, which the
+origin check exempts. The API was not restarted for any of this; nginx was reloaded.
 
 **The deploy checks CloudFront, not just the box.** After writing the snippet and reloading nginx,
 "Require CloudFront's origin header in nginx" asks `https://d3ekigkotd1xa2.cloudfront.net/health` (through CloudFront)

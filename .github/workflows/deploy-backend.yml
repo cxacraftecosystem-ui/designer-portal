@@ -74,9 +74,10 @@ permissions:
 
 # cancel-in-progress is deliberately OFF. This workflow now starts on every push to main,
 # so overlapping runs are far more likely than they were with the old paths filter — and
-# cancelling mid-deploy is destructive here: the remote script stops the fieldrepo service
-# before running `prisma migrate deploy`, so a run killed in that window can leave the API
-# down with no restart step to come. Queueing is slower and safe; cancelling is not.
+# cancelling mid-deploy is unsafe here: backend/deploy/blue_green.sh pauses the queue, migrates
+# and starts the new release on the idle port before switching nginx, and on its fallback (three
+# failed migrations) stops the live API, so a run killed in that window can leave the queue or the
+# API down with nothing left to restart it. Queueing is slower and safe; cancelling is not.
 concurrency:
   group: deploy-backend
   cancel-in-progress: false
@@ -832,17 +833,19 @@ jobs:
       # WHAT IT IS NOW.
       #
       #   /home/ubuntu/app/releases/<sha>-<run>.<n>/backend/   one directory per deploy ATTEMPT, venv inside
-      #   /home/ubuntu/app/current -> releases/<sha>-<run>.<n>  the symlink both systemd units point through
+      #   /home/ubuntu/app/current -> releases/<sha>-<run>.<n>  the live release; the queue unit runs through it
+      #   /home/ubuntu/app/slot-<port> -> releases/<...>        what fieldrepo-api@8000 / @8001 run (since 2026-10-19)
       #   /home/ubuntu/app/backend                              the LEGACY tree, left alone; see the shim below
       #
       # THE DIRECTORY IS NAMED FOR THE RUN AND NOT FOR THE COMMIT, since 2026-09-17 — see the "Name
       # this deploy's release directory" step above for the live-tree rsync that forced it.
       #
-      # Rolling back is now `ln -sfn releases/<older-release> current && systemctl restart fieldrepo
-      # fieldrepo-queue`, by hand over SSM, in seconds, with no build and no network. `ls -lt
-      # /home/ubuntu/app/releases` names the candidates newest-first. The last three
+      # Rolling back is `bash /home/ubuntu/app/current/backend/deploy/blue_green.sh rollback
+      # [release]`, by hand over SSM, with no build and no network: since 2026-10-19 it starts the
+      # previous release (the idle port's, by default) beside the live one and switches nginx when it
+      # answers /health. `ls -lt /home/ubuntu/app/releases` names the candidates newest-first. The last three
       # releases are kept, so "the one before this one" is always there. NOTE THE ONE THING A
-      # SYMLINK FLIP CANNOT UNDO: a migration that has already been applied. The schema only ever
+      # ROLLBACK CANNOT UNDO: a migration that has already been applied. The schema only ever
       # moves forward, so rolling the CODE back is only safe while the older code tolerates the
       # newer schema — which is why the migrate branch below refuses to flip forward on failure
       # rather than trying to be clever about going backwards.
@@ -1299,6 +1302,13 @@ jobs:
             rm -f "$tmp"
           }
 
+          # 2026-10-19: the API runs as fieldrepo-api@<port> (backend/deploy/blue_green.sh installs that
+          # template, memory ceiling included), and the first blue/green release removes the
+          # single-port fieldrepo.service and these drop-ins. So they are written only while that unit
+          # is still there, never recreated for a unit that no longer exists.
+          legacy_api=no
+          if [ -f /etc/systemd/system/fieldrepo.service ]; then legacy_api=yes; fi
+          if [ "$legacy_api" = yes ]; then
           write_dropin fieldrepo.service 10-release-layout.conf <<'CONF'
           [Service]
           WorkingDirectory=/home/ubuntu/app/current/backend
@@ -1308,6 +1318,7 @@ jobs:
           ExecStart=
           ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
           CONF
+          fi
 
           write_dropin fieldrepo-queue.service 10-release-layout.conf <<'CONF'
           [Service]
@@ -1386,11 +1397,13 @@ jobs:
           # replaces this t3.small blue/green. These ceilings are deliberately the SAME on it. They cap
           # one unit each and were set from per-process readings, not from the size of the box, so
           # they move only when the readings asked for above are taken on the new box.
+          if [ "$legacy_api" = yes ]; then
           write_dropin fieldrepo.service memory.conf <<'CONF'
           [Service]
           MemoryAccounting=yes
           MemoryHigh=1000M
           CONF
+          fi
 
           write_dropin fieldrepo-queue.service memory.conf <<'CONF'
           [Service]
@@ -2690,195 +2703,33 @@ jobs:
       # to serving the PREVIOUS release, which is code that matches the schema that is actually
       # there, and the run goes red. That is the whole point of the layout: before it, a failed
       # migrate left new code on disk with no way back except another deploy.
-      - name: Migrate if needed, flip the symlink, restart
+      # ─── 2026-10-19: THE NEW RELEASE STARTS BESIDE THE LIVE ONE; NGINX SWITCHES WHEN IT IS HEALTHY ──
+      # Everything above this line still holds for the migration, with one change of order: the
+      # live API is no longer stopped first. Until this date the no-pending path flipped `current`
+      # and restarted the API in place, and the pending path stopped it before migrating, so every
+      # deploy spent the API's whole start-up (minutes on this box) answering 502.
+      #
+      # backend/deploy/blue_green.sh `release`, piped from this commit: the Node pin is checked
+      # before anything is touched; the idle loopback port's slot (/home/ubuntu/app/slot-<port>) is
+      # pointed at this release; the queue pauses; `prisma migrate deploy` runs with the live port
+      # still serving (a no-op when nothing is pending); the idle port starts as
+      # fieldrepo-api@<port>; /health is waited for, up to ten minutes by the clock with a line every
+      # twenty seconds; nginx is reloaded onto it and checked through nginx; and only then is the old
+      # port stopped, `current` flipped (the `.released` marker after it, as before) and the queue
+      # restarted. A failure before the switch stops the new port and leaves nginx on the old one,
+      # which never stopped. If `prisma migrate deploy` fails three times, FOR ANY REASON (it is
+      # there for a pooler with no free session, but the script does not read the error, so a broken
+      # migration takes this path too), the script stops the live API, tries five more times, the
+      # old stop-first path, and warns.
+      # The first run converts the box from fieldrepo.service; backend/DEPLOY_AWS.md has the layout,
+      # `status`, `restart` and `rollback`.
+      - name: Migrate, start the new release beside the live one, switch when healthy
         env:
           SHA: ${{ env.REL_ID }}
         run: |
-          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' NODE_PIN='$PRISMA_CLI_NODE_VERSION' bash -s" <<'REMOTE'
-          set -uo pipefail
-          APP=/home/ubuntu/app
-          REL="$APP/releases/$SHA"
-          cd "$REL/backend"
-          export PATH="$PWD/.venv/bin:$PATH"
-
-          # THE PRISMA CLI RUNS ON THE NODE "Pin the Node the Prisma CLI runs on" BUILT, and on no
-          # other. PRISMA_NODEENV_CACHE_DIR names that directory; the two flags stop prisma-client-py
-          # preferring a global `node` or the `nodejs-bin` package if either ever appears on this box,
-          # which would quietly unpin it again. Checked HERE, BEFORE `migrate status`, because a CLI
-          # that cannot start makes `migrate status` fail, and a failed status is read as "pending" —
-          # which stops both units and retries `migrate deploy` five times before giving up. A missing
-          # Node is not a pending migration and must not cost an outage: refuse with the box untouched.
-          export PRISMA_NODEENV_CACHE_DIR="$HOME/.cache/prisma-python/nodeenv-${NODE_PIN:-unset}"
-          export PRISMA_USE_GLOBAL_NODE=false
-          export PRISMA_USE_NODEJS_BIN=false
-          if [ "$("$PRISMA_NODEENV_CACHE_DIR/bin/node" --version 2>/dev/null)" != "v${NODE_PIN:-unset}" ]; then
-            echo "::error::the Prisma CLI's pinned Node (v${NODE_PIN:-unset}) is not at $PRISMA_NODEENV_CACHE_DIR. Nothing has been stopped or flipped; the box is still serving $(readlink "$APP/current")."
-            exit 1
-          fi
-
-          # ATOMIC BY `mv -T`, not by `ln -sfn` alone. `ln -sfn` unlinks and re-creates, so there is
-          # a window — brief, but real — in which `current` does not exist at all, and an automatic
-          # `Restart=always` landing in it would fail. Renaming a finished symlink over the old one
-          # is a single syscall with no such window.
-          flip() {
-            ln -sfn "$REL" "$APP/current.tmp"
-            mv -Tf "$APP/current.tmp" "$APP/current"
-            # 2026-09-17: RELEASE DIRECTORIES ARE NAMED PER RUN ATTEMPT NOW, so `releases/` holds
-            # directories that were BUILT and never SERVED — the three attempts of run 35145291959
-            # would have left three. The prune step at the end of this job used to rank by mtime and
-            # would have counted those among the three it keeps, deleting the last release anybody
-            # could actually roll back to and leaving half-built trees as the only candidates. A
-            # release is a rollback target only once it has been live; this marker is the record of
-            # that, and the prune ranks on nothing else.
-            #
-            # WRITTEN AFTER THE `mv`, NEVER BEFORE, so a flip that fails marks nothing. The prune
-            # ranks by the MARKER'S own mtime rather than the directory's, so this timestamp has to
-            # be the instant the symlink actually moved and not a moment earlier.
-            #
-            # A FAILURE HERE IS A WARNING AND NOT A FAILED DEPLOY — the release is live and about to
-            # pass its health check, and failing after the flip would report a good release as
-            # broken. It is not silent either: an unmarked live release is a rollback target the NEXT
-            # deploy's prune will sweep, which is worth a line in the log rather than a discovery
-            # during an incident. (This block runs under `set -uo pipefail` and not `-e`, so the
-            # `||` is belt-and-braces; leave it, because the next editor may add the `-e`.)
-            touch "$REL/.released" || echo "::warning::could not write $REL/.released. The release is live and fine, but the next deploy's prune will read it as a tree that never went live and will sweep it an hour after it stops being current — so this box may end up with no rollback target. Check the filesystem before the next deploy."
-            echo "current -> $(readlink "$APP/current")"
-          }
-          restart_units() {
-            sudo systemctl restart fieldrepo
-            # The media queue runs in its OWN service (decoupled from uvicorn so its heavy AI/ffmpeg
-            # work can never starve uvicorn's worker health-ping and get the worker SIGKILLed, which
-            # used to orphan Prisma query-engines and exhaust the pooler -> HTTP 500). Restart it too
-            # so it picks up the new code; '|| true' keeps deploys working on a box provisioned before
-            # this service existed.
-            sudo systemctl restart fieldrepo-queue 2>/dev/null || true
-          }
-
-          deploy_failed=0
-          if ./.venv/bin/python -m prisma migrate status; then
-            echo "no pending migrations — taking the no-downtime path (flip, then restart)"
-            flip
-            restart_units
-          else
-            echo "migrations are pending (or the database could not be read) — taking the stop-first path"
-            # Migrations need SESSION mode; on the Supabase deployment this was written against, until
-            # 2026-08-22, that meant a pooler with pool_size 15. The running app
-            # holds most of those client sessions across its uvicorn workers, so the schema engine had
-            # no connection left and failed with "EMAXCONNSESSION max clients reached". Stop the app to
-            # free its sessions, then migrate (with a short retry for any sessions the pooler hasn't
-            # reclaimed yet). The app is ALWAYS restarted afterwards, so a transient migrate failure
-            # never leaves the API down — but a genuine migrate failure still fails the deploy.
-            sudo systemctl stop fieldrepo || true
-            # 2026-09-03: the QUEUE is stopped too, and it was not before. It holds pooler sessions of
-            # its own — that is the whole reason it exists as a separate process — so leaving it up
-            # while stopping uvicorn frees only some of the clients the schema engine is waiting for.
-            sudo systemctl stop fieldrepo-queue 2>/dev/null || true
-            sleep 5
-            migrate_ok=0
-            for attempt in 1 2 3 4 5; do
-              if ./.venv/bin/python -m prisma migrate deploy; then migrate_ok=1; break; fi
-              echo "migrate attempt ${attempt} failed; waiting for pooler sessions to drain..."; sleep 10
-            done
-            if [ "$migrate_ok" = "1" ]; then
-              flip
-              restart_units
-            else
-              echo "::error::prisma migrate deploy failed after retries. NOT flipping the symlink — the box stays on $(readlink "$APP/current"), which is code that matches the schema the database actually has. Nothing is half-deployed; fix the migration and push again."
-              deploy_failed=1
-              restart_units
-            fi
-          fi
-
-          # App startup connects to a remote database, possibly cross-region, so poll rather than sleep.
-          # This runs on the rollback path too: whichever release the units came back on, the deploy
-          # does not finish until something is answering.
-          # 150 x 2s = FIVE MINUTES, RAISED FROM 40 x 2s ON 2026-09-15, AND THE OLD NUMBER WAS THE
-          # BUG RATHER THAN THE BOX BEING SLOW ON ONE BAD DAY. Measured on the deploy that restored
-          # service: the unit restarted at 20:58:13 and the probe gave up at 21:00:06 -- about 113
-          # seconds, comfortably past the old ceiling of roughly 80. This is a t3.micro that starts
-          # uvicorn, imports a client whose models.py is megabytes, and launches the query engine
-          # subprocess before /health can answer.
-          #
-          # WHAT THE OLD CEILING ACTUALLY COST, which is worse than a red tick: the flip happens
-          # BEFORE this loop on the no-downtime path, so a deploy that was entirely successful
-          # ended red, dumped a journal, and returned a non-zero exit -- while the box went on
-          # serving the new release perfectly well. A deploy that lies in the failing direction
-          # trains people to ignore it, and it did: three consecutive "failures" this evening were
-          # this loop, not the release.
-          #
-          # `--max-time 5` BOUNDS EACH ATTEMPT. Without it a hung connect makes one iteration take
-          # far longer than the 2s the arithmetic above assumes, so the real ceiling was never the
-          # number written here.
-          # ─── A LINE EVERY TWENTY SECONDS, BECAUSE FIVE MINUTES OF SILENCE KILLS THE SSH ────────
-          #
-          # 2026-09-17. This loop is the longest silent block in the whole deploy: 150 iterations of
-          # `sleep 2` that print NOTHING until /health answers — up to five minutes in which not one
-          # byte crosses the SSH connection. Run 35145291959 dropped twice with `client_loop: send
-          # disconnect: Broken pipe` and exit 255 after ~280-300 s of output silence. ONE of the
-          # three landed inside exactly this window — attempt 2, at 299.6 s, having already
-          # migrated and flipped the symlink; the other two died earlier, in the client-import
-          # step, which is heartbeated separately above. This loop is still the longest silent
-          # block in the deploy and the one most likely to idle a flow out.
-          #
-          # The keepalives in the runner's ~/.ssh/config are the transport-level guard. THIS is the
-          # application-level one, and it is the DIAGNOSTIC that did not exist: with a heartbeat in
-          # the log, the next drop says which iteration it died on and what systemd thought the
-          # units were doing, instead of leaving a five-minute hole. A step that cannot go silent
-          # cannot produce that evidence — and cannot be the thing that idles the flow out either.
-          #
-          # EVERY TENTH ITERATION, so roughly every 20 s — comfortably inside any NAT or stateful
-          # firewall idle window. Fifteen lines in a log nobody reads on a good day, and the only
-          # record that exists on a bad one.
-          #
-          # ON STDERR, so anything that ever pipes this step's stdout keeps reading exactly what it
-          # read before. Nothing does today; a heartbeat must not be the reason that changes.
-          #
-          # AN `if` RATHER THAN `[ … ] && echo`. This heredoc runs `set -uo pipefail` WITHOUT `-e`
-          # today, so a false `&&` would be harmless — but the loop's status would then depend on
-          # which iteration it left on, and the day somebody adds `-e` above, the heartbeat becomes
-          # the thing that fails the deploy. `systemctl is-active` gets `|| true` for the same
-          # reason: it exits non-zero for a unit that is merely still starting, which is the state
-          # this loop exists to wait out.
-          # ─── THE BOUND IS 10 MINUTES, NOT 5, AND IT IS NAMED ONCE ───────────────────────────
-          #
-          # 2026-09-17, and this is the second half of that day. The bound was 150 tries — five
-          # minutes — and the deploy that first carried the heartbeat above FAILED ON IT, with the
-          # last line reading:
-          #
-          #     waiting for /health: 140/150 (~280s elapsed); fieldrepo is active, fieldrepo-queue is active
-          #
-          # The release was fine. The symlink had flipped, the units were `active`, and the API
-          # answered normally a few minutes later — it simply could not serve a request on its own
-          # loopback inside five minutes, because the 1 GiB box was thrashing (1 GiB in swap,
-          # ~14 MB/s paging both ways, 85% iowait; the numbers are quoted in full on
-          # `instance_type` in infra/terraform/main.tf, which moved to t3.small the same day).
-          #
-          # SO THE REAL FIX IS THE MEMORY, AND THIS IS NOT IT. Doubling the RAM is what makes a
-          # restart fast; this bound only decides how patient the pipeline is when it is not.
-          # Raising it alone would have turned a red deploy into a slow green one and left the box
-          # thrashing under real traffic — which is why both landed together, and why this comment
-          # says so rather than letting the next reader conclude the timeout was the bug.
-          #
-          # Ten minutes is insurance, not an expectation: on t3.small this loop should exit in the
-          # first few tries. A genuinely dead service now costs ten minutes instead of five before
-          # the journal is dumped, which is the right trade against a deploy that reports failure
-          # over a release that is actually live — the failure mode this file has now hit twice.
-          #
-          # ONE NAME, THREE USES. The count was written out three times — the `seq`, the last-try
-          # test and the progress line — and a bound that has to be changed in three places is a
-          # bound that will one day disagree with itself, printing `150/150` while looping to 300.
-          tries=300
-          for i in $(seq 1 "$tries"); do
-            if curl -fsS --max-time 5 http://127.0.0.1:8000/health >/dev/null 2>&1; then echo "healthy after ${i} tries"; break; fi
-            if [ "$i" = "$tries" ]; then echo "service did not become healthy after $((tries * 2))s:"; sudo journalctl -u fieldrepo -n 80 --no-pager; exit 1; fi
-            if [ "$((i % 10))" -eq 0 ]; then
-              echo "waiting for /health: ${i}/${tries} (~$((i * 2))s elapsed); fieldrepo is $(systemctl is-active fieldrepo || true), fieldrepo-queue is $(systemctl is-active fieldrepo-queue || true)" >&2
-            fi
-            sleep 2
-          done
-          curl -fsS http://127.0.0.1:8000/health
-          exit "$deploy_failed"
-          REMOTE
+          set -euo pipefail
+          [ -n "${SHA:-}" ] || { echo "::error::the release id is empty"; exit 1; }
+          ssh ubuntu@${{ secrets.EC2_HOST }} "NODE_PIN='$PRISMA_CLI_NODE_VERSION' bash -s -- release '$SHA'" < backend/deploy/blue_green.sh
 
       # ─── RELEASES ARE PRUNED BY WHAT WENT LIVE, NOT BY WHAT IS NEWEST ────────────────────────
       #
@@ -2919,7 +2770,28 @@ jobs:
 
           # ONE definition of "this is the tree being served", used by BOTH passes, resolved on both
           # sides so a release reached through any symlink still compares equal.
-          is_live() { [ "$(readlink -f "./$1")" = "$live" ]; }
+          # 2026-10-19: AND NEVER A RELEASE A PORT'S SLOT POINTS AT. The previous release stays behind
+          # the idle port's /home/ubuntu/app/slot-<port> link as the instant rollback target, so it is
+          # protected exactly like `current`, whatever its rank.
+          slot_8000="$(readlink -f "$APP/slot-8000" 2>/dev/null || true)"
+          slot_8001="$(readlink -f "$APP/slot-8001" 2>/dev/null || true)"
+          is_live() {
+            local r
+            r="$(readlink -f "./$1")"
+            [ "$r" = "$live" ] || [ "$r" = "$slot_8000" ] || [ "$r" = "$slot_8001" ]
+          }
+
+          # A DIRECTORY THIS USER CANNOT DELETE IS A WARNING, NEVER A FAILED DEPLOY. On 2026-10-19 a
+          # release folder owned by root (left by a hand recovery run as root) made `rm -rf` fail here,
+          # and `set -e` turned a deploy that had already switched and answered /health red. So: as
+          # ubuntu, then with sudo (ubuntu has passwordless sudo on these boxes), and if both fail, a
+          # warning naming the directory. Only ever a path under releases/, never `current` or a slot.
+          prune() {
+            if rm -rf -- "$1" 2>/dev/null; then return 0; fi
+            if sudo -n rm -rf -- "$1" 2>/dev/null; then echo "pruned $1 with sudo: something in it was not ubuntu's"; return 0; fi
+            echo "::warning::could not delete releases/$1 even with sudo; it stays. Look at 'ls -la /home/ubuntu/app/releases/$1' by hand."
+            return 0
+          }
 
           # Named once because it is used twice, and a bound written out twice is a bound that will
           # one day disagree with itself.
@@ -2965,9 +2837,9 @@ jobs:
                 # that failed its migration, or an operator who has rolled back by hand, leaves
                 # `current` pointing at a release OLDER than the newest three — so it lands in this
                 # list, and without this line the next run deletes the code the box is executing.
-                if is_live "$d"; then echo "keeping $d (current)"; continue; fi
+                if is_live "$d"; then echo "keeping $d (current, or behind a port's slot)"; continue; fi
                 echo "pruning $d (went live, but is older than the $keep_released newest that did)"
-                rm -rf -- "$d"
+                prune "$d"
               done
 
           # ─── PASS 2 · TREES THAT WERE BUILT AND NEVER SERVED ────────────────────────────────
@@ -3012,7 +2884,7 @@ jobs:
                 if [ -e "$d/.released" ]; then continue; fi
                 if is_live "$d"; then echo "keeping $d (current — and it carries no .released marker, which should not be possible after a flip; say so rather than delete it)"; continue; fi
                 echo "pruning $d (built, never went live)"
-                rm -rf -- "$d"
+                prune "$d"
               done
 
           total="$(find . -maxdepth 1 -mindepth 1 -type d | wc -l)"
@@ -3050,18 +2922,24 @@ jobs:
       # on disk" and "the deployed code" were the same directory either way. Its one path reference
       # moved to `current/` with everything else. It is deliberately still the LAST gate before the
       # SSH window closes: if it fails the run is red, the previous release is still on disk, and the
-      # rollback is `ln -sfn releases/<older-release> current && sudo systemctl restart fieldrepo
-      # fieldrepo-queue` over SSM — seconds, no build, no network. Since 2026-09-17 release
-      # directories are named `<sha>-<run_id>.<attempt>`, so `ls -lt /home/ubuntu/app/releases` is
-      # how you read the name off; the one below the current one is the target.
+      # rollback is `bash /home/ubuntu/app/current/backend/deploy/blue_green.sh rollback` over SSM —
+      # no build, no network: the previous release starts on the idle port and nginx switches to it
+      # once it answers /health. Since 2026-09-17 release directories are named
+      # `<sha>-<run_id>.<attempt>`; to name an older one, read it off `ls -lt
+      # /home/ubuntu/app/releases` and pass it: `blue_green.sh rollback <release>`.
       - name: Assert the API is ready AND answers CORS for the production origin
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
           set -euo pipefail
 
+          # The port nginx proxies to since 2026-10-19 (8000 or 8001; backend/deploy/blue_green.sh).
+          port="$(sed -nE 's#^[[:space:]]*proxy_pass http://127\.0\.0\.1:([0-9]+);.*#\1#p' /etc/nginx/sites-available/fieldrepo | head -n1)"
+          case "$port" in 8000|8001) ;; *) echo "::error::nginx proxies to '${port:-nothing}', not 8000 or 8001"; exit 1 ;; esac
+          echo "live port: $port"
+
           # 1. READY, not merely up. `/health` deliberately avoids the database, so a wrong DSN
           #    produces a green deploy and a dead site; `/health/ready` is the endpoint that connects.
-          ready="$(curl -fsS http://127.0.0.1:8000/health/ready)"
+          ready="$(curl -fsS "http://127.0.0.1:${port}/health/ready")"
           echo "readiness: ${ready}"
           case "$ready" in
             *'"database":true'*) ;;
@@ -3071,7 +2949,7 @@ jobs:
           # 2. The production origin is allowed. This is a real preflight, answered by the same
           #    middleware a browser talks to, so it cannot pass on a list that merely looks right.
           origin="https://designer-repository.vercel.app"
-          hdr="$(curl -s -D - -o /dev/null --max-time 20 -X OPTIONS http://127.0.0.1:8000/api/auth/login -H "Origin: ${origin}" -H "Access-Control-Request-Method: POST")"
+          hdr="$(curl -s -D - -o /dev/null --max-time 20 -X OPTIONS "http://127.0.0.1:${port}/api/auth/login" -H "Origin: ${origin}" -H "Access-Control-Request-Method: POST")"
           echo "${hdr}" | head -1
           # No `$` anchor: curl prints headers with CRLF endings, so the line ends in a
           # carriage return and an end-anchored pattern can never match it.
@@ -3162,10 +3040,15 @@ jobs:
           echo "=== kernel OOM kills, if any ==="
           sudo dmesg -T 2>/dev/null | grep -iE 'out of memory|oom-kill|killed process' | tail -20 \
             || echo "(no OOM lines, or dmesg is not readable from here)"
-          echo "=== fieldrepo ==="
-          systemctl status fieldrepo --no-pager -l 2>&1 | head -30 | scrub
-          systemctl show fieldrepo -p NRestarts -p ExecMainStatus -p MemoryCurrent 2>&1
-          sudo journalctl -u fieldrepo --since '-15 min' --no-pager 2>&1 | tail -120 | scrub
+          echo "=== the API: the port nginx proxies to, and each port's unit ==="
+          grep -n proxy_pass /etc/nginx/sites-available/fieldrepo 2>&1
+          ls -la /home/ubuntu/app/slot-8000 /home/ubuntu/app/slot-8001 2>&1
+          for u in fieldrepo-api@8000 fieldrepo-api@8001 fieldrepo; do
+            echo "--- $u ---"
+            systemctl status "$u" --no-pager -l 2>&1 | head -30 | scrub
+            systemctl show "$u" -p NRestarts -p ExecMainStatus -p MemoryCurrent 2>&1
+            sudo journalctl -u "$u" --since '-15 min' --no-pager 2>&1 | tail -120 | scrub
+          done
           echo "=== fieldrepo-queue ==="
           systemctl status fieldrepo-queue --no-pager -l 2>&1 | head -20 | scrub
           systemctl show fieldrepo-queue -p NRestarts -p ExecMainStatus -p MemoryCurrent 2>&1
