@@ -577,7 +577,10 @@ and contract; each portal generates its own.
 - **Whose key.** Automatic runs and the backfill use the deployment's key and spend nobody's daily
   allowance. A researcher's Regenerate uses their own key when they have one, and counts one run
   against their daily writing-help allowance (`TRANSCRIPT_INSIGHTS` on `DwAiVerbDailyUsage`) when
-  it reaches a provider.
+  the provider answers: a stored version, or a refusal (key not accepted, request turned down, model
+  declined) that closes the job at once. A busy or unreachable provider retries and spends nothing.
+  Regenerate on an edited summary while an automatic job is active claims that job for the
+  researcher, so it runs on their key instead of being skipped.
 - **Consent.** The artisan's recorded answer is checked when Regenerate is pressed and again by the
   worker at the moment of sending (`dictation_consent.INSIGHTS`). A refusal sends nothing.
 - **Who sees it.** Exactly who may read the transcript: an insight is a copy of it, so a media row is

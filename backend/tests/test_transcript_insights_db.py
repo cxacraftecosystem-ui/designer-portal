@@ -144,3 +144,14 @@ async def test_the_drain_filter_on_the_job_type_is_valid_sql(client):
         where={"jobType": {"not_in": ["TRANSCRIPTION", "TRANSCRIPT_INSIGHTS"]}}, take=1
     )
     assert isinstance(rows, list)
+
+
+async def test_a_regenerate_claims_an_automatic_job_once(client):
+    from app.services import transcript_insights as ti
+
+    media_id = await _media(client)
+    job = await ti.enqueue(media_id)
+    owner = (await client.mediafile.find_unique(where={"id": media_id})).uploadedById
+    assert await ti.claim_for_requester(job.id, owner) is True
+    assert await ti.claim_for_requester(job.id, owner) is False  # already claimed
+    assert await ti.job_requester(job) == owner
