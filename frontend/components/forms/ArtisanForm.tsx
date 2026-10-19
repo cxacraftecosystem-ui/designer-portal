@@ -52,7 +52,8 @@ import {
   type DuplicateCheckRequest,
   type PossibleDuplicateHold
 } from "@/lib/duplicates";
-import { hasRank } from "@/lib/permissions";
+import { canManageCrafts, hasRank } from "@/lib/permissions";
+import { craftsEmptyLine, deviceLooksOffline, workshopListNotice } from "@/lib/workshopOptions";
 import {
   ARTISAN_FORM_CONTRACT,
   EXPERIENCE_MONTH_OPTIONS,
@@ -766,6 +767,22 @@ export function ArtisanForm({
    */
   const offPageCraft = useRecordOffPage<Craft>("/crafts", craftId, crafts);
   const craftOptions = useMemo(() => (offPageCraft ? mergeById(crafts, [offPageCraft]) : crafts), [crafts, offPageCraft]);
+  /**
+   * WHY THE CRAFT PICKER IS EMPTY — "" while it is loading or has rows.
+   *
+   * A register that ANSWERED with no crafts is empty, and says what this role can do about it; only
+   * a read that failed says it could not load. Collapsing the two is the 0.0.19 smoke's "Couldn't
+   * load crafts" on a deployment that simply had none yet.
+   */
+  const craftNotice =
+    craftOptions.length > 0 || craftListState === "pending"
+      ? ""
+      : craftListState === "loaded"
+        ? craftsEmptyLine(canManageCrafts(user))
+        : workshopListNotice(
+            { kind: "failed" },
+            { table: "field", noun: "crafts", scoped: false, accessList: false, online: !deviceLooksOffline() }
+          );
 
   /**
    * The craft and the workshop carry into a new artisan; the ARTISAN in the bag never does.
@@ -1457,6 +1474,7 @@ export function ArtisanForm({
             <Select
               name="craftId"
               searchable
+              emptyLabel={craftNotice || undefined}
               value={craftId}
               onChange={(event) => {
                 setCraftId(event.target.value);
@@ -1475,6 +1493,7 @@ export function ArtisanForm({
               ))}
             </Select>
             <CappedListNotice cuts={[craftCut]} />
+            {craftNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{craftNotice}</p> : null}
           </Field>
           <DictatedTextInput
             name="newCraftName"

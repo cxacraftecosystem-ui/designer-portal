@@ -343,6 +343,17 @@ internal fun narrowedEmptyLine(noun: String): String =
 internal fun unscopedEmptyLine(noun: String): String = "No $noun have been recorded yet."
 
 /**
+ * THE CRAFT PICKER'S EMPTY STATE, WITH THE NEXT MOVE THE READER'S ROLE ALLOWS.
+ *
+ * Adding a craft — on the crafts screen or by typing a new name on the artisan form — is
+ * `require_craft_manager`, Professor and above. Below that a typed name is refused on save, so the
+ * sentence sends them to someone who can rather than to a box that will not work. Byte for byte
+ * `craftsEmptyLine` in `frontend/lib/workshopOptions.ts`.
+ */
+internal fun craftsEmptyLine(canAdd: Boolean): String =
+    if (canAdd) "No crafts yet. Type a new craft name below." else "No crafts yet. Ask a professor or admin to add one."
+
+/**
  * GENUINELY EMPTY, AT THE WORKSHOP ON SCREEN — the read succeeded, was narrowed to ONE WORKSHOP, and
  * that workshop's roster is empty. The eighth sentence, and the one the questionnaire's artisan
  * picker was forbidden to say until 2026-09-17.
@@ -505,7 +516,16 @@ internal data class RegisterLoad(
  * @param rows how many options the picker is actually offering.
  * @param load what this device knows, from `loadCachedRegister`.
  */
-internal fun registerListNotice(noun: String, rows: Int, load: RegisterLoad): String? = when {
+internal fun registerListNotice(
+    noun: String,
+    rows: Int,
+    load: RegisterLoad,
+    /**
+     * The caller's own sentence for a register that ANSWERED with no rows — [craftsEmptyLine] on the
+     * artisan form, which can name the next move. Null keeps [unscopedEmptyLine].
+     */
+    emptyLine: String? = null,
+): String? = when {
     // The list arrived this session. The only branch allowed to say nothing.
     rows > 0 && load.source == RegisterSource.LIVE -> null
     /*
@@ -522,6 +542,13 @@ internal fun registerListNotice(noun: String, rows: Int, load: RegisterLoad): St
     // Nothing to offer. WHICH of the three empty states this is decides both the sentence and
     // whether the field stands down, so it may not be collapsed into one "no options" branch.
     load.source == RegisterSource.PENDING -> loadingListLine(noun)
+    /*
+     * THE READ ANSWERED, AND THE ANSWER WAS NONE. A live fetch sets `online = true`, so before this
+     * arm an empty register read on a good connection fell through to [couldNotListLine] and said
+     * "Couldn't load crafts" about a repository that simply has none yet (0.0.19 emulator smoke).
+     * A cached file with no rows is the same answer, stored: the server said none.
+     */
+    load.loaded -> emptyLine ?: unscopedEmptyLine(noun)
     load.online -> couldNotListLine(noun)
     else -> offlineListLine(noun)
 }

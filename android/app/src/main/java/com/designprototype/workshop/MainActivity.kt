@@ -462,6 +462,7 @@ import com.designprototype.workshop.ui.unscopedEmptyLine
 // see the call site, which carries the argument for each arm.
 import com.designprototype.workshop.ui.loadingListLine
 import com.designprototype.workshop.ui.couldNotListLine
+import com.designprototype.workshop.ui.craftsEmptyLine
 import com.designprototype.workshop.ui.offlineListLine
 import com.designprototype.workshop.ui.atWorkshopEmptyLine
 // The register half of the same file: where a cached list came from, and the five sentences one is
@@ -8600,9 +8601,11 @@ private fun RegisterDropdownField(
     placeholder: String = "Select",
     includeNone: Boolean = true,
     enabled: Boolean = true,
+    /** The answered-and-empty sentence, when the caller can name a next move. See [registerListNotice]. */
+    emptyLine: String? = null,
     onSelect: (String) -> Unit
 ) {
-    val notice = registerListNotice(noun, options.size, load)
+    val notice = registerListNotice(noun, options.size, load, emptyLine)
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         DropdownField(
             label = label,
@@ -11638,6 +11641,8 @@ private fun ArtisanForm(
         craftId = ""
     }
     val canSetStatus = remember { canSetRecordStatus(repository.cachedUser()?.role) }
+    // Whether a typed new craft name will be accepted — `require_craft_manager`, Professor and up.
+    val canAddCraft = remember { repository.cachedUser()?.let { FieldPermissions.canManageCrafts(it) } == true }
     var status by remember(editing) { mutableStateOf(editing?.status ?: defaultCreateStatus(repository.cachedUser()?.role)) }
     var saving by remember { mutableStateOf(false) }
     val hasCraft = craftId.isNotBlank() || newCraftName.isNotBlank()
@@ -12059,6 +12064,7 @@ private fun ArtisanForm(
                 selectedValue = craftId,
                 load = craftRegister,
                 placeholder = "Select existing craft",
+                emptyLine = craftsEmptyLine(canAddCraft),
                 onSelect = { picked ->
                     craftId = picked
                     // An explicit pick replaces the remembered craft and retires the banner: from here on
