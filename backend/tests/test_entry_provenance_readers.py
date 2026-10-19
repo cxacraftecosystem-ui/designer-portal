@@ -1827,6 +1827,10 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         # Classified 2026-10-18 with the unified search index. EXEMPT: it reads `stageKey` and
         # `searchText` and serves match text with no author, FENCED by the test under "Reader 18".
         "app/services/search_index.py",
+        # Classified 2026-10-19 with the artisan QR cards. EXEMPT: the workshop card sheet reads the
+        # participants stage only for each entry's `artisanRef`, to print the roster's cards in
+        # roster order. No stage value is shown and nothing is attributed to anybody.
+        "app/api/routes/artisan_cards.py",
     }
     root = Path(__file__).resolve().parents[1] / "app"
     found = set()

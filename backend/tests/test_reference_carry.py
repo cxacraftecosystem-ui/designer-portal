@@ -792,6 +792,12 @@ RELATION_LEDGER = {
         "designWorkshop": (
             "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
         ),
+        "cards": (
+            "NOT INCLUDED — the printed QR cards (services/artisan_card) identify the artisan on paper; "
+            "a card code is never a stage value, and nothing the picker reads goes through it"
+        ),
+        "duplicatePairsA": "NOT INCLUDED — likely-duplicate bookkeeping (services/artisan_duplicates)",
+        "duplicatePairsB": "NOT INCLUDED — likely-duplicate bookkeeping (services/artisan_duplicates)",
     },
     "Location": {
         "artisans": "the back-reference of the relation the Artisan picker includes",

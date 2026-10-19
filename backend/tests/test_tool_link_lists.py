@@ -182,6 +182,22 @@ def _artisan(artisan_id: str, created_by: str = "usr_7") -> _Row:
     return _Row(id=artisan_id, name=f"Artisan {artisan_id}", createdById=created_by)
 
 
+@pytest.fixture(autouse=True)
+def _no_merged_artisans(monkeypatch):
+    """The merged-artisan redirect (services/artisan_merge) reads its own table through the real
+    client; these drives stub ``db``, and nothing in them was merged, so it hands the ids back."""
+    from app.api.routes import tools
+
+    async def _same_payload(data, **_kw):
+        return data
+
+    async def _same_ids(ids, **_kw):
+        return ids
+
+    monkeypatch.setattr(tools, "redirect_payload", _same_payload)
+    monkeypatch.setattr(tools, "redirect_ids", _same_ids)
+
+
 def _drive_create(
     monkeypatch,
     fields: dict[str, Any],

@@ -15,6 +15,7 @@ from typing import Any
 
 from app.core.db import db
 from app.core.security import hash_password
+from app.services import aadhaar_fingerprint
 from prisma import Json
 
 AADHAAR = "234123412346"
@@ -76,9 +77,14 @@ async def seed(stamp: str) -> SimpleNamespace:
         }
     )
     common = {"place": "Bagru", "createdById": owner}
-    # aadhaarNumber and pehchanCardNumber are unique and every module seeds its own world into one
-    # database, so an earlier world gives both numbers up before this one takes them.
-    await db.artisan.update_many(where={"aadhaarNumber": AADHAAR}, data={"aadhaarNumber": None})
+    # aadhaarFingerprint and pehchanCardNumber are unique and every module seeds its own world into
+    # one database, so an earlier world gives both up before this one takes them. The register keeps
+    # no Aadhaar number: a seeded artisan holds its fingerprint and last four, as a saved one does.
+    fingerprint = aadhaar_fingerprint.fingerprint(AADHAAR, "search-test-only-key")
+    await db.artisan.update_many(
+        where={"aadhaarFingerprint": fingerprint},
+        data={"aadhaarFingerprint": None, "aadhaarLast4": None},
+    )
     await db.artisan.update_many(
         where={"pehchanCardNumber": PEHCHAN}, data={"pehchanCardNumber": None}
     )
@@ -88,7 +94,8 @@ async def seed(stamp: str) -> SimpleNamespace:
             "localName": "रमेश कुमार",
             "craftId": w.craft.id,
             "workshopId": w.workshop.id,
-            "aadhaarNumber": AADHAAR,
+            "aadhaarFingerprint": fingerprint,
+            "aadhaarLast4": AADHAAR[-4:],
             "phone": PHONE,
             "email": EMAIL,
             "pehchanCardAvailable": True,

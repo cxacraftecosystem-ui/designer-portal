@@ -15,7 +15,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.db import db
-from app.services import artisan_merge
+from app.services import aadhaar_fingerprint, artisan_merge
 from tests import duplicates_support as ds
 
 pytestmark = pytest.mark.skipif(not ds.LOCAL, reason="needs a LOCAL database")
@@ -146,6 +146,28 @@ def test_a_pair_merges_again_after_an_undo():
     run(scenario)
 
 
+def test_the_merged_records_card_moves_to_the_survivor_as_replaced_and_undo_hands_it_back():
+    async def scenario():
+        t = ds.tag()
+        user = await ds.admin(t)
+        keep = await ds.artisan(user, f"Mohan Lal {t}")
+        gone = await ds.artisan(user, f"Mohan Lal {t}")
+        kept_card = await db.artisancard.create(data={"artisanId": keep.id, "code": f"DK{t}"[:16]})
+        old_card = await db.artisancard.create(data={"artisanId": gone.id, "code": f"DG{t}"[:16]})
+        pair = await ds.make_pair(keep.id, gone.id)
+        result = await _merge(pair, ds.sides(pair, keep.id), user=user)
+        moved = await db.artisancard.find_unique(where={"id": old_card.id})
+        assert moved.artisanId == keep.id and moved.revokedAt is not None
+        assert moved.revokedReason == artisan_merge.CARD_MERGED_REASON
+        still = await db.artisancard.find_unique(where={"id": kept_card.id})
+        assert still.artisanId == keep.id and still.revokedAt is None
+        await artisan_merge.undo(result["merge"]["id"], user=user, settings=ds.NO_PEER)
+        back = await db.artisancard.find_unique(where={"id": old_card.id})
+        assert back.artisanId == gone.id and back.revokedAt is None and back.revokedReason is None
+
+    run(scenario)
+
+
 def _code(exc: HTTPException) -> str:
     detail = exc.detail
     return detail.get("code") if isinstance(detail, dict) else str(detail)
@@ -212,8 +234,10 @@ def test_every_blocker_refuses_with_409():
         cases = [
             ({"aadhaarFingerprint": ds.fp("x1" + t)}, {"aadhaarFingerprint": ds.fp("x2" + t)}, "different_aadhaar"),
             ({"pehchanCardNumber": f"P1{t}"}, {"pehchanCardNumber": f"P2{t}"}, "different_pehchan"),
-            ({"aadhaarNumber": f"9{t[:3]}0000{t[3:7]}"[:12]}, {}, "aadhaar_backfill_pending"),
         ]
+        if aadhaar_fingerprint.LEGACY_COLUMN_PRESENT:
+            # Only while the legacy column exists: once it is dropped no row can be "not reached".
+            cases.append(({"aadhaarNumber": f"9{t[:3]}0000{t[3:7]}"[:12]}, {}, "aadhaar_backfill_pending"))
         for a_extra, b_extra, expect in cases:
             a, b, pair = await blocked(a_extra, b_extra, expect)
             with pytest.raises(HTTPException) as caught:

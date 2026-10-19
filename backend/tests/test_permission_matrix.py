@@ -121,7 +121,7 @@ LOCATION = {
     "district": "Kolkata",
 }
 CRAFT_BODY = {"name": "Test craft"}
-WORKSHOP_BODY = {"title": "Test workshop", "place": "Kolkata", "location": LOCATION}
+WORKSHOP_BODY = {"title": "Test workshop", "date": "2026-10-01", "place": "Kolkata", "location": LOCATION}
 ARTISAN_BODY = {
     "name": "Test artisan",
     "place": "Kolkata",
@@ -294,7 +294,11 @@ def api(monkeypatch: pytest.MonkeyPatch) -> _Api:
     for module in list(sys.modules.values()):
         if getattr(module, "__name__", "").startswith("app.") and getattr(module, "db", None) is real_db:
             monkeypatch.setattr(module, "db", tripwire)
-    yield _Api(tripwire)
+    harness = _Api(tripwire)
+    # The merged-artisan redirect (services/artisan_merge) runs before every create that names
+    # artisans. Nothing here was merged; reading that table is not "reaching the handler".
+    harness.preload("artisanmerge", SimpleNamespace(find_many=_returning([]), find_first=_returning(None)))
+    yield harness
     _CURRENT["user"] = None
 
 
@@ -420,13 +424,25 @@ def test_admins_create_update_and_delete(api: _Api, role: str, path: str, body: 
     assert all(outcome.reached for outcome in outcomes), outcomes
 
 
-def test_a_new_craft_cannot_be_minted_sideways_through_the_artisan_form(api: _Api) -> None:
+def test_a_new_craft_cannot_be_minted_sideways_through_the_artisan_form(
+    api: _Api, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``craftName`` on POST /artisans creates the craft when nothing matches it — the same write
     POST /crafts guards, reached from another route. Both ask ``can_manage_crafts``, so the grant
     that no longer opens the front door does not open this one either."""
     caller = api.as_(_user("RESEARCHER", canManageCrafts=True))
+    # The duplicate finder reads the register before the craft is resolved, and swallows what it
+    # cannot read; it is advisory and not what this test is about, so it finds nothing.
+    from app.api.routes import artisans
+
+    async def _no_duplicates(*_args: Any, **_kwargs: Any) -> list:
+        return []
+
+    monkeypatch.setattr(artisans, "_likely_duplicates", _no_duplicates)
     # Let the name lookup answer "no such craft", which is the branch that decides.
     caller.preload("craft", SimpleNamespace(find_unique=_returning(None)))
+    # The identity-number clash check reads the register first (a read, above every write); no clash.
+    caller.preload("artisan", SimpleNamespace(find_first=_returning(None), find_many=_returning([])))
 
     body = {**ARTISAN_BODY, "craftName": "A craft nobody added yet"}
     body.pop("craftId")

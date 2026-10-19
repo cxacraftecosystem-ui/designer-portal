@@ -122,6 +122,7 @@ SPECIAL_REPOINT = {
     "AssignedTask.artisanIds": "array of ids; replaced in place, de-duplicated, old list logged",
     "DwStageEntry.data.artisanRef": "participant and existingProduct entries; version bumped",
     "CrossPortalArtisanLink.artisanId": "moved with the Field Repository told first",
+    "ArtisanCard.artisanId": "moved to the survivor, the live one revoked (REPLACED); undo restores it",
 }
 
 #: Tables that name an artisan and are deliberately not re-pointed, and why.
@@ -131,6 +132,7 @@ NOT_REPOINTED = {
     "ArtisanDuplicateCandidate": "the merged record's pairs cascade away with it",
     "ArtisanMerge": "the merge record itself",
     "ArtisanPeerScan": "a scan timestamp; the survivor is asked on its own next turn",
+    "SearchDocument": "a derived index: the re-pointed rows' triggers queue them to be indexed again",
 }
 
 
@@ -807,6 +809,34 @@ async def _repoint_task_arrays(tx: Any, merged: str, survivor: str) -> list[dict
     return moved
 
 
+#: Why a merged-away artisan's live card was revoked (``ArtisanCard.revokedReason``).
+CARD_MERGED_REASON = "MERGED"
+
+
+async def _repoint_cards(tx: Any, merged: str, survivor: str) -> list[dict[str, Any]]:
+    """The merged record's QR cards move to the survivor, its live one revoked on the way.
+
+    A printed card of the merged-away artisan then resolves as REPLACED, naming the survivor,
+    instead of "unknown" — and the survivor keeps its own live card (one per artisan). Each moved
+    card is logged with whether it was live, so undo can hand it back as it was."""
+    rows = await tx.query_raw(
+        """WITH before AS (
+               SELECT "id", "revokedAt" IS NULL AS live FROM "ArtisanCard" WHERE "artisanId" = $1 FOR UPDATE
+           )
+           UPDATE "ArtisanCard" c
+              SET "artisanId" = $2,
+                  "revokedAt" = CASE WHEN b.live THEN (now() AT TIME ZONE 'utc') ELSE c."revokedAt" END,
+                  "revokedReason" = CASE WHEN b.live THEN $3 ELSE c."revokedReason" END
+             FROM before b
+            WHERE c."id" = b."id"
+        RETURNING c."id" AS id, b.live AS live""",
+        merged,
+        survivor,
+        CARD_MERGED_REASON,
+    )
+    return [{"id": row["id"], "live": bool(row["live"])} for row in rows]
+
+
 async def _repoint_stage_entries(tx: Any, merged: str, survivor: str) -> list[dict[str, Any]]:
     rows = await tx.query_raw(
         """UPDATE "DwStageEntry"
@@ -1049,6 +1079,7 @@ async def _merge_tx(
                 moves["repoint"][label] = moved
         moves["taskArrays"] = await _repoint_task_arrays(tx, gone_id, keep_id)
         moves["stageEntries"] = await _repoint_stage_entries(tx, gone_id, keep_id)
+        moves["cards"] = await _repoint_cards(tx, gone_id, keep_id)
         touched_interviews = [m["key"]["interviewId"] for m in moves["repoint"].get("QuestionnaireInterviewArtisan.artisanId", [])]
         touched_interviews += [d["interviewId"] for d in moves["deleted"].get("QuestionnaireInterviewArtisan.artisanId", [])]
         moves["interviewKeys"] = await _recompute_set_keys(tx, touched_interviews)
@@ -1208,6 +1239,19 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
                     gone_id,
                     keep_id,
                     entry_ids,
+                )
+            # 4b. The QR cards back, a card the merge revoked made live again.
+            for card in moves.get("cards") or []:
+                await tx.execute_raw(
+                    """UPDATE "ArtisanCard"
+                          SET "artisanId" = $2,
+                              "revokedAt" = CASE WHEN $4 THEN NULL ELSE "revokedAt" END,
+                              "revokedReason" = CASE WHEN $4 THEN NULL ELSE "revokedReason" END
+                        WHERE "id" = $1 AND "artisanId" = $3""",
+                    card["id"],
+                    gone_id,
+                    keep_id,
+                    bool(card.get("live")),
                 )
             interviews = [i["id"] for i in moves.get("interviewKeys") or []]
             interviews += [m["key"]["interviewId"] for m in (moves.get("repoint") or {}).get("QuestionnaireInterviewArtisan.artisanId", [])]

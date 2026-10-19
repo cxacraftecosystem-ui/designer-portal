@@ -568,7 +568,7 @@ def world():
                 "no_start": await db.artisan.create(data={
                     **base, "name": f"No Start {tag}", "dateOfBirth": "1970-01-01T00:00:00Z",
                     "craftId": craft.id, "dos": "d", "donts": "n", "locationId": location.id,
-                    "aadhaarNumber": None, "phone": "9876543210",
+                    "phone": "9876543210",
                 }),
                 "complete": await db.artisan.create(data={
                     **base, "name": f"Complete {tag}", "dateOfBirth": "1970-01-01T00:00:00Z",

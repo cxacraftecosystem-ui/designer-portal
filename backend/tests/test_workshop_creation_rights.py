@@ -84,6 +84,7 @@ DESIGN_WORKSHOP_CREATORS = ("ADMIN", "MASTER_ADMIN")
 #: which is why "Kutch" is stored as "Kachchh" and why neither is invented here.
 WORKSHOP_BODY: dict[str, Any] = {
     "title": "Gate test workshop",
+    "date": "2026-10-01",
     "place": "Bhuj",
     "location": {
         "latitude": 23.25,

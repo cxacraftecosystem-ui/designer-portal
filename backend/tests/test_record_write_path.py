@@ -411,6 +411,11 @@ def _drive_rejected_create(monkeypatch, *, artisans_found, questions_found, payl
     monkeypatch.setattr(questionnaire, "jsonify_metadata", lambda *_a, **_kw: None)
     monkeypatch.setattr(questionnaire, "apply_status_policy_create", lambda *_a, **_kw: None)
     monkeypatch.setattr(questionnaire, "pin_pending_if_late", lambda *_a, **_kw: None)
+    async def _no_merges(ids, **_kw):
+        # The merged-artisan redirect (services/artisan_merge) reads its own table; nothing is merged.
+        return ids
+
+    monkeypatch.setattr(questionnaire, "redirect_ids", _no_merges)
 
     monkeypatch.setattr(
         questionnaire,

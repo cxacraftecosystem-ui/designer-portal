@@ -918,7 +918,9 @@ def test_a_refused_create_mints_no_location_and_no_craft(monkeypatch, kind):
         "craftName": "A craft the register lacks",
         "location": {"latitude": 21.19, "longitude": 83.58},
     }
-    payload = SimpleNamespace(model_dump=lambda **_kwargs: dict(body), clientKey=None)
+    payload = SimpleNamespace(
+        model_dump=lambda **_kwargs: dict(body), clientKey=None, duplicateAcknowledged=None
+    )
 
     with pytest.raises(HTTPException) as refused:
         asyncio.run(handler(payload, current_user=_account("ADMIN")))
