@@ -63,12 +63,11 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zipfile import BadZipFile
 
-from openpyxl import load_workbook
-from openpyxl.utils.exceptions import InvalidFileException
-from openpyxl.worksheet.worksheet import Worksheet
+if TYPE_CHECKING:
+    from openpyxl.worksheet.worksheet import Worksheet
 
 __all__ = [
     "FALSEISH",
@@ -376,6 +375,8 @@ def formula_map(
     holds a formula Excel has never calculated" — see :class:`FormulaCell`. Cheap in the normal case,
     where the answer is an empty dict for every sheet.
     """
+    from openpyxl import load_workbook
+    from openpyxl.utils.exceptions import InvalidFileException
     found: dict[str, dict[tuple[int, int], str]] = {}
     try:
         wb = load_workbook(BytesIO(data), data_only=False, read_only=True)
@@ -447,6 +448,8 @@ def load_sheets(
 
     Raises :class:`XlsxTableError` carrying the magic-byte sentence when the file cannot be opened.
     """
+    from openpyxl import load_workbook
+    from openpyxl.utils.exceptions import InvalidFileException
     try:
         wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
     except (InvalidFileException, BadZipFile, OSError, ValueError, KeyError, TypeError) as exc:
@@ -475,6 +478,8 @@ def load_value_sheets(
     take on trust. Two functions, two return types, one shared body of argument in the docstrings
     above.
     """
+    from openpyxl import load_workbook
+    from openpyxl.utils.exceptions import InvalidFileException
     try:
         wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
     except (InvalidFileException, BadZipFile, OSError, ValueError, KeyError, TypeError) as exc:

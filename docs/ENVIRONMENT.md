@@ -769,8 +769,11 @@ PATH="$PWD/.venv/Scripts:$PATH" PYTHONUTF8=1 .venv/Scripts/python.exe scripts/ge
 `scripts/generate_prisma_client.py` runs exactly `prisma generate --schema prisma/schema.prisma` and
 then adds `from __future__ import annotations` to the generated `types.py`. That line is what makes
 the client importable in seconds on Python 3.14 rather than in the ten-plus minutes this machine used
-to spend (or a `MemoryError`); the script's docstring has the measurements and the cause. A bare
-`prisma generate` still works, and gives you the slow client.
+to spend (or a `MemoryError`); the script's docstring has the measurements and the cause. It then
+moves the TypedDicts to `types.pyi` (editors and type checkers read it) and leaves a small runtime
+`types.py`, which takes ~1.4 GB out of every process that imports the client. A bare
+`prisma generate` still works, and gives you the slow, heavy client; `tests/test_import_footprint.py`
+fails on it.
 
 `prisma/generator/generator.py` writes the packaged schema with `pathlib.write_text()` and no
 `encoding=`, so it encodes at the **locale default** — cp1252 on a standard Windows install.

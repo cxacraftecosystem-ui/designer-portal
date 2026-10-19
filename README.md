@@ -154,8 +154,8 @@ a `prisma migrate dev --name init` that used to be here:
   a laptop runs the versions production runs ([docs/CI.md](docs/CI.md) §1.3).
 - **`scripts/generate_prisma_client.py`** runs `prisma generate` — which writes the client every
   module that reaches the database imports, and talks to no database — and then adds one line to the
-  generated `types.py` without which importing that client on Python 3.14 takes many minutes and
-  gigabytes. Every automated generate (CI, the deploy, the Dockerfile) runs the same script.
+  generated `types.py` without which importing that client on Python 3.14 takes many minutes, then
+  moves its TypedDicts to `types.pyi` so a running process does not hold ~1.4 GB of them. Every automated generate (CI, the deploy, the Dockerfile) runs the same script.
 - **`prisma migrate deploy`, never `prisma migrate dev`.** Migrations in this repository are
   hand-written, forward-only files under `backend/prisma/migrations/`; `deploy` applies them in order.
   `dev` would try to author a new migration from any drift it detects, and may offer to reset the

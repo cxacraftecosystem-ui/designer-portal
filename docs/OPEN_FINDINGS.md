@@ -826,8 +826,9 @@ was raised to its newest release on 2026-10-09; this one cannot be, and it now h
 
 It also forces one patch to generated code. The client it writes for this schema is 675,391 lines of
 TypedDicts without `from __future__ import annotations`, which Python 3.14 imports in tens of minutes
-and over a gigabyte; `backend/scripts/generate_prisma_client.py` adds that line after every generate,
-and every automated generate runs it. That script is a workaround for a library nobody maintains.
+and over a gigabyte; `backend/scripts/generate_prisma_client.py` adds that line after every generate
+and then moves the TypedDicts to `types.pyi` so no running process holds them (~1.4 GB each, measured
+2026-10-19), and every automated generate runs it. That script is a workaround for a library nobody maintains.
 
 **The exit**, and the only one: move `app/core/db.py` and every `db.<model>` call to a maintained async
 stack — SQLAlchemy 2 with asyncpg or psycopg 3 — with migrations kept on the Node Prisma CLI used only

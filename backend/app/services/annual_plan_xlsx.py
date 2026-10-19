@@ -63,11 +63,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from io import BytesIO
-from typing import Any
-
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.worksheet.worksheet import Worksheet
+from typing import TYPE_CHECKING, Any
 
 from app.services import address, naming
 from app.services.stage_schema import ENUMS
@@ -83,6 +79,9 @@ from app.services.xlsx_table import (
     norm_header,
     pick_sheet,
 )
+
+if TYPE_CHECKING:
+    from openpyxl.worksheet.worksheet import Worksheet
 
 __all__ = [
     # Exported because the refusal that reads a declared filter has to bound it before it lands in
@@ -1184,6 +1183,7 @@ def _header(ws: Worksheet, row: int, labels: tuple[tuple[str, str], ...]) -> Non
     set a column width. It writes no value, so it is outside that rule rather than an exception to
     it; `artisan_xlsx._header` does the same thing for the same reason.)
     """
+    from openpyxl.styles import Alignment, Font, PatternFill
     fill = PatternFill(fill_type="solid", start_color=f"FF{_BRAND}")
     required_fill = PatternFill(fill_type="solid", start_color="FF9A3412")
     for index, (key, label) in enumerate(labels, start=1):
@@ -1239,6 +1239,7 @@ def _details_sheet(ws: Worksheet, *, plan_year: str, filter_note: str | None = N
     sixty workshops. The sentence is also there to be READ — an administrator who opens the file
     sees, beside the year, that it is not the whole year.
     """
+    from openpyxl.styles import Alignment, Font
     ws.sheet_properties.tabColor = f"FF{_BRAND}"
     label = _put(ws, 1, 1, "Plan year")
     label.font = Font(bold=True)
@@ -1349,6 +1350,7 @@ def _help_sheet(ws: Worksheet) -> None:
     `scan_header` finds no header row on it at all. `tests/test_annual_plan_xlsx.py::
     test_the_instructions_sheet_is_not_even_a_candidate_for_the_data_sheet` pins that.
     """
+    from openpyxl.styles import Alignment, Font
     ws.sheet_properties.tabColor = _GREY
     ws.column_dimensions["A"].width = 110
     row = 1
@@ -1378,6 +1380,7 @@ def build_annual_plan_pro_forma() -> bytes:
     a workshop called "Example". The worked example lives on the instructions sheet, where it cannot
     be imported.
     """
+    from openpyxl import Workbook
     wb = Workbook()
     plan = wb.active
     plan.title = SHEET_PLAN
@@ -1405,6 +1408,7 @@ def build_annual_plan_workbook(
     produce one per row on every export/import cycle and teach an administrator that the warning
     means nothing.
     """
+    from openpyxl import Workbook
     wb = Workbook()
     plan = wb.active
     plan.title = SHEET_PLAN

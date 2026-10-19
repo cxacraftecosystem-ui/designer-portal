@@ -553,8 +553,8 @@ the old one) is written out on the `lifecycle` block of `aws_instance.api` in
 ### 8.2 GitHub Actions secrets (auto-deploy on push)
 
 `.github/workflows/deploy-backend.yml` waits for the same commit's `Checks` run, rsyncs `backend/`
-into `releases/<sha>-<run_id>.<attempt>`, writes that release's `.env`, builds or reuses a venv from
-`requirements.lock`, runs `prisma migrate deploy`, **flips the `current` symlink** and restarts the
+into `releases/<sha>-<run_id>.<attempt>`, writes that release's `.env`, ships the release venv it built on the runner from
+`requirements.lock` (the box runs no `pip` and no `prisma generate`), runs `prisma migrate deploy`, **flips the `current` symlink** and restarts the
 units — on every push to `main` that touches `backend/`. Set these repo secrets
 (**Settings → Secrets and variables → Actions**):
 

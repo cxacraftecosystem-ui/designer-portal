@@ -1312,6 +1312,7 @@ jobs:
           EnvironmentFile=
           EnvironmentFile=/home/ubuntu/app/current/backend/.env
           Environment=MEDIA_QUEUE_WORKER_ENABLED=false
+          Environment=MALLOC_ARENA_MAX=2
           ExecStart=
           ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
           CONF
@@ -1322,6 +1323,7 @@ jobs:
           WorkingDirectory=/home/ubuntu/app/current/backend
           EnvironmentFile=
           EnvironmentFile=/home/ubuntu/app/current/backend/.env
+          Environment=MALLOC_ARENA_MAX=2
           ExecStart=
           ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
           CONF
@@ -1394,6 +1396,22 @@ jobs:
           # replaces this t3.small blue/green. These ceilings are deliberately the SAME on it. They cap
           # one unit each and were set from per-process readings, not from the size of the box, so
           # they move only when the readings asked for above are taken on the new box.
+          # ─── AND THEN THE BASELINE FELL BY ~1.3 GB PER PROCESS, 2026-10-19 ──────────────────────
+          # Read on the t3.medium over SSM, idle, almost empty database: the API at 956 MB RSS plus
+          # 623 MB in swap, the queue at 802 MB plus 731 MB in swap (pinned at its 800M MemoryHigh),
+          # 2.1 GB of the box in swap. Nearly all of it was ONE module: the generated prisma/types.py,
+          # ~180,000 TypedDicts that every importing process held (~1.43 GB measured in a container).
+          # scripts/generate_prisma_client.py now moves them to types.pyi, which only type checkers
+          # read, and the same container measures the API at ~250 MB and the queue at ~190 MB after
+          # start. These ceilings are deliberately left where they are: they now sit well above both
+          # processes, and they move when the box's own `systemctl status` lines say so.
+          #
+          # MALLOC_ARENA_MAX=2 is in both units' 10-release-layout.conf above (and in the API unit
+          # template in backend/deploy/blue_green.sh and infra/terraform/user_data.sh). glibc gives
+          # each thread that allocates its own malloc arena, up to 8 per core, and memory freed in one
+          # arena is not reusable by another; the API's asyncio.to_thread pool and the queue's media
+          # work are exactly that pattern. Two arenas cap the fragmentation at no measurable cost to a
+          # process that is single-threaded where it matters.
           if [ "$legacy_api" = yes ]; then
           write_dropin fieldrepo.service memory.conf <<'CONF'
           [Service]
@@ -2059,150 +2077,113 @@ jobs:
             echo \"Monday summary switch pinned: \$(grep -E \"^WEEKLY_DIGEST_ENABLED=\" \"\$ENVFILE\")\"
           '"
 
-      # ─── THE VENV, AND WHY IT IS COPIED RATHER THAN REBUILT OR HARD-LINKED ──────────────────
+      # ─── THE VENV IS BUILT HERE, ON THE RUNNER, AND SHIPPED (2026-10-19) ──────────────────────
       #
       # A venv per release is what makes the symlink flip a real rollback: roll back to a release
       # whose lock pinned a different prisma, and you get that prisma, not whatever the last deploy
       # left in a shared directory. It also means a deploy that fails halfway has not touched the
-      # environment the running code is using. The cost is disk, and on a 30 GiB root with three
-      # releases kept that cost is not interesting.
+      # environment the running code is using.
       #
-      # Building it from scratch every time IS interesting, though: `pip install` of seventy-one
-      # wheels on a CPU-credit-throttled t3.micro is minutes, every deploy, for a commit that
-      # usually changed a route handler. So the venv is REBUILT only when the dependency set moved
-      # — decided by comparing this release's `requirements.lock` and `pyproject.toml` against the
-      # previous release's copies — or the interpreter did (the previous venv must run the pinned
-      # BOX_PYTHON_* build, by path and by version, 2026-10-09), and otherwise COPIED from the
-      # previous release.
+      # UNTIL 2026-10-19 THE BOX BUILT IT: `pip install -r requirements.lock` whenever the lock or the
+      # interpreter moved, otherwise a `cp -a` of the previous release's venv, then `pip install -e .`
+      # on every deploy and the runner's Prisma client copied in on top. All of that ran on the box
+      # WHILE THE OLD RELEASE WAS SERVING, which since blue/green (backend/deploy/blue_green.sh) is
+      # also while the new API starts beside it. On a box already holding two Python processes and
+      # gigabytes of swap, a pip resolve and a 330 MB copy were the part of the deploy that did not
+      # need to be there. Now the runner, which has memory to spare, builds the whole venv and the box
+      # only receives files.
       #
-      # `cp -a` AND NOT `cp -al`, WHICH IS THE ONE DECISION HERE THAT IS NOT OBVIOUS. Hard links
-      # would make the copy instant and free, and they would be WRONG: `prisma generate` writes the
-      # generated client INTO site-packages, in place, so a hard-linked venv means generating for
-      # this release silently rewrites the previous release's client to this release's schema. The
-      # rollback target would then be code from one commit running a Prisma client generated for
-      # another commit's schema — a corruption that appears only when you roll back, which is the
-      # worst possible time to discover it. A real copy is a few seconds of I/O to keep releases
-      # genuinely independent.
+      # IT IS BUILT AT THE BOX'S PATHS, WHICH IS WHAT MAKES SHIPPING IT SOUND. A venv is bound to
+      # where it was made: `.venv/bin/python` is a symlink to the interpreter, console scripts carry
+      # the venv's absolute path in their shebang, and the editable install of this project names the
+      # source directory it was run from. So the runner installs the pinned python-build-standalone
+      # CPython at the box's own /opt/cpython/<version>+<build> (same URL, same SHA-256 check) and
+      # builds the venv at /home/ubuntu/app/releases/<release>/backend/.venv, from a copy of this
+      # commit's backend at /home/ubuntu/app/releases/<release>/backend. Every path inside the venv
+      # is then already the path it will have on the box. Both machines are x86-64 Ubuntu 26.04, and
+      # every wheel in the lock is a manylinux wheel, so nothing compiled on one is foreign to the
+      # other.
       #
-      # `pip install -e . --no-deps` runs on BOTH paths, copied or fresh. The editable install
-      # writes a path file naming the directory it was run from, so a copied venv still points at
-      # the PREVIOUS release's source tree until it is re-run here. `--no-deps` is what keeps the
-      # lock authoritative — without it pip re-resolves this project's declared ranges and can lift
-      # a pin the lock had settled.
-      # ─── THE CLIENT IS BUILT HERE, ON THE RUNNER, AND NOT ON THE BOX ───────────────────────
+      # WHAT CROSSES THE WIRE. `rsync --checksum --copy-dest=<previous release's venv>`: a file
+      # byte-identical to the previous release's is copied locally on the box instead of being sent,
+      # so an ordinary deploy transfers only what changed. It is a COPY, not a hard link, for the
+      # reason this file has always given: two releases sharing inodes would let anything written
+      # into one venv change the rollback target too. The disk cost is the same full copy the old
+      # `cp -a` made, and three releases on a 28 GiB root do not notice it.
       #
-      # WHY IT MOVED, ON 2026-09-15. `prisma generate` ran on the EC2 box for the life of this
-      # workflow. It was OOM-killed twice in a row that day -- the log says only
-      #
-      #     Error: Generator "prisma-client-py" failed:
-      #     Killed
-      #
-      # -- and the retry after 2 GiB of swap was added thrashed the instance hard enough to drop
-      # the SSH connection outright (`client_loop: send disconnect: Broken pipe`). The API box is a
-      # t3.micro: 1 GiB of RAM, shared with uvicorn and the worker. prisma-client-py builds the
-      # whole client in memory before writing it, and this schema is ~100 models at
-      # `recursive_type_depth = 5`. Swap does not fix that, it only converts a kill into a stall.
-      #
-      # AND THE FAILURE BEFORE THAT ONE IS THE REASON TO DISTRUST BOX-SIDE GENERATION ENTIRELY.
-      # When the deploy copies the previous release's venv, generate had been writing the client
-      # into the PREVIOUS release's directory and exiting 0:
-      #
-      #     ✔ Generated Prisma Client Python to ./../../b9b35bb…/backend/.venv/…/site-packages/prisma
-      #
-      # so the release being deployed silently kept the client it was handed. Production served a
-      # client generated on 2026-09-03 for a day: every route naming a model added since -- 
-      # /api/design-workshops, /api/sanction-orders -- answered `AttributeError`, a 500 reading
-      # "Something went wrong on the server", while /api/users was fine because it predates that
-      # schema. Nothing went red. Between "written to the wrong release" and "silently killed",
-      # every outcome except the correct one was green.
-      #
-      # The runner has memory, builds from the same `prisma==` pin as the box, and produces PURE
-      # PYTHON: the generated modules are platform- and interpreter-independent, and the query
-      # engine BINARY is not among them -- prisma downloads that at runtime into
-      # ~/.cache/prisma-python, which is why shipping these files to a different machine is sound.
-      # BOX_PYTHON_VERSION, THE BOX'S OWN VERSION TO THE PATCH (exact since 2026-10-09; it was the
-      # minor), so the bytes are exactly what the box would have made. The generated modules are pure
-      # Python and would import on another version, but "the bytes the box would have produced" is a
-      # cheaper property to hold than an argument about which syntax the generator emits. setup-python
-      # builds its own CPython rather than python-build-standalone's, from the same upstream release.
-      # An exact version needs no `check-latest`: it is either in setup-python's manifest or the step
-      # fails, and the generate step below asserts the patch it got.
-      - name: Python for the generator (the box's exact version)
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.BOX_PYTHON_VERSION }}
-
-      - name: Generate the Prisma client on the runner, where there is memory for it
-        id: genclient
+      # THE CLIENT IS GENERATED INTO THIS VENV, ON THE RUNNER (since 2026-09-15). `prisma generate`
+      # on the box was OOM-killed twice that day (`Generator "prisma-client-py" failed: Killed`), and
+      # before that it had been writing into the PREVIOUS release's copied venv and exiting 0, so
+      # production served a client a day older than its schema and every route naming a newer model
+      # answered 500. Generating into the venv that ships removes both: the runner has the memory,
+      # and the client cannot land anywhere but the venv it was generated for. The proofs that the
+      # client matches this commit's schema still run, here and again on the box.
+      - name: Install the pinned CPython on the runner, at the box's path
         run: |
           set -euo pipefail
-          # The pin is READ FROM THE LOCK rather than written here. Two copies of a version are one
-          # copy too many, and the box installs prisma from this same file -- a generator built by a
-          # different version than the runtime is its own class of subtle wrongness.
-          pin="$(grep -iE '^prisma==' backend/requirements.lock | head -1)"
-          test -n "$pin" || { echo "::error::no prisma== pin in backend/requirements.lock"; exit 1; }
-          echo "generating with $pin"
-          # The patch setup-python handed over, asserted rather than assumed: the box runs exactly
-          # BOX_PYTHON_VERSION, and this is the run that writes the bytes it will import.
-          python -I -c 'import platform, sys; got = platform.python_version(); assert got == sys.argv[1], "setup-python gave %s, not %s" % (got, sys.argv[1]); print("generator Python:", got)' "$BOX_PYTHON_VERSION"
-          python -m venv /tmp/genvenv
-          /tmp/genvenv/bin/python -m pip install --quiet --upgrade pip
-          /tmp/genvenv/bin/python -m pip install --quiet "$pin"
-          # THROUGH scripts/generate_prisma_client.py AND NOT A BARE `prisma generate` (2026-10-09). It
-          # generates exactly as before and then adds `from __future__ import annotations` to the
-          # generated types.py — without it, importing this client on Python 3.14 takes minutes and
-          # over a gigabyte (209 s for `prisma migrate deploy` to print its first line on a GitHub
-          # runner, 8 s on 3.12), which on the box would be every restart of both units. The file
-          # travels to the box in the copy below like every other generated file. The script's
-          # docstring has the measurements and the reason it refuses any file shape it does not know.
-          ( cd backend && PATH="/tmp/genvenv/bin:$PATH" /tmp/genvenv/bin/python scripts/generate_prisma_client.py )
+          minor="${BOX_PYTHON_VERSION%.*}"
+          home="/opt/cpython/${BOX_PYTHON_VERSION}+${BOX_PYTHON_BUILD}"
+          want_url="https://github.com/astral-sh/python-build-standalone/releases/download/${BOX_PYTHON_BUILD}/cpython-${BOX_PYTHON_VERSION}%2B${BOX_PYTHON_BUILD}-x86_64-unknown-linux-gnu-install_only.tar.gz"
+          [ "$BOX_PYTHON_URL" = "$want_url" ] || { echo "::error::BOX_PYTHON_URL is not $want_url. Change the four BOX_PYTHON_* values together."; exit 1; }
+          [ "$(uname -m)" = "x86_64" ] || { echo "::error::this runner is $(uname -m); the pinned build is for x86_64."; exit 1; }
+          stage="$(mktemp -d)"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 900 -o "$stage/python.tar.gz" "$BOX_PYTHON_URL"
+          got="$(sha256sum "$stage/python.tar.gz" | cut -d' ' -f1)"
+          [ "$got" = "$BOX_PYTHON_SHA256" ] || { echo "::error::$BOX_PYTHON_URL has SHA-256 $got, and the pin is $BOX_PYTHON_SHA256. Nothing was built."; exit 1; }
+          tar -xzf "$stage/python.tar.gz" -C "$stage"
+          sudo install -d -m 0755 /opt/cpython
+          sudo rm -rf "$home"
+          sudo mv -T "$stage/python" "$home"
+          sudo "$home/bin/python${minor}" -I -m compileall -q "$home/lib/python${minor}" || true
+          rm -rf "$stage"
+          "$home/bin/python${minor}" -I -c 'import platform, sys; assert platform.python_version() == sys.argv[1], platform.python_version(); print("runner interpreter: CPython", platform.python_version(), "from", sys.base_prefix)' "$BOX_PYTHON_VERSION"
 
-          sp="$(/tmp/genvenv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
-          echo "generated into $sp"
+      - name: Build the release venv on the runner, with the Prisma client generated into it
+        id: genclient
+        env:
+          SHA: ${{ env.REL_ID }}
+        run: |
+          set -euo pipefail
+          minor="${BOX_PYTHON_VERSION%.*}"
+          py="/opt/cpython/${BOX_PYTHON_VERSION}+${BOX_PYTHON_BUILD}/bin/python${minor}"
+          R="/home/ubuntu/app/releases/$SHA/backend"
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 "$R"
+          # The same source the box receives in "Sync code to the release directory", so the
+          # editable install below points at the path that source has on the box.
+          rsync -a --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.env' backend/ "$R/"
+          cd "$R"
+          "$py" -m venv .venv
+          ./.venv/bin/python -m pip install --quiet --upgrade pip
+          ./.venv/bin/python -m pip install --quiet -r requirements.lock
+          # `--no-deps` keeps the lock authoritative: without it pip re-resolves this project's
+          # declared ranges and can lift a pin the lock had settled.
+          ./.venv/bin/python -m pip install --quiet -e . --no-deps
 
-          # THE EXACT FILE LIST, and it is explicit rather than "copy the package". The base package
-          # is installed on the box from the lock and must not be overwritten wholesale by another
-          # machine's copy; only the GENERATED artefacts travel. `schema.prisma` is on the list and
-          # is the one that is easy to forget -- the query engine loads THAT copy, beside the
-          # modules, not backend/prisma/schema.prisma, so a client shipped without it keeps
-          # answering about the old schema. That omission is what made this bug survive a
-          # regeneration during diagnosis.
-          mkdir -p /tmp/genclient/engine
-          for f in actions.py bases.py client.py enums.py http.py metadata.py models.py                    partials.py types.py schema.prisma; do
-            cp "$sp/$f" "/tmp/genclient/$f"
-          done
-          for f in abstract.py http.py query.py; do
-            cp "$sp/engine/$f" "/tmp/genclient/engine/$f"
-          done
-          # ─── AND THE ENGINE BINARIES `generate` JUST FETCHED, WHICH TRAVEL WITH THE CLIENT ───
+          # THROUGH scripts/generate_prisma_client.py AND NOT A BARE `prisma generate`. It generates,
+          # adds `from __future__ import annotations` to the generated types.py (without it, importing
+          # the client on 3.14 takes minutes), and then moves those ~180,000 TypedDicts to types.pyi,
+          # leaving a small runtime types.py: the declarations cost every importing process about
+          # 1.3 GB of RAM and nothing at run time reads them. The script's docstring has the numbers.
+          PATH="$R/.venv/bin:$PATH" ./.venv/bin/python scripts/generate_prisma_client.py
+          ./.venv/bin/python scripts/generate_prisma_client.py --check
+          sp="$(./.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
+          case "$sp" in
+            "$R/.venv/"*) echo "generated into $sp" ;;
+            *) echo "::error::prisma resolves to $sp, outside the release venv being built."; exit 1 ;;
+          esac
+          # Bytecode for the generated client, written here so the box's first start of this release
+          # reads it rather than compiling megabytes of generated source beside the live release.
+          ./.venv/bin/python -m compileall -q "$sp"
+
+          # ─── THE ENGINE BINARY, LIFTED OUT OF THE CLI THE GENERATOR JUST INSTALLED ─────────────
           #
           # `prisma generate` fetches the query engine for the platform it runs on as a side effect,
-          # and the generated client HARD-CODES the paths it will look in -- the production error
-          # listed `/home/runner/.cache/prisma-python/...` among them, which is this runner's home.
-          # That is the tell: the client and the engine are a matched pair produced by one act, and
-          # shipping half of it is what took the site down.
-          #
-          # `prisma py fetch` ON THE BOX WAS TRIED FIRST AND IS NOT ENOUGH. It reported "Downloaded
-          # binaries to .../binaries/5.17.0/393aa..." and the very next `connect()` still raised
-          # BinaryNotFoundError for `prisma-query-engine-debian-openssl-3.0.x` in that same
-          # directory -- it does not place the query engine this client asks for.
-          #
-          # Copying the binary is sound HERE and would not be in general: both machines are x86-64
-          # Ubuntu, the engine is selected by the `debian-openssl-3.0.x` target baked into the
-          # client, and the version directory is content-addressed (`5.17.0/<sha>`), so a mismatched
-          # pair cannot quietly overwrite a good one -- it lands beside it under a different hash.
-          # THE ENGINE BINARY, LIFTED OUT OF THE CLI THE GENERATOR JUST INSTALLED.
-          #
-          # The generated client hard-codes THREE absolute paths to look in, and the third is
-          # `/home/runner/.cache/prisma-python/.../node_modules/prisma/query-engine-...` -- this
-          # runner's home, baked in at generation time and meaningless on the box. That is the whole
-          # reason a client generated elsewhere cannot find its engine, and why rsyncing the cache
-          # tree wholesale did not help: the box would have the bytes at a path its own client never
-          # consults.
-          #
-          # The FIRST path it consults is `<release>/backend/prisma-query-engine-<target>`, which is
-          # release-local and therefore the right home for it anyway -- a rolled-back release keeps
-          # the engine it was verified with instead of sharing one mutable cache.
+          # and the generated client HARD-CODES three absolute paths to look in; the third is this
+          # runner's home, meaningless on the box. The FIRST is `<release>/backend/prisma-query-
+          # engine-<target>`, release-local, so a rolled-back release keeps the engine it was verified
+          # with. `prisma py fetch` on the box was tried and does not place the engine this client
+          # asks for. Copying the binary is sound because both machines are x86-64 Ubuntu and the
+          # engine is selected by the `debian-openssl-3.0.x` target baked into the client.
           engine_src="$(find "$HOME/.cache/prisma-python/binaries" -type f -name 'query-engine-*' | head -1)"
           test -n "$engine_src" || { echo "::error::generate did not leave a query engine under the prisma-python cache"; exit 1; }
           mkdir -p /tmp/genengine
@@ -2210,152 +2191,53 @@ jobs:
           chmod +x /tmp/genengine/*
           ls -la /tmp/genengine
 
-          # Proof the generated client is THIS schema's before a byte of it leaves the runner.
-          #
-          # NOT `cmp`, AND THE FIRST VERSION OF THIS LINE WAS `cmp`. The generator writes its own
-          # copy of the schema beside the modules and does not promise it byte-for-byte: it can
-          # normalise line endings and trailing whitespace, and on the first real run that was
-          # enough to fail a deploy whose client was perfectly correct. An assertion that cries wolf
-          # on a good build is worse than none, because the next person weakens it in a hurry.
-          #
-          # What actually has to be true is SEMANTIC: the client's schema must declare the same
-          # models and enums as this commit's. That is the thing the query engine reads it for, and
-          # it is exactly what goes wrong when a stale client ships -- `SanctionOrder` absent, so
-          # `db.sanctionorder` is an AttributeError on a live route. Comparing the declared names
-          # catches that and stays quiet about whitespace.
-          # ANCHORED AT COLUMN 0 AND REQUIRING THE BRACE. `^[[:space:]]*model` also matches a FIELD named
-          # `model` -- schema.prisma:2130 is `  model String?` -- which made the import check below
-          # demand an accessor called `string`. A declaration in this grammar is never indented and
-          # always opens a block, so both halves of that are load-bearing.
+          # Proof the generated client is THIS schema's before a byte of it leaves the runner. The
+          # comparison is SEMANTIC, not `cmp`: the generator normalises whitespace in its copy of the
+          # schema, and what matters is that it declares the same models and enums (a stale client
+          # is `db.<newmodel>` raising AttributeError on a live route). Anchored at column 0 and
+          # requiring the brace, because `  model String?` is a FIELD named model.
           names() { grep -oE '^(model|enum) [A-Za-z0-9_]+ *\{' "$1" | awk '{print $1, $2}' | sort; }
-          if ! diff <(names /tmp/genclient/schema.prisma) <(names backend/prisma/schema.prisma) > /tmp/schemadiff; then
+          if ! diff <(names "$sp/schema.prisma") <(names prisma/schema.prisma) > /tmp/schemadiff; then
             echo "::error::the generated client declares different models/enums than backend/prisma/schema.prisma"
             echo "--- < generated | > this commit ---"
             head -40 /tmp/schemadiff
             exit 1
           fi
-          echo "generated client declares the same $(names backend/prisma/schema.prisma | wc -l) models and enums as this commit"
-          ls -la /tmp/genclient /tmp/genclient/engine
+          echo "generated client declares the same $(names prisma/schema.prisma | wc -l) models and enums as this commit"
+          du -sh .venv
 
-      - name: Build or reuse the release venv, and generate the Prisma client
+      - name: Ship the runner-built venv into the release directory
         env:
           SHA: ${{ env.REL_ID }}
         run: |
+          set -euo pipefail
+          R="/home/ubuntu/app/releases/$SHA/backend"
+          PREV="$(ssh ubuntu@${{ secrets.EC2_HOST }} 'readlink -f /home/ubuntu/app/current 2>/dev/null || true')"
+          echo "previous release: ${PREV:-<none>}"
+          if [ "$PREV" = "/home/ubuntu/app/releases/$SHA" ]; then
+            # A re-run of the attempt that is already live: the venv `current` resolves through is
+            # the running process's, and is never replaced under it.
+            echo "current already points at this release — keeping the venv that is in it"
+            exit 0
+          fi
+          basis=()
+          if [ -n "$PREV" ] && ssh ubuntu@${{ secrets.EC2_HOST }} "test -d '$PREV/backend/.venv' && test ! -L '$PREV/backend/.venv'"; then
+            basis=(--copy-dest="$PREV/backend/.venv/")
+            echo "files unchanged since $PREV are copied on the box, not sent"
+          fi
+          rsync -a --checksum --delete --stats "${basis[@]}" "$R/.venv/" "ubuntu@${{ secrets.EC2_HOST }}:$R/.venv/" > /tmp/venv-rsync.txt
+          grep -E '^(Number of (regular )?files transferred|Total transferred file size|Total bytes sent)' /tmp/venv-rsync.txt || true
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' BOX_PYTHON_VERSION='$BOX_PYTHON_VERSION' BOX_PYTHON_BUILD='$BOX_PYTHON_BUILD' bash -s" <<'REMOTE'
           set -euo pipefail
-          APP=/home/ubuntu/app
-          REL="$APP/releases/$SHA"
-          # `readlink -f` resolves through the bootstrap symlink too, so PREV is a real directory
-          # or empty. `|| true` because on a brand-new box there is nothing to resolve.
-          PREV="$(readlink -f "$APP/current" 2>/dev/null || true)"
+          REL="/home/ubuntu/app/releases/$SHA"
           cd "$REL/backend"
-
-          # ─── THE INTERPRETER IS PART OF WHAT "UNCHANGED DEPENDENCIES" MEANS (2026-10-09) ────────
-          # A venv is bound to the interpreter that built it: `.venv/bin/python` is a symlink to that
-          # interpreter's PATH, pyvenv.cfg names its directory, and every compiled wheel inside is
-          # tagged for its minor. So the copy branch below asks the PREVIOUS venv which interpreter it
-          # runs — the directory it runs from AND its exact version — and copies only a venv built by
-          # the pinned python-build-standalone build. The minor alone is not enough, and the evening
-          # this changed is why: a release built from the deadsnakes package runs CPython 3.14.8 as
-          # well, from /usr, and copying it would hand this release a venv whose `bin/python` points
-          # at an apt package this deploy no longer installs or maintains. In the same way the first
-          # deploy after the box gained 3.14 would have found requirements.lock and pyproject.toml
-          # byte-identical to the live 3.12 release. Each such first deploy therefore BUILDS — `pip
-          # install` of the whole lock, minutes on this box — and every deploy after it copies again.
-          #
-          # The answer comes from running the previous interpreter, never from reading pyvenv.cfg: a
-          # venv whose interpreter cannot start is not one to copy either, and the comparison then
-          # fails and the build runs. And whichever branch below runs, the venv this release ends up
-          # with is asked the same question afterwards and refused unless it is the pinned build.
-          home="/opt/cpython/${BOX_PYTHON_VERSION:?BOX_PYTHON_VERSION is not set; see the job-level env block}+${BOX_PYTHON_BUILD:?BOX_PYTHON_BUILD is not set; see the job-level env block}"
-          want_py="$home/bin/python${BOX_PYTHON_VERSION%.*}"
-          [ -x "$want_py" ] || { echo "::error::$want_py is not installed on the box; the 'Install the pinned CPython on the box' step should have installed it."; exit 1; }
+          home="/opt/cpython/${BOX_PYTHON_VERSION}+${BOX_PYTHON_BUILD}"
           want="$(readlink -f "$home") $BOX_PYTHON_VERSION"
-          runs() { "$1" -I -c 'import os, sys, platform; print(os.path.realpath(sys.base_prefix), platform.python_version())' 2>/dev/null || true; }
-          prev_runs=""
-          if [ -n "$PREV" ] && [ -x "$PREV/backend/.venv/bin/python" ]; then
-            prev_runs="$(runs "$PREV/backend/.venv/bin/python")"
-          fi
-          echo "previous release's venv runs: ${prev_runs:-<none>}; this release needs: $want"
-
-          if [ -n "$PREV" ] && [ "$PREV" = "$REL" ] && [ -x .venv/bin/python ]; then
-            # THIS IS NOW UNREACHABLE, AND IT IS KEPT AS A GUARD RATHER THAN AS AN OPTIMISATION.
-            # Until 2026-09-17 this was the RE-RUN path: release directories were named for the
-            # commit, so a re-run found `current` already pointing at this directory, and this branch
-            # is what stopped the venv of the RUNNING process being `rm -rf`'d two lines below.
-            # Release directories are named for the run attempt now, and the bootstrap shim points a
-            # fresh box at `releases/bootstrap` rather than at this run's release, so `PREV = REL`
-            # cannot happen at all.
-            #
-            # WHERE THE COST WENT, since this is the branch that used to make a re-run free. `PREV`
-            # is `readlink -f current` — whatever release is LIVE, never anything derived from this
-            # run's id — so the `elif` below still fires for a re-run: the live release is the
-            # previous ATTEMPT of the same commit, through the same rsync, so its
-            # `requirements.lock` and `pyproject.toml` are byte-identical and the `cmp -s` pair
-            # passes. A re-run therefore pays one `cp -a` of a venv where it used to pay nothing.
-            # That is the branch every ordinary deploy with unchanged dependencies has taken since
-            # 2026-09-03. NO CASE MOVES FROM COPYING TO `pip install` under this scheme — the fresh
-            # directory name enters the predicate only on the line above.
-            #
-            # AND THAT COPY IS ONLY CORRECT BECAUSE OF `--force-reinstall` BELOW. Keeping the venv in
-            # place left the editable install's path file already naming this release; copying it
-            # leaves it naming PREV until pip rewrites it, and without `--force-reinstall` pip
-            # answers "already satisfied" and does not. See that line — do not revert it as redundant.
-            #
-            # It stays because what it prevents — deleting a venv that `current` resolves through —
-            # is unrecoverable without a rebuild, and a currently-unreachable guard costs one string
-            # comparison. Do not delete it on the grounds that it never fires; that is the argument
-            # that would have to be made again the next time somebody changes how releases are named.
-            echo "current already points at this release — keeping the venv that is in it"
-          elif [ -n "$PREV" ] && [ -x "$PREV/backend/.venv/bin/python" ] \
-               && [ "$prev_runs" = "$want" ] \
-               && [ -f "$PREV/backend/requirements.lock" ] && [ -f requirements.lock ] \
-               && cmp -s "$PREV/backend/requirements.lock" requirements.lock \
-               && cmp -s "$PREV/backend/pyproject.toml" pyproject.toml; then
-            echo "dependencies and interpreter ($want) unchanged since $PREV — copying its venv"
-            rm -rf .venv
-            cp -a "$PREV/backend/.venv" .venv
-          else
-            # Also the path taken on the FIRST run of this workflow, where PREV is the legacy tree
-            # and has no requirements.lock to compare against. Building once is the right answer
-            # there: the legacy venv was installed from unpinned ranges and is exactly what the lock
-            # exists to replace. And the path taken whenever the previous venv runs any interpreter
-            # but the pinned build — the 3.12 releases, a deadsnakes-built 3.14, an older
-            # python-build-standalone build — so the first deploy on each new pin among them.
-            echo "building a fresh venv from requirements.lock with $want_py"
-            rm -rf .venv
-            "$want_py" -m venv .venv
-            ./.venv/bin/python -m pip install --upgrade pip
-            ./.venv/bin/python -m pip install -r requirements.lock
-          fi
-          got="$(runs ./.venv/bin/python)"
-          [ "$got" = "$want" ] || { echo "::error::this release's venv runs '${got:-nothing}', not the pinned $want. Refusing to ship a venv built by another interpreter; nothing has been stopped or flipped."; exit 1; }
-          echo "this release's venv runs $got"
-
-          # `python -m pip` and never `./.venv/bin/pip`: a copied venv's console scripts carry a
-          # shebang naming the directory they were BUILT in, which is the previous release and may
-          # since have been pruned. The interpreter is a symlink to the pinned CPython under
-          # /opt/cpython and does not have that problem. Since 2026-09-17 that shebang is also 14 bytes longer — the release id
-          # gained `-<run_id>.<attempt>` — which is a second reason nothing here, and nothing in the
-          # systemd units, ever invokes a venv console script by name. (Measured at 107 bytes against
-          # a 256-byte kernel limit, so it is headroom and not a hazard; the rule stands on the
-          # pruned-directory argument above, which does not depend on a byte count.)
-          #
-          # `--force-reinstall` ON THE EDITABLE INSTALL, ADDED 2026-09-15. Without it pip sees the
-          # copied venv already carrying this project at this version and answers "already
-          # satisfied" WITHOUT rewriting the path file -- so the re-run that this step's comment
-          # says fixes the copied venv's pointer did not actually fix it, and the venv went on
-          # naming the PREVIOUS release's source tree.
-          ./.venv/bin/python -m pip install -e . --no-deps --force-reinstall
-
-          # NOTHING GENERATES THE CLIENT HERE ANY MORE. It is built on the runner and rsynced in by
-          # the next step -- see that step for why. `prisma generate` ran on this box until
-          # 2026-09-15 and was OOM-killed twice in a row even with 2 GiB of swap added, the second
-          # attempt thrashing hard enough to drop the SSH connection (`client_loop: send disconnect:
-          # Broken pipe`). A 1 GiB t3.micro cannot build a ~100-model client, and giving it swap
-          # only converts the kill into a stall.
-          echo "venv ready; the Prisma client arrives from the runner in the next step"
-
+          got="$(./.venv/bin/python -I -c 'import os, sys, platform; print(os.path.realpath(sys.base_prefix), platform.python_version())' 2>/dev/null || true)"
+          [ "$got" = "$want" ] || { echo "::error::this release's venv runs '${got:-nothing}', not the pinned $want. Nothing has been stopped or flipped."; exit 1; }
+          where="$(./.venv/bin/python -c 'import app, os; print(os.path.dirname(os.path.realpath(app.__file__)))')"
+          [ "$where" = "$(readlink -f "$REL/backend/app")" ] || { echo "::error::the shipped venv imports app from $where, not this release's $REL/backend/app."; exit 1; }
+          echo "venv ready: runs $got and imports this release's app ($(du -sh .venv | cut -f1))"
           REMOTE
 
       # ─── THE NODE THE PRISMA CLI RUNS ON, PINNED (2026-10-09) ───────────────────────────────────
@@ -2416,19 +2298,11 @@ jobs:
       # copied, followed by the check that the whole outage turned on. `--checksum` because a copied
       # venv carries the previous release's client with plausible timestamps and sizes; content is
       # the only honest comparison here.
-      - name: Install the runner-generated Prisma client into the release venv, and prove it
+      - name: Place the query engine beside the release, and prove the shipped client
         env:
           SHA: ${{ env.REL_ID }}
         run: |
           set -euo pipefail
-          site="$(ssh ubuntu@${{ secrets.EC2_HOST }} "/home/ubuntu/app/releases/$SHA/backend/.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))'")"
-          echo "box resolves prisma to: $site"
-          case "$site" in
-            /home/ubuntu/app/releases/$SHA/backend/.venv/*) : ;;
-            *) echo "::error::the release venv resolves prisma to $site, outside this release. Refusing to write a client into another release."; exit 1 ;;
-          esac
-          rsync -az --checksum /tmp/genclient/ "ubuntu@${{ secrets.EC2_HOST }}:$site/"
-
           # THE ENGINE TRAVELS WITH THE CLIENT, into the release directory -- the first path the
           # generated client consults, and the only one of its three that is neither the runner's
           # home nor a shared mutable cache. `--chmod` because rsync does not carry the executable
@@ -2509,9 +2383,11 @@ jobs:
             return 0
           }
           trap 'ka_stop' EXIT
-          # Stale bytecode would keep the OLD modules importable even though the .py files beside
-          # them are new -- a failure that looks exactly like the rsync not having happened.
-          find .venv -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+          # The bytecode in this venv is the runner's, written beside the sources it was compiled from
+          # and shipped with them in one rsync (2026-10-19). It used to be deleted here because the
+          # client was copied OVER an existing venv, so old .pyc files could outlive their sources;
+          # nothing is copied over a shipped venv, and keeping it spares the box compiling the
+          # generated client while the live release is still serving.
           # ─── THE CLIENT MUST BE IN *THIS* RELEASE'S VENV, AND THAT IS ASSERTED ────────────────
           #
           # WHAT HAPPENED ON 2026-09-14, WHICH IS WHY THIS BLOCK EXISTS. The deploy of 1557d93 took
@@ -2571,7 +2447,7 @@ jobs:
           # every later start of both units — run into MemoryHigh and the queue's MemoryMax. `--check`
           # reads the file through find_spec and imports nothing, so a client shipped without the fix
           # fails here in a second instead of stalling the deploy for half an hour first.
-          ./.venv/bin/python scripts/generate_prisma_client.py --check || { echo "::error::the Prisma client in this release lacks the Python 3.14 import fix; the runner's generate step did not run scripts/generate_prisma_client.py. Not flipping."; exit 1; }
+          ./.venv/bin/python scripts/generate_prisma_client.py --check || { echo "::error::the Prisma client in this release is not the one scripts/generate_prisma_client.py writes (the Python 3.14 import fix and the types.py/types.pyi split); the runner's build step did not run it. Not flipping."; exit 1; }
 
           # ─── AN ENGINE NAME THIS BOX'S CLIENT WILL LOOK FOR, ON ANY OpenSSL 3 (2026-10-09) ─────────
           # The engine arrives named for the runner's target, `prisma-query-engine-debian-openssl-3.0.x`

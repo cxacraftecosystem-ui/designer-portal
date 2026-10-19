@@ -21,7 +21,10 @@ never calls the annotate machinery, and the full import takes seconds (that scri
 the measurements). The cause the line above names was precise: for every class, PEP 649's FORWARDREF
 path copies the module's globals, which in a module defining 52,528 classes is quadratic. What
 production DOES still pay is the import itself, part of every cold start and every systemd restart;
-this stub remains the way to measure everything else without it.
+this stub remains the way to measure everything else without it. (Since 2026-10-19 the script also
+moves the declarations to ``types.pyi`` and leaves a runtime ``types.py`` that answers ``dict`` for
+every name, which is this stub's idea applied at generation time with the declarations kept for
+type checkers.)
 
 **NOTHING IN app/ MAY IMPORT THIS.** It is a measurement tool. Type information is what tells the
 next person editing a query that they have spelled a field wrong, and swapping it out inside the
