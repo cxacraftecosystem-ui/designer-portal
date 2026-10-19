@@ -46,7 +46,13 @@ from prisma.errors import UniqueViolationError
 
 from app.core.config import Settings, get_settings
 from app.core.db import db
-from app.services import annual_plan, email_outbox, mailer, ministry_pack_sheets as sheets_mod, naming
+from app.services import (
+    annual_plan,
+    email_outbox,
+    mailer,
+    ministry_pack_sheets as sheets_mod,
+    naming,
+)
 from app.services.design_workshop_oversight import OVERSIGHT_ASSIGNER_ROLES
 from app.services.ministry_pack_sheets import (
     UNSTATED,

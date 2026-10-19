@@ -398,6 +398,12 @@ combine-as-imports = true
 # same number by accident -- swapping them is a rewrite of the truncation logic, not a lint fix.
 "app/services/report_questionnaires.py" = ["SIM113"]
 
+# SHARED BYTE FOR BYTE with the Field Repository's copy (SHARED_FILES in the test itself). The
+# literal U+202E in `test_a_non_ascii_leaf_is_impossible` is the point of that test: a leaf must
+# never carry a right-to-left override. Escaping it would change the shared bytes; do it in both
+# repositories at once.
+"tests/test_naming.py" = ["PLE2502"]
+
 # (b) DTZ001: naive `datetime(...)` literals standing in for Prisma columns in fixtures. Giving them
 # a tzinfo changes what the fixture asserts about a stored stamp, in the suite that guards carry
 # fidelity. C408: `dict(...)` row builders. Both are the test author's to change, not this group's.

@@ -25,7 +25,13 @@ from app.schemas.media import (
     TranscriptRefineRequest,
     TranscriptUpdateRequest,
 )
-from app.services import app_settings, design_workshop_posts, dictation_consent, transcript_insights, transcription_jobs
+from app.services import (
+    app_settings,
+    design_workshop_posts,
+    dictation_consent,
+    transcript_insights,
+    transcription_jobs,
+)
 from app.services.ai import (
     UnknownDimension,
     analyze_measurement_image_bytes,
