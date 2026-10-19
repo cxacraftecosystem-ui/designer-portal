@@ -348,6 +348,7 @@ import com.designprototype.workshop.data.IssuedPasswordLinkDto
 import com.designprototype.workshop.data.SignInHint
 import com.designprototype.workshop.data.signInHint
 import com.designprototype.workshop.data.apiErrorMessage
+import com.designprototype.workshop.data.recordLoadFailure
 import com.designprototype.workshop.data.userMessage
 import com.designprototype.workshop.ui.AppMessageBanner
 import com.designprototype.workshop.ui.AppMessageState
@@ -11016,7 +11017,7 @@ private fun EditScreen(
                 loadFailed = null
                 runCatching { cachedRecordForCorrection(editContext, "artisan", recordId, ArtisanDetailDto.serializer(), { recordCachedNote = it }) { repository.artisan(recordId) } }
                     .onSuccess { detail = it; loaded = true }
-                    .onFailure { loadFailed = it.userMessage("Unable to load artisan") }
+                    .onFailure { loadFailed = it.recordLoadFailure("artisan") }
                 runCatching { repository.artisanQuestionnaire(recordId) }
                     .onSuccess { answers = it.answered }
                 answersLoading = false
@@ -18160,7 +18161,7 @@ private fun ViewDataDetail(
         }
         EntryMode.ARTISAN -> {
             var d by remember(recordId) { mutableStateOf<ArtisanDetailDto?>(null) }
-            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.artisan(recordId) }.onSuccess { d = it; onCompleteness(it.completeness) }.onFailure { loadFailed = it.userMessage("Unable to load artisan") } }
+            LaunchedEffect(recordId, loadAttempt) { loadFailed = null; runCatching { repository.artisan(recordId) }.onSuccess { d = it; onCompleteness(it.completeness) }.onFailure { loadFailed = it.recordLoadFailure("artisan") } }
             val v = d ?: return run { LoadingCard(mode, loadFailed) { loadAttempt++ } }
             RecordCard(title = v.name.ifBlank { "Artisan" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)

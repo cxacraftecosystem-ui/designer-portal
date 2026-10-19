@@ -21,6 +21,21 @@ class UserMessageTest {
     )
 
     @Test
+    fun `an artisan that did not open says gone or not yours, never the server's bare words`() {
+        val gone = http(404, """{"detail":"Record not found"}""").recordLoadFailure("artisan")
+        assertEquals("This artisan could not be found. It may have been deleted.", gone)
+        assertFalse(gone, gone.contains("shared") || gone.contains("access"))
+        assertEquals(
+            "Your account can't open this artisan.",
+            http(403, """{"detail":"Forbidden"}""").recordLoadFailure("artisan"),
+        )
+        assertEquals(
+            "The server couldn't respond. Try again shortly.",
+            http(500, "").recordLoadFailure("artisan"),
+        )
+    }
+
+    @Test
     fun `a sentence the server wrote for people is kept verbatim`() {
         assertEquals(
             "Giriraj Prasad already holds that Aadhaar",

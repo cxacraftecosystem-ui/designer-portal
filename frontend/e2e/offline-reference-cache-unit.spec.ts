@@ -525,6 +525,28 @@ test.describe("recognising a dangling reference", () => {
     expect(isDanglingReference(new ApiError(422, "productName must not be blank", null))).toBe(false);
   });
 
+  test("a queued save naming a workshop the designer is not on, or one that is gone, still offers a re-pick", () => {
+    // 2026-10-19: the filing gate swapped the loader's "Record not found" for a sentence, and must
+    // keep the 404 it rewords. A 403 here would park a queued artisan naming a deleted workshop, or
+    // one its designer was removed from, behind a retry that can never work.
+    const gate = readFileSync(join(__dirname, "..", "..", "backend", "app", "services", "record_design_workshop.py"), "utf8");
+    const said = /NOT_ON_WORKSHOP = \(\s*"([^"]+)"\s*\)/.exec(gate)?.[1];
+    expect(said, "NOT_ON_WORKSHOP is one string literal").toBeTruthy();
+    expect(gate).toContain("status_code=status.HTTP_404_NOT_FOUND, detail=NOT_ON_WORKSHOP");
+    expect(gate).not.toContain("HTTP_403_FORBIDDEN, detail=NOT_ON_WORKSHOP");
+
+    const refusal = new ApiError(404, said as string, null);
+    expect(isDanglingReference(refusal)).toBe(true);
+    const queued = JSON.stringify({ name: "Giriraj Prasad", place: "Bhuj", designWorkshopId: "dw_9" });
+    expect(danglingCandidates(queued)).toEqual(["designWorkshopId"]);
+    const line = outboxDanglingSentence(refusal.message, [referenceFieldNoun("designWorkshopId")], 2, false);
+    expect(line).toContain("design & prototype workshop");
+    // The server's own words are printed, never summarised.
+    expect(line).toContain(said as string);
+    // And a 403 with the same words is not a missing reference: the reason the status must stay.
+    expect(isDanglingReference(new ApiError(403, said as string, null))).toBe(false);
+  });
+
   test("a 409 and a plain Error are not", () => {
     // A 409 is a collision with somebody else's record and has its own arm; a bare Error is the
     // network, which the triage table owns.

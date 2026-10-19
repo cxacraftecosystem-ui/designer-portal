@@ -55,8 +55,14 @@ so it is exactly as hard as editing one of its stages: creator, admin, or grant-
 
 Two behaviours come with the helper and both are wanted:
 
-* **404, never 403**, for a workshop the caller may not see — "a 403 would confirm that the id exists
-  to precisely the caller being turned away."
+* **One refusal for a workshop the caller may not see and for one that does not exist** — the
+  loader answers both with the same 404 so the id is never confirmed. :func:`assert_may_file_under`
+  keeps the 404 and swaps only its words for :data:`NOT_ON_WORKSHOP`, because on a record form
+  "Record not found" reads as the RECORD being gone when it is the chosen workshop (2026-10-19).
+  THE STATUS STAYS 404 ON PURPOSE: both offline queues read a 404 on a replayed save as "a linked
+  record is missing" and offer to pick another workshop (web ``isDanglingReference``, Android
+  ``isMissingReferenceRefusal``). A 403 there would park a queued artisan naming a deleted workshop,
+  or one its designer was taken off, behind a retry that can never work.
 * **409 for a soft-deleted workshop**, with "Restore it before editing", rather than a 404. Every
   read in the design-workshop family filters ``deletedAt: null``, so filing a record under a deleted
   workshop would file it under something none of its own surfaces can show; the admin who can still
@@ -104,10 +110,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.db import db
 from app.services import design_workshop_posts
 
 #: The column name, spelled once. Every schema, route and test that names it reads this.
 DESIGN_WORKSHOP_KEY = "designWorkshopId"
+
+#: What a record form is told when it names a design workshop the caller is not on — or one that does
+#: not exist, which gets the same words so the answer confirms nothing. It replaces the loader's
+#: "Record not found", which on an artisan's Save reads as the artisan being gone.
+NOT_ON_WORKSHOP = (
+    "You're not on that design workshop, so records can't be filed under it. Choose one you're on."
+)
 
 
 async def assert_may_file_under(workshop_id: str | None, user: Any) -> None:
@@ -129,9 +143,37 @@ async def assert_may_file_under(workshop_id: str | None, user: Any) -> None:
     if not workshop_id:
         return
 
+    from fastapi import HTTPException, status
+
     from app.services.design_workshops import load_workshop_or_404
 
-    await load_workshop_or_404(workshop_id, user, for_edit=True)
+    try:
+        await load_workshop_or_404(workshop_id, user, for_edit=True)
+    except HTTPException as refusal:
+        # Only the loader's 404 is reworded; its 403 for a post holder and its 409 for a deleted
+        # workshop already say what to do.
+        if refusal.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NOT_ON_WORKSHOP) from None
+
+
+#: The loader's own sentence for a soft-deleted workshop, so the unchanged-id path says the same.
+WORKSHOP_DELETED = "This workshop is deleted. Restore it before editing."
+
+
+async def refuse_if_the_workshop_is_deleted(workshop_id: str) -> None:
+    """409 when the workshop a record is ALREADY filed under has been soft-deleted.
+
+    Asked on a save that re-sends the stored id, which no longer goes through the loader. Without
+    it, editing a record filed under a deleted workshop would quietly re-file it under something no
+    design-workshop surface can show; the loader's 409 said "restore it first", and so does this.
+    Nothing is disclosed: the id is the one the record being edited already names.
+    """
+    row = await db.designworkshop.find_unique(where={"id": workshop_id})
+    if row is not None and row.deletedAt is not None:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=WORKSHOP_DELETED)
 
 
 async def assert_may_write_a_record_filed_under(workshop_id: str | None, user: Any) -> None:
@@ -161,11 +203,15 @@ async def assert_payload_workshop(
     PATCH carries, because the holder it refuses may not change ANY of the record (2026-10-09), and
     first, so a holder moving the record is told about their post rather than about the destination.
 
-    THE DESTINATION IS KEYED ON PRESENCE. ``exclude_unset=True`` means the key is present only when
-    the caller actually sent it, so an UPDATE that does not mention the workshop is not re-validated
-    — which matters because a record filed under a workshop a designer has since been removed from
-    must still be editable. Only a caller who SENDS the link has to hold it, and re-sending the id
-    the row already holds is asked about exactly as it always was.
+    THE DESTINATION IS ASKED ONLY WHEN IT CHANGES. ``exclude_unset=True`` means the key is present
+    only when the caller actually sent it, and both clients send it on every save — so re-sending the
+    id the row already holds is not a filing and is not asked about (2026-10-19). Asking it was the
+    defect: anybody who may edit the record but is not on the workshop it is filed under — an admin, a
+    professor, the designer who filed it and was later removed — got the loader's 404 "Record not
+    found" for an artisan that was on their screen. Only a caller who MOVES the record has to hold
+    the destination. The one thing still asked of an unchanged id is whether its workshop was
+    soft-deleted, which answers 409 as the loader always did
+    (:func:`refuse_if_the_workshop_is_deleted`).
 
     An explicit ``None`` unfiles the record and is allowed to everybody but the workshop's inspector
     and its two directors: taking your own record out of a workshop needs no permission on that
@@ -175,4 +221,8 @@ async def assert_payload_workshop(
     await assert_may_write_a_record_filed_under(filed_under, user)
     if DESIGN_WORKSHOP_KEY not in data:
         return
-    await assert_may_file_under(data.get(DESIGN_WORKSHOP_KEY), user)
+    destination = data.get(DESIGN_WORKSHOP_KEY)
+    if filed_under and (destination or "").strip() == filed_under:
+        await refuse_if_the_workshop_is_deleted(filed_under)
+        return
+    await assert_may_file_under(destination, user)
