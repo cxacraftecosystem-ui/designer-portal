@@ -1552,6 +1552,50 @@ fun overallPercent(stages: List<DwStageCompleteness>): Int {
     return Math.round(100f * stages.sumOf { it.requiredFilled } / total)
 }
 
+/**
+ * A workshop's headline progress, counted in stages — the one rule every screen that prints
+ * "N of M stages complete" draws its bar and percentage from. The twin of `stageProgress` in
+ * `frontend/lib/designWorkshops.ts`.
+ *
+ * [overallPercent] is required FIELDS filled, a different and equally true number. Printed beside
+ * the stage count it read as a bug — the 0.0.19 stage index said "0% overall · 9 of 22 stages
+ * complete", nine stages with nothing required being complete while none of the remaining fields
+ * were — so a screen that leads with the stage count takes its percentage from here and nowhere else.
+ */
+data class DwStageProgress(
+    val stagesComplete: Int,
+    val stagesTotal: Int,
+    /** [stagesComplete] over [stagesTotal], rounded; 0 when there are no stages to count. */
+    val percent: Int,
+    /** Required fields still empty across every stage — the count the readiness checklist lists. */
+    val requiredLeft: Int,
+)
+
+/** The headline percentage: stages complete over stages total, 0 when nothing is counted. */
+fun dwStageProgressPercent(stagesComplete: Int, stagesTotal: Int): Int {
+    if (stagesTotal <= 0) return 0
+    return Math.round(100f * stagesComplete.coerceAtMost(stagesTotal) / stagesTotal)
+}
+
+/** Roll per-stage scores into the headline. [stagesTotal] defaults to the number of scores. */
+fun dwStageProgress(stages: List<DwStageCompleteness>, stagesTotal: Int = stages.size): DwStageProgress {
+    val complete = stages.count { it.isComplete }
+    return DwStageProgress(
+        stagesComplete = complete,
+        stagesTotal = stagesTotal,
+        percent = dwStageProgressPercent(complete, stagesTotal),
+        requiredLeft = stages.sumOf { it.missing.size },
+    )
+}
+
+/** The stage index's caption under the bar: the stage count, then what is left, in the web card's words. */
+fun dwStageProgressLine(progress: DwStageProgress): String {
+    val stages = "${progress.stagesComplete} of ${progress.stagesTotal} stages complete"
+    val left = progress.requiredLeft
+    return if (left == 0) "$stages · no required fields left"
+    else "$stages · $left required field${if (left == 1) "" else "s"} left"
+}
+
 // --------------------------------------------------------------------------------------
 // The API's other design-workshop payloads
 // --------------------------------------------------------------------------------------

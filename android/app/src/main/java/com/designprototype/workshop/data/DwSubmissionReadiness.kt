@@ -639,7 +639,6 @@ object DwSubmissionReadiness {
 
         val blocking = ArrayList<DwReadinessItem>()
         val advisory = ArrayList<DwReadinessStageGap>()
-        var stagesComplete = 0
         var requiredTotal = 0
         var requiredFilled = 0
         var blockedStages = 0
@@ -649,7 +648,6 @@ object DwSubmissionReadiness {
 
             requiredTotal += score.requiredTotal
             requiredFilled += score.requiredFilled
-            if (score.isComplete) stagesComplete += 1
 
             if (score.missing.isNotEmpty()) {
                 blockedStages += 1
@@ -697,7 +695,8 @@ object DwSubmissionReadiness {
 
         return DwWorkshopReadiness(
             stagesTotal = schema.stages.size,
-            stagesComplete = stagesComplete,
+            // `dwStageProgress`'s count, the call the stage index header draws from too.
+            stagesComplete = dwStageProgress(scores, schema.stages.size).stagesComplete,
             requiredTotal = requiredTotal,
             requiredFilled = requiredFilled,
             blockedStages = blockedStages,

@@ -363,7 +363,7 @@ class DwStageAuthorityDeviceTest {
         val problem = status.problems.single()
         assertTrue(problem, problem.contains("Cluster profile"))
         assertTrue(problem, problem.contains("you deleted everything in tool"))
-        assertTrue(problem, problem.contains("Open the stage online"))
+        assertTrue(problem, problem.contains("Open the stage online to send it"))
     }
 
     /**

@@ -53,6 +53,7 @@ import { byCount, countNoun } from "@/lib/format";
 import {
   isFilled,
   rowTitle,
+  stageProgress,
   type DwEntity,
   type DwField,
   type DwRegistry,
@@ -418,7 +419,6 @@ export function workshopReadiness(registry: DwRegistry, draft: DwDraft, workshop
 
   const blocking: ReadinessItem[] = [];
   const advisory: ReadinessStageGap[] = [];
-  let stagesComplete = 0;
   let requiredTotal = 0;
   let requiredFilled = 0;
   let blockedStages = 0;
@@ -429,7 +429,6 @@ export function workshopReadiness(registry: DwRegistry, draft: DwDraft, workshop
 
     requiredTotal += score.requiredTotal;
     requiredFilled += score.requiredFilled;
-    if (score.isComplete) stagesComplete += 1;
 
     if (score.missing.length) {
       blockedStages += 1;
@@ -470,6 +469,13 @@ export function workshopReadiness(registry: DwRegistry, draft: DwDraft, workshop
       });
     }
   }
+
+  // THE STAGE COUNT IS `stageProgress`'s, the same call the overview card's bar and Android's
+  // stage index draw from, so the sentence below and every progress bar count one way.
+  const { stagesComplete } = stageProgress(
+    registry.stages.map((spec) => scores[spec.key]).filter((score): score is DwStageCompleteness => !!score),
+    registry.stages.length
+  );
 
   return {
     stagesTotal: registry.stages.length,
