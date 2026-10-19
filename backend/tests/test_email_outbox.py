@@ -121,7 +121,7 @@ class _Notifications:
         return row
 
 def _person(uid: str, role: str = "DESIGNER") -> SimpleNamespace:
-    return SimpleNamespace(id=uid, name=f"Person {uid}", email=f"{uid}@example.org", role=role)
+    return SimpleNamespace(id=uid, name=f"Person {uid}", email=f"{uid}@aicraft.iitkgp.ac.in", role=role)
 
 
 @pytest.fixture
@@ -155,7 +155,7 @@ def _queue_link(world: SimpleNamespace, *, expires_in: timedelta = timedelta(hou
     }
     return asyncio.run(
         email_outbox.enqueue(
-            mailer.PASSWORD_LINK, to_address="asha@example.org", recipient_id="u1",
+            mailer.PASSWORD_LINK, to_address="asha@aicraft.iitkgp.ac.in", recipient_id="u1",
             params=params, secret=LINK,
         )
     )
@@ -180,12 +180,12 @@ def test_the_link_is_sealed_at_rest_and_the_seal_is_cleared_once_sent(world: Any
     assert "SECRET-TOKEN-VALUE" not in str(vars(row)), "the link must never be stored in the clear"
     assert managed_secrets.decrypt(row.sealed) == LINK
 
-    assert _drain() == {"processed": 1, "sent": 1, "retrying": 0, "failed": 0}
+    assert _drain() == {"processed": 1, "sent": 1, "retrying": 0, "failed": 0, "skipped": 0}
     (stored,) = world.db.emailmessage.rows
     assert stored.status == "SENT" and stored.sealed is None
     assert stored.providerMessageId == "ses-1" and stored.sentAt is not None
     (message,) = world.sent
-    assert LINK in message["text"] and message["to"] == "asha@example.org"
+    assert LINK in message["text"] and message["to"] == "asha@aicraft.iitkgp.ac.in"
 
 
 def test_a_throttle_is_retried_later_and_a_permanent_refusal_is_not(world: Any) -> None:
@@ -237,7 +237,7 @@ def test_no_log_line_carries_the_link_or_the_address(world: Any, caplog: pytest.
     _drain()
     joined = "\n".join(record.getMessage() for record in caplog.records)
     assert "mail:" in joined
-    assert "SECRET-TOKEN-VALUE" not in joined and "asha@example.org" not in joined
+    assert "SECRET-TOKEN-VALUE" not in joined and "asha@aicraft.iitkgp.ac.in" not in joined
 
 
 def _notify(world: Any, *, viewers: list[Any], creator: Any, actor: Any, prefs: dict[str, bool], sent_back: bool) -> int:
@@ -335,10 +335,10 @@ def test_a_password_notice_lands_in_app_once(world: Any) -> None:
     assert asyncio.run(email_outbox.notify_password_event(user, mailer.PASSWORD_CHANGED, by="administrator"))
     assert asyncio.run(
         email_outbox.notify_password_event(
-            user, mailer.PASSWORD_CHANGED, by="administrator", to_address="old@example.org"
+            user, mailer.PASSWORD_CHANGED, by="administrator", to_address="old@aicraft.iitkgp.ac.in"
         )
     )
-    assert [r.toAddress for r in world.db.emailmessage.rows] == ["asha@example.org", "old@example.org"]
+    assert [r.toAddress for r in world.db.emailmessage.rows] == ["asha@aicraft.iitkgp.ac.in", "old@aicraft.iitkgp.ac.in"]
     (row,) = world.db.notification.rows
     assert row.userId == "asha" and row.kind == mailer.PASSWORD_CHANGED and row.link == "/settings"
 
@@ -387,3 +387,57 @@ def test_the_serialized_notice_says_read_in_words() -> None:
     )
     out = notifications.serialize(row)
     assert out["read"] is False and out["readAt"] is None and out["createdAt"].startswith("2026-10-17")
+
+
+# --------------------------------------------------------------------------------------
+# Reserved, non-deliverable addresses (identical in both portals)
+# --------------------------------------------------------------------------------------
+
+
+def _queue_notice(address: str) -> Any:
+    params = {"recipientName": "Seed", "changedAt": datetime.now(UTC).isoformat()}
+    return asyncio.run(
+        email_outbox.enqueue(
+            mailer.PASSWORD_CHANGED, to_address=address, recipient_id="seed", params=params
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["admin@example.com", "Seed@Mail.EXAMPLE.NET", "x@example.org", "x@field.test", "x@a.invalid"],
+)
+def test_a_reserved_address_is_skipped_not_sent_and_not_logged(
+    world: Any, caplog: pytest.LogCaptureFixture, address: str
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    assert _queue_notice(address) is not None
+    tally = _drain()
+    assert tally["skipped"] == 1 and tally["sent"] == 0 and tally["failed"] == 0
+    assert tally["retrying"] == 0
+    assert world.sent == [], "a reserved address never reaches SES"
+    (row,) = world.db.emailmessage.rows
+    assert row.status == email_outbox.SKIPPED == "SKIPPED"
+    assert row.error == mailer.RESERVED_ADDRESS_REASON == "reserved test address"
+    assert row.sentAt is None and row.lockedAt is None and row.sealed is None
+    messages = [r.getMessage() for r in caplog.records]
+    assert len([m for m in messages if "skipped" in m]) == 1, "one log line"
+    assert all(address not in m and address.lower() not in m for m in messages)
+    assert _drain()["processed"] == 0, "a skipped row is final"
+
+
+@pytest.mark.parametrize("address", ["officer@aicraft.iitkgp.ac.in", "Someone@Gmail.com"])
+def test_a_real_address_is_still_sent(world: Any, address: str) -> None:
+    _queue_notice(address)
+    tally = _drain()
+    assert tally["sent"] == 1 and tally["skipped"] == 0
+    assert [m["to"] for m in world.sent] == [address]
+
+
+def test_a_skipped_row_reads_as_failed_with_its_reason_on_a_status_screen() -> None:
+    row = SimpleNamespace(
+        id="m1", status=email_outbox.SKIPPED, error=mailer.RESERVED_ADDRESS_REASON,
+        sentAt=None, createdAt=datetime(2026, 10, 19, tzinfo=UTC),
+    )
+    shown = email_outbox.delivery_status(row)
+    assert shown["status"] == "FAILED" and shown["error"] == "reserved test address"

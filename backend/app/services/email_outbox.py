@@ -19,6 +19,9 @@ SECRETS. ``params`` holds only what may be kept. The set-password link travels F
 lines carry the row id, the kind and the recipient's ACCOUNT id — never an address, never a body,
 never a link.
 
+RESERVED ADDRESSES. A row addressed to a reserved domain (``example.com``, ``*.test`` …) is never
+handed to SES: it ends SKIPPED with ``mailer.RESERVED_ADDRESS_REASON``.
+
 IN-APP. Every notice goes through :func:`app.services.notifications.notify`, which writes the
 person's in-app activity list as well as calling :func:`enqueue` — so a notice is never lost to mail
 being off. New notices go through ``notify`` too; :func:`enqueue` alone is for a password link.
@@ -47,6 +50,9 @@ QUEUED = "QUEUED"
 SENDING = "SENDING"
 SENT = "SENT"
 FAILED = "FAILED"
+#: Never handed to SES: the address is on a reserved domain that takes no mail
+#: (``mailer.is_reserved_email``). Final, like FAILED, with ``mailer.RESERVED_ADDRESS_REASON``.
+SKIPPED = "SKIPPED"
 #: A hand-in notice for somebody who chose the daily digest: kept, never sent on its own, and folded
 #: into one HAND_IN_DIGEST message by :func:`flush_digests` (which marks it DIGESTED).
 HELD = "HELD"
@@ -224,6 +230,15 @@ async def _send_one(row: Any, settings: Settings) -> str:
     """Render and send one claimed row; returns the status it was left in."""
     attempts = int(row.attempts or 0) + 1
     params = dict(row.params or {}) if isinstance(row.params, dict) else {}
+    domain = mailer.reserved_email_domain(row.toAddress)
+    if domain is not None:
+        # A seeded or test account: SES would bounce it, and bounces cost the sender reputation.
+        await _finish(row.id, SKIPPED, error=mailer.RESERVED_ADDRESS_REASON)
+        logger.info(
+            "mail: skipped %s message %s for account %s (reserved domain %s)",
+            row.kind, row.id, row.recipientId or "-", domain,
+        )
+        return SKIPPED
     secret: str | None = None
     if row.sealed:
         secret = managed_secrets.decrypt(row.sealed)
@@ -275,7 +290,7 @@ async def process_next_email_jobs(
 ) -> dict[str, int]:
     """Drain one batch of due messages. Does nothing at all when mail is not configured."""
     settings = settings or get_settings()
-    tally = {"processed": 0, "sent": 0, "retrying": 0, "failed": 0}
+    tally = {"processed": 0, "sent": 0, "retrying": 0, "failed": 0, "skipped": 0}
     if not mailer.mail_configured(settings):
         return tally
     if recover:
@@ -303,6 +318,8 @@ async def process_next_email_jobs(
             tally["sent"] += 1
         elif outcome == FAILED:
             tally["failed"] += 1
+        elif outcome == SKIPPED:
+            tally["skipped"] += 1
         else:
             tally["retrying"] += 1
     return tally
@@ -604,12 +621,15 @@ async def last_topic_moment(topic: str) -> str | None:
 
 def delivery_status(row: Any) -> dict[str, Any] | None:
     """What a screen says about one outbox row: ``{id, status, at, error}``. ``status`` is QUEUED
-    (still going out, retries included), SENT or FAILED. ``None`` for no row."""
+    (still going out, retries included), SENT or FAILED — a SKIPPED row (a reserved address) reads
+    as FAILED, with its reason. ``None`` for no row."""
     if row is None:
         return None
     state = str(_value(row, "status") or "")
     if state in (SENDING, HELD, DIGESTED):
         state = QUEUED if state != DIGESTED else SENT
+    elif state == SKIPPED:
+        state = FAILED
     moment = _value(row, "sentAt") if state == SENT else _value(row, "createdAt")
     return {
         "id": _value(row, "id"),

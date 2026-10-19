@@ -59,7 +59,7 @@ def test_preferences_a_mailed_link_and_the_drain(monkeypatch: pytest.MonkeyPatch
         )
         target = await db.user.create(
             data={
-                "email": f"mail-designer-{stamp}@example.org",
+                "email": f"mail-designer-{stamp}@aicraft.iitkgp.ac.in",
                 "name": "Asha Patel",
                 "role": "DESIGNER",
                 "passwordHash": hash_password("unused-password"),

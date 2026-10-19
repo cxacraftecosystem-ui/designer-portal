@@ -328,11 +328,11 @@ def test_approve_and_hand_on_emails_the_office_an_expiring_link(
         assert bad.status_code == 422
         office = client.put(
             "/api/settings/report-delivery",
-            json={"addresses": ["DC-Office@Example.org, second@example.org"], "officeName": "DC (Handicrafts)"},
+            json={"addresses": ["DC-Office@AICraft.IITKGP.ac.in, second@example.org"], "officeName": "DC (Handicrafts)"},
             headers=_as(people, "admin"),
         )
         assert office.status_code == 200, office.text
-        assert office.json()["addresses"] == ["dc-office@example.org", "second@example.org"]
+        assert office.json()["addresses"] == ["dc-office@aicraft.iitkgp.ac.in", "second@example.org"]
 
         sent = client.post(
             f"/api/design-workshop-approvals/{deliver}/approve-and-hand-on", json=body, headers=_as(people, "ministry")
@@ -342,7 +342,7 @@ def test_approve_and_hand_on_emails_the_office_an_expiring_link(
         assert answer["status"] == "SUBMITTED" and answer["handedOnTo"] == "DC (Handicrafts)"
         latest = answer["delivery"]["latest"]
         assert latest["state"] == "LIVE" and {e["address"] for e in latest["emails"]} == {
-            "dc-office@example.org",
+            "dc-office@aicraft.iitkgp.ac.in",
             "second@example.org",
         }
         assert all(e["status"] == "QUEUED" for e in latest["emails"])
@@ -369,7 +369,7 @@ def test_approve_and_hand_on_emails_the_office_an_expiring_link(
     sent_mail: list[dict[str, Any]] = []
     monkeypatch.setattr(mailer, "send", lambda **message: sent_mail.append(message) or "ses-1")
     _private(lambda: email_outbox.process_next_email_jobs(limit=200, recover=False))
-    office_mail = [m for m in sent_mail if m["to"] == "dc-office@example.org"]
+    office_mail = [m for m in sent_mail if m["to"] == "dc-office@aicraft.iitkgp.ac.in"]
     assert office_mail, "the office's message went out"
     link = next(line for line in office_mail[0]["text"].splitlines() if "/report-download?token=" in line)
     token = link.split("token=", 1)[1].strip()
