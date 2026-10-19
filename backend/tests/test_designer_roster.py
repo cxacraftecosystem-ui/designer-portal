@@ -537,7 +537,7 @@ async def test_the_first_seen_stamp_records_the_first_sign_in_not_the_latest(wor
 
 
 # --------------------------------------------------------------------------------------
-# 2. Provisioning: an active roster row is an instruction to promote
+# 2. Provisioning: an active roster row creates a NEW account as a designer
 # --------------------------------------------------------------------------------------
 
 
@@ -557,22 +557,24 @@ async def test_a_rostered_email_with_no_account_is_created_as_a_designer(
     assert response.json()["user"]["role"] == "DESIGNER"
 
 
-async def test_an_account_below_designer_is_promoted_on_first_google_sign_in(
+async def test_an_existing_account_below_designer_is_not_promoted_by_signing_in(
     world, client, monkeypatch
 ):
-    """The other half of the same story: the person already had a volunteer account."""
+    """THE SIGN-IN LIST RULE (2026-10-18, ``services/signin_role``): the person already had a
+    volunteer account, so the roster row does not lift it. A sign-in that changed somebody's powers
+    would do it with no administrator's name on it and no audit entry; the change is made on Manage
+    users."""
     response = _google(client, monkeypatch, world["address"]("volunteer"))
     assert response.status_code == 200, response.text
-    assert response.json()["user"]["role"] == "DESIGNER"
+    assert response.json()["user"]["role"] == "CROWDSOURCE_VOLUNTEER"
 
 
 async def test_an_admin_on_the_roster_is_never_demoted_by_signing_in(world, client, monkeypatch):
-    """PROMOTE ONLY, NEVER DEMOTE.
+    """NEVER DEMOTE, either.
 
-    Admins and professors run workshops too, so their address is legitimately on the roster. A
-    not-equal comparison instead of a strictly-below one would knock them down to DESIGNER at
-    their own next sign-in — losing their admin rights to a row they added to help somebody else,
-    with the demotion invisible in the login response they are looking at.
+    Admins and professors run workshops too, so their address is legitimately on the roster. Their
+    own next sign-in must not knock them down to DESIGNER — losing their admin rights to a row they
+    added to help somebody else, with the demotion invisible in the login response.
     """
     response = _google(client, monkeypatch, world["address"]("adminRostered"))
     assert response.status_code == 200, response.text

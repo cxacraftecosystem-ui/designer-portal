@@ -527,76 +527,36 @@ def test_a_temporary_password_is_the_flag_on_an_account_that_has_one(fields, hol
     assert holds_a_temporary_password(_account(**fields)) is holds
 
 
-@pytest.mark.parametrize(
-    ("fields", "granted", "lifted"),
-    [
-        # The ordinary approval of somebody who has an account: lifted, and their links withdrawn.
-        ({"role": "RESEARCHER"}, "PROFESSOR", True),
-        # A flag with no password behind it is no temporary password: lifted like anybody else.
-        ({"role": "RESEARCHER", "mustChangePassword": True, "passwordHash": None}, "PROFESSOR", True),
-        # Never a demotion, and an approval at the tier the account already holds changes nothing —
-        # so neither holds anything back or withdraws anything, flag or no flag.
-        ({"role": "PROFESSOR", "mustChangePassword": True}, "RESEARCHER", False),
-        ({"role": "RESEARCHER", "mustChangePassword": True}, "RESEARCHER", False),
-    ],
-)
-async def test_the_access_approval_lifts_an_account_and_withdraws_its_links(
-    monkeypatch, fields, granted, lifted
-):
-    """``routes/access._lift_existing_account``, the second door onto a promotion: a lift withdraws
-    every outstanding password link AFTER its write, as ``PATCH /api/users/{id}`` does, and answers
-    ``None`` — there is nothing for the approval's answer to say."""
-    held, written, withdrawn = await _lift(monkeypatch, _account(**fields), granted)
-    assert held is None
-    assert written == ([{"role": granted}] if lifted else [])
-    assert withdrawn == (["acct-target"] if lifted else [])
-
-
-async def test_the_access_approval_leaves_a_temporary_password_at_its_tier(monkeypatch):
-    """Rule 5 at the access screen, which has no password field to set a new one in: the account
-    keeps its tier, NOTHING is written to it and no link is touched, and the answer says so — the
-    approved address, both tiers by their labels, and the two ways on, the second on the website's
-    Users page."""
-    from app.services.account_provisioning import APPROVAL_KEEPS_THE_TIER_DETAIL
-
-    flagged = _account(role="RESEARCHER", mustChangePassword=True)
-    held, written, withdrawn = await _lift(monkeypatch, flagged, "PROFESSOR")
-    assert (written, withdrawn) == ([], [])
-    assert held == APPROVAL_KEEPS_THE_TIER_DETAIL.format(
-        email="target@example.org", current="Researcher", granted="Professor"
-    )
-    assert "Users page" in held
-
-
-async def _lift(monkeypatch, account, granted):
-    """Drive ``_lift_existing_account`` over one account; answers (its return, the account writes,
-    the accounts whose links were withdrawn)."""
+async def test_the_access_approval_never_writes_an_existing_account(monkeypatch):
+    """The sign-in list rule (2026-10-18, ``services/signin_role``): ``routes/access._role_kept`` only
+    reads. Approving an address at a higher role than its account holds writes nothing to the account
+    and withdraws no link — the change is made on Manage users, which audits it — and the answer names
+    Manage users."""
     from types import SimpleNamespace
 
     from app.api.routes import access as access_routes
+    from app.services import signin_role
 
+    account = _account(role="RESEARCHER")
     written: list[dict] = []
-    withdrawn: list[str] = []
 
     class _Users:
         async def find_unique(self, where):
             return account if where == {"email": account.email} else None
 
         async def update(self, where, data):
-            assert where == {"id": account.id}
             written.append(data)
             return account
 
-    async def _revoke(user_id):
-        assert written, "links were withdrawn before the account was lifted"
-        withdrawn.append(user_id)
-        return 1
+    async def _revoke(_user_id):
+        raise AssertionError("an approval withdrew a password link")
 
     monkeypatch.setattr(access_routes, "db", SimpleNamespace(user=_Users()))
-    monkeypatch.setattr(access_routes, "invalidate_cached_user", lambda _user_id: None)
-    monkeypatch.setattr(access_routes.credential_links, "revoke_outstanding", _revoke)
-    held = await access_routes._lift_existing_account(account.email, granted)  # noqa: SLF001
-    return held, written, withdrawn
+    monkeypatch.setattr(access_routes, "credential_links", SimpleNamespace(revoke_outstanding=_revoke), raising=False)
+    said = await access_routes._role_kept(account.email, "PROFESSOR")  # noqa: SLF001
+    assert written == []
+    assert said == signin_role.role_kept_sentence(account.email, "RESEARCHER", "PROFESSOR")
+    assert "Manage users" in said
 
 
 def test_the_master_admins_mailbox_is_every_spelling_of_it_and_its_account_only_one(monkeypatch):

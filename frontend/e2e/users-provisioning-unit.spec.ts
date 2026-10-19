@@ -516,16 +516,16 @@ test("/users reads the link once and strips it; /admin/access says Google and of
   expect(ACCESS_PAGE.match(/and role already filled in/g) ?? [], "and never unconditionally").toHaveLength(1);
 });
 
-test("an approval that left the account's tier waiting says so in the server's words, on both approving paths", () => {
+test("an approval that left an existing account's role alone says so in the server's words, on both approving paths", () => {
   /*
-    Approving promotes an account that already exists — except one still holding a temporary password
-    somebody typed for it (2026-10-09): the address is approved, the tier waits, and the 200 carries
-    `accountPromotionHeld`, the sentence that names the two ways on. This screen's own receipt ("may
-    sign in from their next attempt") would read as "done", so the server's sentence replaces it,
-    drawn amber. Restoring is an approval at the row's own tier and can meet the same thing.
+    The sign-in list rule (2026-10-18): approving never changes an account that already exists. When
+    one is there at another role, the 200 carries `accountPromotionHeld`, the sentence that says so
+    and names Manage users. This screen's own receipt ("may sign in from their next attempt") would
+    read as "done", so the server's sentence replaces it, drawn amber. Restoring is an approval at the
+    row's own role and can meet the same thing.
   */
   const sentence =
-    "lata@example.org is approved, but the account keeps its Researcher tier for now: it still has to replace a password somebody typed for it.";
+    "lata@example.org already has an account, as Researcher. Its role stays; change it on Manage users.";
   expect(promotionHeldSentence({ accountPromotionHeld: sentence })).toBe(sentence);
   expect(promotionHeldSentence({ accountPromotionHeld: `  ${sentence}  ` })).toBe(sentence);
   expect(promotionHeldSentence({ accountPromotionHeld: null }), "every other decision").toBeNull();
@@ -536,11 +536,14 @@ test("an approval that left the account's tier waiting says so in the server's w
   expect((ACCESS_PAGE.match(/const held = promotionHeldSentence\(updated\);/g) ?? []).length, "approve and restore").toBe(2);
   expect(ACCESS_PAGE).toContain("setNotice(held ?? `${updated.email} may sign in from their next attempt.`);");
   expect(ACCESS_PAGE).toContain("setNotice(held ?? `${updated.email} can sign in again.`);");
-  expect((ACCESS_PAGE.match(/setHeldPromotion\(held\);/g) ?? []).length).toBe(2);
+  // Approve, restore, and adding an address by hand (which admits it like an approval).
+  expect((ACCESS_PAGE.match(/setHeldPromotion\(held\);/g) ?? []).length).toBe(3);
+  expect(ACCESS_PAGE).toContain("const held = promotionHeldSentence(created);");
   // Amber only while the notice is still that very sentence — a later notice replaces it, nothing to clear.
   expect(ACCESS_PAGE).toContain("heldPromotion !== null && heldPromotion === notice");
-  // And the confirmation no longer promises a lift the server may hold back.
-  expect(ACCESS_PAGE).toContain("unless it still has to replace a temporary password, in which case you are told");
+  // And the confirmation says the list sets new accounts only, and no longer promises a lift.
+  expect(ACCESS_PAGE).toContain("note: NEW_ACCOUNTS_ONLY,");
+  expect(ACCESS_PAGE).not.toContain("raised to match");
 
   // The key is the server's, read where it is written.
   expect(readFileSync(join(__dirname, "..", "..", "backend", "app", "api", "routes", "access.py"), "utf8")).toContain(

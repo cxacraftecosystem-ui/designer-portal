@@ -75,7 +75,7 @@ from app.api.routes import auth as auth_routes
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
-from app.services import access_roster
+from app.services import access_roster, signin_role
 
 _URL = os.environ.get("DATABASE_URL", "")
 _LOCAL = any(host in _URL for host in ("localhost", "127.0.0.1"))
@@ -815,12 +815,13 @@ async def test_the_queue_is_a_filter_over_the_one_list(world, client, monkeypatc
     assert "PENDING" in typo.json()["detail"]
 
 
-async def test_approving_a_request_lets_the_person_in_at_the_chosen_tier(world, client):
+async def test_approving_a_request_lets_the_person_in_and_keeps_their_role(world, client):
     """The queue's whole purpose, end to end on one account.
 
-    The approval also LIFTS an account that already exists. Without that, a request approved at
-    RESEARCHER would take effect only when a new account is created — which never happens for
-    somebody who already has one — and the admin's choice would be silently ignored.
+    THE SIGN-IN LIST RULE (2026-10-18, ``services/signin_role``): the approval lets the person in,
+    and the chosen role is the role a NEW account would be created with. This person already has an
+    account, so it keeps its role, and the answer says so and names Manage users, where a change of
+    role is an explicit act with an audit entry.
     """
     email = world["address"]("pending")
     row_id = _rows(client, world)[email]["id"]
@@ -834,16 +835,18 @@ async def test_approving_a_request_lets_the_person_in_at_the_chosen_tier(world, 
     assert decided.json()["status"] == "ACTIVE"
     assert decided.json()["joinedAt"] is not None
     assert decided.json()["decidedById"] == world["people"]["admin"].id
+    assert decided.json()["accountPromotionHeld"] == signin_role.role_kept_sentence(
+        decided.json()["email"], "RESEARCHER", "PROFESSOR"
+    )
 
     signed_in = _login(client, email)
     assert signed_in.status_code == 200, signed_in.text
-    assert signed_in.json()["user"]["role"] == "PROFESSOR", "the approved tier must reach the account"
+    assert signed_in.json()["user"]["role"] == "RESEARCHER", "an approval never changes an existing account"
 
 
 async def test_approving_never_demotes_an_account(world, client):
-    """An admin approving a colleague at RESEARCHER must not knock a professor down to it. The lift
-    is strictly-below, ``login_with_google``'s rule, for its reason: a demotion delivered by
-    somebody else's administrative click is invisible to the person it happens to."""
+    """An admin approving a colleague at RESEARCHER must not knock a professor down to it: an
+    approval never changes an existing account (``services/signin_role``)."""
     email = world["address"]("professor")
     row_id = _rows(client, world)[email]["id"]
     decided = client.post(

@@ -167,6 +167,7 @@ from app.services import (
     designers,
     email_outbox,
     mailer,
+    signin_role,
 )
 from app.services.account_provisioning import is_master_email
 from app.services.design_workshops import (
@@ -1360,6 +1361,7 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
     lead = team[0]
 
     secrets_minted: dict[str, str] = {}
+    roles_raised: list[tuple[str, str]] = []
 
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=30)) as tx:
         for designer in team:
@@ -1511,7 +1513,12 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
                 # (left alone, correctly). Widening the phase-0 refusal without re-reading this
                 # comparison re-opens the same hole.
                 if role_rank(user) < ROLE_RANK["DESIGNER"]:
+                    before = role_value(user)
                     user = await tx.user.update(where={"id": user.id}, data={"role": "DESIGNER"})
+                    # An officer's explicit act, so it carries the audit entry every change of role
+                    # does (the sign-in list rule, ``services/signin_role``). Written after the
+                    # commit (phase 2), so a rolled-back order never logs a change that did not happen.
+                    roles_raised.append((user.id, before))
 
             # 1.4 THE PROFILE. An upsert, so this is safe for an account that already has one, and
             # it exists because workshop creation READS the profile — a create path that has to
@@ -1655,6 +1662,14 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
         )
 
     # ── PHASE 2: AFTER THE COMMIT. Each of these may fail without undoing the workshop. ────────
+    for raised_id, before in roles_raised:
+        signin_role.audit_role_change(
+            user_id=raised_id,
+            actor_id=getattr(officer, "id", None),
+            before=before,
+            after="DESIGNER",
+            via="sanction-order",
+        )
     # THE HOUSE RULE, WITHOUT EXCEPTION: every write to a ``User`` row invalidates the cached copy.
     # A designer whose role was just lifted to DESIGNER and whose cached row still says RESEARCHER is
     # refused by the designer gate for as long as the TTL runs, on the morning they were told to

@@ -146,6 +146,12 @@ import {
 } from "./rosterQuery";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
+/**
+ * The sign-in list rule's copy (2026-10-18), byte for byte `services/signin_role.NEW_ACCOUNTS_ONLY`
+ * and `shared/signin-role-contract.json`; `tests/test_signin_role_contract.py` reads it from here.
+ */
+const NEW_ACCOUNTS_ONLY = "New accounts only. To change an existing account, use Manage users.";
+
 /** The whole list. Twenty is the designer roster's page size and this table is no denser. */
 const PAGE_SIZE = 20;
 
@@ -273,9 +279,9 @@ function PlatformAccessScreen() {
     admitRole: UserRole | null;
   } | null>(null);
   /**
-   * The server's sentence when an approval left an existing account at its tier — it still holds a
-   * temporary password, and promoting it would carry that password above whoever typed it
-   * (`promotionHeldSentence`). It IS the notice, word for word, drawn amber while the notice is still
+   * The server's sentence when an approval found an existing account at another role, which it
+   * leaves alone: the list sets the role of new accounts only (`promotionHeldSentence`,
+   * `services/signin_role`). It IS the notice, word for word, drawn amber while the notice is still
    * that very sentence — `passwordAccount`'s rule, so a later notice replaces it with nothing to clear.
    */
   const [heldPromotion, setHeldPromotion] = useState<string | null>(null);
@@ -460,6 +466,18 @@ function PlatformAccessScreen() {
         refusal neither screen explained. The sentence now names the credential, and the link under
         it carries the address and the tier to the form that makes a password account.
       */
+      // Adding admits the address like an approval, so an account already there at another role
+      // keeps it and the server's sentence says so; amber, and no password-account link, since the
+      // account exists.
+      const held = promotionHeldSentence(created);
+      if (held) {
+        setHeldPromotion(held);
+        setNotice(held);
+        setPasswordAccount(null);
+        formElement.reset();
+        await reloadAll();
+        return;
+      }
       const message = `${created.email} may sign in with Google, as ${roleLabel(created.admitRole) || "the default role"}. The account is created the first time they sign in with Google.`;
       setNotice(message);
       setPasswordAccount({
@@ -496,10 +514,9 @@ function PlatformAccessScreen() {
       body: role
         ? `They can sign in now, as ${roleLabel(role)}.`
         : "They can sign in now, with the default role.",
-      // The middle clause became true on 2026-10-09: approving promotes an account that already
-      // exists, and one still holding a temporary password is not promoted — see `heldPromotion`.
-      note:
-        "An existing lower role is raised to match — unless it still has to replace a temporary password, in which case you are told how. Approving never lowers a role.",
+      // The sign-in list rule (2026-10-18, `services/signin_role`): approving never changes an
+      // account that already exists. When one is there at another role, the answer says so.
+      note: NEW_ACCOUNTS_ONLY,
       confirmLabel: "Approve",
       tone: "warning"
     });
@@ -584,7 +601,7 @@ function PlatformAccessScreen() {
     if (!ok) return;
     try {
       const updated = await decideAccessRequest(entry.id, { decision: "APPROVE" });
-      // A restore is an approval at the row's own tier, so it can meet the same held promotion.
+      // A restore is an approval at the row's own tier, so it can meet the same kept role.
       const held = promotionHeldSentence(updated);
       setHeldPromotion(held);
       setNotice(held ?? `${updated.email} can sign in again.`);
@@ -734,8 +751,8 @@ function PlatformAccessScreen() {
       {notice ? (
         <div
           className={
-            // AMBER for a promotion that waits: nothing failed — the address is approved — but the
-            // tier still has to be finished on Manage users, and a neutral receipt reads as "done".
+            // AMBER for a role the approval left alone: nothing failed — the address is approved —
+            // but a change of role is made on Manage users, and a neutral receipt reads as "done".
             heldPromotion !== null && heldPromotion === notice
               ? "mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800"
               : "mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700"
@@ -897,6 +914,7 @@ function PlatformAccessScreen() {
               into the next correction.
             */}
             <AdmitTierField grantable={grantable} initial={editing?.admitRole ?? ""} />
+            <span className="text-xs text-ink-500">{NEW_ACCOUNTS_ONLY}</span>
           </Field>
         </div>
         {editing ? null : <SignInMethodField />}

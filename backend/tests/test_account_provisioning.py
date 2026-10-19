@@ -62,7 +62,7 @@ from app.api.routes import auth as auth_routes, users as users_routes
 from app.core.db import db
 from app.core.deps import ACCOUNT_PROVISIONER_REQUIRED_DETAIL, get_settings
 from app.core.security import create_access_token, hash_password
-from app.services import access_roster, account_provisioning
+from app.services import access_roster, account_provisioning, signin_role
 from app.services.designers import canonical_email
 
 pytestmark = [needs_db]
@@ -1443,8 +1443,8 @@ def test_a_promotion_waits_for_a_temporary_password_to_be_replaced(world, client
 
 
 def _approve(client: Any, world: dict[str, Any], actor: str, email: str, role: str) -> Any:
-    """The access screen's APPROVE at ``role``, on the allow-list row of ``email`` — the door that
-    also lifts an account which already exists (``routes/access._lift_existing_account``)."""
+    """The access screen's APPROVE at ``role``, on the allow-list row of ``email``. It never changes
+    an account that already exists (``services/signin_role``)."""
     row = _access_rows(client, world, email)[email]
     return client.post(
         f"/api/access/roster/{row['id']}/decision",
@@ -1460,13 +1460,12 @@ def _role_of(client: Any, world: dict[str, Any], account: dict[str, Any]) -> str
     return rows[0]["role"]
 
 
-def test_an_approval_that_lifts_an_account_withdraws_its_links(world, client):
-    """THE SECOND DOOR ONTO A PROMOTION. Approving an allow-list row lifts the account behind it,
-    and a lift withdraws the account's outstanding links exactly as the PATCH does. The link is the
-    MASTER admin's, which the redemption's issuer re-check would accept whatever the account became
-    (a master may always manage), so only the withdrawal stops it. An approval that lifts nothing —
-    at the tier the account already holds — withdraws nothing."""
-    account = _settled_account(client, world, "lifted-past-its-link")
+def test_an_approval_never_changes_an_existing_account_or_its_links(world, client, caplog):
+    """THE SIGN-IN LIST RULE (2026-10-18, ``services/signin_role``). Approving an allow-list row
+    decides the ADDRESS: an account that already exists keeps its role and its outstanding links,
+    and the answer says so and names Manage users. Approving at the role it already holds says
+    nothing. The change of role is then made on Manage users, which writes the audit entry."""
+    account = _settled_account(client, world, "kept-at-its-role")
     issued = _link(client, world, "master", account["id"])
     assert issued.status_code == 201, issued.text
     token = parse_qs(urlsplit(issued.json()["link"]).query)["token"][0]
@@ -1474,52 +1473,22 @@ def test_an_approval_that_lifts_an_account_withdraws_its_links(world, client):
     unchanged = _approve(client, world, "admin", account["email"], "RESEARCHER")
     assert unchanged.status_code == 200, unchanged.text
     assert unchanged.json()["accountPromotionHeld"] is None
-    assert client.get("/api/auth/set-password", params={"token": token}).json()["valid"] is True
 
-    lifted = _approve(client, world, "master", account["email"], "ADMIN")
-    assert lifted.status_code == 200, lifted.text
-    assert lifted.json()["accountPromotionHeld"] is None
-    assert _role_of(client, world, account) == "ADMIN"
-    checked = client.get("/api/auth/set-password", params={"token": token})
-    assert checked.json() == {"valid": False, "reason": "revoked", "purpose": None}
-
-
-def test_an_approval_leaves_an_account_holding_a_temporary_password_at_its_tier(world, client):
-    """Rule 5 at the access screen, which has no password field to set a new one in. A ministry
-    admin made this account and typed its password; approving the address at PROFESSOR must not
-    carry that password above the ministry admin's reach. The approval stands — refusing it would
-    leave the person's ACCESS undecided over a question about their TIER — the account keeps its
-    tier, and the answer says so for the screen to show. Once the owner has chosen their own
-    password, the same approval lifts it."""
-    email = _fresh(world, "approved-while-temporary")
-    made = _create(client, world, "ministry", email)
-    assert made.status_code == 201, made.text
-    account = made.json()
-    assert account["mustChangePassword"] is True
-
-    held = _approve(client, world, "admin", email, "PROFESSOR")
-    assert held.status_code == 200, held.text
-    assert (held.json()["status"], held.json()["admitRole"]) == ("ACTIVE", "PROFESSOR")
-    assert held.json()["accountPromotionHeld"] == (
-        account_provisioning.APPROVAL_KEEPS_THE_TIER_DETAIL.format(
-            email=email, current="Researcher", granted="Professor"
-        )
+    kept = _approve(client, world, "master", account["email"], "ADMIN")
+    assert kept.status_code == 200, kept.text
+    assert (kept.json()["status"], kept.json()["admitRole"]) == ("ACTIVE", "ADMIN")
+    assert kept.json()["accountPromotionHeld"] == signin_role.role_kept_sentence(
+        account["email"], "RESEARCHER", "ADMIN"
     )
     assert _role_of(client, world, account) == "RESEARCHER"
+    assert client.get("/api/auth/set-password", params={"token": token}).json()["valid"] is True
 
-    signed_in = _login(client, email)
-    assert signed_in.status_code == 200, signed_in.text
-    changed = client.post(
-        "/api/auth/change-password",
-        json={"currentPassword": NEW_PASSWORD, "newPassword": "chosen-by-its-own-owner"},
-        headers=_bearer(signed_in.json()["accessToken"]),
-    )
-    assert changed.status_code == 200, changed.text
-
-    lifted = _approve(client, world, "admin", email, "PROFESSOR")
-    assert lifted.status_code == 200, lifted.text
-    assert lifted.json()["accountPromotionHeld"] is None
+    caplog.set_level("WARNING", logger=signin_role.logger.name)
+    promoted = _patch(client, world, "master", account["id"], role="PROFESSOR")
+    assert promoted.status_code == 200, promoted.text
     assert _role_of(client, world, account) == "PROFESSOR"
+    audits = [r.getMessage() for r in caplog.records if r.getMessage().startswith(signin_role.ROLE_AUDIT_PREFIX)]
+    assert len(audits) == 1 and "from=RESEARCHER to=PROFESSOR via=users" in audits[0], audits
 
 
 # --------------------------------------------------------------------------------------

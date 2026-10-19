@@ -3892,7 +3892,7 @@ data class AccessRosterDto(
      * already in.
      */
     val status: String = "PENDING",
-    /** The tier the account is created at (or lifted to) on first sign-in. Null = the platform default. */
+    /** The tier a NEW account is created at on first sign-in; an existing account keeps its own. Null = the platform default. */
     val admitRole: String? = null,
     val joinedAt: String? = null,
     val requestedAt: String? = null,
@@ -3909,7 +3909,9 @@ data class AccessRosterDto(
     val addedById: String? = null,
     /** Who added the address and who decided it, in words — joined on the roster list (2026-10-17). */
     val addedByName: String? = null,
-    val decidedByName: String? = null
+    val decidedByName: String? = null,
+    /** On a decision's answer only: the sentence when an existing account kept its role (the sign-in list rule). */
+    val accountPromotionHeld: String? = null
 )
 
 /**

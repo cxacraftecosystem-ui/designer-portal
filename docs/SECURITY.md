@@ -628,18 +628,12 @@ while the account still holds a temporary password (the flag up and a password p
 same request sets a new one; and redeeming a link asks again whether its issuer could still manage the
 account (`account_provisioning.issuer_still_manages`). A master admin's link always passes, and so does
 a link nobody issued or whose issuer's account has since been deleted; anything else reads as
-withdrawn. **The access screen's approve and re-admit ask the same two questions** (since later the
-same day — until then they asked neither). They lift an existing account to the approved tier
-(`routes/access._lift_existing_account`); a lift withdraws the account's outstanding links after its
-write, and an account still holding a temporary password is not lifted at all. That door has no
-password field to set a new one in, and refusing the approval would leave the person's ACCESS
-undecided over a question about their TIER, so the approval of the address stands, the account keeps
-its tier, and the decision's answer carries `accountPromotionHeld` — a sentence naming the address,
-both tiers and the two ways on, which `/admin/access` shows in place of its receipt (`null` on every
-other decision). Both doors ask one predicate, `account_provisioning.holds_a_temporary_password`. Two
-doors still lift an account without asking — a Google sign-in on an empanelled address, and the
-sanction register — and both lift only to `DESIGNER`, below every provisioner, so neither can carry a
-credential past whoever issued it.
+withdrawn. **The access screen's approve and re-admit change no account** (the sign-in list rule, 2026-10-18,
+`services/signin_role`): an allow-list row sets the role of a NEW account only, and an existing account
+keeps its role at sign-in and on approval, so neither door can carry a credential anywhere. The
+decision's answer carries `accountPromotionHeld` when an account exists at another role, naming Manage
+users. The remaining doors that change a role — `PATCH /api/users/{id}` and the sanction register
+(to `DESIGNER` only, below every provisioner) — write `AUDIT account role changed`.
 
 **ANY SPELLING OF THE MASTER ADMIN'S MAILBOX IS A MASTER ADMIN'S TO ASSIGN (2026-10-09).**
 `account_provisioning.is_master_email` compares Gmail-canonical forms on both sides, so on the users
