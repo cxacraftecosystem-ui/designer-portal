@@ -37,6 +37,8 @@
  * which is exactly what happened before this module existed.
  */
 
+import { fileName } from "@/lib/naming";
+
 /** The longest edge, in pixels, a card photograph is reduced to before it is sent anywhere. */
 export const IDENTITY_MAX_EDGE = 2000;
 
@@ -109,7 +111,11 @@ export async function prepareIdentityPhotograph(file: File): Promise<File> {
     // re-encode larger than it started. The original is then the better thing to send, and it is
     // already what the caller was going to send.
     if (blob.size >= file.size && !plan.scaled) return file;
-    return new File([blob], "identity-card.jpg", { type: "image/jpeg" });
+    // NAMING 2.1: DesignWorkshop_Artisan_2026-10-18_Identity-Card.jpg. The artisan is who the card
+    // is about and is not known until it has been read, so the name stops there.
+    return new File([blob], fileName({ entity: "Artisan", date: new Date(), what: "Identity-Card", ext: "jpg" }), {
+      type: "image/jpeg"
+    });
   } catch {
     // See the header: no failure here is a reason to tell a designer the card could not be read.
     return file;

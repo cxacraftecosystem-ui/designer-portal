@@ -60,7 +60,7 @@ def test_storage_keys_carry_the_revision_and_stay_out_of_media_and_backups() -> 
     key = packs.storage_key(settings_on(), "2026-09", "SKILL_UPGRADATION", 3, "xlsx")
     assert (
         key
-        == "exports/ministry/2026-09/SKILL_UPGRADATION/r3/ministry-pack-skill-upgradation-2026-09.xlsx"
+        == "exports/ministry/2026-09/SKILL_UPGRADATION/r3/DesignWorkshop_Ministry_2026-09_Skill-Upgradation_Monthly-Report.xlsx"
     )
     assert not key.startswith(("media/", "backups/"))
 

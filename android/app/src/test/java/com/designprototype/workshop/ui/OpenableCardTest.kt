@@ -60,7 +60,7 @@ class OpenableCardTest {
         assertTrue("admin tools", main.contains(".openable(entry.label, RoundedCornerShape(12.dp)) { onSectionChange(entry) }"))
         assertTrue("search hits", mainSource("ui/SearchScreen.kt").contains(".openable(row.title, MaterialTheme.shapes.medium, enabled = openable, onOpen = onOpen)"))
         assertTrue("data browser folders", mainSource("ui/DataBrowserScreen.kt").contains(".openable(folder.name, MaterialTheme.shapes.medium, onOpen = onOpen)"))
-        assertTrue("inspection list", mainSource("ui/designworkshop/InspectionListScreen.kt").contains(".openable(workshop.title.ifBlank { \"Untitled workshop\" }, RoundedCornerShape(12.dp), onOpen = onOpen)"))
+        assertTrue("inspection list", mainSource("ui/designworkshop/InspectionListScreen.kt").contains(".openable(shownTitle, RoundedCornerShape(12.dp), onOpen = onOpen)"))
         assertTrue("stage index", mainSource("ui/designworkshop/StageIndexScreen.kt").contains(".openable(stage.title, RoundedCornerShape(8.dp), onOpen = onOpen)"))
     }
 

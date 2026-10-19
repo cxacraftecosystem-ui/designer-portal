@@ -46,7 +46,7 @@ from prisma.errors import UniqueViolationError
 
 from app.core.config import Settings, get_settings
 from app.core.db import db
-from app.services import annual_plan, email_outbox, mailer, ministry_pack_sheets as sheets_mod
+from app.services import annual_plan, email_outbox, mailer, ministry_pack_sheets as sheets_mod, naming
 from app.services.design_workshop_oversight import OVERSIGHT_ASSIGNER_ROLES
 from app.services.ministry_pack_sheets import (
     UNSTATED,
@@ -401,7 +401,10 @@ def storage_key(settings: Settings, period: str, scheme: str, revision: int, fil
 
 
 def file_name(period: str, scheme: str, file: str) -> str:
-    return f"ministry-pack-{scheme_slug(scheme)}-{period}.{file}"
+    """``DesignWorkshop_Ministry_2026-09_Skill-Upgradation_Monthly-Report.xlsx`` (services/naming.py)."""
+    return naming.export_filename(
+        "Ministry", "Monthly-Report", file, period=period, subject=scheme_slug(scheme).replace("-", " ")
+    )
 
 
 def _workshop_dict(record: Any) -> dict[str, Any]:

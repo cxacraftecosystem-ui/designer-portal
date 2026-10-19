@@ -68,6 +68,7 @@ import {
   type WorkshopRecordType
 } from "@/lib/workshopCodes";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { fileName as namingFileName } from "@/lib/naming";
 
 /**
  * Error correction level Q — a quarter of the symbol recoverable.
@@ -161,7 +162,8 @@ function svgSource(entry: Extract<Rendered, { ok: true }>): string {
  * colons become hyphens because Windows refuses a file name containing one.
  */
 function fileName(code: string, extension: string): string {
-  return `${code.replace(/:/g, "-")}.${extension}`;
+  // NAMING 2.1: DesignWorkshop_Workshop_DW-RJ-0012-A3_Record-Code.png — still the code and nothing else.
+  return namingFileName({ entity: "Workshop", subject: code, what: "Record-Code", ext: extension });
 }
 
 /** Hand a blob to the browser as a download, and release the object URL once it has been taken. */

@@ -13,6 +13,7 @@ import type { Registry, Row } from "@/lib/offlineReport/builder";
 import { renderDocx, type FigureRasteriser, type ImageLoader } from "@/lib/offlineReport/docx";
 import type { ReportDocument, Script } from "@/lib/offlineReport/model";
 import { renderPdf, type FontSource, type PdfMakeLike } from "@/lib/offlineReport/pdf";
+import { workshopFilename, type WorkshopNameFields } from "@/lib/naming";
 
 export type DraftLike = {
   localId: string;
@@ -23,6 +24,7 @@ export type DraftLike = {
     workshopCode: string | null;
     craftName: string | null;
     clusterName: string | null;
+    district?: string | null;
     state: string | null;
     designerName: string | null;
   };
@@ -59,6 +61,7 @@ export function draftReportInput(draft: DraftLike, sources: ReportSources | null
       workshopCode: draft.header.workshopCode ?? text(setup.workshopCode),
       craftName: draft.header.craftName ?? text(setup.craftName),
       clusterName: draft.header.clusterName ?? text(setup.clusterName),
+      district: draft.header.district ?? text(setup.district),
       state: draft.header.state ?? text(setup.state),
       designerName: draft.header.designerName ?? text(setup.designerName),
       implementingAgency: text(setup.implementingAgency)
@@ -69,16 +72,13 @@ export function draftReportInput(draft: DraftLike, sources: ReportSources | null
   };
 }
 
-/** `_report_file_name`: `DesignWorkshop_<code or title>_<yyyymmdd>.<ext>`. */
-export function reportFileName(workshopCode: string | null, title: string, format: "DOCX" | "PDF", now: Date = new Date()): string {
-  const stem = workshopCode || title || "workshop";
-  const safe = Array.from(String(stem))
-    .map((c) => (/[\p{L}\p{N}]/u.test(c) || " -_".includes(c) ? c : "_"))
-    .join("")
-    .trim();
-  const joined = safe.split(/\s+/).filter(Boolean).join("_").slice(0, 60) || "workshop";
-  const stamp = now.toISOString().slice(0, 10).replace(/-/g, "");
-  return `DesignWorkshop_${joined}_${stamp}.${format === "PDF" ? "pdf" : "docx"}`;
+/**
+ * The server's `_report_file_name`, through the same `workshopFilename` (NAMING 2.1), so a report
+ * written on this device and one downloaded from the server carry one name:
+ * `DesignWorkshop_Workshop_2026-10-18_Bagru-Jaipur_Hand-Block-Printing_DW-RJ-0012_Report.pdf`.
+ */
+export function reportFileName(workshop: WorkshopNameFields, format: "DOCX" | "PDF", now: Date = new Date()): string {
+  return workshopFilename(workshop, "Report", format === "PDF" ? "pdf" : "docx", { at: now });
 }
 
 const SCRIPT_NAMES: Record<string, string> = {
@@ -146,7 +146,7 @@ export async function generateOfflineFile(
   now: Date = new Date()
 ): Promise<OfflineFile> {
   const built = buildOfflineReport(registry, input, { kind: "FILE", options });
-  const fileName = reportFileName(input.workshop.workshopCode, input.workshop.title, format, now);
+  const fileName = reportFileName(input.workshop, format, now);
   if (format === "DOCX") {
     const { blob, dropped } = await renderDocx(built.document, writers.loadImage, writers.rasterise);
     return { blob, fileName, warnings: [...built.warnings, ...droppedWarnings(dropped)], document: built.document };

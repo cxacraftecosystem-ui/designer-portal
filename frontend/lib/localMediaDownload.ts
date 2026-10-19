@@ -15,6 +15,7 @@
  */
 
 import { saveBlobToDisk } from "@/lib/fileDownload";
+import { recordingFilename } from "@/lib/naming";
 
 /**
  * The extension a saved file should carry for a mime type, or null when there is no sensible one.
@@ -76,12 +77,12 @@ export function extensionForMime(mimeType: string | null | undefined): string | 
 }
 
 /** What an unnamed file is called, by kind: a recording is a voice note, anything else by its type. */
-function stemForMime(mimeType: string | null | undefined): string {
+function whatForMime(mimeType: string | null | undefined): string {
   const base = baseMimeType(mimeType);
-  if (base.startsWith("audio/")) return "voice-note";
-  if (base.startsWith("video/")) return "video";
-  if (base.startsWith("image/")) return "photo";
-  return "file";
+  if (base.startsWith("audio/")) return "Recording";
+  if (base.startsWith("video/")) return "Video";
+  if (base.startsWith("image/")) return "Photo";
+  return "File";
 }
 
 function pad(value: number): string {
@@ -130,8 +131,11 @@ export function localMediaFileName({
     return `${cleaned}.${extension}`;
   }
   const when = capturedAt instanceof Date ? capturedAt : typeof capturedAt === "number" ? new Date(capturedAt) : now;
-  const stamp = fileDateStamp(Number.isFinite(when.getTime()) ? when : now);
-  return `${stemForMime(mimeType)}-${stamp}.${extension ?? "bin"}`;
+  // NAMING 2.1: <Portal>_2026-10-16_1430_Recording.webm, dated and timed in IST.
+  return recordingFilename(null, extension ?? "bin", {
+    capturedAt: Number.isFinite(when.getTime()) ? when : now,
+    what: whatForMime(mimeType)
+  });
 }
 
 /**

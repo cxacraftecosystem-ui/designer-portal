@@ -104,6 +104,7 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { RENDER_CAP } from "@/components/ui/selectFilter";
 import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
 import { adoptDraftIntoWorkshop, type DwDraft } from "@/lib/designWorkshopStore";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 /**
  * Matches every other server-backed search box in this feature. The list route filters four columns
@@ -133,7 +134,7 @@ type Candidate = { id: string; label: string };
 /** "Ikat revival, Barpali — Sambalpuri ikat" — enough to tell two of a designer's workshops apart. */
 function labelFor(row: Pick<DwSummary, "title" | "craftName" | "clusterName" | "district">): string {
   const place = [row.clusterName, row.district].filter(Boolean).join(", ");
-  const parts = [row.title || "Untitled design workshop", row.craftName, place].filter(Boolean);
+  const parts = [workshopDisplayTitle(row), row.craftName, place].filter(Boolean);
   return parts.join(" · ");
 }
 
@@ -342,7 +343,7 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
 
   if (!draft) return null;
 
-  const title = draft.header.title || "Untitled design workshop";
+  const title = workshopDisplayTitle(draft.header);
   const stageCount = Object.keys(draft.stages ?? {}).length;
   /**
    * The repository answered, it answered with nothing, and no search is narrowing it.

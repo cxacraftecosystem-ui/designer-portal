@@ -46,6 +46,7 @@ import {
   syncDesignWorkshopDrafts,
   type DwDraft
 } from "@/lib/designWorkshopStore";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 /**
  * What a completed pass should SAY, given what it did.
@@ -458,7 +459,7 @@ export function DesignWorkshopDraftBanner() {
                 href={`/design-workshops/${draft.remoteId ?? draft.localId}`}
                 className="text-sm font-medium underline-offset-2 hover:underline"
               >
-                {draft.header.title || "Untitled design workshop"}
+                {workshopDisplayTitle(draft.header)}
               </Link>
               <span className="ml-2 text-xs text-ink-500">
                 {/* Every number on screen is a real count of a real thing, and the sentence says

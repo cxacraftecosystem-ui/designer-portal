@@ -203,8 +203,8 @@ def _ready_pack(**extra: Any) -> Any:
                 "scheme": "OTHER",
                 "trigger": packs.SCHEDULED,
                 "status": packs.READY,
-                "xlsxKey": "exports/ministry/2026-08/OTHER/r1/ministry-pack-other-2026-08.xlsx",
-                "pdfKey": "exports/ministry/2026-08/OTHER/r1/ministry-pack-other-2026-08.pdf",
+                "xlsxKey": "exports/ministry/2026-08/OTHER/r1/DesignWorkshop_Ministry_2026-08_Other_Monthly-Report.xlsx",
+                "pdfKey": "exports/ministry/2026-08/OTHER/r1/DesignWorkshop_Ministry_2026-08_Other_Monthly-Report.pdf",
                 "xlsxBytes": 10,
                 "pdfBytes": 10,
                 **extra,
@@ -265,7 +265,7 @@ def test_a_link_is_short_lived_and_logged(
     )
     assert answer.status_code == 200, answer.text
     body = answer.json()
-    assert body["fileName"] == "ministry-pack-other-2026-08.xlsx" and body["url"].startswith(
+    assert body["fileName"] == "DesignWorkshop_Ministry_2026-08_Other_Monthly-Report.xlsx" and body["url"].startswith(
         "https://"
     )
     assert bucket.presigned[-1]["expires_in"] == 300
@@ -279,5 +279,5 @@ def test_a_link_is_short_lived_and_logged(
     payload = (
         world["client"].get(f"/api/ministry-exports/packs/{pack.id}", headers=bearer(viewer)).json()
     )
-    assert payload["files"]["xlsx"]["name"] == "ministry-pack-other-2026-08.xlsx"
+    assert payload["files"]["xlsx"]["name"] == "DesignWorkshop_Ministry_2026-08_Other_Monthly-Report.xlsx"
     assert payload["periodLabel"] == "August 2026" and payload["schemeLabel"] == "Other"

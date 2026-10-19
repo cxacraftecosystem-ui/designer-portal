@@ -11,9 +11,6 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.security.MessageDigest
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /**
  * The public entry point for exporting a [ReportDocument] from the device, entirely offline.
@@ -44,9 +41,6 @@ import java.time.format.DateTimeFormatter
  * retention rule first, not the store.
  */
 object ReportExport {
-
-    /** File-name stamp, matching the dataset zip and the .xlsx report so exports sort together. */
-    private val STAMP = DateTimeFormatter.ofPattern("ddMMyyyyHHmmss").withZone(ZoneId.systemDefault())
 
     /**
      * Where an export landed and what could not be put in it.
@@ -210,18 +204,14 @@ object ReportExport {
     }.getOrNull()
 
     /**
-     * "DesignWorkshop_<title>_<stamp>.<ext>", with everything a file system might object to removed.
+     * The NAMING 2.1 fallback when a caller passes no name: `DesignWorkshop_Workshop_<date>_<title>_Report`.
      *
      * The character filter is the same one the data-browser download uses. A craft name carrying a
      * slash ("Ikat/Bandha") or a colon produced a MediaStore insert that failed with a bare
      * IllegalArgumentException after the whole report had already been rendered.
      */
-    private fun defaultName(document: ReportDocument, ext: String): String {
-        val stem = document.meta.title
-            .replace(Regex("[^A-Za-z0-9._-]+"), "_")
-            .trim('_')
-            .take(60)
-            .ifEmpty { "report" }
-        return "DesignWorkshop_${stem}_${STAMP.format(Instant.now())}.$ext"
-    }
+    private fun defaultName(document: ReportDocument, ext: String): String =
+        com.designprototype.workshop.data.Naming.exportFilename(
+            "Workshop", "Report", ext, subject = document.meta.title.ifBlank { null },
+        )
 }

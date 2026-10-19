@@ -20,7 +20,7 @@ from pydantic import Field
 from app.api.routes.ministry_dashboard import require_ministry_dashboard_reader
 from app.core.db import db
 from app.schemas.common import APIModel
-from app.services import ministry_export as exports
+from app.services import ministry_export as exports, naming
 from app.services.xlsx_report import xlsx_response
 
 router = APIRouter(prefix="/ministry-dashboard/stage-data-exports", tags=["ministry"])
@@ -91,4 +91,4 @@ async def download_stage_data_export(
             status_code=status.HTTP_409_CONFLICT,
             detail="This export is not ready to download.",
         )
-    return xlsx_response(row.content.decode(), row.fileName or "ministry-stage-data.xlsx")
+    return xlsx_response(row.content.decode(), row.fileName or naming.export_filename("Ministry", "Export", "xlsx", subject="Stage Data"))

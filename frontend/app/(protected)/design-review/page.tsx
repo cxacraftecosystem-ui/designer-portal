@@ -168,10 +168,10 @@ import { isUnreachable } from "@/lib/failureTriage";
 import { canRunDesignWorkshops, roleLabel } from "@/lib/permissions";
 import { listPoolWorkshops, poolCountsLabel, poolFirstKind, type PoolWorkshop } from "@/lib/poolDirectory";
 import { formatDate } from "@/lib/format";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 import type { PageResult } from "@/lib/types";
 import {
   designWorkshopOptions,
-  UNTITLED_WORKSHOP,
   workshopCutSentence,
   workshopEmptyLabel,
   type WorkshopListState,
@@ -275,8 +275,8 @@ type ListFailure = { unreachable: boolean; note: string | null };
   apart goes in the `hint` — which `SearchableSelect` searches as well as draws, so the date and the
   craft stayed reachable when they stopped being in the label.
 
-  `UNTITLED_WORKSHOP` is imported for the one place this file still names a workshop in prose. The
-  fallback matters more than it looks: everything below `title` on a summary row is denormalised from
+  `workshopDisplayTitle` names a workshop wherever this file prints one in prose. The fallback
+  matters more than it looks: everything below `title` on a summary row is denormalised from
   stage 1 by `promoted_values()`, so a workshop created this morning legitimately has a title and
   nulls everywhere else.
 */
@@ -765,7 +765,7 @@ function DesignReview() {
                         : "grid w-full gap-0.5 rounded-md border border-line-200 bg-card px-3 py-2 text-left hover:border-purple-300 hover:bg-purple-50"
                     }
                   >
-                    <span className="truncate text-sm font-medium text-ink-900">{item.title || UNTITLED_WORKSHOP}</span>
+                    <span className="truncate text-sm font-medium text-ink-900">{workshopDisplayTitle(item)}</span>
                     <span className="text-xs text-ink-500">
                       {poolCountsLabel(item.openCounts)}
                       {item.startDate ? ` · ${formatDate(item.startDate)}` : ""}
@@ -1065,11 +1065,11 @@ function DesignReview() {
               <>
                 {/* The title alone, which is §2.3's label — a date after it would read as part of
                     the name in a sentence, and the row it came from is on screen above with the day
-                    it ran in its hint. `UNTITLED_WORKSHOP` is the shared fallback: everything below
+                    it ran in its hint. `workshopDisplayTitle` is the shared fallback: everything below
                     `title` on a summary row is denormalised from stage 1, so a workshop created this
                     morning legitimately has a title and nulls everywhere else. */}
                 Now reading{" "}
-                <span className="font-medium text-ink-700">{listedRow.title.trim() || UNTITLED_WORKSHOP}</span>.
+                <span className="font-medium text-ink-700">{workshopDisplayTitle(listedRow)}</span>.
               </>
             ) : ready ? (
               <>

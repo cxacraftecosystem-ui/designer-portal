@@ -47,7 +47,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from app.services import aadhaar_fingerprint
+from app.services import aadhaar_fingerprint, naming
 from app.services.artisan_identity import mask_aadhaar
 from app.services.records import derive_age, derive_experience_years
 from app.services.rich_text import plain_from_stored
@@ -296,7 +296,18 @@ def interview_label(interview: Any) -> str:
     names = artisan_names(interview)
     if names:
         return ", ".join(names)
-    return (getattr(interview, "title", None) or "").strip() or "Interview"
+    title = (getattr(interview, "title", None) or "").strip()
+    if title:
+        return title
+    # A blank title reads as its generated default (NAMING 2.4), never a bare "Interview" that
+    # twenty blank interviews would share.
+    return naming.session_title(
+        {
+            "participants": [],
+            "date": getattr(interview, "interviewDate", None),
+            "place": getattr(interview, "place", None),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

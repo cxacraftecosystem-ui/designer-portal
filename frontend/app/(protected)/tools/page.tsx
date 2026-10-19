@@ -29,6 +29,7 @@ import { parseCompletenessFilter, type CompletenessFilter as CompletenessValue }
 import { formatDate } from "@/lib/format";
 import { RECORD_UPDATE_HREF, RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { PageResult, ToolDocumentation } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 export default function ToolsPage() {
   const { user } = useAuth();
@@ -163,7 +164,7 @@ export default function ToolsPage() {
         icon={<Hammer className="h-5 w-5" aria-hidden />}
         actions={
           <>
-            {canDownloadDataset(user) ? <DownloadCsvButton path="/export/tools.csv" filename="tools.csv" /> : null}
+            {canDownloadDataset(user) ? <DownloadCsvButton path="/export/tools.csv" filename={exportFilename("Tool", "Export", "csv")} /> : null}
             {/* Gated, not merely locked: an ungated "New …" invited every tier to press a
                 button that lands on the route guard's refusal. Below researcher the honest UI is
                 no button, matching `require_record_creator` on the server. */}

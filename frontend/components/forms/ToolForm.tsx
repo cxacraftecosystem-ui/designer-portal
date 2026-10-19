@@ -47,13 +47,28 @@ import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch } from "@/lib/api";
 import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useFocusField, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
-import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
+import { collectExifMetadata, exifMetadataToRemark, inferMediaType, mediaKindWord, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
+import { recordingFilename, splitExtension } from "@/lib/naming";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
 import { makerOptions, traditionOptions } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { LiveCompleteness } from "@/components/records/LiveCompleteness";
+
+/**
+ * A process-stage capture, named by the convention (NAMING 2.1): the step number is in What, so
+ * `DesignWorkshop_Tool_2026-06-19_1017_Tray-Attachment_Step-3-Photo_01.jpg`.
+ */
+function stageStepFile(file: File, index: number, toolName: string | null | undefined): File {
+  const name = recordingFilename("Tool", splitExtension(file.name)[1], {
+    capturedAt: new Date(file.lastModified || Date.now()),
+    subject: toolName,
+    what: `Step-${index + 1}-${mediaKindWord(file)}`,
+    sequence: "01"
+  });
+  return new File([file], name, { type: file.type, lastModified: file.lastModified });
+}
 
 /*
   ── THE LINKED-ARTISAN LABEL MOVED, IT WAS NOT DROPPED ──────────────────────────────────────────
@@ -1346,7 +1361,7 @@ export function ToolForm({
             transcribeAudio: false
           })),
           ...stageFiles.map((file, index) => ({
-            files: [new File([file], `STAGE_STEP_${index + 1}_${file.name}`, { type: file.type, lastModified: file.lastModified })],
+            files: [stageStepFile(file, index, payload.toolkitName)],
             linkedRecordType: "tool",
             caption: `Process stage step ${index + 1} for ${payload.toolkitName || "tool"}`,
             location,
@@ -1501,7 +1516,7 @@ export function ToolForm({
       for (const [index, file] of stageFiles.entries()) {
         try {
           await uploadMediaFile({
-            file: new File([file], `STAGE_STEP_${index + 1}_${file.name}`, { type: file.type, lastModified: file.lastModified }),
+            file: stageStepFile(file, index, saved.toolkitName),
             linkedRecordType: "tool",
             linkedRecordId: saved.id,
             caption: `Process stage step ${index + 1} for ${saved.toolkitName}`,

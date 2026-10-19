@@ -90,7 +90,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.core.db import db
-from app.services import design_workshop_posts
+from app.services import design_workshop_posts, naming
 from app.services.concurrency import gather_reads
 from app.services.dictation_consent import MEDIA_TAG as DESIGN_WORKSHOP_TAG
 from app.services.s3 import delete_object
@@ -283,6 +283,18 @@ def _aware(value: Any) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+def workshop_title(workshop: Any) -> str:
+    """The typed title, or (only when blank) its generated default ``Workshop_Date_Place`` (NAMING
+    2.4) in place of a shared "Untitled workshop"."""
+    return str(getattr(workshop, "title", "") or "") or naming.session_title(
+        {
+            "entity": "Workshop",
+            "date": getattr(workshop, "date", None),
+            "place": getattr(workshop, "place", None),
+        }
+    )
+
+
 def build_windows(workshops: Iterable[Any]) -> list[WorkshopWindow]:
     """Every workshop as a half-open span ``[start, end)`` covering WHOLE DAYS.
 
@@ -332,7 +344,7 @@ def build_windows(workshops: Iterable[Any]) -> list[WorkshopWindow]:
         windows.append(
             WorkshopWindow(
                 id=workshop.id,
-                title=str(getattr(workshop, "title", "") or "Untitled workshop"),
+                title=workshop_title(workshop),
                 start=start,
                 end=end,
             )
@@ -453,7 +465,7 @@ async def run_ladder() -> LadderRun:
 
     windows = build_windows(workshops)
     workshop_titles: dict[str, str] = {
-        workshop.id: str(getattr(workshop, "title", "") or "Untitled workshop")
+        workshop.id: workshop_title(workshop)
         for workshop in workshops
     }
 
@@ -1099,7 +1111,7 @@ async def _claimed_detail(noun: str, title: str, claimed: set[str]) -> str:
     """The 409 for a discard of a row a design workshop claims, naming the workshop or workshops."""
     found = await db.designworkshop.find_many(where={"id": {"in": sorted(claimed)}})
     names = sorted(
-        f"“{getattr(workshop, 'title', '') or 'Untitled workshop'}”" for workshop in found
+        f"“{workshop_title(workshop)}”" for workshop in found
     )
     if not names:
         where = "a design workshop"
@@ -1144,7 +1156,7 @@ async def file_one_unmapped(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="That workshop no longer exists. Re-check the report for the current list.",
         )
-    workshop_title = str(getattr(workshop, "title", "") or "Untitled workshop")
+    shown_title = workshop_title(workshop)
     changed = await delegate.update_many(
         where={"id": record_id, "workshopId": None},
         data={"workshopId": workshop_id},
@@ -1164,7 +1176,7 @@ async def file_one_unmapped(
         "noun": noun,
         "title": title,
         "workshopId": workshop_id,
-        "workshopTitle": workshop_title,
+        "workshopTitle": shown_title,
     }
 
 

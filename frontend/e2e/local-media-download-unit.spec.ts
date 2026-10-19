@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
 import { baseMimeType, extensionForMime, fileDateStamp, localMediaFileName } from "@/lib/localMediaDownload";
+import { PORTAL } from "@/lib/namingPortal";
 
 const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
 
@@ -60,24 +61,29 @@ test.describe("localMediaFileName", () => {
     expect(localMediaFileName({ name: "..hidden.pdf", mimeType: "application/pdf", now: AT })).toBe("hidden.pdf");
   });
 
-  test("an unnamed recording is a dated voice note", () => {
-    expect(localMediaFileName({ mimeType: "audio/webm;codecs=opus", now: AT })).toBe("voice-note-2026-10-16-143005.webm");
-    expect(localMediaFileName({ name: "blob", mimeType: "audio/mp4", now: AT })).toBe("voice-note-2026-10-16-143005.m4a");
-    expect(localMediaFileName({ name: "   ", mimeType: "audio/ogg", now: AT })).toBe("voice-note-2026-10-16-143005.ogg");
+  // NAMING 2.1: <Portal>_<IST date>_<HHMM>_<What>.<ext>. Asserted by shape for "now" (the runner's
+  // zone is not IST) and exactly for an instant whose IST reading is fixed.
+  const DATED = (what: string, ext: string) =>
+    new RegExp(`^${PORTAL}_\\d{4}-\\d{2}-\\d{2}_\\d{4}_${what}\\.${ext}$`);
+
+  test("an unnamed recording is a dated Recording", () => {
+    expect(localMediaFileName({ mimeType: "audio/webm;codecs=opus", now: AT })).toMatch(DATED("Recording", "webm"));
+    expect(localMediaFileName({ name: "blob", mimeType: "audio/mp4", now: AT })).toMatch(DATED("Recording", "m4a"));
+    expect(localMediaFileName({ name: "   ", mimeType: "audio/ogg", now: AT })).toMatch(DATED("Recording", "ogg"));
   });
 
-  test("dates from the capture time when the caller has one", () => {
-    const captured = new Date(2026, 0, 2, 3, 4, 5).getTime();
+  test("dates from the capture time when the caller has one, in IST", () => {
+    const captured = Date.UTC(2026, 0, 1, 21, 34, 5); // 03:04 on 2 January in IST
     expect(localMediaFileName({ mimeType: "audio/webm", capturedAt: captured, now: AT })).toBe(
-      "voice-note-2026-01-02-030405.webm"
+      `${PORTAL}_2026-01-02_0304_Recording.webm`
     );
   });
 
   test("other unnamed kinds are named by kind, and .bin only when nothing is known", () => {
-    expect(localMediaFileName({ mimeType: "video/mp4", now: AT })).toBe("video-2026-10-16-143005.mp4");
-    expect(localMediaFileName({ mimeType: "image/jpeg", now: AT })).toBe("photo-2026-10-16-143005.jpg");
-    expect(localMediaFileName({ mimeType: "application/pdf", now: AT })).toBe("file-2026-10-16-143005.pdf");
-    expect(localMediaFileName({ now: AT })).toBe("file-2026-10-16-143005.bin");
+    expect(localMediaFileName({ mimeType: "video/mp4", now: AT })).toMatch(DATED("Video", "mp4"));
+    expect(localMediaFileName({ mimeType: "image/jpeg", now: AT })).toMatch(DATED("Photo", "jpg"));
+    expect(localMediaFileName({ mimeType: "application/pdf", now: AT })).toMatch(DATED("File", "pdf"));
+    expect(localMediaFileName({ now: AT })).toMatch(DATED("File", "bin"));
   });
 
   test("the stamp is zero-padded local time", () => {

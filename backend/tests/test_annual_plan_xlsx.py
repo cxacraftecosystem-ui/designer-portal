@@ -774,7 +774,7 @@ def test_the_export_filename_is_pure_ascii():
     because nothing here can emit a non-ASCII character. Said out loud so nobody replaces the simple
     header with the RFC 6266 form the record downloads need."""
     name = export_filename(2026)
-    assert name == "annual-plan-2026-27.xlsx"
+    assert name == "DesignWorkshop_Annual-Plan_FY2026-27_Export.xlsx"  # NAMING 2.1
     assert name.encode("ascii")
 
 

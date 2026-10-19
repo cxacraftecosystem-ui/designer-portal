@@ -59,6 +59,7 @@ import {
 // The app's one date format. `cachedListLine` takes the FORMATTED string, so this is the only place
 // the ISO stamp on `WorkshopListState.cachedAt` meets a locale.
 import { formatDate } from "@/lib/format";
+import { workshopDisplayTitle, type WorkshopTitleFields } from "@/lib/workshopTitle";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The two tables
@@ -171,16 +172,6 @@ export const GROUP_SUBMITTED_AND_ARCHIVED = "Submitted and archived";
 /** `endDate` in the past. Ordinary workshops only — the other table has no window. */
 export const GROUP_ENDED = "Ended";
 
-/**
- * What a workshop with no title reads as.
- *
- * Never an id, and never blank. Everything from `workshopCode` down on a `DwSummary` is
- * DENORMALISED from stage 1 and is null until stage 1 has been saved, so a freshly created workshop
- * legitimately arrives here with a title and nothing else — and a workshop created and abandoned
- * before stage 1 arrives with not even that. A blank row in a listbox is a row a reader cannot
- * describe, cannot search for, and cannot tell from the row above it.
- */
-export const UNTITLED_WORKSHOP = "Untitled workshop";
 
 /**
  * The page size EVERY workshop picker asks for. `RENDER_CAP`, and never a round number.
@@ -439,8 +430,15 @@ function day(iso: string | null | undefined): string {
  * covers `workshopCode` alongside title, craft and cluster, and every one of these pickers is
  * specified to point its box at that search.
  */
-function labelFor(title: string | null | undefined): string {
-  return present(title) || UNTITLED_WORKSHOP;
+/**
+ * What a workshop reads as: its typed title, else the generated default (NAMING 2.4,
+ * `workshopDisplayTitle`). Never an id, and never blank. Everything from `workshopCode` down on a
+ * `DwSummary` is DENORMALISED from stage 1 and is null until stage 1 has been saved, so a workshop
+ * created and abandoned before stage 1 can arrive with no title at all; a blank row in a listbox is
+ * a row a reader cannot describe, search for, or tell from the row above it.
+ */
+function labelFor(row: WorkshopTitleFields): string {
+  return workshopDisplayTitle(row);
 }
 
 /** The hint: the present members, joined by the middle dot both clients use everywhere else. */
@@ -673,7 +671,7 @@ export function designWorkshopOptions<Row extends DesignWorkshopRow>(
     return {
       option: {
         value: row.id,
-        label: labelFor(row.title),
+        label: labelFor(row),
         hint: hintFrom([statusWord, row.craftName, firstPresent(row.clusterName, row.state), day(row.startDate)])
       },
       heading,
@@ -682,7 +680,7 @@ export function designWorkshopOptions<Row extends DesignWorkshopRow>(
       // a creation date is the least-wrong stand-in for one. Two different questions, and answering
       // them with one value would either date rows that are undated or shuffle them arbitrarily.
       occurrence: firstPresent(row.startDate, row.createdAt),
-      title: labelFor(row.title),
+      title: labelFor(row),
       id: row.id
     };
   };
@@ -756,7 +754,7 @@ export function fieldWorkshopOptions<Row extends FieldWorkshopRow>(
     return {
       option: {
         value: row.id,
-        label: labelFor(row.title),
+        label: labelFor(row),
         hint: hintFrom([
           ended ? "Ended" : "",
           row.place,
@@ -767,7 +765,7 @@ export function fieldWorkshopOptions<Row extends FieldWorkshopRow>(
       // `startDate ?? date ?? createdAt` — `workshopOccurrenceDate`, which is Android parity with
       // `WorkshopDetailDto.occurrenceDate()` and is already the key four of the ten callers sort by.
       occurrence: firstPresent(row.startDate, row.date, row.createdAt),
-      title: labelFor(row.title),
+      title: labelFor(row),
       id: row.id
     };
   };

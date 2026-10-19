@@ -803,11 +803,13 @@ class TestDesignWorkshopHalf:
                 dwstageentry=[_entry("workshopSetup", {"workshopTitle": "Indigo fortnight"})],
             )
         )
-        body = _content(
-            manifest,
-            f"Design workshops/Bagru indigo fortnight/Stages/{SETUP_FOLDER}/Workshop details.txt",
+        # NAMING 2.1: the stage table is <Portal>_Workshop_..._Workshop-Details.txt in its folder.
+        folder = f"Design workshops/Bagru indigo fortnight/Stages/{SETUP_FOLDER}/"
+        path = next(
+            p for p in _paths(manifest) if p.startswith(folder) and p.endswith("_Workshop-Details.txt")
         )
-        assert "Workshop title: Indigo fortnight" in body
+        assert path.removeprefix(folder).startswith("DesignWorkshop_Workshop_")
+        assert "Workshop title: Indigo fortnight" in _content(manifest, path)
 
     def test_only_stages_that_hold_something_get_a_folder(self, monkeypatch):
         """Twenty-two folders of which most open on nothing is not navigable — the tree lists only

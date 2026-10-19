@@ -36,7 +36,7 @@ from app.schemas.questionnaire import (
     QuestionnaireSectionReorder,
     QuestionnaireSectionUpdate,
 )
-from app.services import answer_drafts, cross_portal_codes
+from app.services import answer_drafts, cross_portal_codes, naming
 from app.services.access import guard_record_edit, owner_download_scope
 from app.services.artisan_merge import redirect_ids
 from app.services.completeness import (
@@ -2371,8 +2371,11 @@ async def consolidated_questionnaire_csv(
     for row in consolidated_rows(payload):
         writer.writerow(row)
     name = payload.get("artisan", {}).get("name") or artisan_id
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-") or artisan_id
-    return csv_response(f"questionnaire-{slug}.csv", output.getvalue())
+    # NAMING 2.1: DesignWorkshop_Questionnaire_2026-10-18_Giriraj-Prasad-Chhipa_Export.csv
+    return csv_response(
+        naming.export_filename("Questionnaire", "Export", "csv", subject=name),
+        output.getvalue(),
+    )
 
 
 @router.delete("/interviews/{interview_id}", status_code=status.HTTP_204_NO_CONTENT)

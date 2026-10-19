@@ -1,5 +1,7 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.occurrenceDate
+import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.data.DesignWorkshopDto
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.WorkshopDetailDto
@@ -719,16 +721,24 @@ internal fun workshopCapLine(shown: Int, total: Int, kind: WorkshopListKind): St
  * coincidental craft match — and the hint is SEARCHED as well as shown, so nothing becomes
  * unreachable by moving it there.
  *
- * `"Untitled workshop"` rather than a blank row, because `title` is denormalised from stage 1 by
+ * The generated default (NAMING 2.4) rather than a blank row, because `title` is denormalised from stage 1 by
  * `promoted_values()` and a workshop whose stage 1 is unfinished legitimately has none. A blank row
  * is a choice a reader cannot make.
  */
 internal fun designWorkshopLabel(workshop: DesignWorkshopDto): String =
-    workshop.title.trim().ifBlank { "Untitled workshop" }
+    workshopDisplayTitle(
+        workshop.title,
+        date = workshop.startDate,
+        workshopCode = workshop.workshopCode,
+        clusterName = workshop.clusterName,
+        district = workshop.district,
+        state = workshop.state,
+        craftName = workshop.craftName,
+    )
 
 /** The same rule for a field workshop. */
 internal fun fieldWorkshopLabel(workshop: WorkshopDetailDto): String =
-    workshop.title.trim().ifBlank { "Untitled workshop" }
+    workshopDisplayTitle(workshop.title, date = workshop.occurrenceDate(), place = workshop.place)
 
 /**
  * The word for where a workshop stands, or null for a plain open one that needs no word.

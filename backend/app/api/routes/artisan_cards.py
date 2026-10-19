@@ -157,16 +157,14 @@ async def _photo_bytes(artisan_ids: list[str], viewer: Any, wanted: bool) -> dic
     return await asyncio.to_thread(artisan_card_pdf.load_photos, keys)
 
 
-PORTAL = naming.PORTAL_DESIGN_WORKSHOP
 def _card_file_name(faces: list[Any]) -> str:
     """One card names its artisan; a sheet is the day's artisan cards (services/naming.py)."""
     if len(faces) == 1:
         face = faces[0]
-        return naming.file_name(
-            PORTAL, "Artisan", "Artisan-Card", "pdf",
-            day=naming.ist_date(), place=face.cluster, craft=face.craft, subject=face.name,
+        return naming.export_filename(
+            "Artisan", "Artisan-Card", "pdf", place=face.cluster, craft=face.craft, subject=face.name
         )
-    return naming.file_name(PORTAL, "Artisan", "Artisan-Cards", "pdf", day=naming.ist_date())
+    return naming.export_filename("Artisan", "Artisan-Cards", "pdf")
 
 
 def _pdf(content: bytes, filename: str) -> Response:

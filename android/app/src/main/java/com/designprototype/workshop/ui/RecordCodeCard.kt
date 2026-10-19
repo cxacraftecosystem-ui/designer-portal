@@ -183,7 +183,10 @@ private suspend fun writeCodePng(
 ): SavedCode = withContext(Dispatchers.IO) {
     // Named after the CODE and nothing else — see the file header. Colons are illegal in a file name
     // on every filesystem this could be copied onto, so they become hyphens.
-    val name = "${entry.code.replace(':', '-')}.png"
+    // NAMING 2.1: DesignWorkshop_Workshop_DW-RJ-0012-A3_Record-Code.png — still the code and nothing else.
+    val name = com.designprototype.workshop.data.Naming.fileName(
+        entity = "Workshop", subject = entry.code, what = "Record-Code", ext = "png",
+    )
     val extent = entry.symbol.size + QUIET_MODULES * 2
     val side = extent * PNG_MODULE_PX
     val bitmap = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)

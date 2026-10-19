@@ -6,6 +6,7 @@ import type { DropdownOption } from "@/components/ui/Dropdown";
 import { apiFetch } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { User, Workshop } from "@/lib/types";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 /**
  * Shared vocabulary for the workshop-access screens (the request panel on /settings and the admin
@@ -199,8 +200,8 @@ export function workshopOccurrence(workshop: WorkshopNameParts): string {
 
 /** Clean human label for a workshop — title plus the day it ran, never an id. */
 export function workshopLabel(workshop: WorkshopNameParts | null | undefined): string {
-  if (!workshop) return "Untitled workshop";
-  const title = workshop.title?.trim() || "Untitled workshop";
+  if (!workshop) return workshopDisplayTitle(null);
+  const title = workshopDisplayTitle(workshop);
   const when = formatDate(workshopOccurrence(workshop) || null);
   return when === "-" ? title : `${title} · ${when}`;
 }

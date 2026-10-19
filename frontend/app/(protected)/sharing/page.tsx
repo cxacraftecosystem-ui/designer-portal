@@ -41,6 +41,7 @@ import type {
   User,
   Workshop
 } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 const TIER_LABEL: Record<DataAccessTier, string> = {
   DOWNLOAD: "Download (minimum)",
@@ -991,7 +992,7 @@ export default function SharingPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `data-${ownerLabel.replace(/[^A-Za-z0-9]+/g, "_")}.zip`;
+      a.download = exportFilename("Shared-Data", "Export", "zip", { subject: ownerLabel });
       a.click();
       URL.revokeObjectURL(url);
     }, "Download ready.");

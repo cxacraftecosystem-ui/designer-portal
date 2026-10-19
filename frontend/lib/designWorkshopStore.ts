@@ -154,6 +154,7 @@ import {
   triageFailure
 } from "@/lib/failureTriage";
 import { APP_RUN_ID, blocksRetry } from "@/lib/offline";
+import { sessionTitle } from "@/lib/naming";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Constants
@@ -4443,8 +4444,17 @@ async function runSyncUnderLease(): Promise<DwSyncResult> {
  * long as the connection stayed bad, which is the whole population this feature exists for, while
  * the duplicate this misses is the one the pass would have made anyway.
  */
+/**
+ * THE TITLE THE CREATE SENDS, and the one an interrupted create is looked up by: the typed title, or
+ * the generated default `Workshop_<day the draft was started>` (NAMING 2.4). Built only from fields
+ * that never change after the draft exists, so the lookup cannot miss the record its own POST made.
+ */
+function createTitle(draft: DwDraft): string {
+  return draft.header.title.trim() || sessionTitle({ entity: "Workshop", date: new Date(draft.createdAt) });
+}
+
 async function resolveInterruptedCreate(draft: DwDraft): Promise<DwSummary | "ambiguous" | null> {
-  const title = draft.header.title || "Untitled design workshop";
+  const title = createTitle(draft);
   const claimed = new Set(
     (await refreshDrafts()).map((row) => row.remoteId).filter((id): id is string => typeof id === "string")
   );
@@ -4834,7 +4844,7 @@ async function runSync(): Promise<DwSyncResult> {
           const created =
             resumed ??
             (await createDesignWorkshop({
-              title: draft.header.title || "Untitled design workshop",
+              title: createTitle(draft),
               templateId: draft.header.templateId,
               /*
                 THE HEADER'S THIRD BLOCK, BOTH KEYS, AND THE CREATE IS THE ONLY REQUEST THAT MAY

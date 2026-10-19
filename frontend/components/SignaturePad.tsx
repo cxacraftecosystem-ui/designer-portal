@@ -67,7 +67,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Eraser, PenLine, Undo2 } from "lucide-react";
 
-import { mediaTimestamp } from "@/lib/media";
+import { recordingFilename } from "@/lib/naming";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /** A point on the pad, as a fraction of its box. See the header for why these are not pixels. */
@@ -340,7 +340,7 @@ export function SignaturePad({
   }
 
   async function attach() {
-    const file = await signatureToPngFile(strokes, `Signature-${mediaTimestamp()}.png`);
+    const file = await signatureToPngFile(strokes, recordingFilename(null, "png", { capturedAt: new Date(), what: "Signature" }));
     if (!file) {
       setStatus("There is nothing on the pad to attach yet.");
       return;

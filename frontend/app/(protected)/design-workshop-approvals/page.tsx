@@ -48,6 +48,7 @@ import { isUnreachable } from "@/lib/offline";
 import { canApproveDesignWorkshops } from "@/lib/permissions";
 import type { DwClearedFilter, DwQueueSort } from "@/lib/reviewAids";
 import type { PageResult } from "@/lib/types";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 const PAGE_SIZE = 20;
 /** 300 ms, this app's number. Clearing the box does not wait. */
@@ -229,7 +230,7 @@ export default function ReportsToApprovePage() {
                 >
                   <div className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-ink-900">
-                      {workshop.title?.trim() || "Untitled design workshop"}
+                      {workshopDisplayTitle(workshop)}
                     </span>
                     <span className="block truncate text-xs text-ink-500">
                       {workshop.workshopCode ?? "No workshop code yet"}

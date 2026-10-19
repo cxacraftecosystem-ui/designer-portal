@@ -1063,6 +1063,15 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
     /**
+     * The `anyascii` table, for `data/Naming.kt` (NAMING_2026-10-18): the same table the server
+     * (`anyascii` on PyPI) and the browser (`any-ascii` on npm) transliterate with, so a name in
+     * Devanagari or Bengali comes out of all three clients spelled the same way. ICU's Any-Latin
+     * spells it differently from the other two. The tables are Java resources; proguard-rules.pro
+     * keeps the package so R8 cannot move the class away from them.
+     */
+    implementation("com.anyascii:anyascii:0.3.3")
+
+    /**
      * THE VENDORED TRACE ENGINE — the only way this app turns a photograph into vectors.
      *
      * `DwTraceRuntime` in `ui/designworkshop/DwSketchTraceEngine.kt` is the seam: six suspend

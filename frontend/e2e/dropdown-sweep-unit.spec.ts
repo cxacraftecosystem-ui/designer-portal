@@ -26,7 +26,6 @@ import {
   GROUP_ON_THIS_RECORD,
   GROUP_OPEN,
   GROUP_SUBMITTED_AND_ARCHIVED,
-  UNTITLED_WORKSHOP,
   designWorkshopOptions,
   fieldWorkshopOptions,
   workshopCutSentence,
@@ -38,6 +37,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 /**
  * THE DROPDOWN SWEEP'S REVIEW, PINNED — ten findings, and every assertion below fails against the
@@ -1014,11 +1014,13 @@ test("the label is the title alone and everything that tells two workshops apart
   // A workshop created and abandoned before stage 1 has a title and nothing else — and sometimes
   // not even that. A blank row in a listbox cannot be described, searched for, or told from the
   // row above it.
-  const bare = designWorkshopOptions(dwList([dw({ id: "w3", title: "   " })]), {
+  const bareRow = dw({ id: "w3", title: "   " });
+  const bare = designWorkshopOptions(dwList([bareRow]), {
     group: true,
     offPage: REFUSE
   }).options;
-  expect(bare[0].label).toBe(UNTITLED_WORKSHOP);
+  expect(bare[0].label).toBe(workshopDisplayTitle(bareRow));
+  expect(bare[0].label.startsWith("Workshop")).toBe(true);
   expect(bare[0].hint, "no gaps, no stray separators — the parts that are absent are absent").toBeUndefined();
 
   // §2.6: submitted and archived rows ARE offered, and the status word is what stops one being

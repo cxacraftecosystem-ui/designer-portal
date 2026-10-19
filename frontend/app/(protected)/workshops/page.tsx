@@ -68,6 +68,7 @@ import type {
 } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { LiveCompleteness } from "@/components/records/LiveCompleteness";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 // The API includes the workshop's linked crafts (not yet in the Workshop TS type); used to pre-fill
 // the "Crafts covered" selection when editing.
@@ -957,7 +958,7 @@ function WorkshopsPageBody() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <RowCompletenessRing block={workshop.completeness} />
-                        <OpenableRowLink href={RECORD_VIEW_HREF.workshop(workshop.id)}>{workshop.title?.trim() || "Untitled workshop"}</OpenableRowLink>
+                        <OpenableRowLink href={RECORD_VIEW_HREF.workshop(workshop.id)}>{workshopDisplayTitle(workshop)}</OpenableRowLink>
                       </div>
                       <div className="text-xs text-ink-500">{workshop.description ?? "-"}</div>
                     </td>

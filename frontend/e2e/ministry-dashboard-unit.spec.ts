@@ -533,7 +533,7 @@ test.describe("the downloads say what they hold", () => {
     // Silently handing over a different population than the one on screen would be worse than
     // handing over the whole one and saying which it is — so the page says which.
     expect(LIB).toContain("downloadRegister");
-    expect(LIB).toContain('downloadFile("/export/artisans.csv", "artisans.csv")');
+    expect(LIB).toContain('downloadFile("/export/artisans.csv", exportFilename("Artisan", "Export", "csv"))');
     // ONE LINE, WHATEVER THE FORMATTER DID TO IT. This sentence is JSX text and is wrapped wherever
     // it fits, so a raw substring check would be asserting the formatter's line breaks rather than
     // the copy.

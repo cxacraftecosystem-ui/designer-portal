@@ -13,12 +13,13 @@ import type {
   ArtisanImportReport,
   DwArtisanImportList
 } from "@/app/(protected)/officers/oversight";
+import { exportFilename } from "@/lib/naming";
 
 const base = (workshopId: string) => `/design-workshops/${encodeURIComponent(workshopId)}/roster`;
 
 /** The pro-forma with this workshop's Details sheet already filled in. */
 export function downloadRosterProForma(workshopId: string) {
-  return fetchFile(`${base(workshopId)}/pro-forma`, "artisan-list-pro-forma.xlsx");
+  return fetchFile(`${base(workshopId)}/pro-forma`, exportFilename("Artisan", "Pro-Forma", "xlsx", { dated: false }));
 }
 
 /** One multipart part, no scalars. Never set `Content-Type` — the browser writes the boundary. */

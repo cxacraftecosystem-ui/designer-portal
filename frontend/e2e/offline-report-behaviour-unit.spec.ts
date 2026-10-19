@@ -112,12 +112,17 @@ test.describe("the draft is read the way the server reads a workshop", () => {
 
 test.describe("what a file written on the device says beside it", () => {
   test("the file is named as the server names it", () => {
-    expect(reportFileName("DW-OD-2026-014", "x", "PDF", new Date("2026-10-10T00:00:00Z"))).toBe(
-      "DesignWorkshop_DW-OD-2026-014_20261010.pdf"
+    const at = new Date("2026-10-10T00:00:00Z");
+    expect(reportFileName({ workshopCode: "DW-OD-2026-014", title: "x" }, "PDF", at)).toBe(
+      "DesignWorkshop_Workshop_2026-10-10_DW-OD-2026-014_Report.pdf"
     );
-    expect(reportFileName(null, "Sambalpuri ikat / Barpali", "DOCX", new Date("2026-10-10T00:00:00Z"))).toBe(
-      "DesignWorkshop_Sambalpuri_ikat___Barpali_20261010.docx"
-    );
+    expect(
+      reportFileName(
+        { workshopCode: null, title: "Sambalpuri ikat / Barpali", clusterName: "Barpali", district: "Bargarh", craftName: "Ikat" },
+        "DOCX",
+        at
+      )
+    ).toBe("DesignWorkshop_Workshop_2026-10-10_Barpali-Bargarh_Ikat_Sambalpuri-Ikat-Barpali_Report.docx");
   });
 
   test("each kind of loss is named for what it is, and none of them mentions a server", () => {

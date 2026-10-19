@@ -198,3 +198,8 @@
 # Builder chains. R8 kept the classes but stripped members from all fifteen of them; keeping them whole
 # costs a few kilobytes and removes a second way for this to fail silently at a sign-in screen.
 -keep class com.google.android.libraries.identity.googleid.** { *; }
+
+# anyascii (data/Naming.kt) reads its tables as resources next to its own class: keep the class
+# and its package name so the lookup still finds them after shrinking.
+-keeppackagenames com.anyascii
+-keep class com.anyascii.** { *; }

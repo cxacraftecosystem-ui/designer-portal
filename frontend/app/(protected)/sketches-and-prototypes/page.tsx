@@ -217,6 +217,7 @@ import {
   CHOOSER_REFUSED_TITLE
 } from "./chooserSentences";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 /**
  * How many workshops the chooser asks for.
@@ -281,7 +282,7 @@ type ChosenVerdict = "unknown" | "allowed" | "refused" | "uncheckable";
  * offline may not even have that.
  */
 function workshopLabel(summary: DwSummary): string {
-  const title = summary.title?.trim() || "Untitled design workshop";
+  const title = workshopDisplayTitle(summary);
   const when = formatDate(summary.startDate ?? summary.createdAt ?? null);
   return when === "-" ? title : `${title} · ${when}`;
 }

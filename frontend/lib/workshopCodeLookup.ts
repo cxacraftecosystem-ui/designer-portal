@@ -45,6 +45,7 @@ import type {
   Workshop
 } from "@/lib/types";
 import { unresolvedWorkshopCodeMessage, type WorkshopCodeRef, type WorkshopRecordType } from "@/lib/workshopCodes";
+import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 /** The process record as this lookup reads it — the two fields it needs, and no more. */
 type ProcessSummary = { id: string; name: string; product?: { productName?: string | null } | null };
@@ -187,7 +188,7 @@ async function fetchHit(ref: WorkshopCodeRef): Promise<WorkshopCodeHit> {
       */
       const record = await getDesignWorkshop(ref.id);
       return {
-        label: record.title?.trim() || "Untitled design workshop",
+        label: workshopDisplayTitle(record),
         /*
           THE SAME WORDS THE LIST ROW SHOWS, so a designer confirming they scanned the right workshop
           reads it the way they already know it. The date goes through `formatDate` for that reason —

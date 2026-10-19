@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.userMessage
 
 import android.content.Intent
@@ -112,8 +113,6 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /**
  * Cards & tags — print a code for every artisan on the roster and every prototype in the workshop,
@@ -517,7 +516,20 @@ fun WorkshopCodesScreen(
                 exporting = true
                 exported = null
                 scope.launch {
-                    runCatching { writeSheet(context, repository, kind, cards) }
+                    // NAMING 2.1: DesignWorkshop_Workshop_2026-10-18_Bagru-Jaipur_Hand-Block-Printing_DW-RJ-0012_Artisan-Cards.pdf
+                    val setup = draft?.stages?.get("WORKSHOP_SETUP")?.values.orEmpty()
+                    fun setupText(key: String) = DwValues.text(setup[key]).trim().ifBlank { null }
+                    val sheetName = com.designprototype.workshop.data.Naming.workshopFilename(
+                        workshopCode = setupText("workshopCode"),
+                        title = draft?.title,
+                        clusterName = setupText("clusterName"),
+                        district = setupText("district"),
+                        state = setupText("state"),
+                        craftName = setupText("craftName"),
+                        what = "${workshopRecordTypeLabel(kind)} Cards",
+                        ext = "pdf",
+                    )
+                    runCatching { writeSheet(context, repository, kind, cards, sheetName) }
                         .onSuccess {
                             exported = it
                             onMessage("Saved ${it.fileName}")
@@ -965,11 +977,8 @@ private suspend fun writeSheet(
     repository: WorkshopRepository,
     kind: DwWorkshopRecordType,
     cards: List<DwCardRender>,
+    name: String,
 ): SheetExport = withContext(Dispatchers.IO) {
-    // The same stamp the report exports carry, so a designer's Downloads folder sorts the sheet
-    // beside the report it was cut for.
-    val stamp = DateTimeFormatter.ofPattern("ddMMyyyyHHmmss").withZone(ZoneId.systemDefault()).format(Instant.now())
-    val name = "DesignWorkshop_${workshopRecordTypeLabel(kind)}Cards_$stamp.pdf"
     val tmp = File(context.cacheDir, name)
     try {
         val pages = FileOutputStream(tmp).use { fos ->

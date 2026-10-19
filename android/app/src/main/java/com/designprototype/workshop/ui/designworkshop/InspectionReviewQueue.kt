@@ -39,6 +39,7 @@ import com.designprototype.workshop.data.canInspectDesignWorkshops
 import com.designprototype.workshop.data.dwInspectionReviewQueue
 import com.designprototype.workshop.data.dwInspectionWaitingLabel
 import com.designprototype.workshop.data.dwInspectionWaitingSentence
+import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
@@ -203,7 +204,15 @@ private fun QueueRow(row: DesignWorkshopDto, notes: List<DwQueuedInspectionNote>
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         Text(
-            row.title.ifBlank { "Untitled workshop" },
+            workshopDisplayTitle(
+                row.title,
+                date = row.startDate,
+                workshopCode = row.workshopCode,
+                clusterName = row.clusterName,
+                district = row.district,
+                state = row.state,
+                craftName = row.craftName,
+            ),
             color = MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold

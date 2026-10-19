@@ -71,6 +71,7 @@ import { downloadFile } from "@/lib/fileDownload";
 import { hasRank } from "@/lib/permissions";
 import type { DwStatus } from "@/lib/designWorkshops";
 import type { User } from "@/lib/types";
+import { exportFilename } from "@/lib/naming";
 
 /**
  * One sanction order, exactly as `sanction_payload` builds it.
@@ -740,5 +741,5 @@ export async function confirmSanctionImport(body: {
  * round trip that cannot lose anything.
  */
 export async function downloadSanctionProForma(): Promise<void> {
-  await downloadFile("/sanction-orders/pro-forma.xlsx", "sanction-orders-pro-forma.xlsx");
+  await downloadFile("/sanction-orders/pro-forma.xlsx", exportFilename("Sanction-Orders", "Pro-Forma", "xlsx", { dated: false }));
 }

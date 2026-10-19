@@ -406,7 +406,8 @@ class WorkshopOptionsTest {
     /** A workshop whose stage 1 is unfinished is still pickable, and does not render a blank row. */
     @Test
     fun `an untitled workshop is named rather than left blank`() {
-        assertEquals("Untitled workshop", designWorkshopOptions(listOf(dw("w1", title = "   "))).single().label)
+        // NAMING 2.4: the generated default, not a shared "Untitled workshop".
+        assertEquals("Workshop", designWorkshopOptions(listOf(dw("w1", title = "   "))).single().label)
     }
 
     /**

@@ -31,7 +31,7 @@ from io import BytesIO
 from typing import Any
 
 from app.core.db import db
-from app.services import design_workshop_data as dw
+from app.services import design_workshop_data as dw, naming
 from app.services.records import mask_identity_number
 from app.services.stage_schema import TextFormat, stages
 
@@ -240,7 +240,10 @@ def _write_workbook(
 
 
 def export_filename(at: datetime) -> str:
-    return f"ministry-stage-data-{at.strftime('%Y%m%d-%H%M')}.xlsx"
+    # NAMING 2.1: a snapshot that can repeat within a day carries its time.
+    return naming.export_filename(
+        "Ministry", "Export", "xlsx", at=at, with_time=True, subject="Stage Data"
+    )
 
 
 def job_payload(row: Any) -> dict[str, Any]:

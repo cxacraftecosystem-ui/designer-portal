@@ -47,6 +47,7 @@ import {
 } from "@/lib/twoFactor";
 import { leavingSetupDiscards, twoStepSwitchView, type TwoStepPhase } from "@/lib/twoStepSwitch";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { exportFilename } from "@/lib/naming";
 
 /** Which part of the conversation is on screen. */
 type Step =
@@ -167,7 +168,8 @@ export function TwoStepVerificationCard() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "recovery-codes.txt";
+    // NAMING 2.1: <Portal>_Account_2026-10-18_Recovery-Codes.txt — never the e-mail address.
+    link.download = exportFilename("Account", "Recovery-Codes", "txt");
     link.click();
     URL.revokeObjectURL(url);
   }
