@@ -136,15 +136,16 @@ async def test_an_interview_that_names_a_refused_workshop_refuses_the_queue_too(
     assert verdict.refusal
 
 
-async def test_an_interview_whose_workshop_was_never_asked_also_refuses(monkeypatch):
-    """Fail closed. "Nobody has asked the artisan yet" stops a send exactly as a refusal does."""
+async def test_an_interview_whose_workshop_never_answered_is_sent(monkeypatch):
+    """Consent is assumed by default (owner decision, 19 Oct 2026): no answer is not a refusal."""
     _install(
         monkeypatch,
         interviews={"interview-1": _interview("ws-1")},
         workshops={"ws-1": _workshop(DictationConsent.NOT_RECORDED)},
     )
     verdict = await transcription_verdict(_clip())
-    assert verdict.decision is SendDecision.REFUSED
+    assert verdict.may_send is True
+    assert verdict.refusal is None
 
 
 async def test_a_granted_workshop_permits_the_send_and_names_the_workshop(monkeypatch):
@@ -159,11 +160,24 @@ async def test_a_granted_workshop_permits_the_send_and_names_the_workshop(monkey
     assert verdict.workshop_id == "ws-1"
 
 
-async def test_a_workshop_that_cannot_be_read_at_all_refuses(monkeypatch):
-    """An unknown consent costs a named artisan's recorded voice leaving the device. It fails closed."""
+async def test_a_workshop_that_no_longer_exists_holds_no_refusal_and_is_sent(monkeypatch):
+    """A missing workshop is asked of the ledger like any other; with no refusal there it is sent."""
     _install(monkeypatch, interviews={"interview-1": _interview("ws-1")}, workshops={})
     verdict = await transcription_verdict(_clip())
+    assert verdict.may_send is True
+
+
+async def test_a_workshop_whose_consent_cannot_be_read_refuses(monkeypatch):
+    """A FAILED READ still fails closed: the store that failed may hold a refusal."""
+    fake = _install(monkeypatch, interviews={"interview-1": _interview("ws-1")}, workshops={})
+
+    async def _broken(*_a, **_k):
+        raise RuntimeError("database blinked")
+
+    fake.designworkshop = SimpleNamespace(find_unique=_broken)
+    verdict = await transcription_verdict(_clip())
     assert verdict.decision is SendDecision.REFUSED
+    assert verdict.refusal == dictation_consent.UNREADABLE
 
 
 # ---------------------------------------------------------------------------------------------

@@ -725,25 +725,24 @@ export const VERBS_NEED_A_CONNECTION =
  * trip whose only outcome is a refusal. Written ONCE and read by all three call sites, for the same
  * reason — three paraphrases of one rule is the drift this file exists to avoid.
  *
- * **NOT_RECORDED AND REFUSED GET DIFFERENT SENTENCES, and collapsing them would be the defect
- * `dictation_consent.gate_refusal` keeps two strings apart to avoid**: one is answered by asking the
- * artisan, and telling somebody to go and ask again when the answer is already on record is the sort
- * of instruction that teaches a designer to stop reading these messages.
+ * **ONLY A REFUSAL IS A CONSENT RUNG.** Consent is assumed by default and can be revoked (owner
+ * decision, 19 Oct 2026), so a workshop with no answer on record runs the verbs like a granted one.
  *
  * It names the fix rather than "ask an administrator", which would be wrong twice over — the 409 is
  * a 409 and not a 403 precisely because *"what is not in a state to permit the send is the
  * WORKSHOP"*, and the designer reading this is the person who can put it right.
  */
-export function consentNotGranted(consent: string | null | undefined): string {
-  const token = (consent ?? "").trim().toUpperCase();
-  if (token === "REFUSED") {
-    return "The artisan declined sharing, so AI tools are off.";
-  }
-  return "Needs the artisan's sharing consent first.";
+export function consentNotGranted(_consent?: string | null): string {
+  return "The artisan declined sharing, so AI tools are off.";
+}
+
+/** True only for a refusal on record: no answer is consent, assumed by default (19 Oct 2026). */
+export function consentRefused(consent: string | null | undefined): boolean {
+  return (consent ?? "").trim().toUpperCase() === "REFUSED";
 }
 
 /** The link drawn after {@link consentNotGranted}; it opens the consent card on the workshop page. */
-export const CONSENT_LINK_LABEL = "Record consent";
+export const CONSENT_LINK_LABEL = "Change consent";
 
 /** A photograph still only on this device has no server id to send, which is a different refusal. */
 export const MEDIA_NOT_UPLOADED_YET =
@@ -806,8 +805,7 @@ export const WORKSHOP_NOT_ON_SERVER_YET =
  * ── THE THREE-VALUED ANSWER, WHICH IS THE PART TO GET RIGHT ─────────────────────────────────────
  *   `null` — nothing at the workshop level stands in the way. A caller may go on to its own rungs.
  *   `""`   — the draft is still being read. INERT AND SILENT: the control must be disabled and no
- *            sentence drawn, because the floor answer is NOT_RECORDED and drawing its sentence would
- *            flash "nobody has been asked" on every workshop that has been asked.
+ *            sentence drawn, because a refusal on record may not have been read yet.
  *   a sentence — a refusal to render in place of the control's silence.
  *
  * **A CALLER MUST BRANCH ON `!== null` AND NEVER ON TRUTHINESS.** The empty string is a REFUSAL to
@@ -820,11 +818,11 @@ export function verbWorkshopRefusal(state: {
   ready: boolean;
   /** `useWorkshopConsent`'s `serverId` — null when this workshop has no copy on the server. */
   serverId: string | null;
-  /** The consent token off the draft. Never null; the floor is "NOT_RECORDED". */
+  /** The consent token off the draft. Never null; the floor is "NOT_RECORDED" (consent assumed). */
   decision: string;
 }): string | null {
   if (!state.ready) return "";
-  if (state.decision.trim().toUpperCase() !== "GRANTED") return consentNotGranted(state.decision);
+  if (consentRefused(state.decision)) return consentNotGranted(state.decision);
   /*
     THE NOT-YET-SYNCED RUNG IS *BELOW* THE CONSENT RUNG, WHICH IS THE ORDERING TO THINK ABOUT.
 
@@ -835,10 +833,9 @@ export function verbWorkshopRefusal(state: {
 
     Above the consent rung it would ALSO catch it, but it would then be shown on workshops where it
     is not the whole truth: this sentence promises that the verbs "become available" after the next
-    sync, and on a workshop whose recorded answer is REFUSED they will not. Underneath it, every one
-    of the four combinations gets a sentence that is unconditionally true — REFUSED says refused,
-    NOT_RECORDED says go and ask, and the sync sentence is drawn only where sync really is the one
-    thing missing.
+    sync, and on a workshop whose recorded answer is REFUSED they will not. Underneath it, every
+    combination gets a sentence that is unconditionally true — REFUSED says refused, and the sync
+    sentence is drawn only where sync really is the one thing missing.
   */
   if (!state.serverId) return WORKSHOP_NOT_ON_SERVER_YET;
   return null;

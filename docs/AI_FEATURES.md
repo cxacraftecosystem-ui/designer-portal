@@ -582,7 +582,8 @@ and contract; each portal generates its own.
   Regenerate on an edited summary while an automatic job is active claims that job for the
   researcher, so it runs on their key instead of being skipped.
 - **Consent.** The artisan's recorded answer is checked when Regenerate is pressed and again by the
-  worker at the moment of sending (`dictation_consent.INSIGHTS`). A refusal sends nothing.
+  worker at the moment of sending (`dictation_consent.INSIGHTS`). Consent is assumed by default
+  (owner decision, 2026-10-19): no answer sends, and a recorded refusal sends nothing.
 - **Who sees it.** Exactly who may read the transcript: an insight is a copy of it, so a media row is
   encoded for the viewer and, if its transcript does not survive, neither does the insight. The
   uploader or an admin may edit or regenerate it, except a person who inspects or supervises a

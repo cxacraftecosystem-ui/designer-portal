@@ -153,12 +153,12 @@ class DwAiVerbSurface(
 internal val LocalDwOpenConsent = staticCompositionLocalOf<(() -> Unit)?> { null }
 
 /**
- * The "Record consent" control drawn under a consent refusal. Draws nothing once consent is granted
- * (the refusal is then about something else) or where no host offers the route.
+ * The "Change consent" control drawn under a consent refusal. Draws nothing unless the answer on
+ * record is a refusal (consent is assumed by default) or where no host offers the route.
  */
 @Composable
 internal fun DwRecordConsentLink(consent: DwTier3Consent) {
-    if (consent == DwTier3Consent.GRANTED) return
+    if (consent != DwTier3Consent.REFUSED) return
     val open = LocalDwOpenConsent.current ?: return
     TextButton(onClick = open, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
         Text(DW_VERB_CONSENT_LINK_LABEL, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium)

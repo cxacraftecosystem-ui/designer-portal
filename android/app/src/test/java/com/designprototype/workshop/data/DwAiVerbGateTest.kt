@@ -84,27 +84,16 @@ class DwAiVerbGateTest {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * TWO SENTENCES AND NOT ONE. NOT_RECORDED is answered by asking the artisan; REFUSED has already
-     * been asked and answered, and telling somebody to go and ask again when the answer is on record is
-     * the sort of instruction that teaches a designer to stop reading these messages. This is the
-     * distinction `dictation_consent.gate_refusal` keeps two strings apart to preserve, on the device
-     * side of the same gate.
+     * CONSENT IS ASSUMED BY DEFAULT (owner decision, 19 Oct 2026): a workshop with no answer on record
+     * runs the verbs; only a recorded refusal stops them, with the sentence web prints too.
      */
     @Test
-    fun `an unasked consent and a refused one are never told in the same words`() {
-        val unasked = sentence(dwVerbGate(conditions(consent = DwTier3Consent.NOT_RECORDED)))
+    fun `no answer on record is consent and only a refusal stops a verb`() {
+        assertSame(DwVerbGate.Ready, dwVerbGate(conditions(consent = DwTier3Consent.NOT_RECORDED)))
         val refused = sentence(dwVerbGate(conditions(consent = DwTier3Consent.REFUSED)))
-        assertTrue(unasked != refused)
-
         // Web's words exactly (lib/aiVerbs.ts), so the two clients never disagree about the same gate.
-        assertEquals("Needs the artisan's sharing consent first.", unasked)
         assertEquals("The artisan declined sharing, so AI tools are off.", refused)
-        // The unasked one says consent is still needed; the refused one says the answer was given and
-        // does not ask for it again. The fix itself is the "Record consent" control beside both.
-        assertTrue(unasked.contains("consent first"))
-        assertTrue(refused.contains("declined"))
-        assertTrue(!refused.contains("first"))
-        assertEquals("Record consent", DW_VERB_CONSENT_LINK_LABEL)
+        assertEquals("Change consent", DW_VERB_CONSENT_LINK_LABEL)
     }
 
     /**
@@ -114,10 +103,10 @@ class DwAiVerbGateTest {
      */
     @Test
     fun `a consent refusal points at recording consent and not at an administrator`() {
-        // The fix is the "Record consent" control drawn beside the sentence, which opens the
-        // workshop's own consent card — the designer reading this is the one who can record it.
-        assertTrue(DW_VERB_CONSENT_LINK_LABEL.startsWith("Record"))
-        for (consent in listOf(DwTier3Consent.NOT_RECORDED, DwTier3Consent.REFUSED)) {
+        // The fix is the "Change consent" control drawn beside the sentence, which opens the
+        // workshop's own consent card — the designer reading this is the one who can switch it back on.
+        assertTrue(DW_VERB_CONSENT_LINK_LABEL.startsWith("Change"))
+        for (consent in listOf(DwTier3Consent.REFUSED)) {
             val words = sentence(dwVerbGate(conditions(consent = consent)))
             assertTrue(words.contains("consent") || words.contains("sharing"))
             assertTrue(!words.contains("administrator"))

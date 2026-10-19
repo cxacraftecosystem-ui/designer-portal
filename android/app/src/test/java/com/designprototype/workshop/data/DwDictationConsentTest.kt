@@ -304,7 +304,11 @@ class DwDictationConsentTest {
      */
     @Test
     fun `the gating sentences do not promise more than the gate does`() {
-        listOf(DwTier3Consent.NOT_RECORDED, DwTier3Consent.REFUSED).forEach { state ->
+        // Consent is assumed by default (19 Oct 2026): only a refusal gates, and says so.
+        assertTrue(
+            dwConsentStateSentence(DwTier3Consent.NOT_RECORDED, null).startsWith("On by default"),
+        )
+        listOf(DwTier3Consent.REFUSED).forEach { state ->
             val sentence = dwConsentStateSentence(state, null)
             assertFalse(
                 "The dictation gate is not the only gate, but it is still not everything: $sentence",
@@ -367,8 +371,10 @@ class DwDictationConsentTest {
         )
         assertTrue(
             "The question has to be put to the person whose voice it is",
-            DW_CONSENT_QUESTION.contains("Ask the artisan whose voice it is"),
+            DW_CONSENT_QUESTION.contains("Tell the artisan whose voice it is"),
         )
+        assertTrue("On by default, and switched off on a no", DW_CONSENT_QUESTION.startsWith("On by default"))
+        assertEquals("Recordings may be transcribed", DW_CONSENT_SWITCH_LABEL)
     }
 
     /**

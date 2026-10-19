@@ -1598,11 +1598,10 @@ async def dictate_for_workshop(
     ``dictateAudio`` takes a required ``workshopId``; the id-less URL now answers 410, so there is no
     longer a second way in for either of them to fall back to by accident.
 
-    **THE GATE.** ``DesignWorkshop.dictationConsent`` must be GRANTED. Until it is, this refuses with a
-    409 and a sentence naming the next move — and the next move is a person deciding, never a retry,
-    so neither refusal says "try again". The two states that refuse are NOT_RECORDED (nobody has asked
-    the artisan) and REFUSED (the artisan said no), and they get different sentences because they have
-    different next moves: see ``services/dictation_consent.gate_refusal``.
+    **THE GATE.** Consent is assumed by default and can be revoked (owner decision, 19 Oct 2026): a
+    refusal on record for the workshop or one of its linked artisans refuses with a 409 and a sentence
+    naming the next move — a person deciding, never a retry, so it never says "try again". No answer
+    on record sends. See ``services/dictation_consent.gate_refusal``.
 
     **A 409 AND NOT A 403.** A 403 is about the CALLER — this account may not do this — and would be
     wrong in both directions here: the designer is entitled to dictate, and a colleague with the same

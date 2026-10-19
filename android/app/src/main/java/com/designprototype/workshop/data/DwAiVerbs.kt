@@ -1012,7 +1012,8 @@ sealed interface DwVerbGate {
  */
 fun dwVerbGate(conditions: DwVerbConditions): DwVerbGate {
     if (!conditions.draftRead) return DwVerbGate.StillReading
-    if (conditions.consent != DwTier3Consent.GRANTED) {
+    // Consent is assumed by default (owner decision, 19 Oct 2026): only a recorded refusal stops a verb.
+    if (conditions.consent == DwTier3Consent.REFUSED) {
         return DwVerbGate.Refused(dwVerbConsentRefusal(conditions.consent))
     }
     if (!conditions.workshopOnServer) return DwVerbGate.Refused(DW_VERBS_WORKSHOP_NOT_ON_SERVER)
@@ -1173,8 +1174,9 @@ const val DW_VERBS_NEED_A_CONNECTION: String =
 fun dwVerbConsentRefusal(consent: DwTier3Consent): String = when (consent) {
     DwTier3Consent.REFUSED ->
         "The artisan declined sharing, so AI tools are off."
+    // Never reached through [dwVerbGate]: no answer is consent, assumed by default.
     DwTier3Consent.NOT_RECORDED ->
-        "Needs the artisan's sharing consent first."
+        "Sharing is on by default."
     // GRANTED never reaches here through [dwVerbGate], which tests for it first. It is spelled out
     // rather than left to an `else` so that a fourth consent state added to the enum fails to compile
     // here instead of silently inheriting the "nobody has been asked" sentence — which is the one
@@ -1184,7 +1186,7 @@ fun dwVerbConsentRefusal(consent: DwTier3Consent): String = when (consent) {
 }
 
 /** The control beside a consent refusal that opens the workshop's consent card. Web: `CONSENT_LINK_LABEL`. */
-const val DW_VERB_CONSENT_LINK_LABEL: String = "Record consent"
+const val DW_VERB_CONSENT_LINK_LABEL: String = "Change consent"
 
 /** A photograph the server has never seen cannot be described by a model running on the server. */
 const val DW_VERBS_MEDIA_NOT_UPLOADED: String =

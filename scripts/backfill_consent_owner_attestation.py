@@ -65,13 +65,15 @@ class Plan:
 
 
 def _refusal_sentences() -> set[str]:
+    """The refusal note, and the "nobody has recorded yet" note the gate wrote before consent was
+    assumed by default (19 Oct 2026), which is still stored on older recordings."""
     return {
-        sentence
-        for consent in (
-            dictation_consent.DictationConsent.NOT_RECORDED,
-            dictation_consent.DictationConsent.REFUSED,
-        )
-        if (sentence := dictation_consent.gate_refusal(consent, dictation_consent.MEDIA))
+        dictation_consent.legacy_waiting_sentence(dictation_consent.MEDIA),
+        str(
+            dictation_consent.gate_refusal(
+                dictation_consent.DictationConsent.REFUSED, dictation_consent.MEDIA
+            )
+        ),
     }
 
 

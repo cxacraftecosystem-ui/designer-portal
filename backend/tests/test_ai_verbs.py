@@ -1299,7 +1299,7 @@ def test_every_media_verb_says_which_files_it_can_work_on():
         assert tokens and words
 
 
-@pytest.mark.parametrize("consent", ["NOT_RECORDED", "REFUSED"])
+@pytest.mark.parametrize("consent", ["REFUSED"])
 def test_each_verb_gate_refuses_with_a_sentence_about_that_verb_and_not_about_dictation(
     monkeypatch, consent
 ):
@@ -1376,8 +1376,8 @@ def test_each_verb_gate_refuses_with_a_sentence_about_that_verb_and_not_about_di
         described = dictation_consent.SENDS[verb.value]
         assert described.destination in detail
         assert described.consequence in detail
-        # And the two consent states stay distinguishable at the route, not only in the service.
-        assert ("that is the answer on record" in detail) is (consent == "REFUSED")
+        # Only a recorded refusal stops a verb (consent is assumed by default, 19 Oct 2026).
+        assert "that is the answer on record" in detail
 
 
 def test_a_run_that_reached_a_provider_is_counted_even_when_it_is_then_refused(monkeypatch):

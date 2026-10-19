@@ -6,32 +6,21 @@
  * ────────────────────────────────────────────────────────────────────────────────────────────────
  * WHY THIS EXISTS AT ALL, WHICH IS A DEFECT AND NOT A FEATURE REQUEST.
  *
- * `DesignWorkshop.dictationConsent` gates `POST /{id}/dictate` and all five AI verbs. Anything other
- * than GRANTED is refused with a 409 whose last clause is, verbatim: *"Open the workshop's own
- * screen and record the artisan's answer to that question — until somebody does, this stays
- * unavailable."* On the handset that screen exists (`StageIndexScreen`'s consent row). On the web it
- * did not, and `DwSummary` did not even decode the column — so a designer following that
- * instruction went looking for a control that had never been built. **A refusal that names a control
- * which does not exist is worse than the capability simply being absent**, and it is why this landed
- * before any verb button did.
+ * `DesignWorkshop.dictationConsent` gates `POST /{id}/dictate` and all five AI verbs. Consent is
+ * assumed by default and can be revoked (owner decision, 19 Oct 2026), so only a REFUSED answer is
+ * refused (409), with a sentence sending the designer here to change it. On the handset the same
+ * control is `StageIndexScreen`'s consent row.
  *
  * ────────────────────────────────────────────────────────────────────────────────────────────────
- * FOUR THINGS THIS CARD WILL NOT DO.
+ * WHAT THIS CARD DOES AND WILL NOT DO.
  *
- * 1. **IT DOES NOT REDUCE THE QUESTION TO A SWITCH.** {@link DW_CONSENT_QUESTION} is on screen in
- *    full, above the buttons, because the person who ASKS is whoever is holding the laptop: with a
- *    label reading "allow cloud dictation" what the artisan is actually asked is whatever that
- *    designer improvises, no two artisans are asked the same thing, and there is no way afterwards
- *    to know what any of them agreed to. That is the whole difference between a consent and a
- *    checkbox, and it is Android's argument, transliterated rather than re-derived.
- * 2. **IT OFFERS TWO ANSWERS AND NEVER A THIRD.** `DictationConsentIn` refuses NOT_RECORDED by name
- *    — *"somebody deliberately wrote down that nobody has been asked" is not a state anybody is in*
- *    — so there is no "clear this". Taking a consent back is recording REFUSED, which is a decision
- *    with a next move and a row in the log.
- * 3. **IT DOES NOT GREY OUT THE ANSWER THAT IS ALREADY ON RECORD.** Recording the same answer again
- *    is legitimate: an artisan asked a second time and saying the same thing is worth a second row
- *    in the log. The only disabling here is while a write is in flight.
- * 4. **IT DOES NOT REFUSE THE ANSWER WHEN THERE IS NO SIGNAL.** See {@link recordDraftConsent} — the
+ * 1. **IT IS A SWITCH, ON BY DEFAULT.** "Recordings may be transcribed" is on unless a refusal is on
+ *    record. {@link DW_CONSENT_QUESTION} sits under the label in full, so every artisan is told the
+ *    same words, on the laptop and on the handset.
+ * 2. **IT RECORDS TWO ANSWERS AND NEVER A THIRD.** Switching off records REFUSED (which also stops
+ *    pending transcriptions); switching on records GRANTED. `DictationConsentIn` refuses NOT_RECORDED
+ *    by name, so there is no "clear this": NOT_RECORDED is only ever the absence of an answer.
+ * 3. **IT DOES NOT REFUSE THE ANSWER WHEN THERE IS NO SIGNAL.** See {@link recordDraftConsent} — the
  *    answer lands on this device first and the server hears about it when there is something to hear
  *    it over. A control that recorded consent only when it could reach the server would refuse the
  *    answer at the exact moment the artisan gave it, which is the moment it exists for.
@@ -44,15 +33,15 @@
  */
 
 import { useState } from "react";
-import { CheckCircle2, CloudOff, Loader2, ShieldQuestion } from "lucide-react";
+import { CheckCircle2, CloudOff, ShieldOff } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { Toggle } from "@/components/ui/Toggle";
 import { formatDateTime } from "@/lib/format";
 import {
-  DW_CONSENT_NO_LABEL,
   DW_CONSENT_QUESTION,
   DW_CONSENT_ROW_TITLE,
-  DW_CONSENT_YES_LABEL,
+  DW_CONSENT_SWITCH_LABEL,
   dictationConsentSentence,
   recordDesignWorkshopDictationConsent,
   type DwConsentDecision
@@ -116,7 +105,8 @@ export function DictationConsentCard({
 
   const mayRecord = canRunDesignWorkshops(user) && !readOnlyReason;
   const token = (consent ?? "").trim().toUpperCase();
-  const granted = token === "GRANTED";
+  // On unless a refusal is on record: no answer is consent, assumed by default.
+  const on = token !== "REFUSED";
 
   async function record(decision: DwConsentDecision) {
     setBusy(decision);
@@ -186,19 +176,19 @@ export function DictationConsentCard({
             chip repeats it, so the judgement survives greyscale and forced-colours mode. */}
         <span
           className={
-            granted
+            on
               ? "inline-flex items-center gap-1 rounded-full border border-success-600/25 bg-success-100 px-2 py-0.5 text-xs font-medium text-success-600"
               : "inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
           }
         >
-          {granted ? <CheckCircle2 className="h-3 w-3" aria-hidden /> : <ShieldQuestion className="h-3 w-3" aria-hidden />}
-          {token === "GRANTED" ? "They agreed" : token === "REFUSED" ? "They did not agree" : "Nobody has been asked"}
+          {on ? <CheckCircle2 className="h-3 w-3" aria-hidden /> : <ShieldOff className="h-3 w-3" aria-hidden />}
+          {token === "GRANTED" ? "They agreed" : token === "REFUSED" ? "Switched off" : "On by default"}
         </span>
       </div>
 
       {/* WHAT IS ON RECORD AND WHAT IT MEANS, in one sentence — "not recorded" on its own tells a
           designer nothing about why the controls on the stage they just left behaved as they did. */}
-      <p className={granted ? "text-sm leading-6 text-ink-700" : "text-sm leading-6 text-amber-800 dark:text-amber-100"}>
+      <p className={on ? "text-sm leading-6 text-ink-700" : "text-sm leading-6 text-amber-800 dark:text-amber-100"}>
         {dictationConsentSentence(consent)}
       </p>
 
@@ -218,45 +208,27 @@ export function DictationConsentCard({
         <p className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
           <CloudOff className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>
-            Not uploaded yet. AI tools unlock after the next sync.
+            Not uploaded yet. The server applies this answer after the next sync.
           </span>
         </p>
       ) : null}
 
       {mayRecord ? (
         <>
-          {/* THE QUESTION, IN FULL, ABOVE THE BUTTONS. See the file header for why it is not a
-              switch label. */}
-          <p className="rounded-md bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-700">{DW_CONSENT_QUESTION}</p>
-          {/* Recording REFUSED does more than close the gate and the designer should know before
-              they press: `cancel_pending_transcriptions` marks every queued transcription of this
-              workshop's recordings as failed. That is the difference between a consent and a
-              preference, and discovering it afterwards looks like the app losing work. */}
+          <Toggle
+            label={DW_CONSENT_SWITCH_LABEL}
+            description={DW_CONSENT_QUESTION}
+            checked={on}
+            busy={busy !== null}
+            busyLabel="Saving…"
+            onChange={(next) => void record(next ? "GRANTED" : "REFUSED")}
+          />
+          {/* Switching off does more than close the gate and the designer should know before they
+              press: `cancel_pending_transcriptions` marks every queued transcription of this
+              workshop's recordings as failed. Discovering it afterwards looks like lost work. */}
           <p className="text-xs leading-5 text-ink-500">
-            “They did not agree” also stops pending transcriptions. Recordings are kept.
+            Switching off also stops pending transcriptions. Recordings are kept.
           </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            {/* Both labels are sentences rather than verbs, and they are worded as the ARTISAN'S
-                answer rather than as a setting the designer is choosing for them. */}
-            <button
-              type="button"
-              className="field-button justify-center sm:flex-1"
-              disabled={busy !== null}
-              onClick={() => void record("GRANTED")}
-            >
-              {busy === "GRANTED" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-              {busy === "GRANTED" ? "Recording…" : DW_CONSENT_YES_LABEL}
-            </button>
-            <button
-              type="button"
-              className="field-button-secondary justify-center sm:flex-1"
-              disabled={busy !== null}
-              onClick={() => void record("REFUSED")}
-            >
-              {busy === "REFUSED" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-              {busy === "REFUSED" ? "Recording…" : DW_CONSENT_NO_LABEL}
-            </button>
-          </div>
         </>
       ) : (
         <p className="text-xs leading-5 text-ink-500">{readOnlyReason ?? NOT_YOURS_TO_RECORD}</p>

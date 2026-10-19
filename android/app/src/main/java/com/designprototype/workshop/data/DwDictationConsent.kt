@@ -319,7 +319,10 @@ fun dwConsentMerge(
  * narrowed the answer to rung 2.
  */
 const val DW_CONSENT_QUESTION: String =
-    "May recordings and dictation from this workshop be sent to a transcription service? A clip dictated into a field is not kept; attached audio is kept with the workshop. Ask the artisan whose voice it is, and record their answer."
+    "On by default: recordings and dictation from this workshop may be sent to a transcription service. A clip dictated into a field is not kept; attached audio is kept with the workshop. Tell the artisan whose voice it is, and switch this off if they say no."
+
+/** The switch's label (owner decision, 19 Oct 2026: consent is assumed by default and can be revoked). */
+const val DW_CONSENT_SWITCH_LABEL: String = "Recordings may be transcribed"
 
 /** The heading on the row, so it can be found by somebody who was told "it is on the workshop screen". */
 const val DW_CONSENT_ROW_TITLE: String = "Sending recordings out to be written down"
@@ -344,12 +347,10 @@ fun dwConsentStateSentence(consent: DwTier3Consent, recorded: DraftConsent?): St
             dwConsentSyncNote(recorded)
     }
 
-    // NOT the same sentence as REFUSED, and the difference is the entire reason this is three states:
-    // one is an answer and the other is the absence of one. Both gate; only this one is answered by
-    // somebody asking.
+    // No answer on record is consent, assumed by default (owner decision, 19 Oct 2026): it sends, and
+    // switching it off records the refusal that stops it.
     DwTier3Consent.NOT_RECORDED ->
-        "Not answered yet. Dictation uses the phone's own recogniser until it is." + DW_CONSENT_PHONE_RECOGNISER_CAVEAT +
-            DW_CONSENT_MEDIA_GATED_TOO
+        "On by default: recordings may be sent for transcription until someone switches it off."
 }
 
 /**
@@ -482,9 +483,6 @@ private fun dwConsentDay(value: String?): String? {
 const val DW_CONSENT_NOT_YOURS_TO_RECORD: String =
     "Only the workshop's designer or an admin can record this."
 
-/** The two buttons, worded as the artisan's answer rather than as a setting. */
-const val DW_CONSENT_YES_LABEL: String = "They agreed — may be sent out"
-const val DW_CONSENT_NO_LABEL: String = "They did not agree — keep it on the phone"
 
 /**
  * What a designer reads the moment an answer has been taken down — and WHERE it actually landed.

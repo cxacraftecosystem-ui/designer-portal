@@ -85,6 +85,7 @@ import {
   verbAllowanceRefusal,
     verbWorkshopRefusal,
   CONSENT_LINK_LABEL,
+  consentRefused,
   type DwAiVerbAllowanceState,
   type DwAiVerbResult
 } from "@/lib/aiVerbs";
@@ -241,7 +242,7 @@ export function AiVerbSelectionMenu({ workshopId, disabled, selectionChars, read
 
   /* ── The five pre-press states, in the server's own order ─────────────────── */
 
-  const granted = consent.decision.trim().toUpperCase() === "GRANTED";
+  const refused = consentRefused(consent.decision);
   const tooLong = selectionChars > MAX_VERB_TEXT_CHARS;
   const nothingSelected = selectionChars === 0;
 
@@ -353,7 +354,7 @@ export function AiVerbSelectionMenu({ workshopId, disabled, selectionChars, read
       {blocked ? (
         <p className="text-xs leading-5 text-ink-500">
           {blocked}
-          {consent.ready && !granted ? (
+          {consent.ready && refused ? (
             <>
               {" "}
               <Link href={`/design-workshops/${workshopId}#consent`} className="font-medium text-purple-700 dark:text-purple-300 underline">

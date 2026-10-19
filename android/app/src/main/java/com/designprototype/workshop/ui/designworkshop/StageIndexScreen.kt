@@ -2,6 +2,7 @@ package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.openable
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.AppToggle
 import com.designprototype.workshop.data.userMessage
 
 import android.content.Context
@@ -68,10 +69,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DW_CONSENT_NOT_YOURS_TO_RECORD
-import com.designprototype.workshop.data.DW_CONSENT_NO_LABEL
 import com.designprototype.workshop.data.DW_CONSENT_QUESTION
+import com.designprototype.workshop.data.DW_CONSENT_SWITCH_LABEL
 import com.designprototype.workshop.data.DW_CONSENT_ROW_TITLE
-import com.designprototype.workshop.data.DW_CONSENT_YES_LABEL
 import com.designprototype.workshop.data.DW_MAX_HITS
 import com.designprototype.workshop.data.DW_MIN_QUERY_CHARS
 import com.designprototype.workshop.data.DW_PROVENANCE_TITLE
@@ -613,26 +613,20 @@ fun StageIndexScreen(
 // =================================================================================================
 
 /**
- * THE ROW WHERE AN ARTISAN'S ANSWER IS PUT ON RECORD, and the question in the words it is asked in.
+ * THE ROW WHERE AN ARTISAN'S ANSWER IS PUT ON RECORD: a switch, ON by default.
  *
- * ── WHY THE QUESTION IS PRINTED IN FULL RATHER THAN REDUCED TO A SWITCH ────────────────────────
- *
- * This is the whole difference between a consent and a checkbox. The person who ASKS is the designer
- * holding this phone, and if the screen says only "Allow cloud dictation" then what the artisan is
- * actually asked is whatever that designer improvises — no two artisans asked the same thing, and no
- * way afterwards to know what any of them agreed to. So [DW_CONSENT_QUESTION] is on screen, in full,
- * above the two buttons, and the buttons are worded as the ARTISAN'S ANSWER ("they agreed") rather than
- * as a setting the designer is choosing for them.
+ * Consent is assumed by default and anyone can revoke it (owner decision, 19 Oct 2026), so the row is
+ * a setting: "Recordings may be transcribed", on unless a refusal is on record. Switching it off
+ * records REFUSED (which also stops pending transcriptions); switching it back on records GRANTED.
+ * [DW_CONSENT_QUESTION] is printed under the label in full, so what the artisan is told is the same
+ * words on every phone.
  *
  * ── NO GREYED CONTROLS, IN EITHER DIRECTION ────────────────────────────────────────────────────
  *
  * The viewers row above states the rule and this row follows it: an account that may not record this
- * gets a SENTENCE naming who can, never a disabled button, because "a greyed control refuses a tap
- * without saying why, which is how somebody concludes the app is broken". And the button matching the
- * CURRENT answer is not disabled either — recording the same answer again is a legitimate act (an
- * artisan asked a second time and saying the same thing is worth a second row in the log), and the
- * state sentence above already says which answer is on record. The only disabling here is while a
- * write is in flight, which is the same reason the microphone disables while a clip is uploading.
+ * gets a SENTENCE naming who can, never a disabled switch, because "a greyed control refuses a tap
+ * without saying why, which is how somebody concludes the app is broken". The only busy state is
+ * while a write is in flight, which is the same reason the microphone disables while a clip uploads.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -668,7 +662,7 @@ private fun DwDictationConsentRow(
         // stage they have just come from.
         Text(
             dwConsentStateSentence(state, consent),
-            color = if (state == DwTier3Consent.GRANTED) {
+            color = if (state != DwTier3Consent.REFUSED) {
                 MaterialTheme.field.body
             } else {
                 MaterialTheme.field.warning
@@ -676,20 +670,13 @@ private fun DwDictationConsentRow(
             style = MaterialTheme.typography.bodySmall,
         )
         if (mayRecord) {
-            Text(DW_CONSENT_QUESTION, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
-            // STACKED AND FULL WIDTH, not side by side: both labels are sentences rather than verbs,
-            // and two of them in one row would truncate to "They agreed —…" on the narrow handsets this
-            // fleet runs, which is where a consent control must be least ambiguous.
-            OutlinedButton(
-                onClick = { onRecord(DwTier3Consent.GRANTED) },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(DW_CONSENT_YES_LABEL) }
-            OutlinedButton(
-                onClick = { onRecord(DwTier3Consent.REFUSED) },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(DW_CONSENT_NO_LABEL) }
+            AppToggle(
+                label = DW_CONSENT_SWITCH_LABEL,
+                description = DW_CONSENT_QUESTION,
+                checked = state != DwTier3Consent.REFUSED,
+                busy = busy,
+                onCheckedChange = { on -> onRecord(if (on) DwTier3Consent.GRANTED else DwTier3Consent.REFUSED) },
+            )
         } else {
             Text(DW_CONSENT_NOT_YOURS_TO_RECORD, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
