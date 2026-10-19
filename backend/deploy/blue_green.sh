@@ -28,10 +28,12 @@
 # to notice. The previous release stays behind the other slot, so `rollback` is a start and a switch.
 #
 # MIGRATIONS RUN WHILE THE OLD RELEASE SERVES. Each release's migrations must therefore keep the
-# previous release working (add first, drop in a later release). If the schema engine finds no
-# pooler session (EMAXCONNSESSION) after three tries with the queue stopped, the live API is stopped
-# to free its sessions, as every deploy with a migration did before this file: the one case that
-# still has downtime, and it says so in the log.
+# previous release working (add first, drop in a later release). If `prisma migrate deploy` fails
+# three times with the queue stopped, for any reason, the live API is stopped and the migration tried
+# five more times, as every deploy with a migration did before this file. The case this is for is a
+# pooler with no session left for the schema engine (EMAXCONNSESSION), but the script cannot tell
+# that from any other failure, so a bad migration also costs the API until the old port is
+# restarted. It is the one path that still has downtime, and it says so in the log.
 #
 # The first deploy on the old layout (fieldrepo.service on 8000 through `current`) converts it: the
 # new release starts on 8001, and the old unit and its drop-ins are removed after the switch.
@@ -258,7 +260,7 @@ cmd_release() {
 
   if ! migrate "$tree" 3; then
     if [ -n "$old_unit" ]; then
-      say "::warning::the migration found no free pooler session with $old_unit serving; stopping it to free its sessions. The API is down until $UNIT@$cand answers /health."
+      say "::warning::prisma migrate deploy failed three times with $old_unit serving (read the attempts above: this fallback is for a pooler with no free session, EMAXCONNSESSION); stopping it to free its sessions and trying again. The API is down until $UNIT@$cand answers /health."
       sudo systemctl stop "$old_unit" || true
       old_stopped=yes
       sleep 5

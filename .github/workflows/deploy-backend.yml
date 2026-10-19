@@ -2714,8 +2714,10 @@ jobs:
       # twenty seconds; nginx is reloaded onto it and checked through nginx; and only then is the old
       # port stopped, `current` flipped (the `.released` marker after it, as before) and the queue
       # restarted. A failure before the switch stops the new port and leaves nginx on the old one,
-      # which never stopped. If the schema engine still finds no pooler session after three tries,
-      # the script stops the live API to free its sessions, the old stop-first path, and warns.
+      # which never stopped. If `prisma migrate deploy` fails three times, FOR ANY REASON (it is
+      # there for a pooler with no free session, but the script does not read the error, so a broken
+      # migration takes this path too), the script stops the live API, tries five more times, the
+      # old stop-first path, and warns.
       # The first run converts the box from fieldrepo.service; backend/DEPLOY_AWS.md has the layout,
       # `status`, `restart` and `rollback`.
       - name: Migrate, start the new release beside the live one, switch when healthy

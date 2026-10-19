@@ -225,9 +225,13 @@ is retried with sudo and otherwise left with a warning, never a red deploy.
 `backend/deploy/test_blue_green.sh` (Checks, "Deploy scripts") proves each path against stubs.
 
 **Migrations run while the old release serves,** so a release's migrations must keep the previous
-release working: add first, drop in a later release. If the schema engine finds no pooler session
-after three tries with the queue stopped, the script stops the live API and migrates again, the one
-path that still has downtime, with a warning in the log.
+release working: add first, drop in a later release. If `prisma migrate deploy` fails three times
+with the queue stopped, **for any reason**, the script stops the live API and tries five more times,
+the one path that still has downtime, with a warning in the log. The fallback exists for a pooler
+with no session left for the schema engine (EMAXCONNSESSION), but the script does not read the
+error, so a migration that is simply wrong also takes the API down for the five further attempts
+(about a minute) before the old port is restarted and the run fails. Read the three attempts in the
+log to tell the two apart.
 
 ```bash
 bash /home/ubuntu/app/current/backend/deploy/blue_green.sh status      # live port, each port's release
