@@ -1627,6 +1627,17 @@ private fun DwWorkshopNameField(
  * when the store moved to something the box does not already represent — which is what happens when
  * the caller switches to another collection row through the same composable.
  */
+/** The line under stage 1's craft name while it is the linked craft's. */
+internal const val DW_CRAFT_NAME_FROM_LIST = "From the linked craft. Change the craft to change it."
+
+/**
+ * Stage 1's `craftName` is the derived, read-only copy of `craftRef` (REQUIREMENTS_2026-10-20 §2.4):
+ * once a craft is linked, its name is the list's and is never typed. With no link yet the box keeps
+ * whatever an older workshop holds, and the craft picker beside it is the way forward.
+ */
+internal fun dwCraftNameLocked(field: FieldDto, rowValues: Map<String, JsonElement>): Boolean =
+    field.key == "craftName" && rowValues.containsKey("craftRef") && DwValues.text(rowValues["craftRef"]).isNotBlank()
+
 @Composable
 private fun ScalarInput(
     field: FieldDto,
@@ -1759,7 +1770,8 @@ private fun ScalarInput(
             value = if (spoken.isBlank()) buffer else appendSpoken(buffer, spoken),
             onValueChange = { raw -> if (spoken.isBlank()) commit(raw) },
             label = { Text(requiredMarked(fieldLabel(field))) },
-            enabled = enabled,
+            // Stage 1's craft name is the linked craft's (REQUIREMENTS_2026-10-20 §2.4): read-only.
+            enabled = enabled && !dwCraftNameLocked(field, rowValues),
             // Read-only for the seconds the recogniser is running. A keystroke landing in the middle
             // of a stream would be overwritten by the next partial, so the alternative is a box that
             // silently discards typing — which reads as a broken keyboard.
@@ -1773,7 +1785,8 @@ private fun ScalarInput(
             //
             // Only while the box is EMPTY: once they have typed their own figure the derivation is
             // overridden, and a line underneath still quoting a different number reads as an error.
-            supportingText = derivedHint?.takeIf { buffer.isBlank() }?.let { hint -> { Text(hint) } },
+            supportingText = (if (dwCraftNameLocked(field, rowValues)) DW_CRAFT_NAME_FROM_LIST else derivedHint?.takeIf { buffer.isBlank() })
+                ?.let { hint -> { Text(hint) } },
             minLines = minLines,
             singleLine = minLines == 1 && spoken.isBlank(),
             // Sentence case for text, and Next on a one-line box moves to the next field rather

@@ -84,3 +84,17 @@ test("the two shared craft files carry no portal-specific import", () => {
     }
   }
 });
+
+test("the two shared craft files are byte-identical to the documentation portal's, when it is checked out", () => {
+  // CI checks out one repository, so an absent sibling passes; side by side they must not differ.
+  const sibling = join(ROOT, "..", "..", "..", "documentation-portal", "frontend");
+  for (const file of ["components/forms/CraftSelect.tsx", "lib/craftCatalogue.ts"]) {
+    let theirs: string;
+    try {
+      theirs = readFileSync(join(sibling, file), "utf8");
+    } catch {
+      continue;
+    }
+    expect(theirs.replace(/\r\n/g, "\n"), file).toBe(read(file).replace(/\r\n/g, "\n"));
+  }
+});

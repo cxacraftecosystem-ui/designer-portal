@@ -292,7 +292,10 @@ import com.designprototype.workshop.data.CarryContextStore
 import com.designprototype.workshop.data.CarryNode
 import com.designprototype.workshop.data.CompletionCellDto
 import com.designprototype.workshop.data.CompletionMatrixDto
+import com.designprototype.workshop.data.CraftCatalogueCache
 import com.designprototype.workshop.data.CraftCreateRequest
+import com.designprototype.workshop.data.catalogueCraftDto
+import com.designprototype.workshop.ui.CraftPickerField
 import com.designprototype.workshop.data.DataAccessGrantDto
 import com.designprototype.workshop.data.DataAccessScopeItemDto
 import com.designprototype.workshop.data.DataAccessTierInfo
@@ -1982,6 +1985,13 @@ private fun RepositoryApp(
         onPreferencesChanged(syncAppPreferences(repository, latestPreferences, AppPreferencesStore(appContext)))
     }
 
+    // The craft list (REQUIREMENTS_2026-10-20 §2.4): fetched at sign-in when this device has none,
+    // and on app start when the copy is older than a day. A picker that opens online refreshes too.
+    LaunchedEffect(user?.id, passwordHeld) {
+        if (user == null || passwordHeld) return@LaunchedEffect
+        repository.refreshCraftCatalogueIfStale(appContext)
+    }
+
     // Offline outbox auto-sync: drain queued entries on login/start, whenever the network returns, and
     // on a periodic fallback. `pendingUploads` powers the "saved offline — uploading" banner.
     /**
@@ -3152,20 +3162,35 @@ internal suspend fun <T> loadCachedRegister(
     return load
 }
 
-/** The craft register, ALL-scoped and offline-cached — see the section header above for why. */
+/**
+ * The craft register: the craft CATALOGUE (REQUIREMENTS_2026-10-20 §2.4), the database's one list,
+ * kept in `filesDir/craft_catalogue.json` by [CraftCatalogueCache] with its ETag. The device's copy
+ * answers first, then the server's; offline the copy is the list.
+ */
 internal suspend fun loadCraftRegister(
     context: Context,
     repository: WorkshopRepository,
     onList: (List<CraftDto>) -> Unit,
-): RegisterLoad = loadCachedRegister(
-    context = context,
-    model = REGISTER_CRAFT,
-    decode = ::optionToCraft,
-    encode = ::craftToOption,
-    fetch = { repository.crafts() },
-    isTransient = repository::isTransient,
-    onList = onList,
-)
+): RegisterLoad {
+    var load = RegisterLoad(source = RegisterSource.NONE)
+    CraftCatalogueCache.cached(context)?.let { cached ->
+        onList(cached.crafts.map(::catalogueCraftDto))
+        load = RegisterLoad(
+            source = RegisterSource.CACHED,
+            fetchedAt = CraftCatalogueCache.fetchedAt()?.takeIf { it > 0 }?.let { Instant.ofEpochMilli(it).toString() },
+        )
+    }
+    val attempt = runCatching { repository.craftCatalogue(context) }
+    val fresh = attempt.getOrNull()
+    if (fresh != null && CraftCatalogueCache.lastRefreshReachedServer) {
+        onList(fresh.crafts.map(::catalogueCraftDto))
+        load = RegisterLoad(source = RegisterSource.LIVE, online = true)
+    } else {
+        val cause = attempt.exceptionOrNull()
+        load = load.copy(online = cause != null && !repository.isTransient(cause))
+    }
+    return load
+}
 
 /**
  * The artisan register, ALL-scoped and offline-cached — see the section header above for why.
@@ -11274,9 +11299,19 @@ private fun CraftForm(
     val isEdit = editing != null
     var name by remember(editing) { mutableStateOf(editing?.name ?: "") }
     var localName by remember(editing) { mutableStateOf(editing?.localName ?: "") }
-    var category by remember(editing) { mutableStateOf(editing?.category ?: "") }
-    var place by remember(editing) { mutableStateOf(editing?.place ?: "") }
+    // The craft's place on the list (REQUIREMENTS_2026-10-20 §2.4): Category → Sub-category, never typed.
+    var subCategoryId by remember(editing) { mutableStateOf(editing?.subCategoryId ?: "") }
+    var pickedCategoryId by remember(editing) { mutableStateOf("") }
+    var stateOfOrigin by remember(editing) { mutableStateOf(editing?.stateOfOrigin?.toSet() ?: emptySet()) }
+    var stateOfPractice by remember(editing) { mutableStateOf(editing?.stateOfPractice?.toSet() ?: emptySet()) }
+    var giStatus by remember(editing) { mutableStateOf(editing?.giStatus ?: "NON_GI") }
     var description by remember(editing) { mutableStateOf(editing?.description ?: "") }
+    val craftCatalogue by CraftCatalogueCache.catalogue.collectAsState()
+    LaunchedEffect(Unit) {
+        CraftCatalogueCache.cached(context)
+        runCatching { repository.craftCatalogue(context) }
+    }
+    var subCategoryError by remember { mutableStateOf<String?>(null) }
     val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
     var saving by remember { mutableStateOf(false) }
     var nameError by remember { mutableStateOf<String?>(null) }
@@ -11286,15 +11321,18 @@ private fun CraftForm(
         key = if (isEdit) "craft:edit:${editing!!.id}" else "craft:new",
         snapshot = {
             mapOf(
-                "name" to name, "localName" to localName, "category" to category, "place" to place,
-                "description" to description,
+                "name" to name, "localName" to localName, "subCategoryId" to subCategoryId,
+                "stateOfOrigin" to stateOfOrigin.joinToString("|"), "stateOfPractice" to stateOfPractice.joinToString("|"),
+                "giStatus" to giStatus, "description" to description,
             ) + media.draftFields("media")
         },
         restore = { v ->
             name = v["name"] ?: name
             localName = v["localName"] ?: localName
-            category = v["category"] ?: category
-            place = v["place"] ?: place
+            subCategoryId = v["subCategoryId"] ?: subCategoryId
+            v["stateOfOrigin"]?.let { stateOfOrigin = it.split("|").filter(String::isNotBlank).toSet() }
+            v["stateOfPractice"]?.let { stateOfPractice = it.split("|").filter(String::isNotBlank).toSet() }
+            giStatus = v["giStatus"] ?: giStatus
             description = v["description"] ?: description
             media.restoreDraft("media", v)
         },
@@ -11309,6 +11347,12 @@ private fun CraftForm(
         if (!validateRequired(listOf(
                 RequiredCheck(name.isBlank(), { nameError = it }, nameFocus)
             ))) { onError("Fill in the highlighted field."); return }
+        if (subCategoryId.isBlank()) {
+            subCategoryError = "Choose a sub-category."
+            onError("Fill in the highlighted field.")
+            return
+        }
+        subCategoryError = null
         scope.launch {
             // Late-submission gate: if the chosen workshop has ended, say what that means and save
             // only if the researcher confirms. Returns true immediately when there is nothing to say.
@@ -11319,8 +11363,10 @@ private fun CraftForm(
             val body = retry?.body ?: CraftCreateRequest(
                 name = name.trim(),
                 localName = localName.blankToNull(),
-                category = category.blankToNull(),
-                place = place.blankToNull(),
+                subCategoryId = subCategoryId,
+                stateOfOrigin = stateOfOrigin.toList(),
+                stateOfPractice = stateOfPractice.toList(),
+                giStatus = giStatus,
                 description = description.blankToNull(),
                 workshopId = workshop.value(),
                 recordedAt = if (isEdit) null else Instant.now().toString()
@@ -11360,6 +11406,7 @@ private fun CraftForm(
                     repository.createCraft(body, createKey).id
                 }
                 landed = true
+                CraftCatalogueCache.invalidate()
                 uploadAttachments(repository, context, media, "craft", craftId, name, "Field media for ${name.trim()}")
             }.onSuccess {
                 draft.discard()
@@ -11378,9 +11425,12 @@ private fun CraftForm(
             saving = false
         }
     }
-    val initialSig = remember(editing) { listOf(name, localName, category, place, description).joinToString("") }
+    val initialSig = remember(editing) {
+        listOf(name, localName, subCategoryId, stateOfOrigin.sorted().joinToString(), stateOfPractice.sorted().joinToString(), giStatus, description).joinToString("")
+    }
     val dirty = !saving && (
-        listOf(name, localName, category, place, description).joinToString("") != initialSig ||
+        listOf(name, localName, subCategoryId, stateOfOrigin.sorted().joinToString(), stateOfPractice.sorted().joinToString(), giStatus, description)
+            .joinToString("") != initialSig ||
             workshop.isDirty() || media.uris.isNotEmpty()
     )
 
@@ -11407,8 +11457,55 @@ private fun CraftForm(
         WorkshopField(state = workshop, saving = saving)
         RequiredInput("Craft name", name, nameError, nameFocus, titleCased = true) { name = it }
         TextInput("Local name", localName) { localName = it }
-        TextInput("Category", category) { category = it }
-        TextInput("Place", place, titleCased = true) { place = it }
+        // Category → Sub-category from the list (§2.4). Managing the categories themselves is web-only.
+        val categories = craftCatalogue?.categories.orEmpty().sortedBy { it.sortOrder }
+        val categoryId = craftCatalogue?.subCategoryParent(subCategoryId) ?: pickedCategoryId
+        DropdownField(
+            label = "Category *",
+            options = categories.map { it.id to it.name },
+            selectedValue = categoryId,
+            placeholder = "Choose a category",
+            includeNone = false,
+            emptyMessage = CraftCatalogueCache.OFFLINE_FIRST_RUN,
+        ) { picked ->
+            pickedCategoryId = picked
+            if (picked != categoryId) subCategoryId = ""
+        }
+        DropdownField(
+            label = "Sub-category *",
+            options = categories.firstOrNull { it.id == categoryId }?.subCategories.orEmpty()
+                .sortedBy { it.sortOrder }.map { it.id to it.name },
+            selectedValue = subCategoryId,
+            placeholder = if (categoryId.isBlank()) "Choose a category first" else "Choose a sub-category",
+            includeNone = false,
+            enabled = categoryId.isNotBlank(),
+        ) { subCategoryId = it; subCategoryError = null }
+        subCategoryError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        SearchableMultiSelectField(
+            label = "State of origin",
+            options = CraftCatalogueCache.STATE_OPTIONS.map { SelectOption(it, it) },
+            selected = stateOfOrigin,
+            placeholder = "Choose states",
+            searchable = true,
+            bulk = false,
+            onSelectedChange = { stateOfOrigin = it }
+        )
+        SearchableMultiSelectField(
+            label = "State of practice",
+            options = CraftCatalogueCache.STATE_OPTIONS.map { SelectOption(it, it) },
+            selected = stateOfPractice,
+            placeholder = "Choose states",
+            searchable = true,
+            bulk = false,
+            onSelectedChange = { stateOfPractice = it }
+        )
+        DropdownField(
+            label = "GI status *",
+            options = listOf("GI" to "GI", "NON_GI" to "Non GI"),
+            selectedValue = giStatus,
+            includeNone = false,
+            searchable = false,
+        ) { giStatus = it }
         // `Craft.description` is the craft's narrative and it prints in the report, so it takes both
         // controls. The single-line boxes above take neither: that is the user's own "only the larger
         // text boxes" rule, and `ui/RecordProseText.kt` carries the full enumeration of what was
@@ -11599,7 +11696,6 @@ private fun ArtisanForm(
     var dosItems by remember(editing) { mutableStateOf(splitNumbered(editing?.dos)) }
     var dontsItems by remember(editing) { mutableStateOf(splitNumbered(editing?.donts)) }
     var craftId by remember(editing) { mutableStateOf(editing?.craftId ?: prefill?.craftId ?: "") }
-    var newCraftName by remember(editing) { mutableStateOf("") }
     // THE WHOLE WORKSHOP QUESTION, IN ONE CONTROL: "Type of workshop", then "Workshop". The type
     // decides which register the second box lists and which of this record's two nullable columns
     // the answer is written to (R3), and it is NOT stored on the record — the workshop already
@@ -11641,11 +11737,10 @@ private fun ArtisanForm(
         craftId = ""
     }
     val canSetStatus = remember { canSetRecordStatus(repository.cachedUser()?.role) }
-    // Whether a typed new craft name will be accepted — `require_craft_manager`, Professor and up.
-    val canAddCraft = remember { repository.cachedUser()?.let { FieldPermissions.canManageCrafts(it) } == true }
     var status by remember(editing) { mutableStateOf(editing?.status ?: defaultCreateStatus(repository.cachedUser()?.role)) }
     var saving by remember { mutableStateOf(false) }
-    val hasCraft = craftId.isNotBlank() || newCraftName.isNotBlank()
+    // A craft from the list, never typed (REQUIREMENTS_2026-10-20 §2.4).
+    val hasCraft = craftId.isNotBlank()
     var nameError by remember { mutableStateOf<String?>(null) }
     var placeError by remember { mutableStateOf<String?>(null) }
     var craftError by remember { mutableStateOf<String?>(null) }
@@ -11677,7 +11772,7 @@ private fun ArtisanForm(
                 "craftStartDate" to (craftStartDate?.toString() ?: ""),
                 "experienceYears" to experienceYears, "experienceMonths" to experienceMonths,
                 "dos" to draftList(dosItems), "donts" to draftList(dontsItems), "craftId" to craftId,
-                "newCraftName" to newCraftName, "status" to status,
+                "status" to status,
             ) + media.draftFields("media")
         },
         restore = { v ->
@@ -11699,7 +11794,6 @@ private fun ArtisanForm(
             v["dos"]?.let { dosItems = parseDraftList(it).ifEmpty { listOf("") } }
             v["donts"]?.let { dontsItems = parseDraftList(it).ifEmpty { listOf("") } }
             craftId = v["craftId"] ?: craftId
-            newCraftName = v["newCraftName"] ?: newCraftName
             status = v["status"] ?: status
             media.restoreDraft("media", v)
         },
@@ -11846,7 +11940,7 @@ private fun ArtisanForm(
                             district = media.location?.district,
                             village = media.location?.village,
                             craftId = craftId.ifBlank { null },
-                            craftName = if (craftId.isBlank()) newCraftName.blankToNull() else null,
+                            craftName = null,
                             aadhaar = if (keepsStoredAadhaar) null else aadhaar.blankToNull(),
                             pehchanCardNumber = if (pehchanAvailable == true) pehchanNumber.blankToNull() else null,
                         )
@@ -11898,7 +11992,6 @@ private fun ArtisanForm(
                 dos = dosText,
                 donts = dontsText,
                 craftId = craftId.ifBlank { null },
-                craftName = if (craftId.isBlank()) newCraftName.blankToNull() else null,
                 workshopId = link.workshopId(),
                 designWorkshopId = link.designWorkshopId(),
                 status = status,
@@ -11960,7 +12053,7 @@ private fun ArtisanForm(
                     draft.discard(); media.reset()
                     onDone()
                 } else {
-                    val resolvedCraftName = crafts.firstOrNull { it.id == craftId }?.name ?: newCraftName.blankToNull()
+                    val resolvedCraftName = crafts.firstOrNull { it.id == craftId }?.name
                     val prefillOut = Prefill(
                         artisanId = artisanId,
                         artisanName = name.trim(),
@@ -12019,7 +12112,7 @@ private fun ArtisanForm(
         // The offer resolves a beat after the first composition, so until it does the handoff it was
         // built from stands in — otherwise the baseline and the prefill would disagree for one frame
         // and an untouched form would come out of it reading as edited.
-        craftId.exceptCarried(carry.offer?.context?.craftId ?: prefill?.craftId), newCraftName, status
+        craftId.exceptCarried(carry.offer?.context?.craftId ?: prefill?.craftId), status
     ).joinToString("\u0000")
     val initialSig = remember(editing) { formSignature() }
     val dirty = !saving && (
@@ -12032,7 +12125,7 @@ private fun ArtisanForm(
         evaluateCompleteness(
             rules,
             CompletenessKind.ARTISAN,
-            mapOf("dateOfBirth" to dateOfBirth, "craftStartDate" to craftStartDate, "craftId" to craftId.ifBlank { newCraftName }, "dos" to joinNumbered(dosItems), "donts" to joinNumbered(dontsItems), "locationId" to (media.location ?: editing?.location)),
+            mapOf("dateOfBirth" to dateOfBirth, "craftStartDate" to craftStartDate, "craftId" to craftId, "dos" to joinNumbered(dosItems), "donts" to joinNumbered(dontsItems), "locationId" to (media.location ?: editing?.location)),
             liveCompletenessCounts(rules, CompletenessKind.ARTISAN, editing?.completeness, mapOf("photos" to rememberImageCount(media.uris))),
         )
     }
@@ -12049,43 +12142,28 @@ private fun ArtisanForm(
         RecordWorkshopField(link = link, saving = saving)
         RequiredInput("Name", name, nameError, nameFocus, titleCased = true) { name = it }
         TextInput("Local name", localName) { localName = it }
-        /*
-          §3.5 REACHES THIS CONTROL AT LAST. It drew a silent empty menu before: `DropdownField` did
-          not forward `emptyMessage`, so a craft register that had failed to load and one that is
-          genuinely empty opened the identical popup with no words in it. The free-text escape below
-          ("Or new craft name") is why this field never LOST a record — but a designer who reads an
-          empty picker as "this craft is not in the system" types a duplicate of a craft that is.
-        */
+        // The craft is picked from the database's list (REQUIREMENTS_2026-10-20 §2.4); nothing is typed.
         CompletenessAnchor("craft", craftFocus) {
-            RegisterDropdownField(
-                label = "Craft *",
-                noun = "crafts",
-                options = crafts.map { it.id to it.name },
-                selectedValue = craftId,
-                load = craftRegister,
-                placeholder = "Select existing craft",
-                emptyLine = craftsEmptyLine(canAddCraft),
-                onSelect = { picked ->
-                    craftId = picked
+            CraftPickerField(
+                label = "Craft",
+                required = true,
+                selectedIds = listOfNotNull(craftId.ifBlank { null }),
+                fallbackNames = editing?.craft?.let { mapOf(it.id to it.name) }.orEmpty(),
+                isError = craftError != null,
+                supportingText = craftError,
+                refresh = { repository.craftCatalogue(context) },
+                modifier = Modifier.focusRequester(craftFocus),
+                onChange = { ids ->
+                    craftId = ids.firstOrNull().orEmpty()
+                    craftError = null
                     // An explicit pick replaces the remembered craft and retires the banner: from here on
                     // what is on screen is the researcher's own choice, not a suggestion.
-                    crafts.firstOrNull { it.id == picked }?.let {
+                    CraftCatalogueCache.catalogue.value?.craft(craftId)?.let {
                         carry.remember(CarryContext(craftId = it.id, craftName = it.name), explicit = true)
                     }
                 }
             )
         }
-        OutlinedTextField(
-            value = newCraftName,
-            onValueChange = { newCraftName = it },
-            label = { Text("Or new craft name") },
-            // Web parity (components/forms/ArtisanForm.tsx): the box says WHEN it is the one to fill
-            // in, which is the whole point of a field that is only sometimes the right one.
-            placeholder = { Text("Used when no existing craft is selected") },
-            isError = craftError != null,
-            supportingText = craftError?.let { msg -> { Text(msg) } },
-            modifier = Modifier.fillMaxWidth().focusRequester(craftFocus)
-        )
         RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
         DropdownField(
             label = "Gender",
@@ -12690,18 +12768,14 @@ private fun WorkshopForm(
             }
         }
         CompletenessAnchor("crafts") {
-            CheckboxMultiSelectField(
+            // From the craft list (REQUIREMENTS_2026-10-20 §2.4), several at once.
+            CraftPickerField(
                 label = "Crafts covered",
-                // The repository's own sentence for "answered, and this table has none" — see
-                // `unscopedEmptyLine`'s KDoc, which quotes this exact hand-rolled string (and its
-                // sibling below) as the two worked examples of the bug it exists to fix: a claim about
-                // the whole craft table, asserted from a read that this control never checks succeeded.
-                emptyMessage = unscopedEmptyLine("crafts"),
-                options = crafts.map { it.id to (it.name + (it.place?.let { p -> " · $p" } ?: "")) },
-                selectedIds = selectedCrafts
-            ) { id ->
-                selectedCrafts = if (selectedCrafts.contains(id)) selectedCrafts - id else selectedCrafts + id
-            }
+                multiple = true,
+                selectedIds = selectedCrafts.toList(),
+                fallbackNames = editing?.crafts?.mapNotNull { link -> link.craft?.let { it.id to it.name } }?.toMap().orEmpty(),
+                refresh = { repository.craftCatalogue(context) },
+            ) { next -> selectedCrafts = next.toSet() }
         }
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "workshop", recordId = editing!!.id, onError = onError)
@@ -12879,7 +12953,7 @@ private fun ProductForm(
     fun submit(forceOffline: Boolean = false, retry: OnlineAttempt<ProductCreateRequest>? = null) {
         if (!validateRequired(listOf(
                 RequiredCheck(productName.isBlank(), { productNameError = it }, productNameFocus),
-                RequiredCheck(craftName.isBlank(), { craftNameError = it }, craftNameFocus),
+                RequiredCheck(craftId.isBlank(), { craftNameError = it }, craftNameFocus),
                 RequiredCheck(artisanName.isBlank(), { artisanNameError = it }, artisanNameFocus),
                 RequiredCheck(place.isBlank(), { placeError = it }, placeFocus)
             ))) { onError("Fill in the highlighted field."); return }
@@ -13047,20 +13121,26 @@ private fun ProductForm(
         RequiredInput("Product name", productName, productNameError, productNameFocus, titleCased = true) { productName = it }
         TextInput("Local name", localName) { localName = it }
         DropdownField("Product type", productTypeOptions.map { it to it }, productType, includeNone = false) { productType = it }
-        DropdownField(
-            label = "Linked craft (fills craft name)",
-            options = crafts.map { it.id to it.name },
-            selectedValue = craftId,
-            placeholder = "Unlinked / type below"
-        ) { id ->
+        // The craft is picked from the list (REQUIREMENTS_2026-10-20 §2.4); its name is derived from it.
+        CraftPickerField(
+            label = "Craft",
+            required = true,
+            selectedIds = listOfNotNull(craftId.ifBlank { null }),
+            fallbackNames = if (craftId.isNotBlank() && craftName.isNotBlank()) mapOf(craftId to craftName) else emptyMap(),
+            isError = craftNameError != null,
+            supportingText = craftNameError,
+            refresh = { repository.craftCatalogue(context) },
+            modifier = Modifier.focusRequester(craftNameFocus),
+        ) { ids ->
+            val id = ids.firstOrNull().orEmpty()
             craftId = id
-            crafts.firstOrNull { it.id == id }?.let { craftName = it.name }
+            craftName = CraftCatalogueCache.catalogue.value?.craft(id)?.name.orEmpty()
+            craftNameError = null
             // Once the craft changes, drop a linked artisan that no longer belongs to it.
             if (id.isNotBlank() && artisanId.isNotBlank() && artisans.none { it.id == artisanId && it.craftId == id }) {
                 artisanId = ""
             }
         }
-        RequiredInput("Craft name", craftName, craftNameError, craftNameFocus, titleCased = true) { craftName = it }
         // Task 6: the artisan dropdown is gated on a linked craft and only lists that craft's artisans.
         val artisanOptionsForCraft = if (craftId.isNotBlank()) {
             artisans.filter { it.craftId == craftId || it.id == artisanId }
@@ -13640,7 +13720,7 @@ private fun ToolForm(
     fun submit(forceOffline: Boolean = false, retry: OnlineAttempt<ToolCreateRequest>? = null) {
         if (!validateRequired(listOf(
                 RequiredCheck(toolkitName.isBlank(), { toolkitNameError = it }, toolkitNameFocus),
-                RequiredCheck(craftName.isBlank(), { craftNameError = it }, craftNameFocus),
+                RequiredCheck(craftIds.isEmpty(), { craftNameError = it }, craftNameFocus),
                 RequiredCheck(artisanName.isBlank(), { artisanNameError = it }, artisanNameFocus),
                 RequiredCheck(place.isBlank(), { placeError = it }, placeFocus)
             ))) { onError("Fill in the highlighted field."); return }
@@ -13906,14 +13986,21 @@ private fun ToolForm(
             craftIds.filter { id -> crafts.none { it.id == id } }
                 .map { id -> offPageLinkRow(id, knownCraftNames[id], "craft") } +
                 crafts.map { SelectOption(it.id, it.name) }
-        SearchableMultiSelectField(
-            label = "Linked crafts (fills craft name)",
-            options = craftOptions,
-            selected = craftIds.toSet(),
-            placeholder = "Unlinked / type below",
-            emptyMessage = "No crafts have reached this device yet.",
-        ) { next -> onCraftsChanged(mergeSelection(craftIds, next, craftOptions.map { it.value })) }
-        RequiredInput("Craft name", craftName, craftNameError, craftNameFocus, titleCased = true) { craftName = it }
+        // Crafts come only from the list (REQUIREMENTS_2026-10-20 §2.4); the tool's craft name is derived.
+        CraftPickerField(
+            label = "Linked crafts",
+            required = true,
+            multiple = true,
+            selectedIds = craftIds,
+            fallbackNames = craftOptions.associate { it.value to it.label },
+            isError = craftNameError != null,
+            supportingText = craftNameError,
+            refresh = { repository.craftCatalogue(context) },
+            modifier = Modifier.focusRequester(craftNameFocus),
+        ) { next ->
+            craftNameError = null
+            onCraftsChanged(next)
+        }
         // GATED ON A LINKED CRAFT, exactly as the single-select was, and listing the artisans of
         // EVERY ticked craft — plus any already linked to this record, so a selection made before a
         // craft was unticked stays visible rather than disappearing out from under its own chip.
@@ -15314,16 +15401,13 @@ private fun ToolAssignScreen(
             placeholder = "Select a tool",
             includeNone = false
         ) { toolId = it }
-        CheckboxMultiSelectField(
+        // From the craft list (REQUIREMENTS_2026-10-20 §2.4), several at once.
+        CraftPickerField(
             label = "Crafts",
-            options = crafts.map { it.id to it.name },
-            selectedIds = craftIds,
-            // See `unscopedEmptyLine`'s KDoc — this literal string is the one it names by name as
-            // the motivating bug: a claim about the repository, worded as fact, from a read this
-            // control has no way to know actually answered.
-            emptyMessage = unscopedEmptyLine("crafts"),
-            onToggle = { id -> craftIds = if (craftIds.contains(id)) craftIds - id else craftIds + id }
-        )
+            multiple = true,
+            selectedIds = craftIds.toList(),
+            refresh = { repository.craftCatalogue(context) },
+        ) { next -> craftIds = next.toSet() }
         CheckboxMultiSelectField(
             label = "Artisans of selected crafts",
             options = artisansForCrafts.map { it.id to "${it.name} · ${it.place}" },

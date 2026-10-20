@@ -5558,7 +5558,7 @@ class WorkshopRepository(
     // artisan at all; these keep the total and pass the route's own `search`, so the box can reach
     // every record and the screen can say how many there are.
     suspend fun artisanPage(search: String?, completeness: String? = null) = api.artisans(pageSize = 100, search = search?.blankToNull(), completeness = completeness)
-    suspend fun craftPage(search: String?) = api.crafts(pageSize = 100, search = search?.blankToNull())
+    suspend fun craftPage(search: String?) = api.crafts(pageSize = 500, search = search?.blankToNull())
     suspend fun productPage(search: String?, completeness: String? = null) = api.products(pageSize = 100, search = search?.blankToNull(), completeness = completeness)
     suspend fun toolPage(search: String?, completeness: String? = null) = api.tools(pageSize = 100, search = search?.blankToNull(), completeness = completeness)
     suspend fun processPage(search: String?) = api.processes(pageSize = 100, search = search?.blankToNull())
@@ -5570,8 +5570,45 @@ class WorkshopRepository(
 
     suspend fun mediaPage(search: String?) = api.media(pageSize = 100, search = search?.blankToNull())
 
-    suspend fun crafts(createdBy: String? = null): List<CraftDto> =
-        api.crafts(pageSize = 100, createdBy = createdBy?.blankToNull()).items
+    /**
+     * Every craft: the catalogue on hand when there is one (REQUIREMENTS_2026-10-20 §2.4), else the
+     * list route at its 500-row page. `createdBy` (My Activity) always asks the route.
+     */
+    suspend fun crafts(createdBy: String? = null): List<CraftDto> {
+        val catalogue = CraftCatalogueCache.catalogue.value
+        if (createdBy.isNullOrBlank() && catalogue != null) return catalogue.crafts.map(::catalogueCraftDto)
+        return api.crafts(pageSize = 500, createdBy = createdBy?.blankToNull()).items
+    }
+
+    /**
+     * The craft catalogue, revalidated with its ETag (REQUIREMENTS_2026-10-20 §2.3-§2.4). Returns the
+     * newest list on hand — the server's, or the device's when offline — and throws only when there
+     * is no copy at all. Every craft picker and the craft register read this.
+     */
+    suspend fun craftCatalogue(context: Context): CraftCatalogue? =
+        CraftCatalogueCache.refresh(context) { etag ->
+            val response = api.craftCatalogue(ifNoneMatch = etag)
+            when {
+                response.code() == 304 -> CraftCatalogueCache.Fetch.NotModified
+                response.isSuccessful -> CraftCatalogueCache.Fetch.Fresh(
+                    body = response.body()?.string().orEmpty(),
+                    etag = response.headers()["ETag"],
+                )
+                else -> throw HttpException(response)
+            }
+        }
+
+    /** At sign-in and app start: refresh only a copy older than a day (or none). Never throws. */
+    suspend fun refreshCraftCatalogueIfStale(context: Context) {
+        if (CraftCatalogueCache.isStale(context)) runCatching { craftCatalogue(context) }
+    }
+
+    /** Content admins: the whole list with LEGACY and MERGED rows and reference counts. Not cached. */
+    suspend fun fullCraftCatalogue(): CraftCatalogue? {
+        val response = api.craftCatalogue(includeInactive = true)
+        if (!response.isSuccessful) throw HttpException(response)
+        return CraftCatalogueCache.parse(response.body()?.string().orEmpty())
+    }
 
     suspend fun products(createdBy: String? = null): List<ProductDetailDto> =
         api.products(pageSize = 100, createdBy = createdBy?.blankToNull()).items
@@ -6752,8 +6789,12 @@ class WorkshopRepository(
 
     // The app-wide search panel's three list sources (`ui/AppSearchSources.kt`). Each is the list
     // route's own `search` filter, so a match means what it means on that list's screen.
-    suspend fun searchCrafts(query: String, pageSize: Int = 10): List<CraftDto> =
-        api.crafts(pageSize = pageSize, search = query.trim()).items
+    suspend fun searchCrafts(query: String, pageSize: Int = 10): List<CraftDto> {
+        // The catalogue's own ranking when the list is on the device, so search works offline too.
+        val catalogue = CraftCatalogueCache.catalogue.value
+        if (catalogue != null) return CraftCatalogueCache.search(catalogue, query).take(pageSize).map(::catalogueCraftDto)
+        return api.crafts(pageSize = pageSize, search = query.trim()).items
+    }
 
     suspend fun searchProcesses(query: String, pageSize: Int = 10): List<ProcessDetailDto> =
         api.processes(pageSize = pageSize, search = query.trim()).items

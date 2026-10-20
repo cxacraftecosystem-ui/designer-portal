@@ -345,6 +345,33 @@ data class CraftDto(
     val extraMetadata: JsonObject? = null,
     /** The record's version, the base an offline correction is composed against (2026-10-16). */
     val updatedAt: String? = null,
+    // The master-list identity and attributes (REQUIREMENTS_2026-10-20 §2.2-§2.3).
+    val slug: String? = null,
+    val subCategoryId: String? = null,
+    val categoryId: String? = null,
+    val sourceSerial: Int? = null,
+    val stateOfOrigin: List<String> = emptyList(),
+    val stateOfPractice: List<String> = emptyList(),
+    val giStatus: String? = null,
+    val isCatchAll: Boolean = false,
+    /** ACTIVE is on the list; LEGACY predates it and waits for review; MERGED folded into another. */
+    val status: String? = null,
+)
+
+/** A catalogue row as the [CraftDto] every form and list already reads. */
+fun catalogueCraftDto(craft: CatalogueCraft): CraftDto = CraftDto(
+    id = craft.id,
+    name = craft.name,
+    localName = craft.localName,
+    slug = craft.slug,
+    subCategoryId = craft.subCategoryId,
+    categoryId = craft.categoryId,
+    sourceSerial = craft.sourceSerial,
+    stateOfOrigin = craft.stateOfOrigin,
+    stateOfPractice = craft.stateOfPractice,
+    giStatus = craft.giStatus,
+    isCatchAll = craft.isCatchAll,
+    status = craft.status ?: "ACTIVE",
 )
 
 @Serializable
@@ -1142,9 +1169,16 @@ data class ReviewEditRequest(
 data class CraftCreateRequest(
     val name: String,
     val localName: String? = null,
+    /** Ignored by the server since the master list (§2.2): the category is the sub-category's. Left null. */
     val category: String? = null,
     val description: String? = null,
     val place: String? = null,
+    /** Required on create (REQUIREMENTS_2026-10-20 §2.3): the craft's place on the list. */
+    val subCategoryId: String? = null,
+    val stateOfOrigin: List<String>? = null,
+    val stateOfPractice: List<String>? = null,
+    /** "GI" or "NON_GI". */
+    val giStatus: String? = null,
     // The workshop this craft was documented at. Every record form ASKS the workshop question — four
     // of the five open with it, the questionnaire draws it fourth under its own declared order (see
     // `RecordWorkshopField`), and `CraftForm` mounts `WorkshopField` alone because a Craft has no
