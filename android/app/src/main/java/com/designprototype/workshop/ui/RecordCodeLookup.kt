@@ -29,6 +29,7 @@ import com.designprototype.workshop.data.CardResolution
 import com.designprototype.workshop.data.DwWorkshopCodeRef
 import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.data.DwWorkshopScan
+import com.designprototype.workshop.data.OfflineOutbox
 import com.designprototype.workshop.data.ScanAction
 import com.designprototype.workshop.data.ScanCardAnswer
 import com.designprototype.workshop.data.ScanCardKind
@@ -42,6 +43,7 @@ import com.designprototype.workshop.data.ScanRecordAnswer
 import com.designprototype.workshop.data.ScanServices
 import com.designprototype.workshop.data.ScanTarget
 import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.cardWaitingToSync
 import com.designprototype.workshop.data.dispatchScan
 import com.designprototype.workshop.data.readWorkshopScan
 import com.designprototype.workshop.data.unresolvedWorkshopCodeMessage
@@ -245,6 +247,16 @@ fun designerScanCardKind(raw: String): ScanCardKind = when {
     else -> ScanCardKind.NONE
 }
 
+/** Every queued outbox body on this phone; empty when the queue cannot be read. */
+private suspend fun queuedPayloads(context: Context): List<String> =
+    try {
+        OfflineOutbox.all(context).map { it.payloadJson }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        emptyList()
+    }
+
 /** The designer app's answers to the dispatcher: the cached register first, then the server. */
 fun designerScanServices(context: Context, repository: WorkshopRepository): ScanServices = object : ScanServices {
     override val portal = ScanPortal.DESIGNER
@@ -258,22 +270,30 @@ fun designerScanServices(context: Context, repository: WorkshopRepository): Scan
             is CardResolution.Replaced ->
                 if (answer.artisanId.isBlank()) ScanCardAnswer.Refused(CARD_REPLACED) else ScanCardAnswer.Replaced(answer.artisanId)
             CardResolution.Remote -> ScanCardAnswer.Peer
-            // A card this phone has not seen, with no signal: nothing to open until it resolves.
-            is CardResolution.Pending -> ScanCardAnswer.Offline
+            // No signal and no row in the cached register. A card already queued on this phone
+            // (`card:<shortCode>` in an outbox entry) is named as waiting to sync; any other is offline.
+            is CardResolution.Pending ->
+                if (cardWaitingToSync(answer.card, queuedPayloads(context))) {
+                    ScanCardAnswer.Refused(ArtisanCardCode.pendingLabel(ArtisanCardCode.pendingValue(answer.card)))
+                } else {
+                    ScanCardAnswer.Offline
+                }
             is CardResolution.Refused -> ScanCardAnswer.Refused(answer.message)
         }
 
-    override suspend fun lookUpRecord(recordType: String, id: String): ScanRecordAnswer {
-        val type = DwWorkshopRecordType.ofWire(recordType) ?: return ScanRecordAnswer.Missing
-        if (type == DwWorkshopRecordType.PROTOTYPE) return ScanRecordAnswer.Missing
+    override suspend fun lookUpRecord(recordType: String, id: String, code: String): ScanRecordAnswer {
+        val type = DwWorkshopRecordType.ofWire(recordType) ?: return ScanRecordAnswer.Missing()
+        if (type == DwWorkshopRecordType.PROTOTYPE) return ScanRecordAnswer.Missing()
         return try {
             val hit = fetchRecordCodeHit(repository, DwWorkshopCodeRef(type, id))
             ScanRecordAnswer.Found(hit.label, hit.detail)
         } catch (e: CancellationException) {
             throw e
         } catch (_: HttpException) {
-            // One answer for "no such record" and "not yours", as the API gives it.
-            ScanRecordAnswer.Missing
+            // One answer for "no such record" and "not yours", as the API gives it. A design
+            // workshop the reader cannot open yet is named for "Ask to join {title}" (D34).
+            val title = if (type == DwWorkshopRecordType.DESIGN_WORKSHOP) dwScannedWorkshopTitle(context, code) else null
+            ScanRecordAnswer.Missing(title)
         } catch (_: Exception) {
             ScanRecordAnswer.Offline
         }

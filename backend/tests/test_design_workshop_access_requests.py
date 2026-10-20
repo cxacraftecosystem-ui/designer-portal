@@ -818,3 +818,54 @@ def test_deciding_a_request_that_does_not_exist_is_a_404(client, world):
     response = _decide(world, f"cmsnosuchrequest{uuid.uuid4().hex[:8]}", "GRANTED")
     assert response.status_code == 404, response.text
     assert response.json()["detail"] == "Record not found"
+
+
+# --------------------------------------------------------------------------------------
+# The title a scanned code may show (owner decision 2026-10-20, D34)
+# --------------------------------------------------------------------------------------
+
+
+def _preview(world: dict[str, Any], slug: str, code: str):
+    return world["client"].get(
+        "/api/design-workshop-access/preview",
+        params={"code": code},
+        headers=_headers(world, slug),
+    )
+
+
+def test_a_scanned_code_shows_the_workshop_title_to_somebody_without_access(client, world):
+    """The scanner says "Ask to join {title}": the title and the id, and nothing else."""
+    workshop_id = _make_workshop(world, "Bagru block printing week")
+    response = _preview(world, "requester", _code_for(workshop_id))
+    assert response.status_code == 200, response.text
+    assert response.json() == {"workshopId": workshop_id, "title": "Bagru block printing week"}
+
+    # The printed form, spaced and lower-cased, reads the same.
+    code = _code_for(workshop_id)
+    typed = " ".join(code[index : index + 4] for index in range(0, len(code), 4)).lower()
+    assert _preview(world, "requester", typed).json()["title"] == "Bagru block printing week"
+
+
+def test_the_title_preview_refuses_a_damaged_code_and_hides_a_deleted_workshop(client, world):
+    workshop_id = _make_workshop(world, "Preview refusals")
+    good = _code_for(workshop_id)
+    broken = good[:-1] + ("Z" if good[-1] != "Z" else "Y")
+    assert _preview(world, "requester", broken).status_code == 422
+    assert _preview(world, "requester", "https://example.org/x").status_code == 422
+
+    deleted = client.delete(
+        f"/api/design-workshops/{workshop_id}", headers=_headers(world, "creator")
+    )
+    assert deleted.status_code in (200, 204), deleted.text
+    gone = _preview(world, "requester", good)
+    invented = _preview(world, "requester", _code_for(f"cmsdoesnotexist{uuid.uuid4().hex[:10]}"))
+    assert gone.status_code == invented.status_code == 404
+    assert gone.json() == invented.json()
+
+
+def test_the_title_preview_needs_a_signed_in_account(client, world):
+    workshop_id = _make_workshop(world, "Preview needs sign-in")
+    response = client.get(
+        "/api/design-workshop-access/preview", params={"code": _code_for(workshop_id)}
+    )
+    assert response.status_code == 401

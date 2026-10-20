@@ -42,7 +42,7 @@ class TopBarScanDeviceTest {
         override val codecs: ScanCodecs = DesignerScanCodecs
         override fun cardKind(raw: String): ScanCardKind = designerScanCardKind(raw)
         override suspend fun resolveCard(raw: String): ScanCardAnswer = ScanCardAnswer.Offline
-        override suspend fun lookUpRecord(recordType: String, id: String): ScanRecordAnswer = ScanRecordAnswer.Found("Meena Devi")
+        override suspend fun lookUpRecord(recordType: String, id: String, code: String): ScanRecordAnswer = ScanRecordAnswer.Found("Meena Devi")
     }
 
     @Test

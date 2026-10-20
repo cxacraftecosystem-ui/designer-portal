@@ -40,6 +40,16 @@ fun pendingCardsInPayload(payloadJson: String): Set<String> =
 fun substitutePendingCardsInPayload(payloadJson: String, ids: Map<String, String>): String =
     substitutePendingCards(Json.parseToJsonElement(payloadJson), ids).toString()
 
+/**
+ * Whether [card] is already held, waiting to sync, in one of [payloads] (queued entry bodies). The
+ * top-bar scanner says so offline instead of a bare "You're offline": the card is known on this
+ * phone and links on the next sync.
+ */
+fun cardWaitingToSync(card: ArtisanCardCode.Parsed, payloads: List<String>): Boolean {
+    val value = ArtisanCardCode.pendingValue(card)
+    return payloads.any { value in pendingCardsInPayload(it) }
+}
+
 sealed interface PendingCardOutcome {
     /** Every card resolved: pending value → artisan id. */
     data class Resolved(val ids: Map<String, String>) : PendingCardOutcome

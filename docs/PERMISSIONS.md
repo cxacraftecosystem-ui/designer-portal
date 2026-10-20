@@ -1699,6 +1699,7 @@ of it and re-decide nothing.
 | List a workshop's cards (never the secret — only its last four characters) | the same three, post holders among them included | `GET /api/design-workshop-access/grants/{workshopId}` |
 | Cancel a card (stops it admitting anybody further; removes nobody it already admitted) | the same three | `POST /api/design-workshop-access/grants/{id}/revoke` |
 | Redeem a card | any signed-in account | `POST /api/design-workshop-access/redemptions` |
+| See the title of the workshop a scanned `DPW1:G` code names (the title only; owner decision 2026-10-20, D34) | any signed-in account — a missing or deleted workshop is the ordinary 404 | `GET /api/design-workshop-access/preview?code=` |
 
 A redemption answers FULL, ALREADY_A_MEMBER or PROVISIONAL (a spent card, an ineligible account, or a
 card that lapsed within the 30-day sync grace: the scan is filed for an administrator and nothing the

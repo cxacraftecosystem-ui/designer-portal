@@ -83,4 +83,13 @@ class PendingCardsTest {
         assertEquals(emptySet<String>(), pendingCardsInPayload("""{"artisanIds":["cart0000000000000000001"]}"""))
         assertEquals(emptySet<String>(), pendingCardsInPayload("not json"))
     }
+
+    @Test
+    fun `a card already queued on this phone is known offline as waiting to sync`() {
+        val card = (ArtisanCardCode.parse("D-7K3QM-9XA2F-HQ") as ArtisanCardCode.Result.Ok).card
+        val queued = """{"artisanId":"$pending","productName":"Indigo saree"}"""
+        assertTrue(cardWaitingToSync(card, listOf("""{"name":"x"}""", queued)))
+        assertTrue(!cardWaitingToSync(card, listOf("""{"artisanId":"cart0000000000000000001"}""")))
+        assertTrue(!cardWaitingToSync(card, listOf("not json")))
+    }
 }
