@@ -177,12 +177,21 @@ test("at 1440x900 the whole map is on screen with the side column beside it", as
   await stub(page);
   await page.goto("/map?view=coverage");
   await expect(page.getByTestId("coverage-table")).toBeVisible();
-  const map = await page.getByTestId("coverage-map-panel").boundingBox();
-  const side = await page.getByTestId("coverage-side").boundingBox();
-  expect(map && side).toBeTruthy();
-  expect(map!.y + map!.height).toBeLessThanOrEqual(900);
-  expect(side!.x).toBeGreaterThanOrEqual(map!.x + map!.width);
-  expect(side!.y).toBeLessThan(900);
+  const panel = page.getByTestId("coverage-map-panel");
+  const sideBox = await page.getByTestId("coverage-side").boundingBox();
+  const mapBox = await panel.boundingBox();
+  expect(mapBox && sideBox).toBeTruthy();
+  expect(sideBox!.x).toBeGreaterThanOrEqual(mapBox!.x + mapBox!.width);
+  expect(sideBox!.y).toBeLessThan(900);
+  // The panel is sticky under the header: once the page reaches it, the whole country is on screen,
+  // and the map is never cut off inside its own panel.
+  await page.evaluate((top) => window.scrollTo(0, top), Math.max(0, mapBox!.y - 96));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  const svg = await page.getByTestId("coverage-map").boundingBox();
+  expect(svg).toBeTruthy();
+  expect(svg!.y).toBeGreaterThanOrEqual(0);
+  expect(svg!.y + svg!.height).toBeLessThanOrEqual(900);
+  expect(await panel.evaluate((node) => node.scrollHeight - node.clientHeight)).toBeLessThanOrEqual(1);
 });
 
 test("filters change the map and travel in the URL", async ({ page }) => {

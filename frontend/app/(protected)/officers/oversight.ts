@@ -358,6 +358,8 @@ export type DwOversightCreateBody = {
   /** The ticked designers, in tick order. The lead is resolved from `lead` by the shared rule. */
   designerUserIds?: readonly string[];
   lead?: string;
+  /** The craft picked from the master list; its name travels beside it for an older API. */
+  craftId?: string;
   craftName?: string;
   clusterName?: string;
   state?: string;

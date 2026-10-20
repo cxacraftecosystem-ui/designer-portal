@@ -98,6 +98,7 @@ from app.schemas.design_workshop_oversight import (
     DesignWorkshopOversightIn,
 )
 from app.services import (
+    craft_master,
     design_workshop_approvals,
     design_workshop_oversight as oversight,
     design_workshop_posts as posts,
@@ -414,7 +415,6 @@ async def open_workshop_from_oversight(
             key: value
             for key, value in (
                 ("workshopKind", payload.workshopKind),
-                ("craftName", payload.craftName),
                 ("clusterName", payload.clusterName),
                 ("state", payload.state),
                 ("district", payload.district),
@@ -426,6 +426,16 @@ async def open_workshop_from_oversight(
         parsed = _parse_date(getattr(payload, key))
         if parsed:
             columns[key] = parsed
+    # THE MASTER CRAFT LIST (2026-10-20), through the same `craft_columns` the ordinary door calls:
+    # a `craftId` must name an ACTIVE craft and its name follows it, and a bare `craftName` is
+    # matched onto the list. Writing the name alone left every officer-opened workshop with no
+    # `craftId`, so it was missing from every craft filter and from the craft's own page.
+    columns.update(
+        await craft_master.craft_columns(
+            db, payload.model_dump(include={"craftId", "craftName"}, exclude_none=True)
+        )
+    )
+    columns = {key: value for key, value in columns.items() if value is not None}
 
     # ── THE SAME VALUES IN TWO PLACES, DELIBERATELY, AND NEITHER IS DERIVED FROM THE OTHER ───────
     #
@@ -449,7 +459,8 @@ async def open_workshop_from_oversight(
         key: value
         for key, value in (
             ("workshopKind", payload.workshopKind),
-            ("craftName", payload.craftName),
+            ("craftRef", columns.get("craftId")),
+            ("craftName", columns.get("craftName")),
             ("clusterName", payload.clusterName),
             ("state", payload.state),
             ("district", payload.district),

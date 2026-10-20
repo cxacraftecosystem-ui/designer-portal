@@ -783,7 +783,8 @@ function StartWorkshopForm({
         // picker printed about who leads it and the body on the wire cannot disagree.
         designerUserIds,
         lead: leadDesignerId,
-        // This door takes the name only; it is the picked craft's own name, so it matches the list.
+        // The picked craft from the master list; the server writes its name from the id.
+        craftId: craftPick.id || undefined,
         craftName: craftPick.name || undefined,
         clusterName: text("clusterName"),
         state: text("state"),
