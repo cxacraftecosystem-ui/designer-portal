@@ -52,9 +52,12 @@ export function AppSearchHeader({
         frame = 0;
         const now = window.scrollY;
         const height = (headerRef.current?.offsetHeight ?? 60) + 12;
-        setStep((state) => quickReturnStep(state, now - last, now, height, pinnedRef.current));
-        setFloating(now > 0);
+        // The delta is taken NOW: React may run the updater after `last` has moved on, which read
+        // every move as zero and left the header hidden on the way back up.
+        const delta = now - last;
         last = now;
+        setStep((state) => quickReturnStep(state, delta, now, height, pinnedRef.current));
+        setFloating(now > 0);
       });
     };
     onScroll();

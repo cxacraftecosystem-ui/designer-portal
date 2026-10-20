@@ -94,6 +94,13 @@ test("Back closes the More sheet without leaving a step behind", () => {
   expect(SHEET.match(/onNavigate=\{navigateFromSheet\}/g)?.length).toBe(2);
 });
 
+test("the header's scroll delta is taken before the state update, never inside it", () => {
+  // Read inside the updater, `now - last` ran after `last = now` whenever React deferred it: every
+  // move was zero and the header stayed hidden on the way back up.
+  expect(HEADER).toMatch(/const delta = now - last;\s*last = now;\s*setStep\(\(state\) => quickReturnStep\(state, delta, now,/);
+  expect(HEADER).not.toContain("quickReturnStep(state, now - last");
+});
+
 test("the search header carries the scan button, the name and the search glyph", () => {
   expect(HEADER).toContain("<TopBarScanButton />");
   expect(HEADER).toContain("aria-label={`${appName}. Search`}");
