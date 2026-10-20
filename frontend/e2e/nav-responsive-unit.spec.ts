@@ -97,7 +97,8 @@ test("Back closes the More sheet without leaving a step behind", () => {
 test("the header's scroll delta is taken before the state update, never inside it", () => {
   // Read inside the updater, `now - last` ran after `last = now` whenever React deferred it: every
   // move was zero and the header stayed hidden on the way back up.
-  expect(HEADER).toMatch(/const delta = now - last;\s*last = now;\s*setStep\(\(state\) => quickReturnStep\(state, delta, now,/);
+  expect(HEADER).toContain("const delta = now - last;");
+  expect(HEADER).toContain("setStep((state) => quickReturnStep(state, delta, now, height, pinned));");
   expect(HEADER).not.toContain("quickReturnStep(state, now - last");
 });
 
@@ -111,7 +112,9 @@ test("the search header carries the scan button, the name and the search glyph",
 });
 
 test("the scan button keeps the frozen signature", () => {
-  expect(SCAN).toContain("export function TopBarScanButton({ className }: { className?: string }): JSX.Element");
+  expect(SCAN).toContain("export function TopBarScanButton({ className }: { className?: string })");
+  // The qr stream's button opens the scanner in place rather than linking to a page.
+  expect(SCAN).toContain("<ScanSheet");
   expect(SCAN).toContain('aria-label="Scan a code"');
 });
 
