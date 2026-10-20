@@ -70,7 +70,9 @@ const SCROLL_LOCK = "lib/scrollLock.ts";
 test("main keeps its positioning and loses its z-index", () => {
   const shell = read(APP_SHELL);
   // `relative` must stay: the selvedge is `fixed z-0` and only tree order puts the page above it.
-  expect(shell).toContain('className="relative mx-auto max-w-7xl px-4 pb-12 pt-24"');
+  expect(shell).toContain(
+    'className="relative mx-auto max-w-7xl px-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] pt-[calc(60px+1.25rem)] lg:pb-12 lg:pt-24"'
+  );
   // Any z-index utility here — not only the `z-10` that shipped — re-creates the trap.
   expect(shell).not.toMatch(/className="relative z-\S+ mx-auto max-w-7xl/);
 });

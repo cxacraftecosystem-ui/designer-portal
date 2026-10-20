@@ -20,6 +20,7 @@ import {
   Compass,
   DraftingCompass,
   Eye,
+  EyeOff,
   FileArchive,
   FileSearch,
   FileSignature,
@@ -53,6 +54,9 @@ import {
 } from "lucide-react";
 
 import { useAdminView } from "@/components/AdminViewProvider";
+import { AppSearchHeader } from "@/components/nav/AppSearchHeader";
+import { AppSearchPanel } from "@/components/nav/AppSearchPanel";
+import { BottomIslandNav } from "@/components/nav/BottomIslandNav";
 import { useAuth } from "@/components/AuthProvider";
 import {
   AWAITING_APPROVAL_BADGE_HREF,
@@ -68,10 +72,12 @@ import { useAwaitingApprovalCount } from "@/components/hooks/useAwaitingApproval
 import { useAwaitingInspectionCount } from "@/components/hooks/useAwaitingInspectionCount";
 import { useAwaitingSanctionCount } from "@/components/hooks/useAwaitingSanctionCount";
 import { useOpenTaskCount } from "@/components/hooks/useOpenTaskCount";
+import { useUnreadNotificationCount } from "@/components/hooks/useUnreadNotifications";
 import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
 import { OPEN_TASK_BADGE_HREF, openTaskBadgeSentence } from "@/components/tasks/openTaskCount";
 import { HoveredLink, MenuItem } from "@/components/ui/navbar-menu";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
+import { NOTIFICATIONS_HREF } from "@/lib/inAppNotifications";
 import { ministryExportsEnabled } from "@/lib/ministryExports";
 import { canRecordSanctionOrders } from "@/lib/sanctionOrders";
 import {
@@ -103,7 +109,7 @@ import type { User } from "@/lib/types";
  * (Dashboard and the Walkthrough, the two places a newcomer starts). "Account" sits last because it
  * holds what belongs to the person rather than to the repository — their own settings and feedback.
  */
-const NAV_GROUPS = ["Record", "Browse", "Admin", "Account"] as const;
+export const NAV_GROUPS = ["Record", "Browse", "Admin", "Account"] as const;
 type NavGroup = (typeof NAV_GROUPS)[number];
 
 /**
@@ -255,7 +261,7 @@ function AwaitingInspectionBadge({ count }: { count: number }) {
   );
 }
 
-type NavItem = {
+export type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
@@ -758,15 +764,28 @@ const NO_MOTION = { duration: 0 } as const;
 
 export function DynamicIslandNav() {
   const { user, logout } = useAuth();
-  const { adminMode, canAdmin, toggleAdminView } = useAdminView();
+  const adminView = useAdminView();
+  const { adminMode, canAdmin, toggleAdminView } = adminView;
+  /**
+   * Whether this account has the admin-view control at all. The permissions stream adds `available`
+   * (content admins: Admin, Master Admin, Ministry Admin) to the provider; until it lands the
+   * control follows `canAdmin`, which is today's `isAdmin(user)`.
+   */
+  const adminAvailable = (adminView as { available?: boolean }).available ?? canAdmin;
   const router = useRouter();
   const pathname = usePathname();
   const [active, setActive] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [compact, setCompact] = useState(false);
   const { scrollY } = useScroll();
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  /**
+   * The button that opened the sheet — the island's menu button on a desktop, the bottom bar's on a
+   * phone or tablet — so dismissal hands focus back to the control the reader actually pressed.
+   */
+  const sheetOpenerRef = useRef<HTMLButtonElement | null>(null);
   /**
    * REDUCED MOTION, HONOURED HERE FOR THE FIRST TIME — 2026-09-03.
    *
@@ -808,6 +827,7 @@ export function DynamicIslandNav() {
 
   useEffect(() => {
     setSheetOpen(false);
+    setSearchOpen(false);
     setActive(null);
   }, [pathname]);
 
@@ -816,7 +836,12 @@ export function DynamicIslandNav() {
   // they were.
   const closeSheet = useCallback(() => {
     setSheetOpen(false);
-    menuButtonRef.current?.focus();
+    (sheetOpenerRef.current ?? menuButtonRef.current)?.focus();
+  }, []);
+
+  const toggleSheetFrom = useCallback((button: HTMLButtonElement) => {
+    sheetOpenerRef.current = button;
+    setSheetOpen((value) => !value);
   }, []);
 
   /**
@@ -968,6 +993,12 @@ export function DynamicIslandNav() {
   /** The reader's handed-in inspections — gated on "Workshops to inspect" being drawn. */
   const inspectionEntryVisible = visibleItems.some((item) => item.href === AWAITING_INSPECTION_BADGE_HREF);
   const awaitingInspectionCount = useAwaitingInspectionCount(inspectionEntryVisible) ?? 0;
+  /**
+   * The unread count the bottom bar carries on the slot holding "Notifications" (and on its row in
+   * a menu or the "More" sheet). One store with the desktop bell, so the two never disagree; the
+   * bell itself stays desktop-only, as on Android.
+   */
+  const unreadNotifications = useUnreadNotificationCount(Boolean(user));
 
   if (!user) return null;
 
@@ -994,9 +1025,20 @@ export function DynamicIslandNav() {
 
   const isActivePath = (href: string) => href.split("?")[0] === activeBase;
 
+  // The bottom bar's model: the same `visibleItems`, so it can offer nothing the sheet would not.
+  const islandEntry = (item: NavItem) => ({
+    label: item.label,
+    href: item.href,
+    icon: item.icon,
+    badge: item.href === NOTIFICATIONS_HREF ? unreadNotifications : 0
+  });
+  const islandRoots = rootItems.map(islandEntry);
+  const islandGroups = visibleGroups.map((group) => ({ label: group.label, entries: group.items.map(islandEntry) }));
+  const currentLabel = visibleItems.find((item) => isActivePath(item.href))?.label ?? null;
+
   return (
     <>
-      <div className="nav-island-frame pointer-events-none fixed inset-x-0 top-3 z-50 flex justify-center">
+      <div className="nav-island-frame pointer-events-none fixed inset-x-0 top-3 z-50 flex justify-center max-lg:hidden">
         <motion.header
           // `layout` still projects the size change under reduce — the pill really does get smaller
           // — it simply arrives there in one frame instead of springing. Dropping `layout` outright
@@ -1088,23 +1130,33 @@ export function DynamicIslandNav() {
 
           <div className="ml-1 flex items-center gap-1.5">
             {/* Offered to admins only — and it can merely hide admin chrome, never unlock it. */}
-            {canAdmin && !compact ? (
-              // A real switch (owner's rule, 2026-10-17): its position and `aria-checked` say on or
-              // off, so there is no "ON"/"OFF" word to read. hidden below `sm` as before — there
-              // `sm` the sheet footer's switch is a phone user's way to flip it.
-              <ToggleSwitch
-                label="Admin view"
-                showLabel
-                checked={adminMode}
-                onChange={() => toggleAdminView()}
-                className="min-h-9! rounded-full border border-line-200 bg-card py-0 pl-2.5 pr-1 max-sm:hidden pointer-coarse:min-h-11!"
-              />
+            {adminAvailable && !compact ? (
+              // The pill footprint it had before it became a switch (`px-2.5 py-1.5 text-xs`, an eye
+              // and "Admin view"), restored 2026-10-20 — still a real switch inside: its position
+              // and `aria-checked` say on or off, never an "ON"/"OFF" word. The track is drawn at
+              // three quarters so the pill keeps its old height in the island.
+              <span
+                data-testid="island-admin-view"
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-medium transition",
+                  adminMode ? "border-purple-300 bg-purple-50 text-purple-700" : "border-line-200 bg-card text-ink-500"
+                )}
+              >
+                {adminMode ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}
+                <ToggleSwitch
+                  label="Admin view"
+                  showLabel
+                  checked={adminMode}
+                  onChange={() => toggleAdminView()}
+                  className="min-h-0! gap-1.5 px-0 [&>span:last-child]:-mx-1.5 [&>span:last-child]:-my-[3.5px] [&>span:last-child]:scale-75"
+                />
+              </span>
             ) : null}
             <NotificationBell active={isActivePath("/notifications")} />
             <button
               ref={menuButtonRef}
               type="button"
-              onClick={() => setSheetOpen((value) => !value)}
+              onClick={(event) => toggleSheetFrom(event.currentTarget)}
               aria-label="Toggle navigation menu"
               aria-expanded={sheetOpen}
               className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-line-200 bg-card text-ink-900 transition hover:bg-surface-50 pointer-coarse:h-11 pointer-coarse:w-11"
@@ -1193,7 +1245,7 @@ export function DynamicIslandNav() {
               {/* The menu's account footer (toggle · who you are · sign out), not an action row —
                   deliberately not an ActionGroup. */}
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line-200 pt-4">
-                {canAdmin ? (
+                {adminAvailable ? (
                   <ToggleSwitch label="Admin view" showLabel checked={adminMode} onChange={() => toggleAdminView()} />
                 ) : null}
                 <div className="ml-auto text-right text-xs">
@@ -1209,6 +1261,35 @@ export function DynamicIslandNav() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      {/* MOBILE AND TABLET (< 1024 CSS px): Android's search header and bottom island, in place of
+          the island above (REQUIREMENTS_2026-10-20 §4). CSS alone decides which set is drawn —
+          `max-lg:hidden` on the island frame, `lg:hidden` on these — so nothing reads the window
+          width and nothing flashes on hydration. The bar's menu button opens the sheet above, so
+          the admin-view switch and Logout have one home at every width. */}
+      <AppSearchHeader
+        appName={APP_NAME}
+        logo={(className) => <WorkshopLogo className={className} />}
+        onOpenSearch={() => setSearchOpen(true)}
+        searchOpen={searchOpen}
+      />
+      <AppSearchPanel
+        open={searchOpen}
+        appName={APP_NAME}
+        screens={visibleItems.map((item) => ({ label: item.label, href: item.href, icon: item.icon }))}
+        onClose={() => setSearchOpen(false)}
+      />
+      <BottomIslandNav
+        roots={islandRoots}
+        groups={islandGroups}
+        currentLabel={currentLabel}
+        onOpenMenu={toggleSheetFrom}
+        menuOpen={sheetOpen}
+        hidden={searchOpen}
+      />
     </>
   );
 }
+
+/** The name the search header prints — Android's `APP_SEARCH_NAME`, word for word. */
+const APP_NAME = "Design Workshop";
