@@ -50,12 +50,13 @@ from app.core.db import db
 from app.core.deps import (
     ROLE_LABELS,
     ROLE_RANK,
+    assert_can_delete,
     get_current_user,
     get_value,
-    is_admin,
+    is_content_admin,
     is_empty_value,
     is_master_admin,
-    require_admin,
+    require_content_admin,
     role_rank,
     role_value,
 )
@@ -210,11 +211,10 @@ async def assert_all_assignable(assigner: Any, assignee_ids: list[str]) -> None:
 # so the assignees' to-do lists simply empty. ``update_task``'s ``is_manager`` had the same shape and
 # handed a non-creating admin the whole manager arm, reassignment and ``status: CANCELLED`` included.
 #
-# One predicate, three call sites, so there is no second copy left to drift. IF THIS RULE IS EVER
-# RELAXED — if any admin genuinely should be able to unsend anybody's task — relax it HERE and delete
-# the batch route's docstring claim in the same commit; what must not come back is two routes over
-# one table stating opposite rules, which is what an admin reading the batch route's 403 was entitled
-# to believe could not happen.
+# DELETE WAS RELAXED ON THE OWNER'S RULING OF 2026-10-20: any content admin
+# (``deps.CONTENT_ADMIN_ROLES``) withdraws any task or batch, and both delete routes say so with one
+# ``assert_can_delete``. EDITING stays here — the creator or the master admin — and what must not
+# come back is two routes over one table stating opposite rules.
 def has_task_authority(user: Any, tasks: Any) -> bool:
     """True when *user* may change every row in *tasks*: the master admin, or their creator."""
     if is_master_admin(user):
@@ -836,7 +836,7 @@ def batch_summary(tasks: list[Any], serialized: list[dict[str, Any]]) -> dict[st
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_task(
-    payload: TaskCreate, current_user: Any = Depends(require_admin)
+    payload: TaskCreate, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
     """Single-assignee create. The scope fields are optional here — a bare "title + assignee" task
     is still valid for ad-hoc work — but anything supplied is validated exactly like a batch."""
@@ -862,7 +862,7 @@ async def create_task(
 
 @router.post("/batch", status_code=status.HTTP_201_CREATED)
 async def create_task_batch(
-    payload: TaskBatchCreate, current_user: Any = Depends(require_admin)
+    payload: TaskBatchCreate, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
     """Assign one scope to several people at once — THE assignment endpoint.
 
@@ -999,7 +999,7 @@ async def list_tasks(
         # Hard-pinned to the caller: "my tasks" can never be pointed at somebody else's list.
         where["assigneeId"] = current_user.id
     else:
-        if not is_admin(current_user):
+        if not is_content_admin(current_user):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required"
             )
@@ -1037,7 +1037,7 @@ async def list_tasks(
 
 @router.get("/batches")
 async def list_task_batches(
-    current_user: Any = Depends(require_admin),
+    current_user: Any = Depends(require_content_admin),
     view: str = Query("all"),
     workshopId: str | None = Query(None),
     batchId: str | None = Query(None),
@@ -1113,7 +1113,7 @@ async def list_task_batches(
 
 @router.get("/progress")
 async def task_progress(
-    _: Any = Depends(require_admin),
+    _: Any = Depends(require_content_admin),
     workshopId: str | None = Query(None),
     assigneeId: str | None = Query(None),
     includeFinished: bool = Query(True),
@@ -1209,7 +1209,7 @@ async def task_progress(
 
 @router.get("/options")
 async def task_options(
-    current_user: Any = Depends(require_admin),
+    current_user: Any = Depends(require_content_admin),
     workshopId: str | None = Query(None),
     # THE PARAMETER WHOSE ABSENCE MADE THE THREE CAPS BELOW UNREACHABLE. See the docstring.
     search: str | None = Query(None, max_length=120),
@@ -1377,7 +1377,7 @@ async def get_task(task_id: str, current_user: Any = Depends(get_current_user)) 
     if (
         task.assigneeId != current_user.id
         and task.createdById != current_user.id
-        and not is_admin(current_user)
+        and not is_content_admin(current_user)
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1498,17 +1498,14 @@ async def update_task(
 
 
 @router.delete("/batch/{batch_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_task_batch(batch_id: str, current_user: Any = Depends(require_admin)) -> None:
-    """Withdraw a whole assignment in one action. Only the admin who sent it (or the master admin)
-    may unsend it — otherwise one admin could quietly delete another's assignments."""
+async def delete_task_batch(
+    batch_id: str, current_user: Any = Depends(require_content_admin)
+) -> None:
+    """Withdraw a whole assignment in one action. Any content admin (``deps.CONTENT_ADMIN_ROLES``)
+    may, whoever sent it (owner's ruling, 2026-10-20); the journal line below names who did."""
     tasks = await db.assignedtask.find_many(where={"batchId": batch_id})
     if not tasks:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
-    assert_task_authority(
-        current_user,
-        tasks,
-        detail="Only the admin who created this batch (or the master admin) can delete it",
-    )
     await db.assignedtask.delete_many(where={"batchId": batch_id})
     _audit_withdrawal(current_user, tasks, scope=f"batch={batch_id}")
 
@@ -1545,14 +1542,10 @@ def _audit_withdrawal(user: Any, tasks: Any, *, scope: str) -> None:
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_task(task_id: str, current_user: Any = Depends(get_current_user)) -> None:
     """Withdraw ONE assignment. Same rule as the batch above, deliberately: a batch is nothing but
-    ``AssignedTask`` rows sharing a ``batchId``, so a looser test here is not a looser test on a
-    different object — it is the batch rule with a ``for`` loop in front of it."""
+    ``AssignedTask`` rows sharing a ``batchId``, so the two routes state one rule — content admins,
+    any task."""
+    assert_can_delete(current_user)
     task = await require_task(task_id)
-    assert_task_authority(
-        current_user,
-        [task],
-        detail="Only the admin who created this task (or the master admin) can delete it",
-    )
     await db.assignedtask.delete(where={"id": task_id})
     # Logged on the SINGLE route too, and that is the point rather than symmetry for its own sake:
     # withdrawing a batch one row at a time is exactly the shape the authority fix above refuses, so

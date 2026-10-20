@@ -27,24 +27,24 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**490 operations** in the working tree — 236 GET, 169 POST, 35 DELETE,
-25 PATCH, 25 PUT. 2 of them (`/health`, `/health/ready`) are declared
+**495 operations** in the working tree — 236 GET, 169 POST, 39 DELETE,
+26 PATCH, 25 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
 |---|---|
 | `design_workshops.py` | 49 |
 | `media.py` | 21 |
+| `questionnaire_forms.py` | 21 |
 | `questionnaire.py` | 21 |
 | `workshops.py` | 21 |
 | `design_workshop_oversight.py` | 19 |
-| `questionnaire_forms.py` | 19 |
 | `aadhaar.py` | 14 |
 | `design_workshop_inspections.py` | 14 |
-| `sanction_orders.py` | 13 |
+| `sanction_orders.py` | 14 |
+| `annual_plan.py` | 13 |
+| `data_access.py` | 13 |
 | `usage.py` | 13 |
-| `annual_plan.py` | 12 |
-| `data_access.py` | 12 |
 | `design_workshop_approvals.py` | 11 |
 | `artisans.py` | 10 |
 | `auth.py` | 10 |
@@ -143,9 +143,9 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 332 | 6164 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 280 | 3206 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 316 | 3811 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Backend unit (`backend/tests/`) | 332 | 6172 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 281 | 3212 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 316 | 3812 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 9 | 25 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
@@ -171,11 +171,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 321 | 196,669 | 321 | 196,669 |
-| `frontend/app` | 123 | 61,050 | 123 | 61,050 |
-| `frontend/components` | 387 | 145,757 | 387 | 145,757 |
-| `frontend/lib` | 187 | 82,587 | 187 | 82,587 |
-| `android/app/src/main/java` | 355 | 254,530 | 355 | 254,530 |
+| `backend/app` | 321 | 196,847 | 321 | 196,847 |
+| `frontend/app` | 123 | 61,104 | 123 | 61,104 |
+| `frontend/components` | 387 | 145,834 | 387 | 145,834 |
+| `frontend/lib` | 187 | 82,597 | 187 | 82,597 |
+| `android/app/src/main/java` | 355 | 254,556 | 355 | 254,556 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is

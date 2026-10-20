@@ -80,7 +80,7 @@ import {
 import { saveOrQueue } from "@/lib/offline";
 import { cappedListNotice } from "@/components/data/cappedList";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
-import { canManageQuestionnaire, canRunDesignWorkshops, hasRank, isAdmin } from "@/lib/permissions";
+import { canManageQuestionnaire, canRunDesignWorkshops, hasRank, isContentAdmin } from "@/lib/permissions";
 import { interviewFromSearchParams } from "@/lib/unifiedSearch";
 import { UploadsProvider, useEagerStaging, useUploads } from "@/lib/uploads";
 import type { Artisan, MediaFile, PageResult, QuestionnaireInterview, QuestionnaireQuestion, QuestionnaireSection } from "@/lib/types";
@@ -2170,7 +2170,8 @@ function QuestionnairePageBody() {
         any of these keys existed.
       */
       const holder = duplicateSetHolder(err);
-      if (editingId && holder) {
+      // A merge removes its source, so since 2026-10-20 it is offered to content admins only.
+      if (editingId && holder && isContentAdmin(user)) {
         if (await offerMergeIntoHolder(editingId, holder)) return;
         /*
           DECLINED, and the generic sentence is not good enough here. `_DUPLICATE_SET_DETAIL` says
@@ -3335,7 +3336,7 @@ function QuestionnairePageBody() {
       {/* Collapsed by default, and half the rail — see the rail's header for why it is no longer at
           the top of the page. */}
       <CompletionMatrixPanel
-        canOverride={adminMode && isAdmin(user)}
+        canOverride={adminMode && isContentAdmin(user)}
         expanded={megaCards.isOpen("completion")}
         onToggle={() => megaCards.toggle("completion")}
       />
@@ -3976,6 +3977,8 @@ function QuestionnaireAdminEditor({
   onToggle: () => void;
 }) {
   const confirm = useConfirm();
+  // Removing a section or a question is a delete: content admins in admin view only (2026-10-20).
+  const { adminMode } = useAdminView();
   const [localSections, setLocalSections] = useState<QuestionnaireSection[]>(sections);
   const [newCode, setNewCode] = useState("");
   const [newTitle, setNewTitle] = useState("");
@@ -4335,9 +4338,11 @@ function QuestionnaireAdminEditor({
                     <Save className="h-4 w-4" aria-hidden />
                     Save
                   </button>
-                  <button type="button" className="text-sm font-semibold text-red-700 dark:text-red-400" onClick={() => removeSection(section)}>
-                    <Trash2 className="inline h-4 w-4" aria-hidden /> Remove
-                  </button>
+                  {adminMode ? (
+                    <button type="button" className="text-sm font-semibold text-red-700 dark:text-red-400" onClick={() => removeSection(section)}>
+                      <Trash2 className="inline h-4 w-4" aria-hidden /> Remove
+                    </button>
+                  ) : null}
                 </ActionGroup>
               </form>
 
@@ -4379,7 +4384,7 @@ function QuestionnaireAdminEditor({
                       onMoveDown={() => keyboardMove(section, question, 1)}
                       onMoveToSection={(toSectionId) => moveQuestionToSection(question, section.id, toSectionId)}
                       onSave={(prompt, isActive) => saveQuestion(question, prompt, isActive)}
-                      onRemove={() => removeQuestion(question)}
+                      onRemove={adminMode ? () => removeQuestion(question) : undefined}
                     />
                   </div>
                 ))}
@@ -4491,7 +4496,8 @@ function QuestionTile({
   onMoveDown: () => void;
   onMoveToSection: (toSectionId: string) => void;
   onSave: (prompt: string, isActive: boolean) => Promise<boolean>;
-  onRemove: () => void;
+  /** Absent for anybody but a content admin in admin view — the server refuses them the delete. */
+  onRemove?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [prompt, setPrompt] = useState(question.prompt);
@@ -4603,9 +4609,11 @@ function QuestionTile({
                   <Pencil className="h-4 w-4" aria-hidden />
                   Update
                 </button>
-                <button type="button" data-danger className="field-danger" onClick={onRemove} disabled={disabled}>
-                  Remove
-                </button>
+                {onRemove ? (
+                  <button type="button" data-danger className="field-danger" onClick={onRemove} disabled={disabled}>
+                    Remove
+                  </button>
+                ) : null}
               </ActionGroup>
               {otherSections.length ? (
                 <label className="flex items-center gap-1.5 text-xs text-ink-muted">

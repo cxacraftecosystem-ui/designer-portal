@@ -59,10 +59,12 @@ different kind of insert: `can_review_record` is "strictly below me" and `can_ed
 that same comparison narrowed to a Professor floor, so all three clear **both** — a directorate tier
 may reject a professor's record *and* rewrite it, where an inspector at 37 may only reject a
 designer's. They also pick up every Professor-floor capability at once: crafts, workshops, the
-questionnaire builder, dataset download, and the user table. **`MINISTRY_ADMIN` is not an admin.**
-`is_admin` is set membership on `{MASTER_ADMIN, ADMIN}`, so rank 48 opens no part of the admin
-surface — no deletes, no capability grants, no decisions on the platform allow-list, no key store,
-no `/admin` tree. What the tier does hold beyond its rank it holds through **named sets beside
+questionnaire builder, dataset download, and the user table. **`MINISTRY_ADMIN` is not an admin,
+and it is a content admin** (owner's ruling, 2026-10-20, §2.0). `is_admin` is set membership on
+`{MASTER_ADMIN, ADMIN}` and is unchanged, so rank 48 opens no part of the account and governance
+surface — no capability grants, no decisions on the platform allow-list, no key store, no `/admin`
+tree. Deleting content is a different set: `CONTENT_ADMIN_ROLES` = `{ADMIN, MASTER_ADMIN,
+MINISTRY_ADMIN}`, which deletes every record, media file and managed content type. What the tier does hold beyond its rank it holds through **named sets beside
 `is_admin`**, each a separate decision: it names a workshop's designers, directors and inspectors
 (`OVERSIGHT_ASSIGNER_ROLES`, §4.6), it **provisions password accounts** (`ACCOUNT_PROVISIONER_ROLES`
 since 2026-10-09, §1.2 — this sentence said "no account creation" until then), and it may be
@@ -567,10 +569,10 @@ this table is that "grep `deps.py`" is no longer a complete way to check a row.
 | View the **user table**, promote / demote | `require_professor` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Create** a password account; set a temporary password; require a new password; issue a password link; correct a name or an address (§1.2) | `require_account_provisioner`, then `assert_can_manage_target` on the account | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁵** | ✅ | ✅ |
 | **Delete** a user account; **grant** a capability flag (§1.1) | `require_admin` · `assert_may_grant` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
-| **Delete** any record¹⁷ | `assert_can_delete` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| **Delete** any record, media file or other managed content¹⁷ (§2.0) | `assert_can_delete` = `is_content_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ |
 | Ask whether an artisan is **already recorded** (`POST /api/artisan-duplicates/check`, 30 a minute) | `require_record_creator` | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Review **duplicate pairs**: list, preview, merge, dismiss, reopen, link a Field Repository match; list and **undo merges** (`/api/artisan-duplicates`, `/api/artisan-merges`) | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| Delete **media you uploaded**¹⁷ | route-local | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Review **duplicate pairs**: list, preview, merge, dismiss, reopen, link a Field Repository match; list and **undo merges** (`/api/artisan-duplicates`, `/api/artisan-merges`) | `require_content_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ |
+| Delete **media you uploaded**¹⁷ — refused since 2026-10-20; content admins delete any media | `assert_can_delete` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ |
 | Grant / decide **workshop access** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
 | **Run a design & prototype workshop** | `can_run_design_workshops` | ⬜ | ⬜ | ⬜ | **✅** | **⬜²** | **⬜²** | **✅¹²** | **✅¹²** | **✅¹²** | ✅ | ✅ |
 | **Open** a NEW design & prototype workshop | three doors, three gates — see ¹³ | ⬜ | ⬜ | ⬜ | ⬜¹³ | ⬜ | ⬜ | ⬜¹³ | ⬜¹³ | **✅¹³** | ✅ | ✅ |
@@ -761,6 +763,46 @@ and whoever inspects it; a director post neither grants nor bars it, recording t
 order does not bar it, and one person may approve and then hand on. Every decision is one transaction
 with a compare-and-set update and a `ReviewLog` row. An approved or handed-on report is frozen: every
 write of its content answers 403, except recording a report export and the dictation consent.
+
+### 2.0 Content admins (owner's ruling, 2026-10-20)
+
+**Content admins** — `CONTENT_ADMIN_ROLES` = `{ADMIN, MASTER_ADMIN, MINISTRY_ADMIN}`,
+`deps.is_content_admin` — add, edit and delete every record type, every media file type and every
+other managed content type, wherever it is managed. **Every other role adds and edits within its
+existing privileges and never deletes.** `is_admin` is not widened; account and governance rules keep
+reading it. The web's `lib/permissions.ts::CONTENT_ADMIN_ROLES` / `isContentAdmin` and the handset's
+`FieldPermissions.isContentAdmin` carry the same set; `tests/test_role_ladder_parity.py` holds them.
+The documentation-portal spells the constant identically (it has no `MINISTRY_ADMIN` tier yet).
+
+What counts as a delete: hard and soft deletes of records, media, comments, questionnaire sections and
+questions, form questions, interviews and recordings, and merges that remove a source. Unlinking a
+relation, removing a row inside a stage draft, declining an AI layer and removing a session
+participant are edits; revoking a data-access grant and cancelling one's own staged upload are
+neither, and are unchanged.
+
+| Content | Add / edit | Delete |
+|---|---|---|
+| Artisan, product, tool, process, craft, workshop, interview | existing privileges; content admins are privileged editors of every record | content admins |
+| Media file (every type), transcripts, relink, transcribe-now, job retry | uploader and record editors; content admins on any media | content admins (uploaders no longer delete their own) |
+| Comments | the author (`PATCH /data-access/comments/{id}`) | content admins |
+| Questionnaire sections and questions | questionnaire managers, plus content admins | content admins |
+| Questionnaire forms, sittings, form questions | the owner, plus content admins on any form | content admins (`DELETE /questionnaires/{id}`, `DELETE /questionnaires/{id}/entries/{entry_id}`) |
+| Interview merge (source removed) | – | content admins |
+| Design workshop | create: `DESIGN_WORKSHOP_CREATOR_ROLES` = the three; edit: content admins without a viewer grant | content admins (soft); restore: content admins |
+| Workshop types, craft codes mapping, unmapped records, duplicates, completion override | content admins | content admins |
+| Place-name aliases | content admins (ADMIN joined) | content admins |
+| Tasks | content admins create; the creator or master admin edits | content admins, any task |
+| Sanction orders | rank ≥ Assistant Director, as before | content admins (`DELETE /sanction-orders/{id}`; 409 "Linked to 1 workshop. Unlink it first." while its workshop is live) |
+| Annual-plan entries | as before | content admins (`DELETE /annual-plan/entries/{id}`; 409 "Promoted to a workshop.") |
+
+Unchanged governance (not content): users and accounts, designer and access rosters and access
+decisions, workshop assignments, settings, secrets, app release and transcription admin, report
+approval, Aadhaar decisions, feedback acknowledgement. Separation-of-duty refusals stay for every role,
+admins included: the frozen workshop, the post-holder refusal and the sanctioning-officer refusal.
+
+Clients: Delete controls read admin view (`adminMode` on the web, `canDelete` on the handset), which
+only a content admin can turn on; the default is on for the master admin and off for everyone else.
+`tests/test_permission_matrix.py` drives every content delete over all eleven tiers.
 
 ### 2.1 Create, edit, delete — as a decision tree
 

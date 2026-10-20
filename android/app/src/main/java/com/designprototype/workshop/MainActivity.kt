@@ -3420,7 +3420,7 @@ private fun HomeScreen(
      * they can see, while flipping it would quietly subtract from screens (`adminChrome` below) that
      * their role, not the toggle, is what entitles them to.
      */
-    val canToggleAdminView = isAdmin
+    val canToggleAdminView = isAdmin || FieldPermissions.isContentAdmin(user)
 
     // Master admin lands in admin view; other admins opt in from the menu.
     //
@@ -3455,6 +3455,10 @@ private fun HomeScreen(
      * Search — an ordinary user reaches all of those, so "browse as an ordinary user" leaves them be.
      */
     val adminChrome = !isAdmin || adminView
+    // Deletes are the content admins' alone (FieldPermissions.isContentAdmin — ADMIN, MASTER_ADMIN,
+    // MINISTRY_ADMIN; owner's ruling 2026-10-20), and only with admin view on, exactly as the web's
+    // `adminMode`. Set membership, never rank.
+    val canDelete = FieldPermissions.isContentAdmin(user) && adminView
 
     // Unsaved-changes guard: a record form on screen registers its dirty-state + save action here, and
     // any attempt to leave (system Back / in-app back arrow) is intercepted to offer Save / Discard so
@@ -4486,7 +4490,7 @@ private fun HomeScreen(
 
         // Success notes from sections that only hold an onError (media capture, process steps) go here,
         // so "Audio recording added" is drawn as a success and not as a problem. ui/AppMessage.kt.
-        CompositionLocalProvider(LocalAppNotice provides { showMessage(it) }) {
+        CompositionLocalProvider(LocalAppNotice provides { showMessage(it) }, LocalContentAdminChrome provides canDelete) {
         // One focus channel per screen: an Edit opened from a meter pill starts at that field.
         ProvideCompletenessFocus((screen as? Screen.Edit)?.focus, key = screen) {
         when (val s = screen) {
@@ -4847,7 +4851,7 @@ private fun HomeScreen(
                     adminView = adminView,
                     // Every record Delete on the web is `{adminMode ? … : null}` — the role is what
                     // grants it, the toggle is what puts it away while an admin browses as a user.
-                    canDelete = isAdmin && adminChrome,
+                    canDelete = canDelete,
                     onRefreshSections = {
                         runCatching { repository.questionnaireSections() }
                             .onSuccess { sections = it }
@@ -4864,7 +4868,7 @@ private fun HomeScreen(
                 artisans = artisans,
                 adminView = adminView,
                 // Same rule as the interview loader above: `adminMode` gates Delete on every web list.
-                canDelete = isAdmin && adminChrome,
+                canDelete = canDelete,
                 onDone = { message = "${s.mode.label} updated"; refresh(); refreshLookups(); goDashboard() },
                 onError = { showError(it) }
             )
@@ -7681,6 +7685,13 @@ internal class UnsavedGuard {
 }
 
 private val LocalUnsavedGuard = staticCompositionLocalOf<UnsavedGuard?> { null }
+
+/**
+ * True only for a content admin (FieldPermissions.isContentAdmin) with admin view on — the handset's
+ * `adminMode`. Every remove/delete control below the main screen reads it, so a role outside the set
+ * is never offered a delete the server refuses (owner's ruling, 2026-10-20).
+ */
+private val LocalContentAdminChrome = staticCompositionLocalOf { false }
 
 /**
  * Register the current form with the app-level [UnsavedGuard] so the Back navigation can offer to save
@@ -18381,10 +18392,10 @@ private fun RecordCollabSection(
     // The signed-in account, read once: the delete affordance below is offered on the same
     // author-or-admin test `data_access.delete_comment` enforces.
     val me = remember { repository.cachedUser() }
-    fun canRemoveComment(comment: EntryCommentDto): Boolean {
-        val myId = me?.id.orEmpty()
-        return myId.isNotBlank() && (comment.authorId == myId || me?.isAdminUser() == true)
-    }
+    // Deleting a comment is a content admin's act in admin view (2026-10-20); authors no longer delete.
+    val contentAdminChrome = LocalContentAdminChrome.current
+    fun canRemoveComment(@Suppress("UNUSED_PARAMETER") comment: EntryCommentDto): Boolean =
+        me != null && contentAdminChrome
 
     fun reload() {
         scope.launch {
@@ -19400,6 +19411,8 @@ private fun AndroidSavedMediaPreview(
      */
     repository: com.designprototype.workshop.data.WorkshopRepository? = null
 ) {
+    // Removing a saved file is a delete: content admins in admin view only (2026-10-20).
+    val onDelete: (() -> Unit)? = onDelete.takeIf { LocalContentAdminChrome.current }
     /*
      * A CACHED `MediaFile.url` CAN NOW STOP WORKING, AND THIS IS WHERE THAT SHOWS UP FIRST.
      *
@@ -19561,6 +19574,7 @@ private fun QuestionnaireForm(
      * into D" and "delete an unrelated interview".
      */
     var mergeOffer by remember(editing?.id) { mutableStateOf<QuestionnaireMergeOffer?>(null) }
+    val mayMerge = LocalContentAdminChrome.current
     var merging by remember(editing?.id) { mutableStateOf(false) }
     var mergeConflict by remember(editing?.id) { mutableStateOf<QuestionnaireMergeConflictReport?>(null) }
     var title by remember(editing) { mutableStateOf(editing?.title ?: prefill?.artisanName?.let { "Interview with $it" } ?: "") }
@@ -21293,7 +21307,8 @@ private fun QuestionnaireForm(
                                 pendingUploads = qMedia.uris.size + media.uris.size,
                             )
                         } else null
-                        if (offer != null) mergeOffer = offer else onError(refusal.message)
+                        // A merge removes its source: offered to content admins only (2026-10-20).
+                        if (offer != null && mayMerge) mergeOffer = offer else onError(refusal.message)
                         return@launch
                     }
                     // Clear the staged-media bookkeeping so leaving the form doesn't delete the objects
@@ -21607,7 +21622,7 @@ private fun QuestionnaireBuilder(
                                 }
                             ) { Text("Down") }
                         }
-                        OutlinedButton(
+                        if (LocalContentAdminChrome.current) OutlinedButton(
                             onClick = {
                                 scope.launch {
                                     runCatching {
@@ -21688,7 +21703,7 @@ private fun QuestionnaireBuilder(
                                         },
                                     ) { Text("Next section") }
                                 }
-                                OutlinedButton(
+                                if (LocalContentAdminChrome.current) OutlinedButton(
                                     onClick = {
                                         scope.launch {
                                             runCatching {

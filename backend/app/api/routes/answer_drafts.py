@@ -27,7 +27,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.consent_http import require_send
 from app.core.config import get_settings
 from app.core.db import db
-from app.core.deps import get_current_user, get_value, is_admin, may_edit_lower_ranked_record
+from app.core.deps import (
+    get_current_user,
+    get_value,
+    is_content_admin,
+    may_edit_lower_ranked_record,
+)
 from app.services import answer_drafts as ad, dictation_consent
 from app.services.access import effective_tier_for_record
 from app.services.record_design_workshop import assert_may_write_a_record_filed_under
@@ -48,7 +53,7 @@ async def may_edit_interview(interview: Any, user: Any) -> bool:
     ``access.guard_record_edit``. Drafting writes answers in bulk, so a contributor's fill-only
     standing is not enough."""
     owner_id = get_value(interview, "createdById")
-    if is_admin(user) or (owner_id is not None and get_value(user, "id") == owner_id):
+    if is_content_admin(user) or (owner_id is not None and get_value(user, "id") == owner_id):
         return True
     if await may_edit_lower_ranked_record(user, owner_id):
         return True

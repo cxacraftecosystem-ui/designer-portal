@@ -72,13 +72,13 @@ async def effective_tier_for_record(
 ) -> str | None:
     """The highest tier `user` holds over one record owned by `owner_id`.
 
-    Admins and the record's own creator implicitly have EDIT. Otherwise it's the tier of an active
+    Content admins (``deps.CONTENT_ADMIN_ROLES``) and the record's own creator implicitly have EDIT. Otherwise it's the tier of an active
     GRANTED grant from the owner to the user that covers this record (all-data, or the subset list).
     Returns None when the user has no access beyond plain viewing.
     """
-    from app.core.deps import get_value, is_admin
+    from app.core.deps import get_value, is_content_admin
 
-    if is_admin(user):
+    if is_content_admin(user):
         return "EDIT"
     uid = get_value(user, "id")
     if owner_id and uid == owner_id:
@@ -567,13 +567,15 @@ async def guard_record_edit(
     from app.core.deps import (
         assert_can_contribute_fields,
         get_value,
-        is_admin,
+        is_content_admin,
         may_edit_lower_ranked_record,
     )
 
     owner_id = get_value(record, "createdById")
     uid = get_value(user, "id")
-    privileged = is_admin(user) or (owner_id is not None and uid == owner_id)
+    # Content admins (``deps.CONTENT_ADMIN_ROLES``) are privileged editors of EVERY record, including
+    # one an ADMIN or the MASTER_ADMIN made (owner's ruling, 2026-10-20).
+    privileged = is_content_admin(user) or (owner_id is not None and uid == owner_id)
     if not privileged:
         # "A professor may edit the data of anyone ranked below them" — checked before the grant
         # lookup because it costs nothing for the ranks it does not apply to, so nobody below

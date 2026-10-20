@@ -37,9 +37,10 @@ SITTING has no workshop and ``report_items`` selects on ``designWorkshopId`` alo
 is in ``reuse_questionnaire``. The cost of the copy is divergence between the two instruments, and it
 is the cost the feature accepts on purpose.
 
-THERE IS NO WAY TO DELETE A QUESTIONNAIRE HERE, and that is the point rather than an omission. A
-questionnaire with answers against it is somebody's fieldwork; ``PATCH {isActive: false}`` takes it
-out of every list and every dropdown, and the answers stay. The one DELETE in this file removes a
+DELETING IS A CONTENT ADMIN'S ACT (owner's ruling, 2026-10-20). Everyone else retires a form with
+``PATCH {isActive: false}``, which takes it out of every list and every dropdown while the answers
+stay; ``DELETE /questionnaires/{id}`` and ``DELETE /questionnaires/{id}/entries/{entry_id}`` are for
+``deps.CONTENT_ADMIN_ROLES`` alone. The one DELETE in this file removes a
 single QUESTION, and even that only really deletes when nobody has answered it — otherwise it
 retires. The database agrees with both: see the ``ON DELETE RESTRICT`` on
 ``QuestionnaireFormAnswer.questionId``.
@@ -63,9 +64,10 @@ from fastapi.responses import Response
 
 from app.core.db import db
 from app.core.deps import (
+    assert_can_delete,
     can_run_design_workshops,
     get_current_user,
-    is_admin,
+    is_content_admin,
 )
 from app.schemas.questionnaire import (
     CustomAnswerBatch,
@@ -327,7 +329,7 @@ _visible_questionnaire_where = visible_questionnaire_where
 
 
 def _require_owner(record: Any, user: Any) -> None:
-    if record.ownerId != user.id and not is_admin(user):
+    if record.ownerId != user.id and not is_content_admin(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the designer who created this questionnaire, or an admin, can change it.",
@@ -564,7 +566,7 @@ async def download_questionnaire(
     # support, and one they would route around by copying the page.
     if not (
         record.ownerId == current_user.id
-        or is_admin(current_user)
+        or is_content_admin(current_user)
         or await _works_on_this_questionnaires_workshop(record, current_user)
     ):
         raise HTTPException(
@@ -803,7 +805,7 @@ async def list_questionnaires(
         # An explicit "mine" means MINE — the ones this designer uploaded — and must not quietly
         # include a colleague's form that happens to hang off a shared workshop.
         where["ownerId"] = current_user.id
-    elif not is_admin(current_user):
+    elif not is_content_admin(current_user):
         # Own forms, plus the forms attached to a design workshop this designer works on. AND-composed
         # because `where["OR"]` above already belongs to the search box.
         where.setdefault("AND", []).append(_visible_questionnaire_where(current_user))
@@ -883,7 +885,7 @@ async def questionnaire_options(
     """
     _require_designer(current_user)
     where: dict[str, Any] = {"isActive": True}
-    if not is_admin(current_user):
+    if not is_content_admin(current_user):
         # OWN FORMS **OR THE PUBLISHED DEFAULT**, and this used to be `ownerId` alone.
         #
         # That single equality is the other half of the defect the fourth clause of
@@ -956,7 +958,7 @@ async def read_questionnaire(
     record = await _require_questionnaire(questionnaire_id, current_user)
     entitled = (
         record.ownerId == current_user.id
-        or is_admin(current_user)
+        or is_content_admin(current_user)
         # A co-designer on the workshop this form belongs to. See the helper for why the sittings
         # come with it rather than being withheld.
         or await _works_on_this_questionnaires_workshop(record, current_user)
@@ -1228,7 +1230,7 @@ async def update_questionnaire(
         # The truthiness test is the detach case (`None`) passing through unchecked, on purpose;
         # see the helper.
         await _require_attachable_workshop(data["designWorkshopId"], current_user)
-    if "isShared" in data and not is_admin(current_user):
+    if "isShared" in data and not is_content_admin(current_user):
         # ── PUBLISHING IS AN ADMIN'S ACT, AND `_require_owner` ABOVE IS NOT THAT CHECK ───────────
         #
         # That helper admits the form's OWNER, which is every designer for their own forms. Ticking
@@ -1459,7 +1461,10 @@ async def remove_question(
     different and the designer has to be told which one happened. A retired question stops being
     asked and keeps its answers; a client that assumed 204-means-gone would show a question the
     designer just deleted still sitting in the list, with no explanation.
+
+    Content admins only since 2026-10-20 (``deps.CONTENT_ADMIN_ROLES``).
     """
+    assert_can_delete(current_user)
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
@@ -1636,7 +1641,7 @@ async def record_answers(
     )
     try:
         result = await save_answers(
-            entry, payload.answers, user_id=current_user.id, is_admin=is_admin(current_user)
+            entry, payload.answers, user_id=current_user.id, is_admin=is_content_admin(current_user)
         )
     except QuestionnaireEditError as exc:
         raise HTTPException(
@@ -1644,6 +1649,52 @@ async def record_answers(
         ) from exc
     answers = await db.questionnaireformanswer.find_many(where={"entryId": entry.id})
     return public_encode({"saved": result, "answers": answers})
+
+
+@router.delete("/{questionnaire_id}/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_entry(
+    questionnaire_id: str,
+    entry_id: str,
+    current_user: Any = Depends(get_current_user),
+) -> Response:
+    """Delete one sitting and its answers. Content admins only (``deps.CONTENT_ADMIN_ROLES``).
+
+    A hard delete: ``QuestionnaireFormEntry`` carries no ``deletedAt``, and its answers cascade.
+    Whoever holds a post on the form's workshop is refused, as on every other write here.
+    """
+    assert_can_delete(current_user)
+    record = await _require_questionnaire(questionnaire_id, current_user)
+    entry = await _entry_in(
+        questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=False
+    )
+    await _refuse_its_workshops_holder(record, current_user)
+    await db.questionnaireformentry.delete(where={"id": entry.id})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/{questionnaire_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_questionnaire(
+    questionnaire_id: str,
+    current_user: Any = Depends(get_current_user),
+) -> Response:
+    """Delete a questionnaire with its sections, questions, sittings and answers. Content admins only.
+
+    A hard delete in one transaction: ``Questionnaire`` carries no ``deletedAt``, and
+    ``QuestionnaireFormAnswer.questionId`` is ``onDelete: Restrict``, so the answers go first and the
+    cascade from the questionnaire takes the rest.
+    """
+    assert_can_delete(current_user)
+    record = await _require_questionnaire(questionnaire_id, current_user)
+    await _refuse_its_workshops_holder(record, current_user)
+    async with db.tx() as tx:
+        await tx.questionnaireformanswer.delete_many(
+            where={"entry": {"is": {"questionnaireId": questionnaire_id}}}
+        )
+        await tx.questionnaireformanswer.delete_many(
+            where={"question": {"is": {"section": {"is": {"questionnaireId": questionnaire_id}}}}}
+        )
+        await tx.questionnaire.delete(where={"id": questionnaire_id})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 async def _entry_in(
@@ -1685,5 +1736,5 @@ def _may_rewrite_entry(entry: Any, questionnaire: Any, user: Any) -> bool:
     return (
         entry.createdById == user.id
         or getattr(questionnaire, "ownerId", None) == user.id
-        or is_admin(user)
+        or is_content_admin(user)
     )

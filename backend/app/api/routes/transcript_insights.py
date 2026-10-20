@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.consent_http import require_send
 from app.core.db import db
-from app.core.deps import get_current_user, is_admin
+from app.core.deps import get_current_user, is_content_admin
 from app.schemas.transcript_insights import TranscriptInsightPatch, TranscriptInsightRegenerate
 from app.services import (
     ai_verb_cap,
@@ -55,7 +55,9 @@ def require_enabled(_user: Any = Depends(get_current_user)) -> None:
 
 
 def may_edit(user: Any, media: Any) -> bool:
-    return bool(is_admin(user) or getattr(media, "uploadedById", None) == getattr(user, "id", None))
+    return bool(
+        is_content_admin(user) or getattr(media, "uploadedById", None) == getattr(user, "id", None)
+    )
 
 
 async def readable_media_ids(rows: list[Any], viewer: Any) -> set[str]:

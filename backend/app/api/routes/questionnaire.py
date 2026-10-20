@@ -16,9 +16,9 @@ from app.core.deps import (
     assert_can_delete,
     get_current_user,
     get_value,
-    is_admin,
+    is_content_admin,
     is_empty_value,
-    require_admin,
+    require_content_admin,
     require_questionnaire_manager,
 )
 from app.schemas.questionnaire import (
@@ -597,7 +597,7 @@ async def upsert_responses(
         if (
             existing.answerText
             and existing.answeredById != current_user.id
-            and not is_admin(current_user)
+            and not is_content_admin(current_user)
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -728,7 +728,7 @@ async def answered_question_ids(question_ids: list[str]) -> set[str]:
 @router.delete("/sections/{section_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_section(
     section_id: str,
-    _: Any = Depends(require_questionnaire_manager),
+    _: Any = Depends(require_content_admin),
 ) -> None:
     """Take a section out of use. Its questions stop being asked; every recorded answer stays.
 
@@ -917,7 +917,7 @@ async def update_question(
 @router.delete("/questions/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_question(
     question_id: str,
-    _: Any = Depends(require_questionnaire_manager),
+    _: Any = Depends(require_content_admin),
 ) -> None:
     """Take a question out of use. It stops being asked; every answer recorded against it stays.
 
@@ -1683,9 +1683,9 @@ async def completion_matrix(
 @router.put("/completion")
 async def set_completion_cell(
     payload: CompletionCellUpdate,
-    current_user: Any = Depends(require_admin),
+    current_user: Any = Depends(require_content_admin),
 ) -> dict[str, Any]:
-    """Admin/master-admin only: set or clear the manual status for one (artisan, section) cell."""
+    """Content admins only: set or clear the manual status for one (artisan, section) cell."""
     await require_record(db.artisan, payload.artisanId)
     await require_record(db.questionnairesection, payload.sectionId)
     key = {"artisanId_sectionId": {"artisanId": payload.artisanId, "sectionId": payload.sectionId}}
@@ -1946,7 +1946,7 @@ async def _duplicate_pair_aliases(pair_id: str | None, user: Any) -> dict[str, s
     """The two artisans of a likely-duplicate pair, each standing for the other. Admins only."""
     if not pair_id:
         return {}
-    if not is_admin(user):
+    if not is_content_admin(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     pair = await db.artisanduplicatecandidate.find_unique(where={"id": pair_id})
     if pair is None or str(getattr(pair.kind, "value", pair.kind)) != "WITHIN" or not pair.artisanBId:
@@ -1991,11 +1991,9 @@ async def merge_interview_into(
     whoever asked for it, which matters more here than on a PATCH because the source row is gone
     afterwards and the ledger is the only place left that says where it went.
 
-    ``assert_can_delete`` IS DELIBERATELY NOT ALSO REQUIRED, though this ends in a delete. The
-    contract for this route is "gate it exactly as an edit of {id} is gated today", and stacking the
-    delete permission on top would refuse the owner's own researcher the move the owner just ruled
-    they should be offered. What makes that safe is that the content is not deleted: it is on the
-    surviving row, which the response hands straight back.
+    ``assert_can_delete`` IS ALSO REQUIRED SINCE 2026-10-20. The owner's ruling of that day counts a
+    merge that removes its source as a delete, and deletes belong to content admins
+    (``deps.CONTENT_ADMIN_ROLES``) alone; the edit gate below still applies on top.
 
     ── REFUSAL 1: ONE BODY OF FIELDWORK, 422 ───────────────────────────────────────────────────────
 
@@ -2063,6 +2061,7 @@ async def merge_interview_into(
       interview's SECTIONS into it" means on this schema. ``extraMetadata.mergedFrom`` records the
       move either way.
     """
+    assert_can_delete(current_user)
     if interview_id == target_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

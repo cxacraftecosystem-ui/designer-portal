@@ -1262,7 +1262,7 @@ def test_the_unfiled_doors_ask_about_the_design_workshop_before_they_write():
         workshop_routes.discard_one_unmapped_record,
     ):
         source = inspect.getsource(handler)
-        assert "current_user: Any = Depends(require_admin)" in source, handler.__name__
+        assert "current_user: Any = Depends(require_content_admin)" in source, handler.__name__
         assert "user=current_user)" in source, f"{handler.__name__} drops the caller"
 
     filed = inspect.getsource(inference.file_one_unmapped)

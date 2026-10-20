@@ -152,7 +152,8 @@ import {
   canAccessRoute,
   canCreateDesignWorkshops,
   canRunDesignWorkshops,
-  isAdmin
+  isAdmin,
+  isContentAdmin
 } from "@/lib/permissions";
 import type { PageResult, Workshop } from "@/lib/types";
 import { listResource } from "@/lib/api";
@@ -301,7 +302,8 @@ function DesignWorkshopsPageBody() {
    * `ROUTE_GUARDS` refuses the whole path to anyone outside `canRunDesignWorkshops`.
    */
   const allowWork = canRunDesignWorkshops(user);
-  const allowDelete = isAdmin(user);
+  // The content admins (`isContentAdmin`, 2026-10-20) — the server's `assert_can_delete`.
+  const allowDelete = isContentAdmin(user);
   /**
    * The screens to name when THIS reader's empty list is a scope rather than an empty repository —
    * see {@link OVERSIGHT_DOORS}. Empty for everybody else, and both halves of that matter.

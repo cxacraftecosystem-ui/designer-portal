@@ -643,7 +643,7 @@ def test_a_non_owner_may_only_link_artisans_they_created(monkeypatch):
         return "VIEW"
 
     monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
-    monkeypatch.setattr(tools, "is_admin", lambda _user: False)
+    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
 
     with pytest.raises(HTTPException) as excinfo:
         _drive_patch(
@@ -1298,7 +1298,7 @@ def test_a_populated_artisan_name_does_not_lock_the_artisan_relation(monkeypatch
 
     monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
     monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _no_rank)
-    monkeypatch.setattr(tools, "is_admin", lambda _user: False)
+    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
 
     client, _data = _drive_patch(
         monkeypatch,
@@ -1503,7 +1503,7 @@ def test_a_non_owner_may_resave_a_tool_linked_to_somebody_elses_artisan(monkeypa
 
     monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
     monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _no_rank)
-    monkeypatch.setattr(tools, "is_admin", lambda _user: False)
+    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
 
     _client, data = _drive_patch(
         monkeypatch,
@@ -1529,7 +1529,7 @@ def test_adding_somebody_elses_artisan_is_still_refused(monkeypatch):
 
     monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
     monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _no_rank)
-    monkeypatch.setattr(tools, "is_admin", lambda _user: False)
+    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
 
     with pytest.raises(HTTPException) as excinfo:
         _drive_patch(
@@ -1564,7 +1564,7 @@ def test_an_id_that_names_no_visible_artisan_is_a_404_even_when_it_is_already_li
 
     monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
     monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _no_rank)
-    monkeypatch.setattr(tools, "is_admin", lambda _user: False)
+    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
 
     with pytest.raises(HTTPException) as excinfo:
         _drive_patch(
@@ -1618,7 +1618,7 @@ def test_the_link_manager_gate_grants_an_outranking_professor(monkeypatch):
 
     monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _outranks)
     monkeypatch.setattr(tools, "effective_tier_for_record", _never)
-    monkeypatch.setattr(tools, "is_admin", lambda _user: False)
+    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
 
     allowed = asyncio.run(
         tools._may_manage_tool_links(

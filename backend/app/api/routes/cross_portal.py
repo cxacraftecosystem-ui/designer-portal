@@ -42,7 +42,7 @@ from app.core.db import db
 from app.core.deps import (
     get_current_user,
     get_value,
-    is_admin,
+    is_content_admin,
     may_edit_lower_ranked_record,
     require_record_creator,
 )
@@ -213,7 +213,7 @@ async def _assert_may_edit(artisan: Any, user: Any) -> None:
     post on the workshop it is filed under."""
     await assert_may_write_a_record_filed_under(getattr(artisan, "designWorkshopId", None), user)
     owner_id = get_value(artisan, "createdById")
-    if is_admin(user) or (owner_id is not None and get_value(user, "id") == owner_id):
+    if is_content_admin(user) or (owner_id is not None and get_value(user, "id") == owner_id):
         return
     if await may_edit_lower_ranked_record(user, owner_id):
         return

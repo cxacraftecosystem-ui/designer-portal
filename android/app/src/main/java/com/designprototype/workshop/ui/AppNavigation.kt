@@ -235,6 +235,17 @@ object FieldPermissions {
     fun isMasterAdmin(user: UserDto): Boolean = user.role == "MASTER_ADMIN"
 
     /**
+     * `deps.CONTENT_ADMIN_ROLES` (owner's ruling, 2026-10-20): ADMIN, MASTER_ADMIN and MINISTRY_ADMIN
+     * add, edit and DELETE every record, media file and other managed content type. Every other role
+     * adds and edits and never deletes. SET MEMBERSHIP, never rank >= 50 — and not [isAdmin], which
+     * keeps its two members for accounts and governance. The web's `CONTENT_ADMIN_ROLES` and the
+     * documentation-portal's twin carry the same three; `test_role_ladder_parity.py` holds them.
+     */
+    val CONTENT_ADMIN_ROLES: Set<String> = setOf("MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN")
+
+    fun isContentAdmin(user: UserDto?): Boolean = user?.role?.let { it in CONTENT_ADMIN_ROLES } == true
+
+    /**
      * `require_record_creator` — OPENING an artisan, product, process, tool or interview. Researcher
      * and above, matching `can_create_records` and the web's `canCreateRecords`.
      *
@@ -1044,8 +1055,8 @@ fun AppNavigationDrawerContent(
         if (isAdmin || FieldPermissions.isMasterAdmin(user)) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         }
-        // Offered to admins only — and it can merely hide admin chrome, never unlock it.
-        if (isAdmin) {
+        // Offered to the content admins only — and it can merely hide admin chrome, never unlock it.
+        if (FieldPermissions.isContentAdmin(user)) {
             // A real switch (owner's rule, 2026-10-17): its position and TalkBack's "On"/"Off" state
             // say which, so the label never carries an "ON"/"OFF" word. The web's island draws the
             // same `ToggleSwitch` labelled "Admin view".

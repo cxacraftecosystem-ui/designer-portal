@@ -84,10 +84,9 @@ test("a ministry admin is not an admin, and neither are the other two directorat
   for (const role of DIRECTORATE) {
     expect(isAdmin(user(role)), role).toBe(false);
     expect(isMasterAdmin(user(role)), role).toBe(false);
-    // `canAssignTasks` is written as a rank floor at ADMIN where the server is a set. It agrees
-    // today only because 42/45/48 are all below 50; asserted so the agreement is checked rather
-    // than assumed.
-    expect(canAssignTasks(user(role)), role).toBe(false);
+    // `canAssignTasks` is the content-admin SET since 2026-10-20, so the Ministry Admin assigns and
+    // the two director tiers do not.
+    expect(canAssignTasks(user(role)), role).toBe(role === "MINISTRY_ADMIN");
     expect(canAccessRoute(user(role), "/admin"), role).toBe(false);
   }
 });
@@ -111,7 +110,8 @@ test("the three tiers run a workshop and reach no other design-workshop set, bec
   // them, at 45, stays out while 48 is in.
   for (const role of DIRECTORATE) {
     expect(canRunDesignWorkshops(user(role)), role).toBe(true);
-    expect(canCreateDesignWorkshops(user(role)), role).toBe(false);
+    // The Ministry Admin starts one since 2026-10-20 (a content admin); the director tiers do not.
+    expect(canCreateDesignWorkshops(user(role)), role).toBe(role === "MINISTRY_ADMIN");
     expect(canInspectDesignWorkshops(user(role)), role).toBe(role === "MINISTRY_ADMIN");
     // EXPORT is the half that did NOT move on 2026-09-13, and it is the half that takes rows out of
     // the product. A professor has read-without-export since 2026-08-30; these three inherit that

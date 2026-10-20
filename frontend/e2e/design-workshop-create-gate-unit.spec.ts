@@ -105,7 +105,8 @@ test("A DESIGNER MAY NOT — this is the rule, and it is the assertion that woul
 
 test("nobody else may either, signed out included", () => {
   for (const role of ALL_ROLES) {
-    if (role === "ADMIN" || role === "MASTER_ADMIN") continue;
+    // The content admins create (2026-10-20): ADMIN, MASTER_ADMIN and MINISTRY_ADMIN.
+    if (role === "ADMIN" || role === "MASTER_ADMIN" || role === "MINISTRY_ADMIN") continue;
     expect(canCreateDesignWorkshops(user(role)), `${role} may not create a workshop`).toBe(false);
   }
   expect(canCreateDesignWorkshops(null)).toBe(false);

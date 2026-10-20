@@ -1056,6 +1056,54 @@ MIRRORS: tuple[Mirror, ...] = (
             "tuple is a tier it stops asserting anything about."
         ),
     ),
+    # THE CONTENT ADMINS (owner's ruling, 2026-10-20): who deletes records, media and every other
+    # managed content type, and edits every record whoever made it. The server's
+    # `app/core/deps.py::CONTENT_ADMIN_ROLES`; the documentation-portal carries the same set by name.
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="CONTENT_ADMIN_ROLES",
+        kind="partial",
+        pattern=r"export const CONTENT_ADMIN_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ASSISTANT_DIRECTOR",
+                "REGIONAL_DIRECTOR",
+            }
+        ),
+        why=(
+            "Who is offered admin view and with it every Delete on the web. A new tier defaulting IN "
+            "deletes the archive; defaulting OUT is an administering post that cannot remove a "
+            "duplicate. Mirrors `CONTENT_ADMIN_ROLES` in app/core/deps.py."
+        ),
+    ),
+    Mirror(
+        path=f"{_ANDROID_UI}/ui/AppNavigation.kt",
+        binding="FieldPermissions.CONTENT_ADMIN_ROLES",
+        kind="partial",
+        pattern=r"val CONTENT_ADMIN_ROLES: Set<String> = setOf\(([\s\S]*?)\)",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ASSISTANT_DIRECTOR",
+                "REGIONAL_DIRECTOR",
+            }
+        ),
+        why=(
+            "The handset's delete and admin-chrome gate (`FieldPermissions.isContentAdmin`). Set "
+            "membership, never rank >= 50. Mirrors `CONTENT_ADMIN_ROLES` in app/core/deps.py."
+        ),
+    ),
     # ── the repository's front door ─────────────────────────────────────────────────────────────
     Mirror(
         path="README.md",
@@ -1288,6 +1336,19 @@ def test_the_web_provisioner_set_is_the_servers() -> None:
         f"frontend/lib/permissions.ts offers account provisioning to {sorted(offered)}; "
         f"app/core/deps.py grants it to {sorted(ACCOUNT_PROVISIONER_ROLES)}"
     )
+
+
+def test_the_content_admin_set_is_the_servers_on_both_clients() -> None:
+    """``CONTENT_ADMIN_ROLES`` on the web and the handset against the server's frozenset, directly."""
+    from app.core.deps import CONTENT_ADMIN_ROLES
+
+    for binding in ("CONTENT_ADMIN_ROLES", "FieldPermissions.CONTENT_ADMIN_ROLES"):
+        (mirror,) = [m for m in MIRRORS if m.binding == binding]
+        offered = _named_tiers(_body(mirror)) & TIERS
+        assert offered == set(CONTENT_ADMIN_ROLES), (
+            f"{mirror.path} names {sorted(offered)} as content admins; app/core/deps.py says "
+            f"{sorted(CONTENT_ADMIN_ROLES)}"
+        )
 
 
 def test_the_web_approving_authority_is_the_servers() -> None:

@@ -63,15 +63,15 @@ READER_ARMS = {
 
 
 def test_every_route_on_this_router_carries_the_annual_plan_gate():
-    """ALL TWELVE, THE GETS INCLUDED — and exactly four of them on the reader gate.
+    """ALL THIRTEEN, THE GETS INCLUDED — and exactly four of them on the reader gate.
 
     The plan is a list of named places and dates the ministry has not announced. Since 2026-10-10 a
     Regional Director reads and corrects the remarks of their own states' rows through
     ``require_annual_plan_reader``, which the service narrows per row; every other arm — upload,
-    export, pro-forma, promote, withdraw, reinstate and the scope assignment — stays
-    ``require_annual_plan_manager``. An arm on neither gate is the defect this test exists to catch.
+    export, pro-forma, promote, withdraw, reinstate, the scope assignment and the content admins'
+    delete (2026-10-20) — stays ``require_annual_plan_manager``. An arm on neither gate is the defect this test exists to catch.
     """
-    assert len(routes.router.routes) == 12
+    assert len(routes.router.routes) == 13
     for route in routes.router.routes:
         names = [d.call.__name__ for d in route.dependant.dependencies if d.call is not None]
         for method in route.methods:

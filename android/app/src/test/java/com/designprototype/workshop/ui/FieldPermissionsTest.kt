@@ -156,4 +156,17 @@ class FieldPermissionsTest {
         assertFalse(FieldPermissions.canManageDesignerRoster(user("DESIGNER")))
         assertTrue(FieldPermissions.canManageDesignerRoster(user("MASTER_ADMIN")))
     }
+
+    @Test
+    fun `the content admins are exactly the three admin tiers, by set and not by rank`() {
+        // deps.CONTENT_ADMIN_ROLES (owner's ruling, 2026-10-20): they delete, everybody else never does.
+        val contentAdmins = setOf("MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN")
+        assertEquals(contentAdmins, FieldPermissions.CONTENT_ADMIN_ROLES)
+        for (role in everyRole) {
+            assertEquals(role, role in contentAdmins, FieldPermissions.isContentAdmin(user(role)))
+        }
+        assertFalse(FieldPermissions.isContentAdmin(null))
+        // isAdmin is NOT widened: the Ministry Admin deletes content and still is not an admin.
+        assertFalse(FieldPermissions.isAdmin(user("MINISTRY_ADMIN")))
+    }
 }

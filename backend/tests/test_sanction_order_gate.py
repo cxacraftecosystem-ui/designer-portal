@@ -117,8 +117,11 @@ def test_the_create_workshop_gate_is_unchanged_by_this_feature() -> None:
     The obvious way to let a ministry officer open a workshop is to add the three tiers to
     ``DESIGN_WORKSHOP_CREATOR_ROLES``. It would work, and it would hand them the UNTRACKED create as
     well — a workshop with no instrument behind it, no number, no amount and no named designer.
+
+    The MINISTRY_ADMIN joined that set on the owner's ruling of 2026-10-20 (content admins add every
+    record type). The two director tiers did not, and this still pins them out.
     """
-    assert frozenset({"ADMIN", "MASTER_ADMIN"}) == DESIGN_WORKSHOP_CREATOR_ROLES
+    assert frozenset({"ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN"}) == DESIGN_WORKSHOP_CREATOR_ROLES
 
 
 # --------------------------------------------------------------------------------------
@@ -162,21 +165,31 @@ def test_every_route_on_the_prefix_carries_the_sanction_gate_read_included() -> 
     # THIRTEEN SINCE 2026-10-18: "Remind designers" (`POST /{id}/remind`) e-mails the designers an
     # order names what Workshop Setup still needs, behind the same gate; C1 (2026-10-17) added the
     # exact-number planned-workshop lookup the form picks from.
-    assert len(routes) == 13, [getattr(r, "path", None) for r in routes]
+    # FOURTEEN SINCE 2026-10-20: the content admins' `DELETE /{id}`, behind this gate and
+    # `assert_can_delete` both.
+    assert len(routes) == 14, [getattr(r, "path", None) for r in routes]
     for route in routes:
         calls = _dependency_calls(route.dependant)
         assert sanction_routes.require_sanction_recorder in calls, route.path
 
 
-def test_the_register_offers_no_way_to_delete_a_sanction_order() -> None:
-    """A financial instrument of record has no delete, and the absence is asserted rather than assumed.
-
-    Nothing in this product that records a person's standing or an institution's decision is ever
-    deleted. A DELETE arm added here would be one method call away from erasing the only row that
-    proves money was authorised, and it would look entirely ordinary in a diff.
+def test_only_a_content_admin_deletes_a_sanction_order_and_never_a_linked_one() -> None:
+    """The owner's ruling of 2026-10-20 gave the content admins a delete on every content type,
+    this register included. It is one arm, gated twice, and refused with 409 while the workshop the
+    order authorised is live — so the row that proves money was authorised outlives its workshop.
     """
-    methods = {method for route in sanction_routes.router.routes for method in route.methods}
-    assert "DELETE" not in methods
+    import inspect
+
+    deletes = [
+        route
+        for route in sanction_routes.router.routes
+        if "DELETE" in (getattr(route, "methods", None) or set())
+    ]
+    assert [route.path for route in deletes] == ["/sanction-orders/{sanction_id}"]
+    source = inspect.getsource(sanction_routes.delete_sanction_order)
+    assert "assert_can_delete(officer)" in source
+    assert "status.HTTP_409_CONFLICT" in source
+    assert '"deletedAt": None' in source
 
 
 def test_the_awaiting_count_is_declared_before_the_id_route() -> None:

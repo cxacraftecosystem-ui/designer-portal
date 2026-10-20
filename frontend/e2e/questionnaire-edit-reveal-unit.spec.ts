@@ -458,7 +458,8 @@ test.describe("a refused save names the holder and offers to fold into it", () =
       source row to move and no id to put in the path.
     */
     const handler = between(PAGE, "const holder = duplicateSetHolder(err);", "setError(err instanceof Error", "the catch");
-    expect(handler).toContain("if (editingId && holder) {");
+    // A merge removes its source, so it is a content admin's act (2026-10-20).
+    expect(handler).toContain("if (editingId && holder && isContentAdmin(user)) {");
     expect(handler).toContain("if (await offerMergeIntoHolder(editingId, holder)) return;");
     // Declining still says what happened, and says WHICH interview is in the way.
     expect(handler).toContain("already covers this exact set of artisans");

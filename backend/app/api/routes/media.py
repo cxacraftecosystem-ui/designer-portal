@@ -10,7 +10,14 @@ from prisma.errors import UniqueViolationError
 from app.api.consent_http import require_send
 from app.core.config import get_settings
 from app.core.db import db
-from app.core.deps import get_current_user, is_admin, require_admin, require_record_creator
+from app.core.deps import (
+    assert_can_delete,
+    get_current_user,
+    is_content_admin,
+    require_admin,
+    require_content_admin,
+    require_record_creator,
+)
 from app.schemas.media import (
     MediaCompleteRequest,
     MediaRelinkRequest,
@@ -672,9 +679,10 @@ async def transcribe_media_audio(
     **THE FAILURE IN ONE SENTENCE:** a designer refused with the consent 409 on the gated dictation
     route could re-post the identical clip to this address and read the words back.
 
-    ``require_admin``, WHICH IS THE SET ITS OWN TWIN ALREADY HAS. ``POST /{media_id}/transcribe-now``
-    below is this same call against a STORED clip — same provider chain, same transcription mode — and
-    has always been admin-only. Two spellings of one capability with different permissions is the
+    ``require_admin``, and it STAYS there when its twin widened. ``POST /{media_id}/transcribe-now``
+    below is this same call against a STORED clip, and since 2026-10-20 it is a content-admin action
+    on managed media (``deps.CONTENT_ADMIN_ROLES``); this route manages no media, so it keeps the
+    narrower set. Two spellings of one capability with different permissions is the
     shape of defect the analyse-measurement route above was just narrowed for, in the same file and
     for the same reason: each call spends this deployment's provider credit on a caller-supplied file.
 
@@ -1541,7 +1549,9 @@ async def get_media_batch(
 
 
 @router.get("/orphans")
-async def list_orphan_media(current_user: Any = Depends(require_admin)) -> list[dict[str, Any]]:
+async def list_orphan_media(
+    current_user: Any = Depends(require_content_admin),
+) -> list[dict[str, Any]]:
     """Admin-only recovery list: media still tagged to a record type/id whose parent no longer exists
     (the typed FK was nulled when the parent was deleted). The file is intact in object storage; this
     lets an admin see it again — and re-link it to a live record via ``/media/{id}/relink``.
@@ -1578,7 +1588,7 @@ async def list_orphan_media(current_user: Any = Depends(require_admin)) -> list[
 async def relink_media(
     media_id: str,
     payload: MediaRelinkRequest,
-    current_user: Any = Depends(require_admin),
+    current_user: Any = Depends(require_content_admin),
 ) -> dict[str, Any]:
     """Re-attach an orphaned (or mis-linked) media file to an existing record. Validates the target
     record exists, then sets both the string tag columns and the typed foreign key so it reappears
@@ -1646,7 +1656,10 @@ async def refine_media_transcript(
     would be the same defect in a smaller font.
     """
     media = await require_record(db.mediafile, media_id)
-    if not is_admin(current_user) and getattr(media, "uploadedById", None) != current_user.id:
+    if (
+        not is_content_admin(current_user)
+        and getattr(media, "uploadedById", None) != current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only refine the transcript of media you uploaded",
@@ -1669,7 +1682,7 @@ async def refine_media_transcript(
 @router.post("/{media_id}/transcribe-now")
 async def transcribe_media_now_route(
     media_id: str,
-    current_user: Any = Depends(require_admin),
+    current_user: Any = Depends(require_content_admin),
 ) -> dict[str, Any]:
     """Admin/master-admin: transcribe this audio file right now, applying the transcription mode set on
     the settings page, and store the result — bypassing the queue and the off-peak window. Returns the
@@ -1759,7 +1772,10 @@ async def set_media_transcript(
     content of.
     """
     media = await require_record(db.mediafile, media_id)
-    if not is_admin(current_user) and getattr(media, "uploadedById", None) != current_user.id:
+    if (
+        not is_content_admin(current_user)
+        and getattr(media, "uploadedById", None) != current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only edit the transcript of media you uploaded",
@@ -1794,7 +1810,9 @@ async def list_media_processing_jobs(
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
     page, page_size, skip = normalize_pagination(page, pageSize)
-    where: dict[str, Any] = {} if is_admin(current_user) else {"requestedById": current_user.id}
+    where: dict[str, Any] = (
+        {} if is_content_admin(current_user) else {"requestedById": current_user.id}
+    )
     if statusFilter:
         # MediaProcessingJob.status, NOT MediaFile.status — see MEDIA_PROCESSING_JOB_STATUSES above
         # for why passing RECORD_STATUSES here (as this line did) 422'd every request the panel makes.
@@ -1842,7 +1860,7 @@ async def list_media_processing_jobs(
 @router.post("/jobs/process")
 async def process_media_processing_jobs(
     limit: int | None = Query(default=None, ge=1, le=25),
-    _: Any = Depends(require_admin),
+    _: Any = Depends(require_content_admin),
 ) -> dict[str, int]:
     """The media-jobs panel's "Run queue now" button.
 
@@ -1891,7 +1909,7 @@ RETRYABLE_JOB_STATUSES = ("FAILED", "CANCELLED")
 @router.post("/jobs/{job_id}/retry")
 async def retry_media_processing_job(
     job_id: str,
-    current_user: Any = Depends(require_admin),
+    current_user: Any = Depends(require_content_admin),
 ) -> dict[str, Any]:
     """Requeue a failed or cancelled processing job. 409 for a job in any other state.
 
@@ -1986,20 +2004,16 @@ async def get_media(media_id: str, current_user: Any = Depends(get_current_user)
 async def delete_media(media_id: str, current_user: Any = Depends(get_current_user)) -> None:
     """Remove a saved media file and (best-effort) its S3 object.
 
-    Admins may delete any media; everyone else may delete only media they uploaded — so a
-    contributor can prune attachments on their own records straight from the edit screen without
-    holding full delete rights on the parent record.
+    Content admins (``deps.CONTENT_ADMIN_ROLES``) only, since 2026-10-20: every other role adds and
+    edits and never deletes, so an uploader no longer removes their own file.
 
     Except a file that is a design workshop's content, to that workshop's inspector and its two
     directors, whoever uploaded it (2026-10-09): they read the workshop and do not change it, and a
     stage photograph deleted here is gone from its report with no soft delete to restore it from.
     """
+    # Content admins only (owner's ruling, 2026-10-20): an uploader no longer deletes their own file.
+    assert_can_delete(current_user)
     media = await require_record(db.mediafile, media_id)
-    if not is_admin(current_user) and getattr(media, "uploadedById", None) != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only delete media you uploaded",
-        )
     await design_workshop_posts.refuse_a_holders_media_write(media, current_user)
     object_key = getattr(media, "objectKey", None)
     await db.mediafile.delete(where={"id": media_id})

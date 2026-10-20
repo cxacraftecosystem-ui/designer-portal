@@ -256,17 +256,12 @@ export function provisionableRoles(user: User | null | undefined): UserRole[] {
 }
 
 /**
- * Only admins and the master admin may assign tasks to other users.
- *
- * A FLOOR WHERE THE SERVER IS A SET. `deps.require_admin` is `is_admin`, which is set membership on
- * MASTER_ADMIN and ADMIN; this is `rank >= 50`. The two agree for every tier that exists, because
- * the three directorate tiers added 2026-09-13 are 42/45/48 and all below 50. A tier added ABOVE 50
- * would make them disagree and would hand it the whole task-assignment surface on this client alone,
- * where the API would then refuse it — the exact "UI offers what the API refuses" failure this file
- * is written against. If that day comes, this becomes a set.
+ * The content admins ({@link CONTENT_ADMIN_ROLES}) assign tasks to other users — set membership,
+ * exactly as the server's `deps.require_content_admin` on the task routes.
  */
 export function canAssignTasks(user: User | null | undefined) {
-  return hasRank(user, "ADMIN");
+  // The content admins since 2026-10-20 (`deps.require_content_admin` on the task routes).
+  return isContentAdmin(user);
 }
 
 export function isAdmin(user: User | null | undefined) {
@@ -275,6 +270,20 @@ export function isAdmin(user: User | null | undefined) {
 
 export function isMasterAdmin(user: User | null | undefined) {
   return user?.role === "MASTER_ADMIN";
+}
+
+/**
+ * The CONTENT admins (owner's ruling, 2026-10-20): they add, edit and delete every record, media
+ * file and other managed content type. Every other role adds and edits and never deletes.
+ *
+ * A SET, and deliberately not {@link isAdmin}: MINISTRY_ADMIN manages content, not accounts, rosters
+ * or settings. `backend/app/core/deps.py::CONTENT_ADMIN_ROLES` is the twin (the documentation-portal
+ * spells it identically), and `backend/tests/test_role_ladder_parity.py` holds them together.
+ */
+export const CONTENT_ADMIN_ROLES: readonly UserRole[] = ["MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"];
+
+export function isContentAdmin(user: User | null | undefined) {
+  return !!user && CONTENT_ADMIN_ROLES.includes(user.role);
 }
 
 export function canManageQuestionnaire(user: User | null | undefined) {
@@ -319,9 +328,8 @@ export function canManageWorkshops(user: User | null | undefined) {
  * wants `canManageWorkshops && (editing || canCreateWorkshops)`, which is what the workshops page
  * spells out, because a professor must still reach every field through Edit.
  *
- * NOT THE SAME AS `canCreateDesignWorkshops`, which is `{ADMIN, MASTER_ADMIN}` on the other workshop
- * table — a MINISTRY_ADMIN opens a `Workshop` here and reaches a `DesignWorkshop` through
- * `POST /annual-plan/{id}/promote`. Two doors, two gates, one creation path.
+ * NOT THE SAME FUNCTION AS `canCreateDesignWorkshops`, which is a set on the other workshop table
+ * (the content admins since 2026-10-20). Two doors, two gates.
  */
 export function canCreateWorkshops(user: User | null | undefined) {
   return hasRank(user, "MINISTRY_ADMIN");
@@ -431,7 +439,8 @@ export function canCreateRecords(user: User | null | undefined) {
 }
 
 export function canEditOwnOrAdmin(user: User | null | undefined, ownerId?: string | null) {
-  return isAdmin(user) || (!!user?.id && !!ownerId && user.id === ownerId);
+  // Content admins edit every record, whoever made it (2026-10-20).
+  return isContentAdmin(user) || (!!user?.id && !!ownerId && user.id === ownerId);
 }
 
 /**
@@ -1277,7 +1286,8 @@ export function canRunDesignWorkshops(user: User | null | undefined) {
  * something a designer used to have.
  *
  * THE RULE, AS IT WAS ASKED FOR: "designers cannot create workshops (only admins/master admins
- * can) — designers create records under existing workshops."
+ * can) — designers create records under existing workshops." The Ministry Admin joined on
+ * 2026-10-20: content admins add every record type.
  *
  * WHY THE TWO PREDICATES ARE SEPARATE FUNCTIONS RATHER THAN ONE WITH A FLAG. They answer different
  * questions about different things. `canRunDesignWorkshops` asks "may this account do the work of
@@ -1289,7 +1299,7 @@ export function canRunDesignWorkshops(user: User | null | undefined) {
  * `backend/app/core/deps.py::DESIGN_WORKSHOP_CREATOR_ROLES` carries the identical set and must keep
  * carrying it; `backend/tests/test_design_workshop_gate.py` reads THIS FILE to check that it does.
  */
-export const DESIGN_WORKSHOP_CREATOR_ROLES: readonly UserRole[] = ["ADMIN", "MASTER_ADMIN"];
+export const DESIGN_WORKSHOP_CREATOR_ROLES: readonly UserRole[] = ["MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"];
 
 export function canCreateDesignWorkshops(user: User | null | undefined) {
   return !!user && DESIGN_WORKSHOP_CREATOR_ROLES.includes(user.role);

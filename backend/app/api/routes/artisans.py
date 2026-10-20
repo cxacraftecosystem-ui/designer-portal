@@ -1074,14 +1074,14 @@ async def record_artisan_consent(
     """Append the artisan's answer to the ledger (append-only: a change is a new row). It never blocks
     recording; it decides only whether a recording of this artisan may be SENT outside, in both
     portals. Needs the standing to edit the artisan."""
-    from app.core.deps import is_admin, may_edit_lower_ranked_record
+    from app.core.deps import is_content_admin, may_edit_lower_ranked_record
     from app.services import dictation_consent
 
     artisan = await require_record(db.artisan, artisan_id)
     await assert_may_write_a_record_filed_under(artisan.designWorkshopId, current_user)
     owner_id = get_value(artisan, "createdById")
     allowed = (
-        is_admin(current_user)
+        is_content_admin(current_user)
         or (owner_id is not None and get_value(current_user, "id") == owner_id)
         or await may_edit_lower_ranked_record(current_user, owner_id)
     )

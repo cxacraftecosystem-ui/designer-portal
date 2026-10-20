@@ -64,7 +64,7 @@ HOLDERS = {"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"} | SERVING_ADMINS
 #: reads ``frontend/lib/permissions.ts`` to hold the web's copy identical to it.
 #: ``INSPECTABLE`` is ``INSPECTION_ROLES``: OQ-6 widened who may APPOINT an inspector and left who
 #: may BE one exactly as it was, which is the whole of why the widening was safe.
-CREATORS = {"ADMIN", "MASTER_ADMIN"}
+CREATORS = {"ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN"}
 INSPECTABLE = {"INSPECTOR"}
 
 
@@ -1229,7 +1229,8 @@ def test_the_third_door_does_not_widen_the_creator_set_it_bypasses():
     to say it is not the one standing here.
     """
     assert set(deps.DESIGN_WORKSHOP_CREATOR_ROLES) == CREATORS
-    assert "MINISTRY_ADMIN" not in deps.DESIGN_WORKSHOP_CREATOR_ROLES
+    # The MINISTRY_ADMIN joined on the owner's ruling of 2026-10-20; the director tiers did not.
+    assert not {"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"} & deps.DESIGN_WORKSHOP_CREATOR_ROLES
 
     created = [
         route
