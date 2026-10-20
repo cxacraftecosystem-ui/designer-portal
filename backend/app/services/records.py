@@ -1154,88 +1154,31 @@ def lift_stated_address(location_data: dict[str, Any]) -> dict[str, Any]:
 
 
 async def resolve_craft_id(
-    data: dict[str, Any], current_user: Any, *, allow_create: bool = True
+    data: dict[str, Any], current_user: Any, *, stored: Any | None = None, strict: bool = False
 ) -> dict[str, Any]:
-    """Turn a free-text ``craftName`` into a ``craftId``, minting the craft only when permitted.
+    """Turn an old client's free-text ``craftName`` into a ``craftId`` from the master list.
 
-    ── WHY THIS LIVES IN A SERVICE NOW AND NOT IN ``api/routes/artisans`` ────────────────────────
-    It was defined in that route module and imported from nowhere, which was correct while the
-    artisan form was the only door onto ``Artisan``. The spreadsheet importer is the second, and a
-    SERVICE importing a private name out of a ROUTE module is the dependency direction this
-    codebase spends paragraphs refusing — see ``design_workshop_inspections``' own apology for
-    importing ``_stages_payload``. Moved rather than copied, because two resolvers of one
-    free-text-to-vocabulary mapping is how the artisan form and the importer come to disagree about
-    what "Block printing " with a trailing space means.
+    ── SINCE THE MASTER CRAFT LIST (2026-10-20) THIS NEVER CREATES A CRAFT ─────────────────────────
+    Crafts are one database list shared by both portals (docs/CRAFTS.md), and every current client
+    picks a ``craftId`` from it. A ``craftName`` still arrives from old clients and offline outboxes,
+    so it is matched (exact, then by alias) and, when nothing matches, kept in
+    ``extraMetadata.legacyCraftText`` for the admin review queue instead of being minted or lost.
+    The create arm and its ``allow_create`` switch are gone.
 
-    ── ``allow_create`` IS THE WHOLE REASON THIS GREW A PARAMETER, AND IT DEFAULTS TO THE OLD
-    BEHAVIOUR ──
-    The create arm is gated on :func:`deps.can_manage_crafts`, which is PROFESSOR AND ABOVE — and
-    every one of the three directorate tiers added on 2026-09-13 clears that floor. So on the
-    spreadsheet path a MISTYPED craft name in one cell of one row would not be refused: it would
-    MINT a row in the controlled vocabulary, return 201, and report "created" — a new craft nobody
-    chose, arriving through a bulk import, with the officer who caused it unaware there was a
-    decision to make. That is the failure ``POST /crafts``' own gate exists to prevent, reached
-    sideways and at fifteen rows a time.
+    ``strict`` is the spreadsheet importer's: an unmatched name refuses the ROW with a 422 naming the
+    spelling, because the uploader can fix a typo in Excel and nobody is looking at a picker.
 
-    A TYPED FORM IS A DIFFERENT SITUATION AND KEEPS THE OLD ANSWER. A professor typing a craft name
-    into the artisan form is looking at an autocomplete that just told them it matched nothing; they
-    are making a decision. Nobody reading a spreadsheet is. Hence a parameter with the permissive
-    default rather than a narrowing that would have silently changed the form's behaviour too.
+    A ``craftId`` that changes must be an ACTIVE craft (422 ``CRAFT_NOT_IN_LIST``); ``stored`` is the
+    record an edit applies to, so resending the craft it already has is never refused.
 
-    THE REFUSALS ARE DIFFERENT SENTENCES because the remedies are: the form's says "ask a professor
-    or an admin to add it", which is right for a person at a keyboard; the import's says which
-    spelling it looked for, because the likeliest cause on that path is a typo the uploader can fix
-    in Excel in five seconds.
+    It lives in this service and not in ``api/routes/artisans`` because the importer is a second
+    caller, and a service importing a private name out of a route module is the dependency direction
+    this codebase refuses.
     """
-    craft_name = data.pop("craftName", None)
-    if data.get("craftId") or not craft_name:
-        return data
-    existing = await db.craft.find_unique(where={"name": craft_name})
-    if existing:
-        data["craftId"] = existing.id
-        return data
-    if not allow_create:
-        # NOT a 403. The caller has the rank; what it does not have is a person looking at the
-        # value. A 422 naming the spelling is what the uploader can act on, and the importer turns
-        # this into a per-row problem rather than failing the whole file — see ``artisan_import``.
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"No craft is called '{craft_name}'. Crafts are a controlled list and a spreadsheet "
-                "cannot add to it — correct the spelling to match an existing craft, or ask a "
-                "professor or an admin to add the craft first."
-            ),
-        )
-    # IMPORTED INSIDE THE FUNCTION, exactly as ``artisans._may_read_full_aadhaar`` imports
-    # ``has_rank``, and for the cycle rather than for taste: ``core.deps`` imports
-    # ``services/access_roster`` at module level, which imports ``services/designers``. A top-level
-    # ``from app.core.deps import can_manage_crafts`` here would close that loop the first time
-    # anything in that chain reached for this module, and an import cycle in the permission layer
-    # fails at start-up with a traceback that names neither file.
-    from app.core.deps import can_manage_crafts
+    del current_user  # kept in the signature: both portals' callers pass it
+    from app.services import craft_master
 
-    # A free-text craft name that matches nothing would otherwise mint a Craft through the artisan
-    # form — the same write POST /crafts guards, reached sideways. Same predicate, so the two can
-    # never disagree: Professor and above.
-    if not can_manage_crafts(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"Craft '{craft_name}' does not exist yet. Select an existing craft, or ask a "
-                "professor or an admin to add it."
-            ),
-        )
-    from app.services import cross_portal_codes
-
-    created = await db.craft.create(
-        data={
-            "name": craft_name,
-            "createdById": current_user.id,
-            "craftCode": await cross_portal_codes.code_for_new_craft(db, craft_name),
-        }
-    )
-    data["craftId"] = created.id
-    return data
+    return await craft_master.resolve_record_craft(db, data, stored=stored, strict=strict)
 
 
 async def attach_location(data: dict[str, Any]) -> dict[str, Any]:

@@ -317,8 +317,18 @@ STAGE_1 = StageSpec(
                         "Development Programme."
                     ),
                 ),
+                # THE MASTER CRAFT LIST (2026-10-20): the craft is `craftRef`, picked from the list, and
+                # this box is its copy. The server rewrites it from the link on every save
+                # (`design_workshops.derive_stage_craft_names`); the clients show it read-only.
                 fromref(
-                    "craftName", "Craft", T, B, required=True, report_role=COVER, max_length=160
+                    "craftName",
+                    "Craft",
+                    T,
+                    B,
+                    required=True,
+                    report_role=COVER,
+                    max_length=160,
+                    help="Filled from the craft picked below.",
                 ),
                 fromref(
                     "craftLocalName",
@@ -330,13 +340,14 @@ STAGE_1 = StageSpec(
                 ),
                 f(
                     "craftRef",
-                    "Linked craft record",
+                    "Craft from the list",
                     REF,
-                    S,
+                    B,
+                    required=True,
                     ref_model="Craft",
                     ref_scope=ALL_SCOPE,
                     report_role=HIDDEN,
-                    help="Choose a documented craft to fill in the cover fields.",
+                    help="Pick the craft from the list.",
                 ),
                 # ── WHAT ELSE THE CRAFT RECORD HOLDS, EACH IN A BOX OF ITS OWN ────────────────────
                 #

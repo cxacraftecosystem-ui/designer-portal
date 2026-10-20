@@ -862,6 +862,8 @@ def test_the_shared_column_list_still_spells_the_create_loop_it_replaced():
         # columns and this tuple have to gain the column together or the endpoints disagree about
         # what a workshop header consists of.
         "workshopKind",
+        # The master-list craft (2026-10-20), written with its name by ``craft_master.craft_columns``.
+        "craftId",
         "craftName",
         "clusterName",
         "state",

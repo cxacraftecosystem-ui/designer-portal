@@ -74,6 +74,18 @@ from app.services import records as records_service
 pytestmark = pytest.mark.anyio
 
 
+async def _nothing_found(*_args: Any, **_kwargs: Any) -> None:
+    return None
+
+
+async def _no_rows(*_args: Any, **_kwargs: Any) -> list[Any]:
+    return []
+
+
+#: The master craft list with no crafts on it, for the product creates below that send a typed name.
+_NO_CRAFTS = SimpleNamespace(find_unique=_nothing_found, find_first=_nothing_found, find_many=_no_rows)
+
+
 @pytest.fixture(scope="module")
 def anyio_backend():
     return "asyncio"
@@ -333,6 +345,9 @@ async def test_the_product_route_answers_a_replay_without_reaching_a_single_gate
     stored = _row("p-1", client_key="k-1")
     table = _Table([stored])
     monkeypatch.setattr(db, "productdocumentation", table)
+    # An old client's typed craft name is matched onto the master craft list (2026-10-20); empty here.
+    monkeypatch.setattr(db, "craft", _NO_CRAFTS)
+    monkeypatch.setattr(db, "craftspelling", _NO_CRAFTS)
 
     async def _must_not_run(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("a replay reached a write gate")
@@ -361,6 +376,9 @@ async def test_the_second_answer_mirrors_the_first_and_carries_no_replay_flag(mo
     """
     table = _Table()
     monkeypatch.setattr(db, "productdocumentation", table)
+    # An old client's typed craft name is matched onto the master craft list (2026-10-20); empty here.
+    monkeypatch.setattr(db, "craft", _NO_CRAFTS)
+    monkeypatch.setattr(db, "craftspelling", _NO_CRAFTS)
 
     async def _passthrough(data: dict[str, Any]) -> dict[str, Any]:
         return data
@@ -393,6 +411,9 @@ async def test_an_absent_key_leaves_the_product_route_exactly_as_it_was(monkeypa
     """
     table = _Table()
     monkeypatch.setattr(db, "productdocumentation", table)
+    # An old client's typed craft name is matched onto the master craft list (2026-10-20); empty here.
+    monkeypatch.setattr(db, "craft", _NO_CRAFTS)
+    monkeypatch.setattr(db, "craftspelling", _NO_CRAFTS)
 
     async def _passthrough(data: dict[str, Any]) -> dict[str, Any]:
         return data
@@ -502,6 +523,9 @@ async def test_a_replay_of_someone_elses_key_is_refused_by_the_route_too(monkeyp
     # could accidentally swallow it into a create.
     table = _Table([_row("p-1", client_key="k-1", created_by="u-caller")])
     monkeypatch.setattr(db, "productdocumentation", table)
+    # An old client's typed craft name is matched onto the master craft list (2026-10-20); empty here.
+    monkeypatch.setattr(db, "craft", _NO_CRAFTS)
+    monkeypatch.setattr(db, "craftspelling", _NO_CRAFTS)
     with pytest.raises(HTTPException) as caught:
         await product_routes.create_product(
             _product_payload(clientKey="k-1"), current_user=STRANGER
@@ -529,6 +553,9 @@ async def test_a_key_that_loses_the_index_race_is_answered_not_five_hundred(monk
 
     table = _RacingTable()
     monkeypatch.setattr(db, "productdocumentation", table)
+    # An old client's typed craft name is matched onto the master craft list (2026-10-20); empty here.
+    monkeypatch.setattr(db, "craft", _NO_CRAFTS)
+    monkeypatch.setattr(db, "craftspelling", _NO_CRAFTS)
 
     async def _passthrough(data: dict[str, Any]) -> dict[str, Any]:
         return data
@@ -552,6 +579,9 @@ async def test_a_create_that_fails_for_any_other_reason_still_fails(monkeypatch)
     # successful replay just because the request happened to carry a key.
     table = _Table(raises=RuntimeError("could not connect"))
     monkeypatch.setattr(db, "productdocumentation", table)
+    # An old client's typed craft name is matched onto the master craft list (2026-10-20); empty here.
+    monkeypatch.setattr(db, "craft", _NO_CRAFTS)
+    monkeypatch.setattr(db, "craftspelling", _NO_CRAFTS)
 
     async def _passthrough(data: dict[str, Any]) -> dict[str, Any]:
         return data

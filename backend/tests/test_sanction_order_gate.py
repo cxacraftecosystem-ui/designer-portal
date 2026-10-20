@@ -378,7 +378,8 @@ def test_the_sanction_facts_are_not_promoted_columns() -> None:
 
     assert "workshopSetup.sanctionOrderNo" not in PROMOTED_COLUMNS
     assert "workshopSetup.sanctionOrderDate" not in PROMOTED_COLUMNS
-    assert len(PROMOTED_COLUMNS) == 14, sorted(PROMOTED_COLUMNS)
+    # 15 since the master craft list (2026-10-20) promoted `workshopSetup.craftRef` to `craftId`.
+    assert len(PROMOTED_COLUMNS) == 15, sorted(PROMOTED_COLUMNS)
 
 
 # --------------------------------------------------------------------------------------

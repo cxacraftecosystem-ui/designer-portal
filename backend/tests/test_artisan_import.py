@@ -134,8 +134,10 @@ class _Client:
             "craft",
             crafts
             if crafts is not None
-            else [SimpleNamespace(id="craft-1", name="Block Printing")],
+            else [SimpleNamespace(id="craft-1", name="Block Printing", slug="Block-Printing", status="ACTIVE", craftCode=None, extraMetadata=None)],
         )
+        # The master craft list (2026-10-20) matches a typed name by alias through this table.
+        self.craftspelling = _Table("craftspelling")
         self.location = _Table("location")
         self.dwartisanimport = _Table("import")
         self.dwstageentry = _Table("stage")

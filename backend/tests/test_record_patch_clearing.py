@@ -750,7 +750,13 @@ def test_every_nullable_column_a_client_can_send_is_either_clearable_or_exempt()
         # it into the fingerprint and the last four (services/aadhaar_fingerprint.seal) before
         # anything is cleaned or written, so a null retracts both of those and never reaches Prisma.
         sendable -= {"aadhaarNumber"}
-        expected = (nullable & sendable) - (CLEARABLE_KEYS & nullable) - system_managed
+        # ``Craft.subCategoryId`` (the master craft list, 2026-10-20) is nullable only because a craft
+        # recorded before the list has none. An explicit null on a listed craft is REFUSED with a 422
+        # (``crafts._master_list_update``), so it is never a 200 that does nothing.
+        # ``Craft.category`` is the server's copy of the category name since the same date, and the
+        # route ignores a client's value for it, null included.
+        refused = {"subCategoryId", "category"} if model == "Craft" else set()
+        expected = (nullable & sendable) - (CLEARABLE_KEYS & nullable) - system_managed - refused
 
         missing = sorted(expected - set(declared))
         assert not missing, (

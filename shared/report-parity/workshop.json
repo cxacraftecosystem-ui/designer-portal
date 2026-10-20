@@ -21,6 +21,7 @@
     "schemeName": "National Handicraft Development Programme",
     "craftName": "Sambalpuri Ikat",
     "craftLocalName": "ସମ୍ବଲପୁରୀ ଇକତ",
+    "craftRef": "cmc0e65d297113c6286961248",
     "clusterName": "Barpali",
     "state": "Odisha",
     "district": "Bargarh",
@@ -1458,6 +1459,14 @@
   "workshopId": "cmgworkshop00000000000001",
   "builtAt": "2026-10-10T09:00:00Z",
   "references": {
+   "cmc0e65d297113c6286961248": {
+    "model": "Craft",
+    "label": "Sambalpuri Ikat",
+    "photo": "",
+    "place": "Barpali",
+    "district": "Bargarh",
+    "state": "Odisha"
+   },
    "cmgartisan000000000000001": {
     "model": "Artisan",
     "label": "Kamla Devi (OD-BRG-2231)",

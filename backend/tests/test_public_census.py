@@ -156,7 +156,10 @@ def test_the_census_counts_every_row_held_not_only_the_approved_ones(corpus) -> 
     body = asyncio.run(_get()).json()
 
     assert "recordsHeld" in body
-    assert all(kwargs == {} for _, kwargs in tables.calls), "a where clause reached a census count"
+    # The one exception is the craft row, which counts the ACTIVE master list (2026-10-20).
+    assert all(
+        kwargs == ({"where": {"status": "ACTIVE"}} if name == "craft" else {}) for name, kwargs in tables.calls
+    ), "a where clause reached a census count"
 
 
 def _mounted_routes(router):

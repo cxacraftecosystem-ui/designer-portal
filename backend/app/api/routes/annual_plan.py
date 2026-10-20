@@ -72,7 +72,7 @@ from app.schemas.annual_plan import (
     AnnualPlanPromoteRequest,
     RegionalDirectorStatesIn,
 )
-from app.services import annual_plan
+from app.services import annual_plan, craft_master
 from app.services.annual_plan import (
     ANNUAL_PLAN_REFUSAL,
     apply_parsed_plan,
@@ -732,6 +732,14 @@ async def promote_annual_plan_entry(
     the ordinary create button as well. Two doors, two gates, one creation path.
     """
     entry = await _entry_or_404(entry_id)
+    if payload.craftId and payload.craftId != getattr(entry, "craftId", None):
+        # The craft the manager picked when the sheet's text matched nothing on the list.
+        craft = await craft_master.assert_active_craft(db, payload.craftId)
+        await db.annualplanentry.update(
+            where={"id": entry.id},
+            data={"craftId": craft.id, "craftName": craft.name, "updatedById": current_user.id},
+        )
+        entry = await _entry_or_404(entry_id)
     record = await promote_entry(
         entry,
         actor=current_user,

@@ -788,7 +788,7 @@ async def update_artisan(
     # because the records filed under a workshop are its content (2026-10-09). Above the craft and
     # location lines, which write, for the create route's reason.
     await assert_payload_workshop(data, current_user, filed_under=artisan.designWorkshopId)
-    data = await resolve_craft_id(data, current_user)
+    data = await resolve_craft_id(data, current_user, stored=artisan)
     data = await attach_location(data)
     # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
     # ends in ``record_revision``, which used to COMMIT on its own thirty lines before the update

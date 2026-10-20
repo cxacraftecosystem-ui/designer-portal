@@ -360,6 +360,7 @@ def entry_payload(row: Any, *, sanction: dict[str, Any] | None = None) -> dict[s
             enum_label("WORKSHOP_KIND", row.workshopKind) if row.workshopKind else None
         ),
         "craftName": row.craftName,
+        "craftId": getattr(row, "craftId", None),
         "clusterName": row.clusterName,
         "state": row.state,
         "district": row.district,
@@ -526,6 +527,14 @@ def _create_data(row: ParsedPlanRow, *, plan_year: int, actor_id: str, filename:
     }
 
 
+def _with_craft(data: dict[str, Any], crafts_by_name: dict[str, Any]) -> dict[str, Any]:
+    """A new plan row's ``craftId``, when its craft text matched the master list."""
+    matched = crafts_by_name.get(str(data.get("craftName") or ""))
+    if matched is not None:
+        data["craftId"] = matched.id
+    return data
+
+
 async def _write_entry_update(tx: Any, entry_id: str, data: dict[str, Any]) -> None:
     """One row's update, through the TRANSACTION CLIENT, as its own seam.
 
@@ -607,6 +616,12 @@ async def apply_parsed_plan(
     # which is why the ceiling exists at all.
     existing = await db.annualplanentry.find_many(where={"planYear": plan_year})
     by_key = {row.workshopNoKey: row for row in existing}
+    # THE MASTER CRAFT LIST (2026-10-20): each sheet's craft text is matched onto the list once, and a
+    # match links the row (``craftId``). Text that matches nothing is kept as typed and links nothing;
+    # promotion asks for the craft then (``PromoteDialog``), and the review queue lists it.
+    from app.services import craft_master
+
+    crafts_by_name = await craft_master.match_names(db, [row.craftName for row in incoming.values()])
 
     to_create: list[ParsedPlanRow] = []
     updates: list[tuple[Any, dict[str, Any], bool]] = []  # (stored row, data, reinstating)
@@ -631,6 +646,9 @@ async def apply_parsed_plan(
             if not _differs(field_name, old_value, new_value):
                 continue
             row_changed = True
+            if field_name == "craftName":
+                matched = crafts_by_name.get(str(new_value or ""))
+                data["craftId"] = matched.id if matched is not None else None
             data[field_name] = (
                 _midnight(new_value)
                 if field_name in ("plannedStartDate", "plannedEndDate")
@@ -685,11 +703,14 @@ async def apply_parsed_plan(
                 # hundred rows is a single round trip.
                 await tx.annualplanentry.create_many(
                     data=[
-                        _create_data(
-                            row,
-                            plan_year=plan_year,
-                            actor_id=actor_id,
-                            filename=source_filename,
+                        _with_craft(
+                            _create_data(
+                                row,
+                                plan_year=plan_year,
+                                actor_id=actor_id,
+                                filename=source_filename,
+                            ),
+                            crafts_by_name,
                         )
                         for row in to_create
                     ]
@@ -837,6 +858,7 @@ def plan_stage_one_values(entry: Any) -> dict[str, Any]:
         for key, value in (
             ("workshopCode", entry.workshopNo),
             ("workshopKind", entry.workshopKind),
+            ("craftRef", getattr(entry, "craftId", None)),
             ("craftName", entry.craftName),
             ("clusterName", entry.clusterName),
             ("state", entry.state),
@@ -958,6 +980,7 @@ async def promote_entry(
             key: value
             for key, value in (
                 ("workshopKind", entry.workshopKind),
+                ("craftId", getattr(entry, "craftId", None)),
                 ("craftName", entry.craftName),
                 ("clusterName", entry.clusterName),
                 ("state", entry.state),

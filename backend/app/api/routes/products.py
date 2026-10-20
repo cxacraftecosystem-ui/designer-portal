@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, status
 from app.core.db import db
 from app.core.deps import assert_can_delete, get_current_user, require_record_creator
 from app.schemas.records import ProductCreate, ProductUpdate
+from app.services import craft_master
 from app.services.access import guard_record_edit
 from app.services.artisan_merge import redirect_payload
 from app.services.completeness import (
@@ -13,6 +14,7 @@ from app.services.completeness import (
     filter_or_422 as completeness_filter,
 )
 from app.services.concurrency import gather_reads
+from app.services.linked_names import fill_craft_name
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (
     assert_may_write_a_record_filed_under,
@@ -387,6 +389,11 @@ async def create_product(
     # so a create refused after it left a ``Location`` row behind that nothing references, on every
     # refused save (2026-10-09).
     await assert_payload_workshop(data, current_user, filed_under=None)
+    # THE MASTER CRAFT LIST (2026-10-20): the craft is a ``craftId`` from the list, and ``craftName``
+    # is its copy. An old client's typed name is matched onto the list or kept for review. Below the
+    # workshop gates, so a refused create reads nothing.
+    data = await craft_master.resolve_record_craft(db, data, keep_name=True)
+    data = await fill_craft_name(data)
     data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id
@@ -464,6 +471,8 @@ async def update_product(
     # inspector and two directors may not change this record at all, an unfile and a move out
     # included (2026-10-09). Above ``attach_location``, which writes, for the create route's reason.
     await assert_payload_workshop(data, current_user, filed_under=product.designWorkshopId)
+    data = await craft_master.resolve_record_craft(db, data, stored=product, keep_name=True)
+    data = await fill_craft_name(data, stored=product)
     data = await attach_location(data)
     # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
     # ends in ``record_revision``, which used to COMMIT on its own a handful of statements before the

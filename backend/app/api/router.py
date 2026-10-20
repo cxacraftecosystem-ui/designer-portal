@@ -14,6 +14,7 @@ from app.api.routes import (
     asr_models,
     auth,
     completeness,
+    craft_categories,
     craft_codes,
     crafts,
     cross_portal,
@@ -101,6 +102,7 @@ api_router.include_router(artisan_duplicates.router)
 api_router.include_router(artisan_duplicates.merges_router)
 api_router.include_router(crafts.router)
 api_router.include_router(craft_codes.router)
+api_router.include_router(craft_categories.router)
 api_router.include_router(cross_portal.router)
 # The Field Repository's searches of this portal (signed peer routes; docs/SEARCH.md).
 api_router.include_router(cross_portal_search.router)

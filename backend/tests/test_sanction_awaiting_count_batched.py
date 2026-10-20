@@ -15,6 +15,7 @@ COMPLETE = {
     "workshopKind": "DESIGN",
     "schemeName": "NHDP",
     "craftName": "Block printing",
+    "craftRef": "crf_block_printing",
     "clusterName": "Bagru",
     "state": "Rajasthan",
     "district": "Jaipur",

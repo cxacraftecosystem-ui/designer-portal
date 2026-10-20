@@ -235,6 +235,9 @@ class DesignWorkshopCreate(APIModel):
             "Omit if not yet known."
         ),
     )
+    # The master craft list (2026-10-20): the craft is picked from the list; ``craftName`` follows it
+    # and is accepted alone only from old clients, which have it matched onto the list.
+    craftId: str | None = Field(default=None, max_length=64)
     craftName: str | None = Field(default=None, max_length=160)
     clusterName: str | None = Field(default=None, max_length=160)
     state: str | None = Field(default=None, max_length=80)
@@ -275,6 +278,9 @@ class DesignWorkshopUpdate(APIModel):
     # reaches a promoted column that a list filters on. A free string here would produce a workshop
     # filed under a kind no dropdown offers and no filter can find.
     workshopKind: str | None = Field(default=None, max_length=48)
+    # The master craft list (2026-10-20): the craft is picked from the list; ``craftName`` follows it
+    # and is accepted alone only from old clients, which have it matched onto the list.
+    craftId: str | None = Field(default=None, max_length=64)
     craftName: str | None = Field(default=None, max_length=160)
     clusterName: str | None = Field(default=None, max_length=160)
     state: str | None = Field(default=None, max_length=80)
