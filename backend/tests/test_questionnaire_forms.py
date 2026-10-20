@@ -685,7 +685,7 @@ async def test_deleting_an_answered_question_retires_it_and_keeps_the_answer(cli
 
     body = client.delete(
         f"/api/questionnaires/{questionnaire_id}/questions/{answered['id']}",
-        headers=_headers(world),
+        headers=_headers(world, "admin"),  # deleting is a content admin's act (2026-10-20)
     ).json()
     assert body["action"] == "retired"
     retired = {q["id"]: q for s in body["questionnaire"]["sections"] for q in s["questions"]}
@@ -695,7 +695,7 @@ async def test_deleting_an_answered_question_retires_it_and_keeps_the_answer(cli
 
     body = client.delete(
         f"/api/questionnaires/{questionnaire_id}/questions/{unanswered['id']}",
-        headers=_headers(world),
+        headers=_headers(world, "admin"),  # deleting is a content admin's act (2026-10-20)
     ).json()
     assert body["action"] == "deleted"
     remaining = {q["id"] for s in body["questionnaire"]["sections"] for q in s["questions"]}
@@ -1887,7 +1887,7 @@ async def test_a_question_someone_only_tabbed_past_can_still_be_deleted(client, 
 
     removed = client.delete(
         f"/api/questionnaires/{questionnaire_id}/questions/{question_id}",
-        headers=_headers(world),
+        headers=_headers(world, "admin"),  # deleting is a content admin's act (2026-10-20)
     )
     assert removed.status_code == 200, removed.text
     assert removed.json()["action"] == "deleted", (
@@ -1932,7 +1932,7 @@ async def test_a_question_with_a_real_answer_is_still_retired_rather_than_delete
 
     removed = client.delete(
         f"/api/questionnaires/{questionnaire_id}/questions/{question_id}",
-        headers=_headers(world),
+        headers=_headers(world, "admin"),  # deleting is a content admin's act (2026-10-20)
     )
     assert removed.status_code == 200, removed.text
     assert removed.json()["action"] == "retired"

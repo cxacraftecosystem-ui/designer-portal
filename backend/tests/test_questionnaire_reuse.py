@@ -358,7 +358,7 @@ def test_retired_questions_do_not_come_across(client, env):
     )
     assert saved.status_code == 200, saved.text
     removed = client.delete(
-        f"/api/questionnaires/{source['id']}/questions/{doomed}", headers=_as(env, "lead")
+        f"/api/questionnaires/{source['id']}/questions/{doomed}", headers=_as(env, "admin")
     )
     assert removed.status_code == 200, removed.text
     assert removed.json()["action"] == "retired", "the fixture did not retire anything"
@@ -721,7 +721,7 @@ def test_editing_the_copy_leaves_the_original_alone(client, env):
     # (c) retire a question on the copy
     third = _read(client, env, copy_id)["sections"][1]["questions"][0]
     retired = client.delete(
-        f"/api/questionnaires/{copy_id}/questions/{third['id']}", headers=_as(env, "lead")
+        f"/api/questionnaires/{copy_id}/questions/{third['id']}", headers=_as(env, "admin")
     )
     assert retired.status_code == 200, retired.text
 
@@ -1031,7 +1031,7 @@ def test_a_source_with_nothing_left_to_copy_still_reads_as_a_sentence(client, en
         for question in section["questions"]:
             removed = client.delete(
                 f"/api/questionnaires/{source['id']}/questions/{question['id']}",
-                headers=_as(env, "lead"),
+                headers=_as(env, "admin"),
             )
             assert removed.status_code == 200, removed.text
 

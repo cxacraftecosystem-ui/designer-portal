@@ -118,6 +118,7 @@ import com.designprototype.workshop.ui.rememberIslandImeVisible
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import com.designprototype.workshop.ui.LocalContentAdminChrome
 import com.designprototype.workshop.ui.readAdminView
 import com.designprototype.workshop.ui.restoredAdminView
 import com.designprototype.workshop.ui.writeAdminView
@@ -7685,13 +7686,6 @@ internal class UnsavedGuard {
 }
 
 private val LocalUnsavedGuard = staticCompositionLocalOf<UnsavedGuard?> { null }
-
-/**
- * True only for a content admin (FieldPermissions.isContentAdmin) with admin view on — the handset's
- * `adminMode`. Every remove/delete control below the main screen reads it, so a role outside the set
- * is never offered a delete the server refuses (owner's ruling, 2026-10-20).
- */
-private val LocalContentAdminChrome = staticCompositionLocalOf { false }
 
 /**
  * Register the current form with the app-level [UnsavedGuard] so the Back navigation can offer to save

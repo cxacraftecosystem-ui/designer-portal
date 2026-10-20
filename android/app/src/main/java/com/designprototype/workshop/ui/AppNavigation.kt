@@ -54,6 +54,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -1137,3 +1138,10 @@ private fun NavRow(
         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
     )
 }
+
+/**
+ * True only for a content admin ([FieldPermissions.isContentAdmin]) with admin view on — the handset's
+ * `adminMode`. Every remove/delete control reads it, so a role outside the set is never offered a
+ * delete the server refuses (owner's ruling, 2026-10-20).
+ */
+val LocalContentAdminChrome = staticCompositionLocalOf { false }

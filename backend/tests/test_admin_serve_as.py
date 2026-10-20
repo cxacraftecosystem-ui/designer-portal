@@ -1934,11 +1934,11 @@ def test_every_administrator_tier_serves_in_every_supervisory_post(world):
 
 @needs_db
 def test_every_administrator_tier_is_named_a_designer_and_then_writes(world):
-    """The MINISTRY_ADMIN is the one that proves something: the two platform tiers write every
-    workshop through the admin arm, and a ministry admin writes this one only through the row."""
+    """All three tiers are content admins since 2026-10-20 (owner's ruling), so each writes every
+    workshop through the admin arm with no viewer row — and naming them designers changes nothing."""
     workshop_id = _open(world, "Team of administrators")
     before = _write(world, workshop_id, "ministry")
-    assert before.status_code == 404, "a ministry admin wrote a workshop nobody had put them on"
+    assert before.status_code == 200, "a content admin is a privileged editor of every workshop"
 
     named = _designers(world, workshop_id, ["ministry", "admin", "master2"])
     assert named.status_code == 200, named.text
