@@ -122,11 +122,11 @@ for (const size of [
     test("the header hides on the way down and returns on any move up", async ({ page }) => {
       await tallPage(page);
       const frame = page.locator(".app-search-header-frame");
-      await page.mouse.wheel(0, 200);
+      // Window scrolls, not wheels: a wheel lands on whatever is under the pointer, and a card list
+      // there that contains its own overscroll swallows the move before the page sees it.
+      await page.evaluate(() => window.scrollTo({ top: 200, behavior: "instant" }));
       await expect(frame).toHaveAttribute("data-shown", "false");
-      // A wheel scroll animates; an opposite wheel before it lands only shortens the way down.
-      await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThanOrEqual(199);
-      await page.mouse.wheel(0, -10);
+      await page.evaluate(() => window.scrollBy({ top: -10, behavior: "instant" }));
       await expect(frame).toHaveAttribute("data-shown", "true");
     });
 
@@ -184,9 +184,11 @@ test.describe("at 390×844, the upload tray", () => {
       .first()
       .click();
     await page.getByRole("option", { name: "Artisan" }).click();
-    // The form's required location: a state and the device's coordinates.
+    // The form's required location: a state, its district and the device's coordinates.
     await page.getByRole("button", { name: /^State/ }).click();
     await page.getByRole("option", { name: "Rajasthan" }).click();
+    await page.getByRole("button", { name: /^District/ }).click();
+    await page.getByRole("option").first().click();
     await page.getByRole("spinbutton", { name: /^Latitude/ }).fill("26.82");
     await page.getByRole("spinbutton", { name: /^Longitude/ }).fill("75.54");
     await page.locator("form button.field-button").filter({ hasText: /Upload/ }).click();
