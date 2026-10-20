@@ -519,8 +519,11 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Workshop",
       "Craft name (required)",
       "Local name",
-      "Category",
-      "Place",
+      "Category (required)",
+      "Sub-category (required)",
+      "State of origin",
+      "State of practice",
+      "GI status (required)",
       "Description",
       "Craft media"
     ],

@@ -450,7 +450,7 @@ function CraftsPageBody() {
               <DictationUnavailableNotice className="md:col-span-2 lg:col-span-4" />
               <DictatedTextInput
                 name="name"
-                label="Name"
+                label="Craft name"
                 required
                 titleCased
                 explainWhenUnavailable={false}

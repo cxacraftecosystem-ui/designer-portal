@@ -127,8 +127,9 @@ repository under the workshop each record was made in.
 
 Add the craft being documented so artisans, products and tools have something to hang off.
 
-**What the screen asks for:** Workshop, Craft name *(required)*, Local name, Category, Place,
-Description, Craft media.
+**What the screen asks for:** Workshop, Craft name *(required)*, Local name, Category *(required)*,
+Sub-category *(required)*, State of origin, State of practice, GI status *(required)*, Description,
+Craft media.
 
 **Why it exists.** Craft is the shared vocabulary of the repository: artisans link to a craft,
 products and tools inherit the craft name from it, and the Data Browser groups every workshop's
