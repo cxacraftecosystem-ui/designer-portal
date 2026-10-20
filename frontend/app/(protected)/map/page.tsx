@@ -275,6 +275,16 @@ function PlacesView({ viewSwitch }: { viewSwitch?: React.ReactNode }) {
   }, [query, scope.settling]);
 
   const apply = useCallback(() => setApplied({ q, filters }), [q, filters]);
+  /** A new answer is on its way while the previous one is still drawn. */
+  const updating = loading && data !== null;
+  /** Clears every filter, the workshop scope and the detail level: the map's one reset. */
+  function showEverything() {
+    setQ("");
+    setFilters(EMPTY_SEARCH_FILTERS);
+    setApplied({ q: "", filters: EMPTY_SEARCH_FILTERS });
+    scope.setWorkshopIds([]);
+    setLevel("DISTRICT");
+  }
 
   // Memoised because `borrowedOutlines` depends on it: `data?.points ?? []` mints a fresh empty array
   // on every render while data is loading, which would re-run that memo forever.
@@ -468,8 +478,8 @@ function PlacesView({ viewSwitch }: { viewSwitch?: React.ReactNode }) {
         </div>
 
         <ActionGroup>
-          <button type="button" onClick={apply} className="field-button">
-            Update map
+          <button type="button" onClick={apply} className="field-button" aria-busy={updating || undefined}>
+            {updating ? "Updating…" : "Update map"}
           </button>
           {applied.q ||
           applied.filters.place ||
@@ -480,13 +490,7 @@ function PlacesView({ viewSwitch }: { viewSwitch?: React.ReactNode }) {
             <button
               type="button"
               className="text-xs font-semibold text-purple-700 dark:text-purple-300 hover:underline"
-              onClick={() => {
-                setQ("");
-                setFilters(EMPTY_SEARCH_FILTERS);
-                setApplied({ q: "", filters: EMPTY_SEARCH_FILTERS });
-                scope.setWorkshopIds([]);
-                setLevel("DISTRICT");
-              }}
+              onClick={showEverything}
             >
               Show everything
             </button>
@@ -499,7 +503,10 @@ function PlacesView({ viewSwitch }: { viewSwitch?: React.ReactNode }) {
       ) : loading && !data ? (
         <section className="panel p-6 text-sm text-ink-500">Placing the records…</section>
       ) : !data ? null : (
-        <>
+        <div
+          aria-busy={updating || undefined}
+          className={updating ? "opacity-60 transition-opacity" : "transition-opacity"}
+        >
           {data.focus ? (
             // `inScope === false` is a real and reachable state, not an edge case: the map opens scoped
             // to the most recent workshop, so "show this record on the map" from anything older lands
@@ -522,7 +529,14 @@ function PlacesView({ viewSwitch }: { viewSwitch?: React.ReactNode }) {
                 {data.focus.inScope === false ? (
                   <span className="text-amber-800">
                     {" "}
-                    Outside your filters — choose <span className="font-semibold">All records</span>.
+                    Outside your filters.{" "}
+                    <button
+                      type="button"
+                      className="font-semibold underline underline-offset-2 hover:no-underline"
+                      onClick={showEverything}
+                    >
+                      Show everything
+                    </button>
                   </span>
                 ) : null}
               </span>
@@ -770,7 +784,7 @@ function PlacesView({ viewSwitch }: { viewSwitch?: React.ReactNode }) {
               </section>
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -805,7 +819,8 @@ function Stat({
 export default function MapPage() {
   const searchParams = useSearchParams();
   const { user } = useAuth();
-  const [allowed, setAllowed] = useState(false);
+  /** null until the entitlement answers, so a coverage link never mounts Places first. */
+  const [allowed, setAllowed] = useState<boolean | null>(null);
   const wantsCoverage = searchParams.get("view") === "coverage";
 
   useEffect(() => {
@@ -826,6 +841,22 @@ export default function MapPage() {
   // The Coverage link is not rendered at all for an account without the entitlement.
   const viewSwitch = allowed ? <ViewSwitch view={view} /> : null;
 
+  if (wantsCoverage && allowed === null) {
+    // A coverage link while the entitlement is still answering: hold a shell, not the Places view
+    // (which would fire its own heavy requests and then vanish).
+    return (
+      <div>
+        <PageHeader
+          title="Coverage"
+          description="Where the programme has reached, and where it hasn't."
+          icon={<MapIcon className="h-5 w-5" aria-hidden />}
+        />
+        <section className="panel p-6 text-sm text-ink-500" aria-busy="true">
+          Loading…
+        </section>
+      </div>
+    );
+  }
   if (view === "places") return <PlacesView viewSwitch={viewSwitch} />;
   return (
     <div>
